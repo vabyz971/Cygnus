@@ -16,13 +16,19 @@
 
 //! Point d'entrée de l'app Photo : boot eframe + thème Cygnus.
 //!
-//! Découpage (prompt v2) :
-//! - `app`     : PhotoApp (état + channels + `impl eframe::App`)
-//! - `layout`  : disposition propre à photo
-//! - `ui/`     : widgets métier (layers, canvas, toolbar, properties)
+//! Découpage :
+//! - `app`        : PhotoApp (orchestrateur : état + commandes + moteur)
+//! - `state`      : couches d'état (document, coquille, runtime)
+//! - `commands`   : PhotoAction + file + contexte UI
+//! - `layout`     : workspace (régions top/left/center/right/bottom)
+//! - `ui/`        : features métier, viewport, widgets plats
+//! - `persistence`: sauvegarde du workspace (indépendante du document)
 
 mod app;
+mod commands;
 mod layout;
+mod persistence;
+mod state;
 mod ui;
 
 fn main() {

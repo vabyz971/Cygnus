@@ -2840,6 +2840,7 @@ dependencies = [
  "egui",
  "image",
  "photo-engine",
+ "serde_json",
  "ui-kit",
  "uuid",
 ]
@@ -3919,6 +3920,8 @@ dependencies = [
  "egui",
  "egui_material_icons",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
