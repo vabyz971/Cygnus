@@ -25,12 +25,25 @@
 //! ui-kit ne sait PAS ce que contient la texture : photo, video ou
 //! audio. Le rendu GPU réel (enregistrement natif wgpu) est câblé
 //! côté app (eframe) : ui-kit ne porte que l'id de texture.
+//!
+//! Les [`camera`], [`pan_zoom`], [`grid`] et [`overlay`] sont
+//! totalement agnostiques (aucun type PhotoDocument, Layer, Shape…) :
+//! ils ne manipulent que des coordonnées monde / écran.
 
+pub mod camera;
+pub mod grid;
+pub mod overlay;
+pub mod pan_zoom;
 pub mod viewport_interaction;
 pub mod viewport_state;
 // Nom imposé par la structure cible v2 (§4.1) : `viewport/viewport.rs`.
 #[allow(clippy::module_inception)]
 pub mod viewport;
+
+pub use camera::Camera;
+pub use grid::GridConfig;
+pub use overlay::{draw_crosshair, draw_rect_world, draw_selection};
+pub use pan_zoom::PanZoom;
 
 pub use viewport::{Viewport, ViewportResponse, ViewportTextureCache, load_texture};
 pub use viewport_interaction::{ViewportAction, ViewportTool, zoom_factor_for_scroll};

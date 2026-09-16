@@ -37,9 +37,12 @@
 //!    avec `egui_material_icons` — `ReorderableList`).
 //! 9. **`panels`** — conteneurs historiques (panneau titré, split,
 //!    onglets, repliable, toolbar).
-//! 10. **`viewport`** — état zoom/pan générique + affichage texture.
-//! 11. **`dialogs`** — modales, sélecteurs de fichiers, progression.
-//! 12. **`utils`** — état de drag & drop générique (index).
+//! 9. **`viewport`** — état zoom/pan + caméra agnostique
+//!    (`Camera`, `PanZoom`), grille, overlays + affichage texture.
+//! 10. **`dialogs`** — modales, sélecteurs de fichiers, progression.
+//! 11. **`utils`** — état de drag & drop générique (index).
+//! 12. **`context`** — dépendances communes (`UiContext` : egui,
+//!     thème, icônes, traduction — ni moteurs ni documents).
 //!
 //! INTERDIT ici : toute référence aux types métier des apps et aux
 //! engines. Les widgets métier vivent dans `apps/*/src/ui/`. Le flux
@@ -48,9 +51,10 @@
 
 pub mod components;
 pub mod containers;
+pub mod context;
 pub mod dialogs;
-pub mod icons;
 pub mod i18n;
+pub mod icons;
 pub mod layout;
 pub mod panels;
 pub mod primitives;
