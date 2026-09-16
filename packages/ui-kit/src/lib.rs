@@ -19,22 +19,33 @@
 //! Architecture en couches (bas vers haut) :
 //!
 //! 1. **`theme`** — SEULE source des couleurs, espacements, rayons,
-//!    typo. Aucun autre module ne code de valeur en dur.
-//! 2. **`widgets`** — boutons, sliders, inputs, dropdown, toggles,
-//!    tooltips, icônes (`CygnusIcon`, seul contact avec
-//!    `egui_material_icons`) et liste réordonnable générique.
-//! 3. **`panels`** — conteneurs (panneau titré, split
-//!    redimensionnable, onglets, repliable, toolbar). La disposition
-//!    reste propre à chaque app (aucun layout partagé).
-//! 4. **`viewport`** — état zoom/pan générique + affichage texture.
-//! 5. **`dialogs`** — modales, sélecteurs de fichiers, progression.
-//! 6. **`utils`** — état de drag & drop générique (index).
+//!    typo, tailles et bordures. Aucun autre module ne code de valeur
+//!    en dur.
+//! 2. **`primitives`** — briques génériques (`Text`, `Icon`,
+//!    `divider`, `Surface`), indépendantes du domaine.
+//! 3. **`icons`** — enum d'icônes stable + registre (aucune lib
+//!    externe exposée aux apps).
+//! 4. **`components`** — boutons, cases, interrupteurs, curseurs,
+//!    inputs, listes, onglets (variants par enums, style par thème).
+//! 5. **`widgets`** — composants historiques génériques
+//!    (`CygnusButton`, `CygnusSlider`, …, `CygnusIcon` — seul contact
+//!    avec `egui_material_icons` — `ReorderableList`).
+//! 6. **`panels`** — conteneurs historiques (panneau titré, split,
+//!    onglets, repliable, toolbar).
+//! 7. **`viewport`** — état zoom/pan générique + affichage texture.
+//! 8. **`dialogs`** — modales, sélecteurs de fichiers, progression.
+//! 9. **`utils`** — état de drag & drop générique (index).
 //!
 //! INTERDIT ici : toute référence aux types métier des apps et aux
-//! engines. Les widgets métier vivent dans `apps/*/src/ui/`.
+//! engines. Les widgets métier vivent dans `apps/*/src/ui/`. Le flux
+//! reste Application → Domain UI → UI Kit → egui, et les actions
+//! UI → UiCommand → Application → Engine.
 
+pub mod components;
 pub mod dialogs;
+pub mod icons;
 pub mod panels;
+pub mod primitives;
 pub mod theme;
 pub mod utils;
 pub mod viewport;
