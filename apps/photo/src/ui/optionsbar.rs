@@ -20,7 +20,7 @@
 //! gomme (taille, opacité), autres outils (aide contextuelle).
 //! Rien si l'outil n'a pas de réglages — la barre reste vide.
 
-use super::canvas::{PhotoBrushSettings, PhotoCanvasTool};
+use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use ui_kit::theme::tokens::CygnusTheme;
 use ui_kit::theme::typography::body_text;
 use ui_kit::widgets::{CygnusSlider, CygnusToggle};

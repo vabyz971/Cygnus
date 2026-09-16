@@ -21,8 +21,8 @@
 //! tous les outils en Pixel, navigation seule en Vector/Layout).
 //! Style exclusivement ui-kit.
 
-use super::canvas::PhotoCanvasTool;
 use super::modebar::PhotoEditMode;
+use super::viewport::PhotoCanvasTool;
 use ui_kit::widgets::icon::CygnusIcon;
 
 /// Icône + aide contextuelle d'un outil du rail.

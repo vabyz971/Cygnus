@@ -25,8 +25,8 @@
 //! outils propres) : basculer de mode rebascule sur Déplacement si
 //! l'outil courant n'y existe pas.
 
-use super::canvas::{PhotoBrushSettings, PhotoCanvasTool};
 use super::optionsbar::draw_tool_options;
+use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use ui_kit::theme::tokens::CygnusTheme;
 use ui_kit::theme::typography::body_text;
 use ui_kit::widgets::{CygnusButton, CygnusButtonStyle};

@@ -14,41 +14,45 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
-#![allow(unused_imports)] // TODO(Phase 5) : idem.
-//! Widgets egui MÉTIER de l'app Photo (migration Iced → egui, prompt v2).
+//! Widgets egui MÉTIER de l'app Photo.
 //!
-//! Ces widgets manipulent les types de `photo-engine` et composent les
-//! briques GÉNÉRIQUES de `ui_kit` (thème, icônes, `ReorderableList`,
-//! `Viewport`). Ils vivront dans l'app Phase 5 (eframe) ; en Phase 3
-//! ils sont testés en headless.
+//! Trois niveaux :
+//!
+//! - `features/` : fonctionnalités par domaine (calques, inspecteur),
+//!   position-indépendantes, remontant des [`PhotoAction`](crate::commands::PhotoAction) ;
+//! - `viewport/` : canvas + overlays autour du viewport générique ui-kit ;
+//! - widgets plats (`menubar`, `modebar`, `toolbar`, `optionsbar`,
+//!   `colorpanel`, `dialogs`) : contenus utilisés par `crate::layout`.
+//!
+//! Le pont moteur (`engine_bridge`, channels + worker) ne sait rien
+//! d'egui au-delà des snapshots ; aucun widget n'y envoie directement.
 
-pub mod canvas;
 pub mod colorpanel;
 pub mod dialogs;
 pub mod engine_bridge;
-pub mod layers;
+pub mod features;
 pub mod menubar;
 pub mod modebar;
 pub mod optionsbar;
-pub mod properties;
 pub mod toolbar;
+pub mod viewport;
 
-pub use canvas::{PhotoBrushSettings, PhotoCanvas, PhotoCanvasOutcome, PhotoCanvasTool};
 pub use colorpanel::draw_color_panel;
 pub use dialogs::{
-    DocOrientation, ExportDialogState, ExportRequest, NewDocumentDialogState, draw_export_dialog,
-    draw_help_dialog, draw_new_document_dialog,
+    ExportDialogState, NewDocumentDialogState, draw_export_dialog, draw_help_dialog,
+    draw_new_document_dialog,
 };
 pub use engine_bridge::{
-    PhotoEngineCommand, PhotoEngineResponse, PreviewImage, apply_command, display_to_doc_index,
-    spawn_photo_engine_worker,
+    PhotoEngineCommand, PhotoEngineResponse, PreviewImage, spawn_photo_engine_worker,
 };
-pub use layers::{
-    LayerItemAction, LayerPanelAction, LayerRenameState, PhotoLayerInfo, PhotoLayerKind,
-    PhotoSubLayerInfo, draw_photo_layer_panel,
+pub use features::{
+    inspector::{InspectorPanel, inspector_action_to_photo},
+    layers::{LayerRenameState, LayersPanel, PhotoLayerInfo, layer_panel_action_to_photo},
 };
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
-pub use optionsbar::draw_tool_options;
 pub use toolbar::draw_tool_rail;
+pub use viewport::{
+    PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool, draw_origin_marker,
+    draw_selection_chip,
+};

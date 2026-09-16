@@ -31,7 +31,7 @@
 //! d'affichage. Le worker les reconvertit (`doc = len - 1 - display`)
 //! avant de manipuler `document.root` (index 0 = bas de pile).
 
-use super::layers::{PhotoLayerInfo, snapshot_layers};
+use super::features::layers::{PhotoLayerInfo, snapshot_layers};
 use photo_engine::Document;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
