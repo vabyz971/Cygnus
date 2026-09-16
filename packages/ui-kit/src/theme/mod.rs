@@ -16,12 +16,27 @@
 
 //! Thème egui partagé de Cygnus : tokens, typographie et application.
 //!
-//! SEULE source de vérité pour les couleurs, espacements, rayons et
-//! tailles de texte des 3 apps. Aucune couleur codée en dur ailleurs.
+//! SEULE source de vérité pour les couleurs, espacements, rayons,
+//! tailles de texte, tailles de contrôles et bordures des 3 apps.
+//! Aucune couleur ni dimension codée en dur ailleurs.
 
+pub mod borders;
+pub mod colors;
+pub mod radius;
+pub mod sizes;
+pub mod spacing;
+// Nom imposé par la structure cible : `theme/theme.rs`.
+#[allow(clippy::module_inception)]
+pub mod theme;
 pub mod tokens;
 pub mod typography;
 pub mod visuals;
 
-pub use tokens::{CygnusColors, CygnusRadius, CygnusSpacing, CygnusTheme, CygnusTypography};
+pub use borders::CygnusBorders;
+pub use colors::CygnusColors;
+pub use radius::CygnusRadius;
+pub use sizes::CygnusSizes;
+pub use spacing::CygnusSpacing;
+pub use theme::CygnusTheme;
+pub use typography::CygnusTypography;
 pub use visuals::{apply_cygnus_theme, setup_fonts};

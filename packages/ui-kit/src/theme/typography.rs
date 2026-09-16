@@ -16,10 +16,43 @@
 
 //! Échelle typographique de Cygnus.
 //!
-//! Les tailles proviennent de [`CygnusTypography`](super::tokens::CygnusTypography)
-//! ; aucun widget ne doit coder une taille de texte en dur.
+//! SEULE source des tailles de texte : aucun widget ne doit coder une
+//! taille en dur. Les assistants [`heading_text`], [`body_text`] et
+//! [`caption_text`] construisent des [`egui::RichText`] calibrés.
 
-use super::tokens::CygnusTheme;
+use super::theme::CygnusTheme;
+
+/// Tailles typographiques du thème.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CygnusTypography {
+    /// Titres de panneaux.
+    pub heading_size: f32,
+    /// Texte courant.
+    pub body_size: f32,
+    /// Légendes et textes secondaires.
+    pub caption_size: f32,
+    /// Icônes.
+    pub icon_size: f32,
+}
+
+impl CygnusTypography {
+    /// Échelle du thème sombre.
+    pub fn dark() -> Self {
+        Self {
+            heading_size: 16.0,
+            body_size: 13.0,
+            caption_size: 11.0,
+            icon_size: 18.0,
+        }
+    }
+}
+
+impl Default for CygnusTypography {
+    /// Échelle par défaut.
+    fn default() -> Self {
+        Self::dark()
+    }
+}
 
 /// Taille du texte des titres de panneaux.
 pub fn heading_size(theme: &CygnusTheme) -> f32 {
@@ -51,11 +84,11 @@ pub fn body_text(theme: &CygnusTheme, text: &str) -> egui::RichText {
     egui::RichText::new(text).size(body_size(theme))
 }
 
-/// Texte formaté en style légende.
+/// Texte formaté en style légende (couleur secondaire du thème).
 pub fn caption_text(theme: &CygnusTheme, text: &str) -> egui::RichText {
     egui::RichText::new(text)
         .size(caption_size(theme))
-        .color(egui::Color32::from_rgb(160, 160, 175))
+        .color(theme.colors.fg_secondary)
 }
 
 #[cfg(test)]
