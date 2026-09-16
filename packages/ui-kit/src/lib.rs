@@ -27,14 +27,19 @@
 //!    externe exposée aux apps).
 //! 4. **`components`** — boutons, cases, interrupteurs, curseurs,
 //!    inputs, listes, onglets (variants par enums, style par thème).
-//! 5. **`widgets`** — composants historiques génériques
+//! 5. **`containers`** — conteneurs agnostiques (`Section`, `Card`,
+//!    `Stack`, `Panel`, `Split`).
+//! 6. **`layout`** — état du workspace (`PanelId`, `WorkspaceState`,
+//!    persistence JSON via `preferences`).
+//! 7. **`i18n`** — clés de traduction stables + catalogue.
+//! 8. **`widgets`** — composants historiques génériques
 //!    (`CygnusButton`, `CygnusSlider`, …, `CygnusIcon` — seul contact
 //!    avec `egui_material_icons` — `ReorderableList`).
-//! 6. **`panels`** — conteneurs historiques (panneau titré, split,
+//! 9. **`panels`** — conteneurs historiques (panneau titré, split,
 //!    onglets, repliable, toolbar).
-//! 7. **`viewport`** — état zoom/pan générique + affichage texture.
-//! 8. **`dialogs`** — modales, sélecteurs de fichiers, progression.
-//! 9. **`utils`** — état de drag & drop générique (index).
+//! 10. **`viewport`** — état zoom/pan générique + affichage texture.
+//! 11. **`dialogs`** — modales, sélecteurs de fichiers, progression.
+//! 12. **`utils`** — état de drag & drop générique (index).
 //!
 //! INTERDIT ici : toute référence aux types métier des apps et aux
 //! engines. Les widgets métier vivent dans `apps/*/src/ui/`. Le flux
@@ -42,8 +47,11 @@
 //! UI → UiCommand → Application → Engine.
 
 pub mod components;
+pub mod containers;
 pub mod dialogs;
 pub mod icons;
+pub mod i18n;
+pub mod layout;
 pub mod panels;
 pub mod primitives;
 pub mod theme;
