@@ -24,4 +24,4 @@
 
 pub mod ui_state;
 
-pub use ui_state::load_workspace_or_default;
+pub use ui_state::{load_dock_or_default, load_workspace_or_default};

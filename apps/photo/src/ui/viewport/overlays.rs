@@ -19,11 +19,9 @@
 //! Couche de composition : la géométrie vient du [`ViewportState`](ui_kit::viewport::ViewportState),
 //! le dessin des helpers agnostiques
 //! ([`draw_crosshair`](ui_kit::viewport::draw_crosshair)), le style du
-//! thème. Aucune donnée moteur autre que le nom du calque
-//! sélectionné (étiquette).
+//! thème.
 
 use crate::commands::PhotoUiContext;
-use ui_kit::primitives::Text;
 use ui_kit::viewport::{ViewportState, draw_crosshair};
 
 /// Croix à l'origine monde (0, 0) du viewport.
@@ -35,13 +33,6 @@ pub fn draw_origin_marker(painter: &egui::Painter, ctx: &PhotoUiContext, viewpor
         theme.spacing.sm,
         egui::Stroke::new(theme.borders.thin, theme.colors.fg_secondary),
     );
-}
-
-/// Étiquette du calque sélectionné en haut du canvas (`None` = rien).
-pub fn draw_selection_chip(ui: &mut egui::Ui, ctx: &PhotoUiContext, selected_name: Option<&str>) {
-    if let Some(name) = selected_name {
-        Text::caption(ctx.shared.theme(), name).show(ui);
-    }
 }
 
 #[cfg(test)]
@@ -57,8 +48,6 @@ mod tests {
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 draw_origin_marker(ui.painter(), &photo_ctx, &viewport);
-                draw_selection_chip(ui, &photo_ctx, Some("fond"));
-                draw_selection_chip(ui, &photo_ctx, None);
             });
         })
         .drop_without_applying_deltas();

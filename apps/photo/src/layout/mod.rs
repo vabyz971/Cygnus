@@ -18,8 +18,8 @@
 //!
 //! ```text
 //! PhotoWorkspace
-//!   ↓ Top / Left / Center / Right / Bottom (+ overlays)
-//! Panel / Feature (contenu métier)
+//!   ↓ Top / Central (doc tabs + DockArea) / Bottom (+ overlays)
+//! Dock tab / Feature (contenu métier)
 //!   ↓
 //! ui-kit (style + conteneurs génériques)
 //! ```
@@ -27,11 +27,12 @@
 //! Chaque région dessine son `egui::Panel` et délègue le contenu aux
 //! features ; les actions remontent en [`PhotoAction`](crate::commands::PhotoAction).
 //! Le workspace ne connaît ni calques, ni outils, ni moteurs.
-//! Prévu pour évoluer (régions redimensionnables, tabs, layouts
-//! sauvegardables) sans toucher aux features.
+//! Les quatre onglets métier (outils, canvas, inspecteur, calques)
+//! sont ancrables via `egui_dock` (voir [`dock`]).
 
 pub mod bottom_bar;
 pub mod central_view;
+pub mod dock;
 pub mod left_sidebar;
 pub mod overlays;
 pub mod right_sidebar;

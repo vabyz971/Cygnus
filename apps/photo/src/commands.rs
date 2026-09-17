@@ -32,9 +32,14 @@
 //! dépendances d'affichage partagées (thème, icônes, traduction) —
 //! ni documents, ni moteurs.
 
+use crate::layout::dock::PhotoDockTab;
 use crate::ui::{PaintRequest, PhotoCanvasTool};
+use photo_engine::BlendMode;
 use std::path::PathBuf;
 use ui_kit::context::UiContext;
+use ui_kit::i18n::{Catalog, Language};
+use ui_kit::icons::IconRegistry;
+use ui_kit::theme::CygnusTheme;
 use uuid::Uuid;
 
 /// Action UI émise par un panel, le viewport ou un menu.
@@ -56,8 +61,6 @@ pub enum PhotoAction {
     ExportDocument { path: PathBuf, quality: u8 },
     /// Fermer l'onglet actif.
     CloseTab,
-    /// Bascule vers l'onglet `index` (clampé par l'app).
-    SwitchTab(usize),
     /// Annuler / rétablir (worker).
     Undo,
     /// Rétablir (worker).
@@ -88,6 +91,8 @@ pub enum PhotoAction {
     ToggleLayerVisibility(Uuid),
     /// Régler l'opacité (unités moteur 0..=100, worker).
     SetOpacity { layer: Uuid, opacity: f32 },
+    /// Régler le mode de fusion (worker).
+    SetBlendMode { layer: Uuid, mode: BlendMode },
     /// Déplacer un filtre dans sa pile (worker).
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans sa pile (worker).
@@ -108,6 +113,10 @@ pub enum PhotoAction {
     ZoomReset,
     /// Commettre un trait pinceau/gomme (worker).
     CommitStroke(PaintRequest),
+    /// Rouvrir un onglet dock fermé (outils, inspecteur, calques).
+    ShowDockTab(PhotoDockTab),
+    /// Restaurer la disposition des docks par défaut.
+    ResetDockLayout,
     /// Ouvrir la fenêtre d'aide.
     ShowHelp,
     /// Quitter l'application.
@@ -168,10 +177,16 @@ pub struct PhotoUiContext {
 
 impl PhotoUiContext {
     /// Contexte standard pour la frame (thème sombre, icônes,
-    /// catalogue par défaut).
+    /// catalogue français : langue de l'app jusqu'au câblage de la
+    /// préférence de langue).
     pub fn for_frame(ctx: &egui::Context) -> Self {
         Self {
-            shared: UiContext::dark(ctx.clone()),
+            shared: UiContext::new(
+                ctx.clone(),
+                CygnusTheme::dark(),
+                IconRegistry::new(),
+                Catalog::new(Language::Fr),
+            ),
         }
     }
 }

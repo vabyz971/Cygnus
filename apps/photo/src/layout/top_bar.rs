@@ -43,6 +43,9 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
         PhotoMenuAction::ZoomIn => PhotoAction::ZoomIn,
         PhotoMenuAction::ZoomOut => PhotoAction::ZoomOut,
         PhotoMenuAction::ZoomReset => PhotoAction::ZoomReset,
+        PhotoMenuAction::CloseDocument => PhotoAction::CloseTab,
+        PhotoMenuAction::ShowDockTab(tab) => PhotoAction::ShowDockTab(tab),
+        PhotoMenuAction::ResetDockLayout => PhotoAction::ResetDockLayout,
         PhotoMenuAction::ShowHelp => PhotoAction::ShowHelp,
     }
 }
@@ -51,7 +54,7 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
 pub fn show_menu_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
-    _ctx: &PhotoUiContext,
+    ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     egui::Panel::top("photo_menubar")
@@ -63,9 +66,14 @@ pub fn show_menu_bar(
                 has_selection: app.active_doc().ui.selected.is_some(),
             };
             actions.extend(
-                draw_menu_bar(ui, availability)
-                    .into_iter()
-                    .map(menu_action_to_photo),
+                draw_menu_bar(
+                    ui,
+                    availability,
+                    ctx.shared.theme(),
+                    ctx.shared.translator(),
+                )
+                .into_iter()
+                .map(menu_action_to_photo),
             );
         });
     actions
@@ -116,6 +124,20 @@ mod tests {
         assert_eq!(
             menu_action_to_photo(PhotoMenuAction::NewDocument),
             PhotoAction::OpenNewDocumentDialog
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::ShowDockTab(
+                crate::layout::dock::PhotoDockTab::Layers
+            )),
+            PhotoAction::ShowDockTab(crate::layout::dock::PhotoDockTab::Layers)
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::ResetDockLayout),
+            PhotoAction::ResetDockLayout
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::CloseDocument),
+            PhotoAction::CloseTab
         );
     }
 }

@@ -23,7 +23,8 @@
 
 use crate::commands::{PhotoAction, PhotoCommandQueue, PhotoUiContext};
 use crate::layout::PhotoWorkspace;
-use crate::persistence::load_workspace_or_default;
+use crate::layout::dock::{PhotoDockTab, default_dock_state, ensure_tab, push_canvas_tab};
+use crate::persistence::{load_dock_or_default, load_workspace_or_default};
 use crate::state::{
     OpenDocument, PhotoRuntimeState, PhotoShellState, PhotoUiState, apply_response,
 };
@@ -66,12 +67,10 @@ impl PhotoApp {
             queue: PhotoCommandQueue::new(),
         };
         app.open_blank_tab();
+        // Disposition des docks autour des canevas (câblage disque
+        // via `preferences` : phase suivante).
+        app.shell.dock_state = load_dock_or_default(None, &app.doc_ids());
         app
-    }
-
-    /// Nombre de documents ouverts.
-    pub fn doc_count(&self) -> usize {
-        self.docs.len()
     }
 
     /// Document actif (toujours présent : jamais zéro document).
@@ -99,7 +98,8 @@ impl PhotoApp {
         self.spawn_document(title, Document::new(width, height));
     }
 
-    /// Crée le worker d'un document et l'active.
+    /// Crée le worker d'un document, lui ajoute son onglet canevas
+    /// et l'active.
     pub fn spawn_document(&mut self, title: String, document: Document) {
         let (tx, worker_rx) = channel();
         let (worker_tx, rx) = channel();
@@ -111,9 +111,22 @@ impl PhotoApp {
             status: String::from("Pret"),
             ..Default::default()
         };
-        self.docs.push(OpenDocument { title, ui, tx, rx });
+        let id = uuid::Uuid::new_v4();
+        self.docs.push(OpenDocument {
+            id,
+            title,
+            ui,
+            tx,
+            rx,
+        });
         self.active = self.docs.len() - 1;
+        push_canvas_tab(&mut self.shell.dock_state, PhotoDockTab::Canvas(id));
         let _ = self.active_doc().tx.send(PhotoEngineCommand::Refresh);
+    }
+
+    /// Ids des documents ouverts (canevas du layout).
+    fn doc_ids(&self) -> Vec<uuid::Uuid> {
+        self.docs.iter().map(|doc| doc.id).collect()
     }
 
     /// Ferme l'onglet actif (jamais zéro document : le dernier est
@@ -123,18 +136,27 @@ impl PhotoApp {
             self.open_blank_tab();
             return;
         }
-        self.docs.remove(self.active);
+        let index = self.active.min(self.docs.len() - 1);
+        self.close_document(self.docs[index].id);
+    }
+
+    /// Ferme le document `id` et retire son onglet canevas (sans
+    /// effet si inconnu ; jamais zéro document).
+    pub fn close_document(&mut self, id: uuid::Uuid) {
+        if let Some(index) = self.docs.iter().position(|doc| doc.id == id) {
+            self.docs.remove(index);
+            if let Some(path) = self.shell.dock_state.find_tab(&PhotoDockTab::Canvas(id)) {
+                self.shell.dock_state.remove_tab(path);
+            }
+            // Un document avant l'actif décalerait la sélection.
+            if index < self.active {
+                self.active -= 1;
+            }
+        }
         if self.docs.is_empty() {
             self.open_blank_tab();
         } else {
             self.active = self.active.min(self.docs.len() - 1);
-        }
-    }
-
-    /// Bascule vers l'onglet `index` (clampé).
-    pub fn switch_tab(&mut self, index: usize) {
-        if !self.docs.is_empty() {
-            self.active = index.min(self.docs.len() - 1);
         }
     }
 
@@ -165,7 +187,6 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::Export { path, quality });
             }
             PhotoAction::CloseTab => self.close_active_tab(),
-            PhotoAction::SwitchTab(index) => self.switch_tab(index),
             PhotoAction::Undo => self.send_active(PhotoEngineCommand::Undo),
             PhotoAction::Redo => self.send_active(PhotoEngineCommand::Redo),
             PhotoAction::AddEmptyLayer => self.send_active(PhotoEngineCommand::AddEmptyLayer),
@@ -209,6 +230,9 @@ impl PhotoApp {
             PhotoAction::SetOpacity { layer, opacity } => {
                 self.send_active(PhotoEngineCommand::SetOpacity { layer, opacity });
             }
+            PhotoAction::SetBlendMode { layer, mode } => {
+                self.send_active(PhotoEngineCommand::SetBlendMode { layer, mode });
+            }
             PhotoAction::MoveFilter { layer, filter, up } => {
                 self.send_active(PhotoEngineCommand::MoveFilter { layer, filter, up });
             }
@@ -249,6 +273,17 @@ impl PhotoApp {
             }
             PhotoAction::ShowHelp => {
                 self.shell.help_open = true;
+            }
+            PhotoAction::ShowDockTab(tab) => {
+                ensure_tab(&mut self.shell.dock_state, tab);
+            }
+            PhotoAction::ResetDockLayout => {
+                let canvases = self
+                    .doc_ids()
+                    .into_iter()
+                    .map(PhotoDockTab::Canvas)
+                    .collect();
+                self.shell.dock_state = default_dock_state(canvases);
             }
             PhotoAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -320,7 +355,7 @@ mod tests {
     #[test]
     fn app_boots_with_one_blank_doc() {
         let mut app = PhotoApp::new();
-        assert_eq!(app.doc_count(), 1);
+        assert_eq!(app.docs.len(), 1);
         assert_eq!(app.active, 0);
         // Snapshot initial du worker (document vide).
         let response = app
@@ -334,21 +369,52 @@ mod tests {
     }
 
     #[test]
-    fn tabs_open_switch_close() {
+    fn tabs_open_close() {
+        use uuid::Uuid;
+
         let mut app = PhotoApp::new();
         app.open_blank_tab();
         app.open_blank_tab();
-        assert_eq!(app.doc_count(), 3);
-        app.switch_tab(0);
-        assert_eq!(app.active, 0);
-        app.switch_tab(99);
-        assert_eq!(app.active, 2);
+        assert_eq!(app.docs.len(), 3);
+        // Un onglet canevas par document.
+        for doc in &app.docs {
+            assert!(
+                app.shell
+                    .dock_state
+                    .find_tab(&PhotoDockTab::Canvas(doc.id))
+                    .is_some()
+            );
+        }
+        // Fermer l'actif retire aussi son canevas.
+        let removed = app.active_doc().id;
         app.close_active_tab();
-        assert_eq!(app.doc_count(), 2);
+        assert_eq!(app.docs.len(), 2);
+        assert!(
+            app.shell
+                .dock_state
+                .find_tab(&PhotoDockTab::Canvas(removed))
+                .is_none()
+        );
         // Fermer jusqu'au dernier : jamais zéro document.
         app.close_active_tab();
         app.close_active_tab();
-        assert_eq!(app.doc_count(), 1);
+        assert_eq!(app.docs.len(), 1);
+        // Id inconnu : sans effet.
+        app.close_document(Uuid::from_u128(999));
+        assert_eq!(app.docs.len(), 1);
+    }
+
+    #[test]
+    fn closing_before_active_keeps_selection() {
+        let mut app = PhotoApp::new();
+        app.open_blank_tab();
+        app.open_blank_tab();
+        let middle = app.docs[1].id;
+        app.active = 1;
+        app.close_document(app.docs[0].id);
+        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.active, 0);
+        assert_eq!(app.active_doc().id, middle);
     }
 
     #[test]

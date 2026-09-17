@@ -45,6 +45,10 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
             PhotoAction::RemoveFilter { layer, filter }
         }
         LayerPanelAction::RemoveMask { owner, mask } => PhotoAction::RemoveMask { owner, mask },
+        LayerPanelAction::SetOpacity { layer, opacity } => {
+            PhotoAction::SetOpacity { layer, opacity }
+        }
+        LayerPanelAction::SetBlendMode { layer, mode } => PhotoAction::SetBlendMode { layer, mode },
     }
 }
 
@@ -71,6 +75,26 @@ mod tests {
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::Delete),
             PhotoAction::DeleteSelectedLayer
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::SetOpacity {
+                layer: id,
+                opacity: 42.0
+            }),
+            PhotoAction::SetOpacity {
+                layer: id,
+                opacity: 42.0
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::SetBlendMode {
+                layer: id,
+                mode: photo_engine::BlendMode::Screen,
+            }),
+            PhotoAction::SetBlendMode {
+                layer: id,
+                mode: photo_engine::BlendMode::Screen,
+            }
         );
     }
 }

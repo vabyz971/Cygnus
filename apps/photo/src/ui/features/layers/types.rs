@@ -23,7 +23,7 @@
 //! racine est exposé en Phase 3 (les enfants de groupes restent
 //! repliés).
 
-use photo_engine::{Document, LayerNode};
+use photo_engine::{BlendMode, Document, LayerNode};
 use ui_kit::widgets::icon::CygnusIcon;
 use uuid::Uuid;
 
@@ -98,6 +98,8 @@ pub struct PhotoLayerInfo {
     pub visible: bool,
     /// Opacité (unités moteur 0..=100).
     pub opacity: f32,
+    /// Mode de fusion du calque.
+    pub blend_mode: BlendMode,
     /// Le calque porte des filtres live (badge FX).
     pub has_filters: bool,
     /// Le calque porte des masques (badge).
@@ -156,6 +158,7 @@ impl PhotoLayerInfo {
             kind: PhotoLayerKind::from_node(node),
             visible: node.visible(),
             opacity: node.opacity(),
+            blend_mode: node.blend_mode().unwrap_or(BlendMode::Normal),
             has_filters,
             has_masks,
             filters,

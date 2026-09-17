@@ -14,34 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Rail d'outils gauche : icônes d'outils + couleur du pinceau.
+//! Contenu de l'onglet dock « Outils » : rail compact 32 px.
 //!
-//! Le rail suit le mode d'édition ; le choix d'outil remonte en
-//! [`PhotoAction::SetTool`](crate::commands::PhotoAction). La couleur
-//! est un état UI local (mutation directe, aucun moteur).
+//! Position-indépendant : le placement (taille, split, fenêtre
+//! flottante) est géré par le [`DockArea`](egui_dock::DockArea)
+//! (voir `super::dock`). Le choix d'outil remonte en
+//! [`PhotoAction::SetTool`](crate::commands::PhotoAction) ; la
+//! couleur est un état UI local (mutation directe, aucun moteur).
 
-use crate::app::PhotoApp;
-use crate::commands::{PhotoAction, PhotoUiContext};
-use crate::ui::{draw_color_panel, draw_tool_rail};
+use crate::commands::PhotoAction;
+use crate::state::OpenDocument;
+use crate::ui::draw_tool_rail;
+use ui_kit::theme::CygnusTheme;
 
-/// Colonne gauche (rail 60px + nuancier).
-pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, _ctx: &PhotoUiContext) -> Vec<PhotoAction> {
+/// Rail d'outils compact (contenu de l'onglet, sans `Panel`).
+pub fn draw_tools_content(
+    ui: &mut egui::Ui,
+    doc: &mut OpenDocument,
+    theme: &CygnusTheme,
+) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    egui::Panel::left("photo_tools")
-        .resizable(false)
-        .exact_size(60.0)
-        .show(ui, |ui| {
-            let doc = app.active_doc_mut();
-            if let Some(tool) = draw_tool_rail(
-                ui,
-                &mut doc.ui.tool,
-                &mut doc.ui.brush.color,
-                doc.ui.edit_mode,
-            ) {
-                actions.push(PhotoAction::SetTool(tool));
-            }
-            ui.separator();
-            draw_color_panel(ui, &mut doc.ui.brush.color);
-        });
+    if let Some(tool) = draw_tool_rail(
+        ui,
+        &mut doc.ui.tool,
+        &mut doc.ui.brush.color,
+        doc.ui.edit_mode,
+        theme,
+    ) {
+        actions.push(PhotoAction::SetTool(tool));
+    }
     actions
 }

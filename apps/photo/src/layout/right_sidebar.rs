@@ -14,81 +14,62 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Studio droit : empilement des features, sans contenu en dur.
+//! Contenus des onglets dock « Inspecteur » et « Calques ».
 //!
 //! ```text
-//! RightSidebar
-//!   ├── InspectorPanel
-//!   └── LayersPanel
+//! PhotoDockTab::Inspector → InspectorPanel
+//! PhotoDockTab::Layers    → LayersPanel
 //! ```
 //!
-//! La sidebar gère le placement (`egui::Panel` droit, espacement) ;
-//! les panels gèrent leur contenu. L'ordre et la visibilité suivent
-//! le [`WorkspaceState`](ui_kit::layout::WorkspaceState) (région
-//! droite) : masquer un panneau dans le layout le retire d'ici.
+//! Position-indépendants : visibilité et placement via le dock
+//! (fermeture + menu Fenêtre), plus via le `WorkspaceState`.
 
-use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
+use crate::state::OpenDocument;
 use crate::ui::{
     InspectorPanel, LayersPanel, inspector_action_to_photo, layer_panel_action_to_photo,
 };
-use ui_kit::layout::PanelId;
 
-/// Colonne droite (inspecteur + calques, selon le workspace).
-pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
-    // Visibilités lues AVANT l'emprunt mutable du document.
-    let show_inspector = is_panel_visible(app, PanelId::Inspector);
-    let show_layers = is_panel_visible(app, PanelId::Layers);
-    let mut actions = Vec::new();
-    egui::Panel::right("photo_studio")
-        .resizable(true)
-        .default_size(300.0)
-        .min_size(220.0)
-        .show(ui, |ui| {
-            let doc = app.active_doc_mut();
-            let selected = doc
-                .ui
-                .selected
-                .and_then(|id| doc.ui.layers.iter().find(|layer| layer.id == id));
-            if show_inspector {
-                actions.extend(
-                    InspectorPanel::show(ui, ctx, selected)
-                        .into_iter()
-                        .map(inspector_action_to_photo),
-                );
-                ui.separator();
-            }
-            if show_layers {
-                // Annule un renommage orphelin avant affichage.
-                if doc
-                    .ui
-                    .rename
-                    .editing
-                    .is_some_and(|id| !doc.ui.layers.iter().any(|layer| layer.id == id))
-                {
-                    doc.ui.rename.editing = None;
-                }
-                actions.extend(
-                    LayersPanel::show(
-                        ui,
-                        ctx,
-                        &doc.ui.layers,
-                        doc.ui.selected,
-                        &mut doc.ui.rename,
-                        &mut doc.ui.drag_state,
-                    )
-                    .into_iter()
-                    .map(layer_panel_action_to_photo),
-                );
-            }
-        });
-    actions
+/// Inspecteur du calque sélectionné (contenu de l'onglet).
+pub fn draw_inspector_content(
+    ui: &mut egui::Ui,
+    doc: &OpenDocument,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
+    let selected = doc
+        .ui
+        .selected
+        .and_then(|id| doc.ui.layers.iter().find(|layer| layer.id == id));
+    InspectorPanel::show(ui, ctx, selected)
+        .into_iter()
+        .map(inspector_action_to_photo)
+        .collect()
 }
 
-/// Visibilité d'un panneau dans la région droite (défaut : visible).
-fn is_panel_visible(app: &PhotoApp, id: PanelId) -> bool {
-    app.shell
-        .workspace
-        .find(id)
-        .is_none_or(|panel| panel.visible)
+/// Liste des calques (contenu de l'onglet).
+pub fn draw_layers_content(
+    ui: &mut egui::Ui,
+    doc: &mut OpenDocument,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
+    // Annule un renommage orphelin avant affichage.
+    if doc
+        .ui
+        .rename
+        .editing
+        .is_some_and(|id| !doc.ui.layers.iter().any(|layer| layer.id == id))
+    {
+        doc.ui.rename.editing = None;
+    }
+    LayersPanel::show(
+        ui,
+        ctx,
+        &doc.ui.layers,
+        doc.ui.selected,
+        &mut doc.ui.rename,
+        &mut doc.ui.drag_state,
+    )
+    .into_iter()
+    .map(layer_panel_action_to_photo)
+    .collect()
 }

@@ -27,6 +27,7 @@
 //! La frontière moteur→UI ([`apply_response`]) vit ici : c'est le
 //! seul point de conversion des réponses worker en état UI.
 
+use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
     ExportDialogState, LayerRenameState, NewDocumentDialogState, PhotoBrushSettings,
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PreviewImage,
@@ -86,7 +87,9 @@ pub struct FilterModalState {
 
 /// Un document ouvert : worker moteur + état UI.
 pub struct OpenDocument {
-    /// Titre de l'onglet.
+    /// Identifiant stable (onglet dock, persistance du layout).
+    pub id: Uuid,
+    /// Titre de l'onglet dock.
     pub title: String,
     /// État UI du document.
     pub ui: PhotoUiState,
@@ -99,11 +102,14 @@ pub struct OpenDocument {
 }
 
 /// État global de la coquille (fenêtre unique, tous documents).
-#[derive(Default)]
 pub struct PhotoShellState {
     /// Layout des régions et panneaux (persistable, voir
     /// `crate::persistence`).
     pub workspace: WorkspaceState,
+    /// Docks ancrables (outils, canvas, inspecteur, calques).
+    /// `DockState` n'implémente pas `Default` : voir le `impl`
+    /// manuel ci-dessous (layout par défaut, jamais vide).
+    pub dock_state: egui_dock::DockState<PhotoDockTab>,
     /// Modale d'ajout de filtre.
     pub filter_modal: FilterModalState,
     /// Fenêtre « Nouveau document » (format, dimensions, orientation).
@@ -112,6 +118,22 @@ pub struct PhotoShellState {
     pub export_dialog: ExportDialogState,
     /// Fenêtre d'aide visible.
     pub help_open: bool,
+}
+
+impl Default for PhotoShellState {
+    /// Coquille par défaut : workspace standard + dock vide
+    /// (`DockState` n'a pas de `Default`). `PhotoApp::new`
+    /// reconstruit aussitôt le layout autour du premier document.
+    fn default() -> Self {
+        Self {
+            workspace: WorkspaceState::default(),
+            dock_state: egui_dock::DockState::new(Vec::new()),
+            filter_modal: FilterModalState::default(),
+            new_doc_dialog: NewDocumentDialogState::default(),
+            export_dialog: ExportDialogState::default(),
+            help_open: false,
+        }
+    }
 }
 
 /// État éphémère d'exécution (non sérialisable).

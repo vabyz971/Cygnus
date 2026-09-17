@@ -31,6 +31,7 @@ todo = "warn"
 eframe = "=0.36.2"
 egui = "=0.36.2"
 egui_material_icons = { version = "=0.8.0", features = ["filled", "outline"] }
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 rfd = "=0.15.4"
 wgpu = "=30.0.1"
 image = { version = "=0.25.10", features = ["rayon"] }

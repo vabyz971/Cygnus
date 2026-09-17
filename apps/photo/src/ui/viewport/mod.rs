@@ -20,8 +20,8 @@
 //!
 //! - [`canvas`] : `PhotoCanvas` (texture moteur + outils, pan/zoom
 //!   state-only), sans aucun envoi worker ;
-//! - [`overlays`] : marqueurs photo (origine, sélection) via les
-//!   helpers agnostiques ui-kit.
+//! - [`overlays`] : marqueur photo (origine) via les helpers
+//!   agnostiques ui-kit.
 //!
 //! La caméra générique vit dans ui-kit ; le rendu et la sélection
 //! photo restent ici, sans logique métier moteur.
@@ -30,4 +30,4 @@ pub mod canvas;
 pub mod overlays;
 
 pub use canvas::{PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool};
-pub use overlays::{draw_origin_marker, draw_selection_chip};
+pub use overlays::draw_origin_marker;

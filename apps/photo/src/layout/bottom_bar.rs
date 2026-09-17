@@ -16,12 +16,15 @@
 
 //! Barre de statut basse : lecture seule (aucune action).
 //!
-//! Hint de l'outil à gauche, document/mode/zoom/compte à droite.
-//! Style exclusivement ui-kit (`typography`).
+//! Hint de l'outil à gauche, version de l'application à droite
+//! (préfixe « Alpha »). Style exclusivement ui-kit (`typography`).
 
 use crate::app::PhotoApp;
 use crate::commands::PhotoUiContext;
 use ui_kit::theme::typography::body_text;
+
+/// Version de l'application (depuis `Cargo.toml`).
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Barre basse (aucune action émise).
 pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
@@ -37,16 +40,7 @@ pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
                     ui.label(body_text(theme, &doc.ui.status));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(body_text(
-                        theme,
-                        &format!(
-                            "{} · {} · zoom {}% · {} calques",
-                            doc.title,
-                            doc.ui.edit_mode.label(),
-                            (doc.ui.viewport.zoom() * 100.0).round(),
-                            doc.ui.layers.len()
-                        ),
-                    ));
+                    ui.label(body_text(theme, &format!("Alpha : {APP_VERSION}")));
                 });
             });
         });

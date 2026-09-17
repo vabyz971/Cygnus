@@ -22,12 +22,11 @@
 //!   position-indépendantes, remontant des [`PhotoAction`](crate::commands::PhotoAction) ;
 //! - `viewport/` : canvas + overlays autour du viewport générique ui-kit ;
 //! - widgets plats (`menubar`, `modebar`, `toolbar`, `optionsbar`,
-//!   `colorpanel`, `dialogs`) : contenus utilisés par `crate::layout`.
+//!   `dialogs`) : contenus utilisés par `crate::layout`.
 //!
 //! Le pont moteur (`engine_bridge`, channels + worker) ne sait rien
 //! d'egui au-delà des snapshots ; aucun widget n'y envoie directement.
 
-pub mod colorpanel;
 pub mod dialogs;
 pub mod engine_bridge;
 pub mod features;
@@ -37,7 +36,6 @@ pub mod optionsbar;
 pub mod toolbar;
 pub mod viewport;
 
-pub use colorpanel::draw_color_panel;
 pub use dialogs::{
     ExportDialogState, NewDocumentDialogState, draw_export_dialog, draw_help_dialog,
     draw_new_document_dialog,
@@ -54,5 +52,4 @@ pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;
 pub use viewport::{
     PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool, draw_origin_marker,
-    draw_selection_chip,
 };

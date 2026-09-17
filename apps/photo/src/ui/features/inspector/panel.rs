@@ -16,15 +16,14 @@
 
 //! Panneau Inspecteur : propriétés du calque sélectionné.
 //!
-//! Position-indépendant (le workspace décide du placement). En-tête
-//! (nom, type, compteurs) + sections. `None` = état vide explicite.
-//! Aucun envoi worker : tout remonte en [`InspectorAction`].
+//! Position-indépendant (le workspace décide du placement, titre
+//! porté par l'onglet dock). En-tête (nom, type, compteurs) +
+//! sections. `None` = état vide explicite. Aucun envoi worker :
+//! tout remonte en [`InspectorAction`].
 
 use super::sections::draw_appearance_section;
 use crate::commands::PhotoUiContext;
 use crate::ui::PhotoLayerInfo;
-use ui_kit::containers::Panel;
-use ui_kit::layout::PanelId;
 use ui_kit::primitives::Text;
 use uuid::Uuid;
 
@@ -38,38 +37,34 @@ pub enum InspectorAction {
     SetOpacity { layer: Uuid, opacity: f32 },
 }
 
-/// Panneau Inspecteur (contenu + chrome ui-kit, sans position).
+/// Panneau Inspecteur (contenu direct, sans chrome : le titre est
+/// porté par l'onglet dock).
 pub struct InspectorPanel;
 
 impl InspectorPanel {
-    /// Dessine le panneau et retourne les actions.
+    /// Dessine le contenu et retourne les actions.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
         selected: Option<&PhotoLayerInfo>,
     ) -> Vec<InspectorAction> {
         let theme = ctx.shared.theme();
-        let title = ctx.shared.translator().get(PanelId::Inspector.title_key());
-        Panel::new(title)
-            .show(ui, theme, |ui| {
-                let Some(layer) = selected else {
-                    Text::body(theme, "Aucun calque selectionne").show(ui);
-                    return Vec::new();
-                };
-                Text::heading(theme, &layer.name).show(ui);
-                Text::body(
-                    theme,
-                    &format!(
-                        "{} · Filtres : {} · Masques : {}",
-                        layer.kind.icon_label(),
-                        layer.filters.len(),
-                        layer.masks.len()
-                    ),
-                )
-                .show(ui);
-                draw_appearance_section(ui, ctx, layer)
-            })
-            .inner
+        let Some(layer) = selected else {
+            Text::body(theme, "Aucun calque selectionne").show(ui);
+            return Vec::new();
+        };
+        Text::heading(theme, &layer.name).show(ui);
+        Text::body(
+            theme,
+            &format!(
+                "{} · Filtres : {} · Masques : {}",
+                layer.kind.icon_label(),
+                layer.filters.len(),
+                layer.masks.len()
+            ),
+        )
+        .show(ui);
+        draw_appearance_section(ui, ctx, layer)
     }
 }
 

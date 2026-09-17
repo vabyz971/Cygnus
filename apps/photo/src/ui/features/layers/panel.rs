@@ -16,20 +16,22 @@
 
 //! Panneau Calques : contenu métier, indépendant de sa position.
 //!
-//! `LayersPanel` ne sait pas s'il est à gauche ou à droite : le
-//! workspace (`crate::layout`) décide du placement. Le chrome vient
-//! de ui-kit ([`containers::Panel`](ui_kit::containers::Panel)), la
-//! liste de [`super::layer_list`], la barre d'outils d'ici. Aucun
+//! `LayersPanel` ne sait pas où il est affiché : le workspace
+//! (`crate::layout`, onglet dock titré « Calques ») décide du
+//! placement, sans chrome `Panel`. La liste vient de
+//! [`super::layer_list`], la barre de boutons est en bas. Aucun
 //! envoi worker : tout remonte en [`LayerPanelAction`], converti en
 //! [`PhotoAction`](crate::commands::PhotoAction) (voir
-//! [`super::actions`)).
+//! [`super::actions`])).
 
 use super::layer_item::{LayerItemAction, LayerRenameState};
 use super::layer_list::draw_layer_list;
 use super::types::PhotoLayerInfo;
 use crate::commands::PhotoUiContext;
-use ui_kit::containers::Panel;
-use ui_kit::layout::PanelId;
+use photo_engine::BlendMode;
+use ui_kit::components::{Select, Slider};
+use ui_kit::primitives::Text;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::ReorderDragState;
 use ui_kit::widgets::icon::{CygnusIcon, icon_button};
 use uuid::Uuid;
@@ -70,14 +72,19 @@ pub enum LayerPanelAction {
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Supprimer un masque.
     RemoveMask { owner: Uuid, mask: Uuid },
+    /// Régler l'opacité du calque sélectionné (unités 0..=100).
+    SetOpacity { layer: Uuid, opacity: f32 },
+    /// Régler le mode de fusion du calque sélectionné.
+    SetBlendMode { layer: Uuid, mode: BlendMode },
 }
 
-/// Panneau Calques (contenu + chrome ui-kit, sans position).
+/// Panneau Calques (contenu direct : liste + barre de boutons en
+/// bas, sans chrome).
 pub struct LayersPanel;
 
 impl LayersPanel {
-    /// Dessine le panneau complet (titre traduit, liste, barre de
-    /// boutons) et retourne les actions.
+    /// Dessine le contenu (liste, barre de boutons bas) et retourne
+    /// les actions.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
@@ -86,26 +93,63 @@ impl LayersPanel {
         rename: &mut LayerRenameState,
         drag_state: &mut ReorderDragState,
     ) -> Vec<LayerPanelAction> {
-        let theme = ctx.shared.theme();
-        let title = ctx.shared.translator().get(PanelId::Layers.title_key());
-        Panel::new(title)
-            .show(ui, theme, |ui| {
-                draw_layers_panel(ui, layers, selected, rename, drag_state)
-            })
-            .inner
+        draw_layers_panel(ui, ctx.shared.theme(), layers, selected, rename, drag_state)
     }
 }
 
-/// Liste bornée (réserve la barre de boutons) + barre bas.
+/// En-tête : opacité (slider coalescé côté worker) + mode de
+/// fusion de la sélection. Sans sélection : hint explicite.
+fn draw_selection_header(
+    ui: &mut egui::Ui,
+    theme: &CygnusTheme,
+    layers: &[PhotoLayerInfo],
+    selected: Option<Uuid>,
+) -> Vec<LayerPanelAction> {
+    let mut actions = Vec::new();
+    let Some(layer) = selected.and_then(|id| layers.iter().find(|item| item.id == id)) else {
+        Text::caption(theme, "Sélectionnez un calque").show(ui);
+        ui.separator();
+        return actions;
+    };
+    // Unités moteur 0..=100 (comme l'inspecteur).
+    let mut opacity = layer.opacity;
+    Slider::new("Opacité", 0.0..=100.0).show(ui, theme, &mut opacity);
+    if opacity != layer.opacity {
+        actions.push(LayerPanelAction::SetOpacity {
+            layer: layer.id,
+            opacity,
+        });
+    }
+    let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
+    let mut choice = BlendMode::ALL
+        .iter()
+        .position(|mode| *mode == layer.blend_mode)
+        .unwrap_or(0);
+    Select::new("Fusion", &options).show(ui, theme, &mut choice);
+    if let Some(mode) = BlendMode::ALL.get(choice)
+        && *mode != layer.blend_mode
+    {
+        actions.push(LayerPanelAction::SetBlendMode {
+            layer: layer.id,
+            mode: *mode,
+        });
+    }
+    ui.separator();
+    actions
+}
+
+/// En-tête + liste bornée (réserve la barre de boutons) + barre bas.
 fn draw_layers_panel(
     ui: &mut egui::Ui,
+    theme: &CygnusTheme,
     layers: &[PhotoLayerInfo],
     selected: Option<Uuid>,
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
 ) -> Vec<LayerPanelAction> {
     let mut actions = Vec::new();
-    // Liste bornée : réserve la barre de boutons en bas.
+    actions.extend(draw_selection_header(ui, theme, layers, selected));
+    // Liste bornée : réserve l'en-tête et la barre de boutons.
     let bar_height = 40.0;
     let list_height = (ui.available_height() - bar_height).max(80.0);
     let (item_actions, drop) = ui
@@ -213,6 +257,35 @@ mod tests {
         .drop_without_applying_deltas();
         assert!(reported.is_empty(), "aucun clic sans interaction");
         assert!(!drag_state.is_dragging);
+    }
+
+    #[test]
+    fn panel_with_selection_renders_header_without_actions() {
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let photo_ctx = PhotoUiContext::for_frame(&ctx);
+        let layers = fixture_layers();
+        let selected = layers.first().map(|layer| layer.id);
+        let mut drag_state = ReorderDragState::default();
+        let mut rename = LayerRenameState::default();
+        let mut reported = Vec::new();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                reported = LayersPanel::show(
+                    ui,
+                    &photo_ctx,
+                    &layers,
+                    selected,
+                    &mut rename,
+                    &mut drag_state,
+                );
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(
+            reported.is_empty(),
+            "en-tête inerte sans interaction : {reported:?}"
+        );
     }
 
     #[test]

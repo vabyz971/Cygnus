@@ -16,12 +16,22 @@
 
 //! Menu contextuel PHOTO (barre haute, widget métier).
 //!
-//! Cinq menus : Fichier (nouveau document avec paramètres, ouvrir,
+//! Six menus : Fichier (nouveau document avec paramètres, ouvrir,
 //! exporter avec paramètres, quitter), Édition (annuler, rétablir),
 //! Calque (vide, image, dupliquer, masque, supprimer), Affichage
-//! (grille, zoom), Aide. Style exclusivement ui-kit ; les fenêtres de
-//! paramètres (nouveau document, export) sont des modales détenues
-//! par l'app (voir `super::dialogs`).
+//! (grille, zoom), Fenêtre (rouvrir un panneau fermé, réinitialiser
+//! la disposition des docks), Aide. Items en [`Button`](ui_kit::components::Button)
+//! fantôme, libellés génériques via [`Catalog`](ui_kit::i18n::Catalog),
+//! chaînes photo en `&str` locaux ; les fenêtres de paramètres
+//! (nouveau document, export) sont des modales détenues par l'app
+//! (voir `super::dialogs`).
+
+use crate::layout::dock::PhotoDockTab;
+
+use ui_kit::components::{Button, ButtonSize, ButtonVariant};
+use ui_kit::i18n::{Catalog, TextKey};
+use ui_kit::primitives::divider;
+use ui_kit::theme::CygnusTheme;
 
 /// Action rapportée par [`draw_menu_bar`], traitée par l'app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +64,12 @@ pub enum PhotoMenuAction {
     ZoomOut,
     /// Réinitialiser le zoom à 100 %.
     ZoomReset,
+    /// Fermer le document actif.
+    CloseDocument,
+    /// Rouvrir un onglet dock fermé.
+    ShowDockTab(PhotoDockTab),
+    /// Restaurer la disposition des docks par défaut.
+    ResetDockLayout,
     /// Ouvrir la fenêtre d'aide.
     ShowHelp,
 }
@@ -70,108 +86,173 @@ pub struct MenuAvailability {
 }
 
 /// Dessine la barre de menus et retourne les actions.
-pub fn draw_menu_bar(ui: &mut egui::Ui, availability: MenuAvailability) -> Vec<PhotoMenuAction> {
+///
+/// Les items sont des boutons fantômes ui-kit (fond transparent,
+/// surlignage egui natif au survol) ; le clic ferme le menu ouvert.
+/// Les libellés génériques viennent du catalogue, les chaînes
+/// spécifiques à Photo restent des `&str` locaux.
+pub fn draw_menu_bar(
+    ui: &mut egui::Ui,
+    availability: MenuAvailability,
+    theme: &CygnusTheme,
+    catalog: Catalog,
+) -> Vec<PhotoMenuAction> {
     let mut actions = Vec::new();
-    egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("Fichier", |ui| {
-            if ui.button("Nouveau document...").clicked() {
-                actions.push(PhotoMenuAction::NewDocument);
-                ui.close();
-            }
-            if ui.button("Ouvrir une image...").clicked() {
-                actions.push(PhotoMenuAction::OpenImage);
-                ui.close();
-            }
-            if ui.button("Exportation...").clicked() {
-                actions.push(PhotoMenuAction::Export);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Quitter").clicked() {
-                actions.push(PhotoMenuAction::Quit);
-                ui.close();
-            }
-        });
-        ui.menu_button("Édition", |ui| {
-            ui.add_enabled_ui(availability.can_undo, |ui| {
-                if ui.button("Annuler").clicked() {
-                    actions.push(PhotoMenuAction::Undo);
-                    ui.close();
-                }
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(
+            theme.spacing.sm as i8,
+            theme.spacing.sm as i8,
+        ))
+        .show(ui, |ui| {
+            // Padding interne des titres de menus (plus grosses zones
+            // cliquables, barre aérée), tout du thème. Les items
+            // déroulants gardent leur hauteur fixe (min_size ui-kit).
+            ui.spacing_mut().button_padding = egui::vec2(theme.spacing.sm, theme.spacing.sm);
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(catalog.get(TextKey::File), |ui| {
+                    if menu_item(ui, theme, catalog.get(TextKey::NewDocument)) {
+                        actions.push(PhotoMenuAction::NewDocument);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::Open)) {
+                        actions.push(PhotoMenuAction::OpenImage);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::Export)) {
+                        actions.push(PhotoMenuAction::Export);
+                    }
+                    divider(ui, theme);
+                    if menu_item(ui, theme, "Fermer le document") {
+                        actions.push(PhotoMenuAction::CloseDocument);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::Quit)) {
+                        actions.push(PhotoMenuAction::Quit);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Edit), |ui| {
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Undo),
+                        availability.can_undo,
+                    ) {
+                        actions.push(PhotoMenuAction::Undo);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Redo),
+                        availability.can_redo,
+                    ) {
+                        actions.push(PhotoMenuAction::Redo);
+                    }
+                });
+                ui.menu_button("Calque", |ui| {
+                    if menu_item(ui, theme, "Nouveau calque vide") {
+                        actions.push(PhotoMenuAction::AddEmptyLayer);
+                    }
+                    if menu_item(ui, theme, "Calque depuis une image") {
+                        actions.push(PhotoMenuAction::OpenImage);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        "Dupliquer le calque",
+                        availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::DuplicateLayer);
+                    }
+                    if menu_item_enabled(ui, theme, "Ajouter un masque", availability.has_selection)
+                    {
+                        actions.push(PhotoMenuAction::AddMask);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        "Supprimer le calque",
+                        availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::DeleteLayer);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::View), |ui| {
+                    if menu_item(ui, theme, catalog.get(TextKey::Grid)) {
+                        actions.push(PhotoMenuAction::ToggleGrid);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::ZoomIn)) {
+                        actions.push(PhotoMenuAction::ZoomIn);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::ZoomOut)) {
+                        actions.push(PhotoMenuAction::ZoomOut);
+                    }
+                    if menu_item(ui, theme, "Zoom 100 %") {
+                        actions.push(PhotoMenuAction::ZoomReset);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Window), |ui| {
+                    // Canevas épinglés (non fermables) : seuls
+                    // outils, inspecteur et calques sont à rouvrir.
+                    for tab in [
+                        PhotoDockTab::Tools,
+                        PhotoDockTab::Inspector,
+                        PhotoDockTab::Layers,
+                    ] {
+                        if menu_item(ui, theme, catalog.get(tab.title_key())) {
+                            actions.push(PhotoMenuAction::ShowDockTab(tab));
+                        }
+                    }
+                    divider(ui, theme);
+                    if menu_item(ui, theme, "Réinitialiser la disposition") {
+                        actions.push(PhotoMenuAction::ResetDockLayout);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Help), |ui| {
+                    if menu_item(ui, theme, "À propos") {
+                        actions.push(PhotoMenuAction::ShowHelp);
+                    }
+                });
             });
-            ui.add_enabled_ui(availability.can_redo, |ui| {
-                if ui.button("Rétablir").clicked() {
-                    actions.push(PhotoMenuAction::Redo);
-                    ui.close();
-                }
-            });
         });
-        ui.menu_button("Calque", |ui| {
-            if ui.button("Nouveau calque vide").clicked() {
-                actions.push(PhotoMenuAction::AddEmptyLayer);
-                ui.close();
-            }
-            if ui.button("Calque depuis une image...").clicked() {
-                actions.push(PhotoMenuAction::OpenImage);
-                ui.close();
-            }
-            ui.add_enabled_ui(availability.has_selection, |ui| {
-                if ui.button("Dupliquer le calque").clicked() {
-                    actions.push(PhotoMenuAction::DuplicateLayer);
-                    ui.close();
-                }
-                if ui.button("Ajouter un masque").clicked() {
-                    actions.push(PhotoMenuAction::AddMask);
-                    ui.close();
-                }
-                if ui.button("Supprimer le calque").clicked() {
-                    actions.push(PhotoMenuAction::DeleteLayer);
-                    ui.close();
-                }
-            });
-        });
-        ui.menu_button("Affichage", |ui| {
-            if ui.button("Grille on/off").clicked() {
-                actions.push(PhotoMenuAction::ToggleGrid);
-                ui.close();
-            }
-            if ui.button("Zoom avant").clicked() {
-                actions.push(PhotoMenuAction::ZoomIn);
-                ui.close();
-            }
-            if ui.button("Zoom arrière").clicked() {
-                actions.push(PhotoMenuAction::ZoomOut);
-                ui.close();
-            }
-            if ui.button("Zoom 100 %").clicked() {
-                actions.push(PhotoMenuAction::ZoomReset);
-                ui.close();
-            }
-        });
-        ui.menu_button("Aide", |ui| {
-            if ui.button("Aide de Photo").clicked() {
-                actions.push(PhotoMenuAction::ShowHelp);
-                ui.close();
-            }
-        });
-    });
     actions
+}
+
+/// Item de menu : bouton fantôme pleine largeur ; `true` si cliqué
+/// (et menu refermé).
+fn menu_item(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
+    menu_item_enabled(ui, theme, label, true)
+}
+
+/// Item de menu désactivable (remplace `add_enabled_ui` + bouton brut).
+fn menu_item_enabled(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str, enabled: bool) -> bool {
+    let clicked = Button::new(label)
+        .variant(ButtonVariant::Ghost)
+        .size(ButtonSize::Medium)
+        .enabled(enabled)
+        .show(ui, theme)
+        .clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ui_kit::i18n::Language;
 
     #[test]
     fn menu_bar_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
-        ctx.run_ui(egui::RawInput::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let actions = draw_menu_bar(ui, MenuAvailability::default());
-                assert!(actions.is_empty(), "aucun clic sans interaction");
-            });
-        })
-        .drop_without_applying_deltas();
+        let theme = CygnusTheme::dark();
+        for language in [Language::En, Language::Fr] {
+            let catalog = Catalog::new(language);
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let actions = draw_menu_bar(ui, MenuAvailability::default(), &theme, catalog);
+                    assert!(actions.is_empty(), "aucun clic sans interaction");
+                });
+            })
+            .drop_without_applying_deltas();
+        }
     }
 }

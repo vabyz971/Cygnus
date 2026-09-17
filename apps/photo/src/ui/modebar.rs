@@ -27,8 +27,6 @@
 
 use super::optionsbar::draw_tool_options;
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
-use ui_kit::theme::tokens::CygnusTheme;
-use ui_kit::theme::typography::body_text;
 use ui_kit::widgets::{CygnusButton, CygnusButtonStyle};
 
 /// Mode d'édition du document (façon personas).
@@ -94,32 +92,30 @@ pub fn draw_photo_modebar(
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
 ) -> Option<PhotoEditMode> {
-    let theme = CygnusTheme::dark();
     let mut chosen = None;
-    // Rangée 1 : grands boutons de mode.
+    // Rangée 1 : grands boutons de mode
     ui.horizontal(|ui| {
-        ui.label(body_text(&theme, "Mode"));
-        for candidate in PhotoEditMode::ALL {
-            let active = *mode == *candidate;
-            if CygnusButton::new(candidate.label())
-                .style(if active {
-                    CygnusButtonStyle::Primary
-                } else {
-                    CygnusButtonStyle::Secondary
-                })
-                .show(ui)
-                .clicked()
-            {
-                *mode = *candidate;
-                chosen = Some(*candidate);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            for candidate in PhotoEditMode::ALL {
+                let active = *mode == *candidate;
+                if CygnusButton::new(candidate.label())
+                    .style(if active {
+                        CygnusButtonStyle::Primary
+                    } else {
+                        CygnusButtonStyle::Secondary
+                    })
+                    .show(ui)
+                    .clicked()
+                {
+                    *mode = *candidate;
+                    chosen = Some(*candidate);
+                }
             }
-        }
+        });
     });
     ui.separator();
     // Rangée 2 : nom et paramètres de l'outil sélectionné.
     ui.horizontal(|ui| {
-        ui.label(body_text(&theme, mode.label()));
-        ui.separator();
         draw_tool_options(ui, tool, brush, show_grid);
     });
     chosen

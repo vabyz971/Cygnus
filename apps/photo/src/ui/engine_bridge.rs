@@ -32,7 +32,7 @@
 //! avant de manipuler `document.root` (index 0 = bas de pile).
 
 use super::features::layers::{PhotoLayerInfo, snapshot_layers};
-use photo_engine::Document;
+use photo_engine::{BlendMode, Document};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
@@ -63,6 +63,8 @@ pub enum PhotoEngineCommand {
     ReorderLayer { from: usize, to: usize },
     /// Régler l'opacité d'un calque (unités moteur 0..=100).
     SetOpacity { layer: Uuid, opacity: f32 },
+    /// Régler le mode de fusion d'un calque (choix discret).
+    SetBlendMode { layer: Uuid, mode: BlendMode },
     /// Annuler la dernière mutation.
     Undo,
     /// Rétablir la dernière annulation.
@@ -268,6 +270,17 @@ impl EngineWorker {
                 self.push_history(Some(layer));
                 if let Some(node) = self.document.find_mut(layer) {
                     node.set_opacity(opacity);
+                }
+                self.response()
+            }
+            PhotoEngineCommand::SetBlendMode { layer, mode } => {
+                if self.document.find(layer).is_none() {
+                    return self.response();
+                }
+                // Choix discret : un snapshot par changement.
+                self.push_history(None);
+                if let Some(node) = self.document.find_mut(layer) {
+                    node.set_blend_mode(mode);
                 }
                 self.response()
             }
@@ -683,6 +696,43 @@ mod tests {
             .collect();
         assert_eq!(names, ["dessus", "milieu", "fond"]);
         assert!(snapshot_layers(&doc).iter().all(|l| l.visible));
+    }
+
+    #[test]
+    fn set_blend_mode_snapshots_and_undoes() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::SetBlendMode {
+            layer: id,
+            mode: BlendMode::Multiply,
+        });
+        assert_eq!(
+            worker.document.find(id).expect("present").blend_mode(),
+            Some(BlendMode::Multiply)
+        );
+        assert_eq!(worker.undo.len(), 1);
+        // Id inconnu : sans effet, sans snapshot.
+        worker.apply(PhotoEngineCommand::SetBlendMode {
+            layer: Uuid::new_v4(),
+            mode: BlendMode::Screen,
+        });
+        assert_eq!(worker.undo.len(), 1);
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(
+            worker.document.find(id).expect("present").blend_mode(),
+            Some(BlendMode::Normal)
+        );
+        let PhotoEngineResponse::LayersChanged { layers, .. } = response else {
+            panic!("réponse attendue");
+        };
+        assert_eq!(
+            layers
+                .iter()
+                .find(|l| l.id == id)
+                .expect("present")
+                .blend_mode,
+            BlendMode::Multiply
+        );
     }
 
     #[test]

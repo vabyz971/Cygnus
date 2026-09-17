@@ -23,6 +23,7 @@
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::widgets::icon::CygnusIcon;
 
 /// Icône + aide contextuelle d'un outil du rail.
@@ -37,27 +38,36 @@ fn tool_icon(tool: PhotoCanvasTool) -> (CygnusIcon, &'static str) {
     }
 }
 
-/// Dessine le rail d'outils vertical (nuancier pinceau en bas,
-/// façon Affinity) pour le `mode` courant et retourne l'outil choisi
-/// éventuel.
+/// Dessine le rail d'outils vertical compact (32 px, couleur du
+/// pinceau juste après les outils, façon Affinity) pour le `mode`
+/// courant et retourne l'outil choisi éventuel.
+///
+/// Survol et sélection peints avec les tokens du thème
+/// (`item_hover`, `item_selected`) : les boutons sont sans frame,
+/// le fond est dessiné avant le bouton (derrière l'icône).
 pub fn draw_tool_rail(
     ui: &mut egui::Ui,
     current_tool: &mut PhotoCanvasTool,
     brush_color: &mut [u8; 3],
     mode: PhotoEditMode,
+    theme: &CygnusTheme,
 ) -> Option<PhotoCanvasTool> {
     let mut chosen = None;
     ui.vertical_centered(|ui| {
         for tool in mode.tools() {
             let tool = *tool;
             let (icon, tip) = tool_icon(tool);
+            let size = egui::vec2(28.0, 28.0);
+            let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
+            if *current_tool == tool {
+                ui.painter()
+                    .rect_filled(rect, theme.radius.sm, theme.colors.item_selected);
+            } else if hover.hovered() {
+                ui.painter()
+                    .rect_filled(rect, theme.radius.sm, theme.colors.item_hover);
+            }
             let response = ui
-                .add_sized(
-                    egui::vec2(44.0, 44.0),
-                    egui::Button::new(icon.sized(20.0))
-                        .frame(false)
-                        .selected(*current_tool == tool),
-                )
+                .put(rect, egui::Button::new(icon.sized(16.0)).frame(false))
                 .on_hover_text(tip);
             if response.clicked() {
                 *current_tool = tool;
@@ -78,12 +88,13 @@ mod tests {
     fn tool_rail_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let theme = CygnusTheme::dark();
         let mut tool = PhotoCanvasTool::Move;
         let mut color = [255u8, 255, 255];
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(
-                    draw_tool_rail(ui, &mut tool, &mut color, PhotoEditMode::Pixel),
+                    draw_tool_rail(ui, &mut tool, &mut color, PhotoEditMode::Pixel, &theme),
                     None
                 );
             });
@@ -96,6 +107,7 @@ mod tests {
     fn every_mode_rail_renders() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let theme = CygnusTheme::dark();
         for mode in [
             PhotoEditMode::Vector,
             PhotoEditMode::Pixel,
@@ -105,7 +117,7 @@ mod tests {
             let mut color = [255u8, 255, 255];
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let _ = draw_tool_rail(ui, &mut tool, &mut color, mode);
+                    let _ = draw_tool_rail(ui, &mut tool, &mut color, mode, &theme);
                 });
             })
             .drop_without_applying_deltas();

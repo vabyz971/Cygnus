@@ -11,8 +11,10 @@ workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+egui_dock.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 ui-kit = { path = "../../packages/ui-kit" }
 photo-engine = { path = "../../engines/photo-engine" }
 uuid.workspace = true
 image.workspace = true
-serde_json.workspace = true
