@@ -17,11 +17,10 @@
 //! Orchestrateur du workspace : barres fixes + docks + overlays.
 //!
 //! Ordre egui imposé : panneaux haut/bas d'abord, zone centrale
-//! ([`DockArea`](egui_dock::DockArea) : un onglet canevas par
-//! document + outils, inspecteur, calques) ensuite, modales
-//! par-dessus. Les barres haute (menus, modes) et basse (statut)
-//! restent fixes. Toute la logique vit dans les régions et les
-//! features.
+//! ([`Tree`](egui_tiles::Tree) : un panneau canevas par document +
+//! outils, inspecteur, calques) ensuite, modales par-dessus. Les
+//! barres haute (menus, modes) et basse (statut) restent fixes.
+//! Toute la logique vit dans les régions et les features.
 use super::{bottom_bar, dock, overlays, top_bar};
 use crate::app::PhotoApp;
 use crate::commands::PhotoUiContext;
@@ -38,9 +37,9 @@ impl PhotoWorkspace {
         actions.extend(top_bar::show_mode_bar(ui, app, ctx));
         // 3. Barre de statut basse (réservée avant la zone centrale).
         bottom_bar::show(ui, app, ctx);
-        // 4. Zone centrale : docks ancrables (canevas par document).
+        // 4. Zone centrale : tuiles ancrables (canevas par document).
         egui::CentralPanel::default().show(ui, |ui| {
-            actions.extend(dock::show_dock_area(ui, app, ctx));
+            actions.extend(dock::show_tree(ui, app, ctx));
         });
         // 5. Modales et dialogs par-dessus.
         actions.extend(overlays::show(ui, app, ctx));

@@ -23,6 +23,10 @@
 /// Hauteurs standard des contrôles.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusSizes {
+    /// Hauteur d'un très petit bouton (12px).
+    pub button_xxs: f32,
+    /// Hauteur d'un petit bouton (18px).
+    pub button_xs: f32,
     /// Hauteur d'un petit bouton (24px).
     pub button_sm: f32,
     /// Hauteur d'un bouton standard (32px).
@@ -43,6 +47,8 @@ impl CygnusSizes {
     /// Tailles du thème sombre.
     pub fn dark() -> Self {
         Self {
+            button_xxs: 12.0,
+            button_xs: 18.0,
             button_sm: 24.0,
             button_md: 32.0,
             button_lg: 40.0,

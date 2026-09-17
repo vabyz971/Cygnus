@@ -106,10 +106,11 @@ pub struct PhotoShellState {
     /// Layout des régions et panneaux (persistable, voir
     /// `crate::persistence`).
     pub workspace: WorkspaceState,
-    /// Docks ancrables (outils, canvas, inspecteur, calques).
-    /// `DockState` n'implémente pas `Default` : voir le `impl`
-    /// manuel ci-dessous (layout par défaut, jamais vide).
-    pub dock_state: egui_dock::DockState<PhotoDockTab>,
+    /// Tuiles ancrables (outils, canevas, inspecteur, calques).
+    /// `Tree` n'implémente pas `Default` : voir le `impl`
+    /// manuel ci-dessous (arbre vide, reconstruit par l'app autour
+    /// du premier document).
+    pub tree: egui_tiles::Tree<PhotoDockTab>,
     /// Modale d'ajout de filtre.
     pub filter_modal: FilterModalState,
     /// Fenêtre « Nouveau document » (format, dimensions, orientation).
@@ -121,13 +122,13 @@ pub struct PhotoShellState {
 }
 
 impl Default for PhotoShellState {
-    /// Coquille par défaut : workspace standard + dock vide
-    /// (`DockState` n'a pas de `Default`). `PhotoApp::new`
+    /// Coquille par défaut : workspace standard + arbre vide
+    /// (`Tree` n'a pas de `Default`). `PhotoApp::new`
     /// reconstruit aussitôt le layout autour du premier document.
     fn default() -> Self {
         Self {
             workspace: WorkspaceState::default(),
-            dock_state: egui_dock::DockState::new(Vec::new()),
+            tree: egui_tiles::Tree::empty("photo-tree"),
             filter_modal: FilterModalState::default(),
             new_doc_dialog: NewDocumentDialogState::default(),
             export_dialog: ExportDialogState::default(),

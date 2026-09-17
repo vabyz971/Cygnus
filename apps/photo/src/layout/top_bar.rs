@@ -83,7 +83,7 @@ pub fn show_menu_bar(
 pub fn show_mode_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
-    _ctx: &PhotoUiContext,
+    ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     egui::Panel::top("photo_modebar")
@@ -96,6 +96,7 @@ pub fn show_mode_bar(
                 doc.ui.tool,
                 &mut doc.ui.brush,
                 &mut doc.ui.show_grid,
+                ctx.shared.theme(),
             );
             // Outil incompatible avec le nouveau mode : rebascule.
             if let Some(mode) = chosen

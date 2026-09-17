@@ -20,10 +20,8 @@
 //! versionné différemment retombe sur le layout par défaut
 //! ([`load_workspace_or_default`], [`load_dock_or_default`]).
 
-use crate::layout::dock::{
-    PhotoDockTab, apply_french_translations, default_dock_state, reconcile_canvases,
-};
-use egui_dock::DockState;
+use crate::layout::dock::{PhotoDockTab, default_tree, reconcile_canvases};
+use egui_tiles::Tree;
 use ui_kit::layout::{WorkspaceState, load_workspace, save_workspace};
 use uuid::Uuid;
 
@@ -58,48 +56,42 @@ pub fn load_workspace_or_default(json: Option<&str>) -> WorkspaceState {
         .unwrap_or_default()
 }
 
-/// Sérialise la disposition des docks en JSON.
+/// Sérialise la disposition des tuiles en JSON.
 ///
-/// À appeler APRÈS au moins une frame affichée : avant le premier
-/// layout, `egui_dock` stocke des `Rect::NOTHING` (infinis) que
-/// `serde_json` écrit `null` (restauration impossible — un JSON
-/// invalide retombe sur le défaut via [`load_dock_or_default`]).
+/// `egui_tiles` ne persiste que la structure (parts, visibilités),
+/// pas de géométrie infinie : la sauvegarde est valide même avant
+/// le premier layout.
 ///
 /// En attente du câblage disque (`preferences`) : phase suivante.
 ///
 /// # Errors
 /// Retourne l'erreur `serde_json` si la sérialisation échoue.
 #[allow(dead_code)]
-pub fn save_dock_state(state: &DockState<PhotoDockTab>) -> Result<String, serde_json::Error> {
+pub fn save_tree_state(state: &Tree<PhotoDockTab>) -> Result<String, serde_json::Error> {
     serde_json::to_string(state)
 }
 
-/// Restaure la disposition des docks (erreur si JSON invalide —
-/// voir [`load_dock_or_default`]).
+/// Restaure la disposition des tuiles (erreur si JSON invalide —
+/// voir [`load_tree_or_default`]).
 ///
 /// En attente du câblage disque (`preferences`) : phase suivante.
 ///
 /// # Errors
 /// Retourne une erreur si le JSON est invalide.
 #[allow(dead_code)]
-pub fn load_dock_state(json: &str) -> Result<DockState<PhotoDockTab>, serde_json::Error> {
+pub fn load_tree_state(json: &str) -> Result<Tree<PhotoDockTab>, serde_json::Error> {
     serde_json::from_str(json)
 }
 
-/// Restaure la disposition des docks, ou le layout par défaut si le
+/// Restaure la disposition des tuiles, ou le layout par défaut si le
 /// JSON est absent ou invalide. Les ids de documents changent à
 /// chaque lancement : les canevas restaurés sont réconciliés avec
-/// `ids` (orphelins retirés, manquants ajoutés). Les traductions
-/// françaises (non sérialisées par `egui_dock`) sont toujours
-/// réappliquées.
-pub fn load_dock_or_default(json: Option<&str>, ids: &[Uuid]) -> DockState<PhotoDockTab> {
+/// `ids` (orphelins retirés, manquants ajoutés).
+pub fn load_tree_or_default(json: Option<&str>, ids: &[Uuid]) -> Tree<PhotoDockTab> {
     let mut state = json
-        .and_then(|raw| load_dock_state(raw).ok())
-        .unwrap_or_else(|| {
-            default_dock_state(ids.iter().map(|id| PhotoDockTab::Canvas(*id)).collect())
-        });
+        .and_then(|raw| load_tree_state(raw).ok())
+        .unwrap_or_else(|| default_tree(ids.iter().map(|id| PhotoDockTab::Canvas(*id)).collect()));
     reconcile_canvases(&mut state, ids);
-    apply_french_translations(&mut state);
     state
 }
 

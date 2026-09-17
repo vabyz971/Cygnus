@@ -14,19 +14,24 @@
 - fmt · function · L125-L127 — fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 - ALL · constant · L131-L135 — pub const ALL: [RenderQuality; 3] = [
 - label · function · L137-L143 — pub fn label(self) -> &'static str
-- GeneralPreferences · struct · L148-L153 — pub struct GeneralPreferences
-- RenderPreferences · struct · L157-L162 — pub struct RenderPreferences
-- default · function · L165-L172 — fn default() -> Self
-- KeybindingPreferences · struct · L177-L179 — pub struct KeybindingPreferences
-- with_defaults · function · L184-L217 — pub fn with_defaults() -> Self
-- default · function · L221-L223 — fn default() -> Self
-- Preferences · struct · L228-L236 — pub struct Preferences
-- default · function · L239-L246 — fn default() -> Self
-- config_path · function · L253-L259 — pub fn config_path(app: &str) -> Option<PathBuf>
-- load · function · L264-L287 — pub fn load(app: &str) -> Self
-- save · function · L294-L304 — pub fn save(&self, app: &str) -> Result<(), PreferencesError>
-- PreferencesError · enum · L309-L316 — pub enum PreferencesError
-- tests · module · L319-L363 — mod tests
-- serde_aller_retour_conserve_tout · function · L323-L335 — fn serde_aller_retour_conserve_tout()
-- champs_manquants_tomber_sur_defauts · function · L338-L347 — fn champs_manquants_tomber_sur_defauts()
-- api_filtrees_par_plateforme · function · L350-L362 — fn api_filtrees_par_plateforme()
+- GeneralPreferences · struct · L148-L156 — pub struct GeneralPreferences
+- default_layer_item_radius · function · L158-L160 — fn default_layer_item_radius() -> f32
+- RenderPreferences · struct · L164-L169 — pub struct RenderPreferences
+- default · function · L172-L179 — fn default() -> Self
+- KeybindingPreferences · struct · L184-L186 — pub struct KeybindingPreferences
+- with_defaults · function · L191-L224 — pub fn with_defaults() -> Self
+- default · function · L228-L230 — fn default() -> Self
+- Preferences · struct · L235-L243 — pub struct Preferences
+- default · function · L246-L253 — fn default() -> Self
+- config_file · function · L256-L258 — fn config_file(base: &std::path::Path, vendor: &str, app: &str) -> PathBuf
+- config_path · function · L264-L266 — pub fn config_path(app: &str) -> Option<PathBuf>
+- legacy_config_path · function · L271-L273 — fn legacy_config_path(app: &str) -> Option<PathBuf>
+- load · function · L278-L290 — pub fn load(app: &str) -> Self
+- read_or_default · function · L292-L309 — fn read_or_default(path: &std::path::Path) -> Self
+- save · function · L316-L326 — pub fn save(&self, app: &str) -> Result<(), PreferencesError>
+- PreferencesError · enum · L331-L338 — pub enum PreferencesError
+- tests · module · L341-L398 — mod tests
+- chemin_config_pour_nouveau_nom · function · L345-L355 — fn chemin_config_pour_nouveau_nom()
+- serde_aller_retour_conserve_tout · function · L358-L370 — fn serde_aller_retour_conserve_tout()
+- champs_manquants_tomber_sur_defauts · function · L373-L382 — fn champs_manquants_tomber_sur_defauts()
+- api_filtrees_par_plateforme · function · L385-L397 — fn api_filtrees_par_plateforme()

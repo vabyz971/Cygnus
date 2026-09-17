@@ -17,16 +17,16 @@
 //! Liste des calques : virtualisation + réordonnancement.
 //!
 //! Toute la mécanique de drag & drop est déléguée à
-//! `ui_kit::ReorderableList` (générique) ; ce module ne contient que
+//! `ui_kit::components::ReorderableList` (générique) ; ce module ne contient que
 //! le rendu photo (voir [`super::layer_item`]) et le fantôme de drag.
 //! Le drop remonte en `(from, to)` (indices d'affichage), converti en
 //! [`PhotoAction`](crate::commands::PhotoAction) par [`super::panel`].
 
 use super::layer_item::{LayerItemAction, LayerRenameState, draw_photo_layer_item};
 use super::types::PhotoLayerInfo;
-use ui_kit::theme::tokens::CygnusTheme;
+use ui_kit::components::ReorderableList;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::ReorderDragState;
-use ui_kit::widgets::ReorderableList;
 use uuid::Uuid;
 
 /// Hauteur d'une ligne de calque HUD (rangée principale + bandeau

@@ -23,8 +23,8 @@
 
 use crate::commands::{PhotoAction, PhotoCommandQueue, PhotoUiContext};
 use crate::layout::PhotoWorkspace;
-use crate::layout::dock::{PhotoDockTab, default_dock_state, ensure_tab, push_canvas_tab};
-use crate::persistence::{load_dock_or_default, load_workspace_or_default};
+use crate::layout::dock::{PhotoDockTab, default_tree, ensure_tab, push_canvas_tab};
+use crate::persistence::{load_tree_or_default, load_workspace_or_default};
 use crate::state::{
     OpenDocument, PhotoRuntimeState, PhotoShellState, PhotoUiState, apply_response,
 };
@@ -69,7 +69,7 @@ impl PhotoApp {
         app.open_blank_tab();
         // Disposition des docks autour des canevas (câblage disque
         // via `preferences` : phase suivante).
-        app.shell.dock_state = load_dock_or_default(None, &app.doc_ids());
+        app.shell.tree = load_tree_or_default(None, &app.doc_ids());
         app
     }
 
@@ -120,7 +120,7 @@ impl PhotoApp {
             rx,
         });
         self.active = self.docs.len() - 1;
-        push_canvas_tab(&mut self.shell.dock_state, PhotoDockTab::Canvas(id));
+        push_canvas_tab(&mut self.shell.tree, PhotoDockTab::Canvas(id));
         let _ = self.active_doc().tx.send(PhotoEngineCommand::Refresh);
     }
 
@@ -145,9 +145,7 @@ impl PhotoApp {
     pub fn close_document(&mut self, id: uuid::Uuid) {
         if let Some(index) = self.docs.iter().position(|doc| doc.id == id) {
             self.docs.remove(index);
-            if let Some(path) = self.shell.dock_state.find_tab(&PhotoDockTab::Canvas(id)) {
-                self.shell.dock_state.remove_tab(path);
-            }
+            crate::layout::dock::remove_canvas_tab(&mut self.shell.tree, id);
             // Un document avant l'actif décalerait la sélection.
             if index < self.active {
                 self.active -= 1;
@@ -202,6 +200,9 @@ impl PhotoApp {
             }
             PhotoAction::DeleteLayer(id) => {
                 self.send_active(PhotoEngineCommand::DeleteLayer(id));
+            }
+            PhotoAction::DuplicateLayer(id) => {
+                self.send_active(PhotoEngineCommand::DuplicateLayer(id));
             }
             PhotoAction::AddMaskToSelected => {
                 if let Some(id) = self.active_doc().ui.selected {
@@ -275,7 +276,7 @@ impl PhotoApp {
                 self.shell.help_open = true;
             }
             PhotoAction::ShowDockTab(tab) => {
-                ensure_tab(&mut self.shell.dock_state, tab);
+                ensure_tab(&mut self.shell.tree, tab);
             }
             PhotoAction::ResetDockLayout => {
                 let canvases = self
@@ -283,7 +284,7 @@ impl PhotoApp {
                     .into_iter()
                     .map(PhotoDockTab::Canvas)
                     .collect();
-                self.shell.dock_state = default_dock_state(canvases);
+                self.shell.tree = default_tree(canvases);
             }
             PhotoAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -378,23 +379,19 @@ mod tests {
         assert_eq!(app.docs.len(), 3);
         // Un onglet canevas par document.
         for doc in &app.docs {
-            assert!(
-                app.shell
-                    .dock_state
-                    .find_tab(&PhotoDockTab::Canvas(doc.id))
-                    .is_some()
-            );
+            assert!(crate::layout::dock::has_tab(
+                &app.shell.tree,
+                PhotoDockTab::Canvas(doc.id)
+            ));
         }
         // Fermer l'actif retire aussi son canevas.
         let removed = app.active_doc().id;
         app.close_active_tab();
         assert_eq!(app.docs.len(), 2);
-        assert!(
-            app.shell
-                .dock_state
-                .find_tab(&PhotoDockTab::Canvas(removed))
-                .is_none()
-        );
+        assert!(!crate::layout::dock::has_tab(
+            &app.shell.tree,
+            PhotoDockTab::Canvas(removed)
+        ));
         // Fermer jusqu'au dernier : jamais zéro document.
         app.close_active_tab();
         app.close_active_tab();

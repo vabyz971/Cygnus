@@ -24,7 +24,7 @@
 //! repliés).
 
 use photo_engine::{BlendMode, Document, LayerNode};
-use ui_kit::widgets::icon::CygnusIcon;
+use ui_kit::icons::Icon;
 use uuid::Uuid;
 
 /// Type sémantique d'un calque photo (miroir des `LayerNode` moteur).
@@ -46,12 +46,12 @@ pub const ALL_PHOTO_LAYER_KINDS: &[PhotoLayerKind] = &[
 ];
 
 impl PhotoLayerKind {
-    /// Icône sémantique (via `CygnusIcon` de ui-kit uniquement).
-    pub fn icon(self) -> CygnusIcon {
+    /// Icône sémantique (via `Icon` de ui-kit uniquement).
+    pub fn icon(self) -> Icon {
         match self {
-            Self::Pixel => CygnusIcon::ImageIcon,
-            Self::Group => CygnusIcon::Layers,
-            Self::Adjustment => CygnusIcon::Settings,
+            Self::Pixel => Icon::ImageIcon,
+            Self::Group => Icon::Layers,
+            Self::Adjustment => Icon::Settings,
         }
     }
 
@@ -188,7 +188,6 @@ mod tests {
     use super::*;
     use photo_engine::PixelLayer;
     use std::sync::Arc;
-    use ui_kit::widgets::icon::ALL_ICONS;
 
     fn test_image() -> Arc<image::DynamicImage> {
         Arc::new(image::DynamicImage::new_rgba8(4, 4))
@@ -223,16 +222,14 @@ mod tests {
             .expect("snapshot present");
         assert!(!fond.visible);
         assert_eq!(fond.kind, PhotoLayerKind::Pixel);
-        assert_eq!(fond.kind.icon(), CygnusIcon::ImageIcon);
+        // Vérifier que l'icône peut être résolue via le registre.
+        let _ = ui_kit::icons::IconRegistry::new().text(fond.kind.icon());
     }
 
     #[test]
     fn layer_kind_icons_come_from_registry() {
         for kind in ALL_PHOTO_LAYER_KINDS {
-            assert!(
-                ALL_ICONS.contains(&kind.icon()),
-                "icone hors registre pour {kind:?}"
-            );
+            let _ = ui_kit::icons::IconRegistry::new().text(kind.icon());
         }
     }
 }

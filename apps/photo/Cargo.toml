@@ -11,7 +11,8 @@ workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
-egui_dock.workspace = true
+egui_animation.workspace = true
+egui_tiles.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ui-kit = { path = "../../packages/ui-kit" }

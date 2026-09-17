@@ -37,6 +37,7 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::Reorder { from, to } => PhotoAction::ReorderLayers { from, to },
         LayerPanelAction::ToggleVisibility(id) => PhotoAction::ToggleLayerVisibility(id),
         LayerPanelAction::DeleteLayer(id) => PhotoAction::DeleteLayer(id),
+        LayerPanelAction::DuplicateLayer(id) => PhotoAction::DuplicateLayer(id),
         LayerPanelAction::MoveFilter { layer, filter, up } => {
             PhotoAction::MoveFilter { layer, filter, up }
         }
@@ -75,6 +76,10 @@ mod tests {
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::Delete),
             PhotoAction::DeleteSelectedLayer
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::DuplicateLayer(id)),
+            PhotoAction::DuplicateLayer(id)
         );
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::SetOpacity {

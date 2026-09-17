@@ -8,51 +8,51 @@
 - try_new_async · function · L55-L114 — async fn try_new_async() -> Option<Self>
 - create_pipeline · function · L115-L128 — fn create_pipeline(device: &wgpu::Device, shader: &str, label: &str) -> wgpu::ComputePipeline
 - adapter_info · function · L129-L133 — pub fn adapter_info() -> String
-- detect_gpu_info_sync · function · L140-L174 — pub fn detect_gpu_info_sync() -> String
-- detect_gpu_info · function · L175-L177 — pub async fn detect_gpu_info() -> String
-- ParamsBc · struct · L185-L190 — struct ParamsBc
-- ParamsSat · struct · L193-L198 — struct ParamsSat
-- ParamsMix · struct · L201-L206 — struct ParamsMix
-- ParamsBlur · struct · L209-L214 — struct ParamsBlur
-- image_to_floats · function · L216-L225 — fn image_to_floats(img: &DynamicImage) -> (Vec<f32>, u32, u32)
-- floats_to_image · function · L226-L235 — fn floats_to_image(floats: &[f32], w: u32, h: u32) -> DynamicImage
-- run_compute · function · L237-L348 — fn run_compute(
-- BAND_BUDGET_BYTES · constant · L356-L356 — const BAND_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
-- run_compute_banded · function · L360-L396 — fn run_compute_banded(
-- apply_brightness_contrast_gpu · function · L398-L428 — pub fn apply_brightness_contrast_gpu(
-- apply_saturation_gpu · function · L430-L447 — pub fn apply_saturation_gpu(img: &DynamicImage, sat: f32) -> Option<DynamicImage>
-- apply_mix_gpu · function · L449-L454 — pub fn apply_mix_gpu(a: &DynamicImage, b: &DynamicImage, factor: f32) -> Option<DynamicImage>
-- apply_blur_gpu · function · L456-L481 — pub fn apply_blur_gpu(img: &DynamicImage, radius: f32) -> Option<DynamicImage>
-- run_compute2 · function · L489-L600 — fn run_compute2(
-- ParamsBlend2 · struct · L604-L613 — struct ParamsBlend2
-- BLEND_BUDGET_BYTES · constant · L615-L615 — const BLEND_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
-- apply_blend_gpu · function · L617-L685 — pub fn apply_blend_gpu(
-- limits_min · function · L687-L690 — fn limits_min(gpu: &GpuContext) -> u64
-- SHADER_BC · constant · L696-L696 — const SHADER_BC: &str = include_str!("shaders/shader_bc.wgsl");
-- SHADER_SAT · constant · L698-L698 — const SHADER_SAT: &str = include_str!("shaders/shader_sat.wgsl");
-- SHADER_BLUR · constant · L700-L700 — const SHADER_BLUR: &str = include_str!("shaders/shader_blur.wgsl");
-- SHADER_BLEND · constant · L702-L702 — const SHADER_BLEND: &str = include_str!("shaders/shader_blend.wgsl");
-- SHADER_BC_TEX · constant · L709-L709 — const SHADER_BC_TEX: &str = include_str!("shaders/shader_bc_tex.wgsl");
-- TEXTURE_FORMAT · constant · L721-L721 — pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-- WORKGROUP_SIZE · constant · L724-L724 — pub const WORKGROUP_SIZE: u32 = 16;
-- Uniforms · struct · L731-L734 — pub struct Uniforms
-- new · function · L739-L744 — pub fn new(brightness: f32, contrast: f32) -> Self
-- default · function · L749-L754 — fn default() -> Self
-- _ · constant · L758-L758 — const _: () = assert!(size_of::<Uniforms>() == 8);
-- _ · constant · L759-L759 — const _: () = assert!(align_of::<Uniforms>() == 4);
-- workgroup_count · function · L763-L768 — pub fn workgroup_count(width: u32, height: u32) -> (u32, u32)
-- create_pipeline · function · L772-L784 — pub fn create_pipeline(
-- create_bind_group · function · L789-L814 — pub fn create_bind_group(
-- dispatch_filter · function · L818-L833 — pub fn dispatch_filter(
-- row_pitch · function · L837-L840 — fn row_pitch(width: u32) -> u32
-- create_input_texture · function · L845-L860 — pub fn create_input_texture(&self, width: u32, height: u32) -> wgpu::Texture
-- upload_image · function · L865-L870 — pub fn upload_image(&self, img: &DynamicImage) -> wgpu::Texture
-- upload_rgba8 · function · L876-L905 — pub fn upload_rgba8(&self, texture: &wgpu::Texture, rgba: &[u8]) -> bool
-- apply_brightness_contrast_texture · function · L933-L977 — pub fn apply_brightness_contrast_texture(
-- evaluate_gpu_available · function · L981-L983 — pub fn evaluate_gpu_available() -> bool
-- tests · module · L986-L1037 — mod tests
-- uniforms_occupe_huit_octets_comme_en_wgsl · function · L990-L993 — fn uniforms_occupe_huit_octets_comme_en_wgsl()
-- uniforms_par_defaut_sont_neutres · function · L996-L1000 — fn uniforms_par_defaut_sont_neutres()
-- uniforms_new_borne_les_plages · function · L1003-L1013 — fn uniforms_new_borne_les_plages()
-- nb_workgroups_couvre_toute_la_surface · function · L1016-L1025 — fn nb_workgroups_couvre_toute_la_surface()
-- pas_de_ligne_aligne_sur_256_octets · function · L1028-L1036 — fn pas_de_ligne_aligne_sur_256_octets()
+- detect_gpu_info_sync · function · L144-L178 — pub fn detect_gpu_info_sync() -> String
+- detect_gpu_info · function · L181-L183 — pub async fn detect_gpu_info() -> String
+- ParamsBc · struct · L191-L196 — struct ParamsBc
+- ParamsSat · struct · L199-L204 — struct ParamsSat
+- ParamsMix · struct · L207-L212 — struct ParamsMix
+- ParamsBlur · struct · L215-L220 — struct ParamsBlur
+- image_to_floats · function · L222-L231 — fn image_to_floats(img: &DynamicImage) -> (Vec<f32>, u32, u32)
+- floats_to_image · function · L232-L241 — fn floats_to_image(floats: &[f32], w: u32, h: u32) -> DynamicImage
+- run_compute · function · L243-L354 — fn run_compute(
+- BAND_BUDGET_BYTES · constant · L362-L362 — const BAND_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
+- run_compute_banded · function · L366-L402 — fn run_compute_banded(
+- apply_brightness_contrast_gpu · function · L404-L434 — pub fn apply_brightness_contrast_gpu(
+- apply_saturation_gpu · function · L436-L453 — pub fn apply_saturation_gpu(img: &DynamicImage, sat: f32) -> Option<DynamicImage>
+- apply_mix_gpu · function · L455-L460 — pub fn apply_mix_gpu(a: &DynamicImage, b: &DynamicImage, factor: f32) -> Option<DynamicImage>
+- apply_blur_gpu · function · L462-L487 — pub fn apply_blur_gpu(img: &DynamicImage, radius: f32) -> Option<DynamicImage>
+- run_compute2 · function · L495-L606 — fn run_compute2(
+- ParamsBlend2 · struct · L610-L619 — struct ParamsBlend2
+- BLEND_BUDGET_BYTES · constant · L621-L621 — const BLEND_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
+- apply_blend_gpu · function · L623-L691 — pub fn apply_blend_gpu(
+- limits_min · function · L693-L696 — fn limits_min(gpu: &GpuContext) -> u64
+- SHADER_BC · constant · L702-L702 — const SHADER_BC: &str = include_str!("shaders/shader_bc.wgsl");
+- SHADER_SAT · constant · L704-L704 — const SHADER_SAT: &str = include_str!("shaders/shader_sat.wgsl");
+- SHADER_BLUR · constant · L706-L706 — const SHADER_BLUR: &str = include_str!("shaders/shader_blur.wgsl");
+- SHADER_BLEND · constant · L708-L708 — const SHADER_BLEND: &str = include_str!("shaders/shader_blend.wgsl");
+- SHADER_BC_TEX · constant · L715-L715 — const SHADER_BC_TEX: &str = include_str!("shaders/shader_bc_tex.wgsl");
+- TEXTURE_FORMAT · constant · L727-L727 — pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+- WORKGROUP_SIZE · constant · L730-L730 — pub const WORKGROUP_SIZE: u32 = 16;
+- Uniforms · struct · L737-L740 — pub struct Uniforms
+- new · function · L745-L750 — pub fn new(brightness: f32, contrast: f32) -> Self
+- default · function · L755-L760 — fn default() -> Self
+- _ · constant · L764-L764 — const _: () = assert!(size_of::<Uniforms>() == 8);
+- _ · constant · L765-L765 — const _: () = assert!(align_of::<Uniforms>() == 4);
+- workgroup_count · function · L769-L774 — pub fn workgroup_count(width: u32, height: u32) -> (u32, u32)
+- create_pipeline · function · L778-L790 — pub fn create_pipeline(
+- create_bind_group · function · L795-L820 — pub fn create_bind_group(
+- dispatch_filter · function · L824-L839 — pub fn dispatch_filter(
+- row_pitch · function · L843-L846 — fn row_pitch(width: u32) -> u32
+- create_input_texture · function · L851-L866 — pub fn create_input_texture(&self, width: u32, height: u32) -> wgpu::Texture
+- upload_image · function · L871-L876 — pub fn upload_image(&self, img: &DynamicImage) -> wgpu::Texture
+- upload_rgba8 · function · L882-L911 — pub fn upload_rgba8(&self, texture: &wgpu::Texture, rgba: &[u8]) -> bool
+- apply_brightness_contrast_texture · function · L939-L983 — pub fn apply_brightness_contrast_texture(
+- evaluate_gpu_available · function · L987-L989 — pub fn evaluate_gpu_available() -> bool
+- tests · module · L992-L1043 — mod tests
+- uniforms_occupe_huit_octets_comme_en_wgsl · function · L996-L999 — fn uniforms_occupe_huit_octets_comme_en_wgsl()
+- uniforms_par_defaut_sont_neutres · function · L1002-L1006 — fn uniforms_par_defaut_sont_neutres()
+- uniforms_new_borne_les_plages · function · L1009-L1019 — fn uniforms_new_borne_les_plages()
+- nb_workgroups_couvre_toute_la_surface · function · L1022-L1031 — fn nb_workgroups_couvre_toute_la_surface()
+- pas_de_ligne_aligne_sur_256_octets · function · L1034-L1042 — fn pas_de_ligne_aligne_sur_256_octets()

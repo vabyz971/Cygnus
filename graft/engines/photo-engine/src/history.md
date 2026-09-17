@@ -16,17 +16,17 @@
 - can_undo · function · L204-L206 — pub fn can_undo(&self) -> bool
 - can_redo · function · L210-L212 — pub fn can_redo(&self) -> bool
 - undo_len · function · L218-L220 — pub fn undo_len(&self) -> usize
-- tests · module · L224-L457 — mod tests
+- tests · module · L224-L506 — mod tests
 - pixel · function · L232-L239 — fn pixel(value: u8) -> LayerNode
 - snap · function · L241-L246 — fn snap(values: &[u8]) -> Snapshot
 - doc_with · function · L248-L252 — fn doc_with(values: &[u8]) -> Document
 - opacity_cmd · function · L254-L256 — fn opacity_cmd(layer_id: Uuid, old: f32, new: f32) -> Command
 - snapshot_undo_redo_aller_retour · function · L259-L281 — fn snapshot_undo_redo_aller_retour()
-- commande_undo_redo_retablit_les_deux_valeurs · function · L284-L304 — fn commande_undo_redo_retablit_les_deux_valeurs()
-- coalescence_fusionne_et_le_restaurateur_est_correct · function · L307-L328 — fn coalescence_fusionne_et_le_restaurateur_est_correct()
-- coalescence_snapshot_conservee_aussi · function · L331-L341 — fn coalescence_snapshot_conservee_aussi()
-- melange_hybride_sequencement_coherent · function · L344-L371 — fn melange_hybride_sequencement_coherent()
-- commande_sur_noeud_absent_est_un_no_op_sur · function · L374-L383 — fn commande_sur_noeud_absent_est_un_no_op_sur()
-- limite_memoire_et_base_preservee_hybride · function · L386-L404 — fn limite_memoire_et_base_preservee_hybride()
-- filtre_param_commande_invalide_le_cache_apparence · function · L407-L450 — fn filtre_param_commande_invalide_le_cache_apparence()
-- coalesce · function · L454-L456 — fn coalesce(id: Uuid) -> u64
+- commande_undo_redo_retablit_les_deux_valeurs · function · L284-L325 — fn commande_undo_redo_retablit_les_deux_valeurs()
+- coalescence_fusionne_et_le_restaurateur_est_correct · function · L328-L363 — fn coalescence_fusionne_et_le_restaurateur_est_correct()
+- coalescence_snapshot_conservee_aussi · function · L366-L376 — fn coalescence_snapshot_conservee_aussi()
+- melange_hybride_sequencement_coherent · function · L379-L420 — fn melange_hybride_sequencement_coherent()
+- commande_sur_noeud_absent_est_un_no_op_sur · function · L423-L432 — fn commande_sur_noeud_absent_est_un_no_op_sur()
+- limite_memoire_et_base_preservee_hybride · function · L435-L453 — fn limite_memoire_et_base_preservee_hybride()
+- filtre_param_commande_invalide_le_cache_apparence · function · L456-L499 — fn filtre_param_commande_invalide_le_cache_apparence()
+- coalesce · function · L503-L505 — fn coalesce(id: Uuid) -> u64

@@ -16,34 +16,34 @@
 - is_passthrough · function · L246-L251 — pub fn is_passthrough(&self) -> bool
 - APPEARANCE_VERSION · constant · L256-L256 — static APPEARANCE_VERSION: AtomicU64 = AtomicU64::new(1);
 - next_appearance_version · function · L258-L260 — pub fn next_appearance_version() -> u64
-- LayerMask · struct · L270-L279 — pub struct LayerMask
-- full · function · L284-L293 — pub fn full(width: u32, height: u32) -> Self
-- touch · function · L295-L297 — pub fn touch(&mut self)
-- coverage_at · function · L303-L306 — pub fn coverage_at(&self, x: u32, y: u32) -> f32
-- PixelLayer · struct · L315-L332 — pub struct PixelLayer
-- new · function · L336-L349 — pub fn new(name: impl Into<String>, image: Arc<DynamicImage>) -> Self
-- dimensions · function · L353-L355 — pub fn dimensions(&self) -> (u32, u32)
-- touch · function · L358-L360 — pub fn touch(&mut self)
-- set_source_image · function · L363-L366 — pub fn set_source_image(&mut self, image: DynamicImage)
-- GroupLayer · struct · L374-L385 — pub struct GroupLayer
-- new · function · L388-L399 — pub fn new(name: impl Into<String>, children: Vec<LayerNode>) -> Self
-- AdjustmentLayer · struct · L405-L412 — pub struct AdjustmentLayer
-- new · function · L415-L423 — pub fn new(name: impl Into<String>, filters: Vec<FilterNode>) -> Self
-- LayerNode · enum · L428-L432 — pub enum LayerNode
-- id · function · L435-L441 — pub fn id(&self) -> Uuid
-- name · function · L443-L449 — pub fn name(&self) -> &str
-- set_name · function · L451-L457 — pub fn set_name(&mut self, name: String)
-- visible · function · L459-L465 — pub fn visible(&self) -> bool
-- set_visible · function · L467-L473 — pub fn set_visible(&mut self, visible: bool)
-- opacity · function · L475-L481 — pub fn opacity(&self) -> f32
-- set_opacity · function · L483-L490 — pub fn set_opacity(&mut self, opacity: f32)
-- blend_mode · function · L493-L499 — pub fn blend_mode(&self) -> Option<BlendMode>
-- set_blend_mode · function · L501-L507 — pub fn set_blend_mode(&mut self, mode: BlendMode)
-- filters · function · L511-L517 — pub fn filters(&self) -> Option<&Vec<FilterNode>>
-- filters_mut · function · L519-L525 — pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterNode>>
-- masks · function · L528-L534 — pub fn masks(&self) -> &[LayerMask]
-- masks_mut · function · L536-L542 — pub fn masks_mut(&mut self) -> Option<&mut Vec<LayerMask>>
-- mask · function · L545-L547 — pub fn mask(&self, id: Uuid) -> Option<&LayerMask>
-- mask_mut · function · L549-L551 — pub fn mask_mut(&mut self, id: Uuid) -> Option<&mut LayerMask>
-- regenerate_ids · function · L555-L586 — pub(crate) fn regenerate_ids(&mut self)
-- Appearance · struct · L595-L602 — pub struct Appearance
+- LayerMask · struct · L270-L281 — pub struct LayerMask
+- full · function · L286-L296 — pub fn full(width: u32, height: u32) -> Self
+- touch · function · L298-L300 — pub fn touch(&mut self)
+- coverage_at · function · L306-L309 — pub fn coverage_at(&self, x: u32, y: u32) -> f32
+- PixelLayer · struct · L318-L335 — pub struct PixelLayer
+- new · function · L339-L352 — pub fn new(name: impl Into<String>, image: Arc<DynamicImage>) -> Self
+- dimensions · function · L356-L358 — pub fn dimensions(&self) -> (u32, u32)
+- touch · function · L361-L363 — pub fn touch(&mut self)
+- set_source_image · function · L366-L369 — pub fn set_source_image(&mut self, image: DynamicImage)
+- GroupLayer · struct · L377-L388 — pub struct GroupLayer
+- new · function · L391-L402 — pub fn new(name: impl Into<String>, children: Vec<LayerNode>) -> Self
+- AdjustmentLayer · struct · L408-L415 — pub struct AdjustmentLayer
+- new · function · L418-L426 — pub fn new(name: impl Into<String>, filters: Vec<FilterNode>) -> Self
+- LayerNode · enum · L431-L435 — pub enum LayerNode
+- id · function · L438-L444 — pub fn id(&self) -> Uuid
+- name · function · L446-L452 — pub fn name(&self) -> &str
+- set_name · function · L454-L460 — pub fn set_name(&mut self, name: String)
+- visible · function · L462-L468 — pub fn visible(&self) -> bool
+- set_visible · function · L470-L476 — pub fn set_visible(&mut self, visible: bool)
+- opacity · function · L478-L484 — pub fn opacity(&self) -> f32
+- set_opacity · function · L486-L493 — pub fn set_opacity(&mut self, opacity: f32)
+- blend_mode · function · L496-L502 — pub fn blend_mode(&self) -> Option<BlendMode>
+- set_blend_mode · function · L504-L510 — pub fn set_blend_mode(&mut self, mode: BlendMode)
+- filters · function · L514-L520 — pub fn filters(&self) -> Option<&Vec<FilterNode>>
+- filters_mut · function · L522-L528 — pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterNode>>
+- masks · function · L531-L537 — pub fn masks(&self) -> &[LayerMask]
+- masks_mut · function · L539-L545 — pub fn masks_mut(&mut self) -> Option<&mut Vec<LayerMask>>
+- mask · function · L548-L550 — pub fn mask(&self, id: Uuid) -> Option<&LayerMask>
+- mask_mut · function · L552-L554 — pub fn mask_mut(&mut self, id: Uuid) -> Option<&mut LayerMask>
+- regenerate_ids · function · L558-L589 — pub(crate) fn regenerate_ids(&mut self)
+- Appearance · struct · L598-L605 — pub struct Appearance

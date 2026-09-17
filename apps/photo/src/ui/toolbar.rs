@@ -23,18 +23,18 @@
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
+use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::CygnusTheme;
-use ui_kit::widgets::icon::CygnusIcon;
 
 /// Icône + aide contextuelle d'un outil du rail.
-fn tool_icon(tool: PhotoCanvasTool) -> (CygnusIcon, &'static str) {
+fn tool_icon(tool: PhotoCanvasTool) -> (Icon, &'static str) {
     match tool {
-        PhotoCanvasTool::Move => (CygnusIcon::MoveTool, "Deplacer / selectionner"),
-        PhotoCanvasTool::Pan => (CygnusIcon::Hand, "Main (deplacer la vue)"),
-        PhotoCanvasTool::Zoom => (CygnusIcon::Search, "Loupe"),
-        PhotoCanvasTool::Brush => (CygnusIcon::Brush, "Pinceau"),
-        PhotoCanvasTool::Eraser => (CygnusIcon::Eraser, "Gomme"),
-        PhotoCanvasTool::Eyedropper => (CygnusIcon::Eyedropper, "Pipette"),
+        PhotoCanvasTool::Move => (Icon::MoveTool, "Deplacer / selectionner"),
+        PhotoCanvasTool::Pan => (Icon::Hand, "Main (deplacer la vue)"),
+        PhotoCanvasTool::Zoom => (Icon::Search, "Loupe"),
+        PhotoCanvasTool::Brush => (Icon::Brush, "Pinceau"),
+        PhotoCanvasTool::Eraser => (Icon::Eraser, "Gomme"),
+        PhotoCanvasTool::Eyedropper => (Icon::Eyedropper, "Pipette"),
     }
 }
 
@@ -54,20 +54,32 @@ pub fn draw_tool_rail(
 ) -> Option<PhotoCanvasTool> {
     let mut chosen = None;
     ui.vertical_centered(|ui| {
-        for tool in mode.tools() {
+        for (index, tool) in mode.tools().iter().enumerate() {
             let tool = *tool;
             let (icon, tip) = tool_icon(tool);
             let size = egui::vec2(28.0, 28.0);
             let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
-            if *current_tool == tool {
+            // Fondu d'apparition (egui natif) vers survol/sélection.
+            let active = *current_tool == tool;
+            let fade = ui.ctx().animate_bool_with_time(
+                ui.make_persistent_id(("photo_tool_hover", index)),
+                active || hover.hovered(),
+                0.12,
+            );
+            if fade > 0.0 {
+                let base = if active {
+                    theme.colors.item_selected
+                } else {
+                    theme.colors.item_hover
+                };
                 ui.painter()
-                    .rect_filled(rect, theme.radius.sm, theme.colors.item_selected);
-            } else if hover.hovered() {
-                ui.painter()
-                    .rect_filled(rect, theme.radius.sm, theme.colors.item_hover);
+                    .rect_filled(rect, theme.radius.sm, base.gamma_multiply(fade));
             }
             let response = ui
-                .put(rect, egui::Button::new(icon.sized(16.0)).frame(false))
+                .put(
+                    rect,
+                    egui::Button::new(IconRegistry::new().sized(icon, 16.0)).frame(false),
+                )
                 .on_hover_text(tip);
             if response.clicked() {
                 *current_tool = tool;

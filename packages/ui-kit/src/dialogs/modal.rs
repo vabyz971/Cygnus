@@ -19,7 +19,7 @@
 //! L'ouverture/fermeture est détenue par l'app (`open: &mut bool`) :
 //! la modale ne fait qu'afficher et rapporter l'action choisie.
 
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 use crate::theme::typography::heading_text;
 
 /// Action rapportée par [`CygnusModal::show`].

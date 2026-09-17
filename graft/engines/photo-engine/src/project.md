@@ -1,46 +1,47 @@
 # engines/photo-engine/src/project.rs
 
 - FORMAT_VERSION · constant · L47-L47 — pub const FORMAT_VERSION: u32 = 4;
-- PROJECT_EXTENSION · constant · L50-L50 — pub const PROJECT_EXTENSION: &str = "csophoto";
-- LEGACY_PROJECT_EXTENSION · constant · L53-L53 — pub const LEGACY_PROJECT_EXTENSION: &str = "csphoto";
-- is_project_path · function · L58-L66 — pub fn is_project_path(path: &Path) -> bool
-- ProjectFile · struct · L69-L74 — struct ProjectFile
-- LayerNodeDto · enum · L78-L82 — enum LayerNodeDto
-- MaskDto · struct · L85-L90 — struct MaskDto
-- PixelDto · struct · L93-L111 — struct PixelDto
-- GroupDto · struct · L114-L125 — struct GroupDto
-- AdjustmentDto · struct · L128-L134 — struct AdjustmentDto
-- FilterDto · struct · L137-L142 — struct FilterDto
-- to_dto · function · L145-L152 — fn to_dto(&self) -> FilterDto
-- from_dto · function · L154-L161 — fn from_dto(dto: FilterDto) -> Self
-- FilterLayerDto · struct · L165-L175 — struct FilterLayerDto
-- to_dto · function · L178-L190 — fn to_dto(&self, name: &str) -> Result<FilterLayerDto, String>
-- from_dto · function · L192-L204 — fn from_dto(dto: FilterLayerDto, name: &str) -> Result<Self, String>
-- migrate_v3 · function · L208-L221 — fn migrate_v3(dto: FilterDto) -> Self
-- png_encode · function · L224-L229 — fn png_encode(img: &DynamicImage, name: &str) -> Result<Vec<u8>, String>
-- png_decode · function · L231-L236 — fn png_decode(png_base64: &str, name: &str) -> Result<DynamicImage, String>
-- masks_to_dto · function · L238-L240 — fn masks_to_dto(masks: &[crate::document::LayerMask], name: &str) -> Result<Vec<MaskDto>, String>
-- mask_to_dto · function · L242-L250 — fn mask_to_dto(mask: &crate::document::LayerMask, name: &str) -> Result<MaskDto, String>
-- masks_from_dto · function · L252-L257 — fn masks_from_dto(
-- mask_from_dto · function · L259-L268 — fn mask_from_dto(dto: MaskDto, name: &str) -> Result<crate::document::LayerMask, String>
-- node_to_dto · function · L270-L314 — fn node_to_dto(node: &LayerNode) -> Result<LayerNodeDto, String>
-- sanitize_transform · function · L316-L326 — fn sanitize_transform(t: Transform2D) -> Transform2D
-- node_from_dto · function · L328-L378 — fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String>
-- LoadedProject · struct · L381-L387 — pub struct LoadedProject
-- clone · function · L390-L398 — fn clone(&self) -> Self
-- fmt · function · L402-L410 — fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-- save · function · L418-L429 — pub fn save(path: &Path, doc: &Document) -> Result<(), String>
-- load · function · L437-L481 — pub fn load(path: &Path) -> Result<LoadedProject, String>
-- VersionProbe · struct · L443-L445 — struct VersionProbe
-- tests · module · L484-L734 — mod tests
-- red_img · function · L489-L495 — fn red_img() -> Arc<DynamicImage>
-- green_img · function · L497-L503 — fn green_img() -> Arc<DynamicImage>
-- sample_document · function · L506-L529 — fn sample_document() -> Document
-- temp_path · function · L531-L539 — fn temp_path(tag: &str) -> std::path::PathBuf
-- aller_retour_projet_v2_conserve_arbre_et_filtres · function · L542-L582 — fn aller_retour_projet_v2_conserve_arbre_et_filtres()
-- detection_extension_projet_canonique_et_heritee · function · L585-L592 — fn detection_extension_projet_canonique_et_heritee()
-- version_etrangere_rejetee_proprement · function · L595-L602 — fn version_etrangere_rejetee_proprement()
-- projet_v3_migre_en_sous_calques_neutres · function · L605-L648 — fn projet_v3_migre_en_sous_calques_neutres()
-- migration_v3_conserve_effets_et_params · function · L651-L678 — fn migration_v3_conserve_effets_et_params()
-- apparence_regeneree_apres_chargement · function · L681-L704 — fn apparence_regeneree_apres_chargement()
-- aller_retour_masque_conserve_pixels_et_flags · function · L707-L733 — fn aller_retour_masque_conserve_pixels_et_flags()
+- PROJECT_EXTENSION · constant · L50-L50 — pub const PROJECT_EXTENSION: &str = "cygp";
+- LEGACY_PROJECT_EXTENSIONS · constant · L54-L54 — pub const LEGACY_PROJECT_EXTENSIONS: [&str; 2] = ["csophoto", "csphoto"];
+- is_project_path · function · L59-L67 — pub fn is_project_path(path: &Path) -> bool
+- ProjectFile · struct · L70-L75 — struct ProjectFile
+- LayerNodeDto · enum · L79-L83 — enum LayerNodeDto
+- MaskDto · struct · L86-L94 — struct MaskDto
+- default_mask_name · function · L96-L98 — fn default_mask_name() -> String
+- PixelDto · struct · L101-L119 — struct PixelDto
+- GroupDto · struct · L122-L133 — struct GroupDto
+- AdjustmentDto · struct · L136-L142 — struct AdjustmentDto
+- FilterDto · struct · L145-L150 — struct FilterDto
+- to_dto · function · L153-L160 — fn to_dto(&self) -> FilterDto
+- from_dto · function · L162-L169 — fn from_dto(dto: FilterDto) -> Self
+- FilterLayerDto · struct · L173-L183 — struct FilterLayerDto
+- to_dto · function · L186-L198 — fn to_dto(&self, name: &str) -> Result<FilterLayerDto, String>
+- from_dto · function · L200-L212 — fn from_dto(dto: FilterLayerDto, name: &str) -> Result<Self, String>
+- migrate_v3 · function · L216-L229 — fn migrate_v3(dto: FilterDto) -> Self
+- png_encode · function · L232-L237 — fn png_encode(img: &DynamicImage, name: &str) -> Result<Vec<u8>, String>
+- png_decode · function · L239-L244 — fn png_decode(png_base64: &str, name: &str) -> Result<DynamicImage, String>
+- masks_to_dto · function · L246-L248 — fn masks_to_dto(masks: &[crate::document::LayerMask], name: &str) -> Result<Vec<MaskDto>, String>
+- mask_to_dto · function · L250-L259 — fn mask_to_dto(mask: &crate::document::LayerMask, name: &str) -> Result<MaskDto, String>
+- masks_from_dto · function · L261-L266 — fn masks_from_dto(
+- mask_from_dto · function · L268-L278 — fn mask_from_dto(dto: MaskDto, name: &str) -> Result<crate::document::LayerMask, String>
+- node_to_dto · function · L280-L324 — fn node_to_dto(node: &LayerNode) -> Result<LayerNodeDto, String>
+- sanitize_transform · function · L326-L336 — fn sanitize_transform(t: Transform2D) -> Transform2D
+- node_from_dto · function · L338-L388 — fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String>
+- LoadedProject · struct · L391-L397 — pub struct LoadedProject
+- clone · function · L400-L408 — fn clone(&self) -> Self
+- fmt · function · L412-L420 — fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+- save · function · L428-L439 — pub fn save(path: &Path, doc: &Document) -> Result<(), String>
+- load · function · L447-L491 — pub fn load(path: &Path) -> Result<LoadedProject, String>
+- VersionProbe · struct · L453-L455 — struct VersionProbe
+- tests · module · L494-L743 — mod tests
+- red_img · function · L499-L505 — fn red_img() -> Arc<DynamicImage>
+- green_img · function · L507-L513 — fn green_img() -> Arc<DynamicImage>
+- sample_document · function · L516-L539 — fn sample_document() -> Document
+- temp_path · function · L541-L547 — fn temp_path(tag: &str) -> std::path::PathBuf
+- aller_retour_projet_v4_conserve_arbre_et_filtres · function · L550-L590 — fn aller_retour_projet_v4_conserve_arbre_et_filtres()
+- detection_extension_projet_canonique_et_heritee · function · L593-L601 — fn detection_extension_projet_canonique_et_heritee()
+- version_etrangere_rejetee_proprement · function · L604-L611 — fn version_etrangere_rejetee_proprement()
+- projet_v3_migre_en_sous_calques_neutres · function · L614-L657 — fn projet_v3_migre_en_sous_calques_neutres()
+- migration_v3_conserve_effets_et_params · function · L660-L687 — fn migration_v3_conserve_effets_et_params()
+- apparence_regeneree_apres_chargement · function · L690-L713 — fn apparence_regeneree_apres_chargement()
+- aller_retour_masque_conserve_pixels_et_flags · function · L716-L742 — fn aller_retour_masque_conserve_pixels_et_flags()

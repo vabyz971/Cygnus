@@ -14,11 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Champ de saisie texte monoligne (renommage, recherche…).
+//! Champ de saisie texte monoligne (renommage, recherche…) et
+//! champ numérique (dimensions, zoom…).
 //!
 //! # Exemple
 //! ```rust,no_run
-//! # use ui_kit::components::TextInput;
+//! # use ui_kit::components::{NumberInput, TextInput};
 //! # use ui_kit::theme::CygnusTheme;
 //! # egui::__run_test_ui(|ui| {
 //! # let theme = CygnusTheme::dark();
@@ -26,6 +27,10 @@
 //! TextInput::new()
 //!     .placeholder("Nom du calque")
 //!     .show(ui, &theme, &mut name);
+//! let mut width = 1920.0;
+//! NumberInput::new("Largeur")
+//!     .range(1.0..=8192.0)
+//!     .show(ui, &theme, &mut width);
 //! # });
 //! ```
 
@@ -67,6 +72,44 @@ impl<'a> TextInput<'a> {
     }
 }
 
+/// Champ numérique (label + `DragValue`) via API builder.
+#[derive(Debug, Clone, Default)]
+pub struct NumberInput<'a> {
+    label: &'a str,
+    range: Option<std::ops::RangeInclusive<f64>>,
+}
+
+impl<'a> NumberInput<'a> {
+    /// Crée un champ numérique avec libellé.
+    pub fn new(label: &'a str) -> Self {
+        Self { label, range: None }
+    }
+
+    /// Plage de valeurs autorisées.
+    #[must_use]
+    pub fn range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    /// Affiche le champ, met à jour `value`, retourne la réponse egui.
+    pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, value: &mut f64) -> egui::Response {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(self.label)
+                    .size(theme.typography.body_size)
+                    .color(theme.colors.fg_secondary),
+            );
+            let mut edit = egui::DragValue::new(value).speed(0.1);
+            if let Some(range) = self.range {
+                edit = edit.range(range);
+            }
+            ui.add(edit)
+        })
+        .inner
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +124,10 @@ mod tests {
                 let _ = TextInput::new()
                     .placeholder("Nom")
                     .show(ui, &theme, &mut name);
+                let mut width = 1920.0;
+                let _ = NumberInput::new("Largeur")
+                    .range(1.0..=8192.0)
+                    .show(ui, &theme, &mut width);
             });
         })
         .drop_without_applying_deltas();

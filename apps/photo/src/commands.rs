@@ -75,6 +75,8 @@ pub enum PhotoAction {
     DeleteSelectedLayer,
     /// Supprimer le calque `layer` (worker, depuis sa rangée).
     DeleteLayer(Uuid),
+    /// Dupliquer le calque `layer` (worker, menu contextuel).
+    DuplicateLayer(Uuid),
     /// Ajouter un masque au calque sélectionné (worker, sans effet si aucun).
     AddMaskToSelected,
     /// Ouvrir la modale d'ajout de filtre.

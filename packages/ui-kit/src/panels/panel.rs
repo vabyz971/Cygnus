@@ -20,7 +20,7 @@
 //! thème, séparateur, puis contenu. Pour les zones redimensionnables,
 //! voir [`CygnusSplitPanel`](super::split::CygnusSplitPanel).
 
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 use crate::theme::typography::heading_text;
 
 /// Panneau titré standard Cygnus.

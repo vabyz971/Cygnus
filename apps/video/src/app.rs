@@ -16,7 +16,7 @@
 
 //! App Video minimale : placeholder en attendant `video-engine`.
 
-use ui_kit::theme::tokens::CygnusTheme;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::theme::typography::{body_text, heading_text};
 
 /// App Video (base minimale).

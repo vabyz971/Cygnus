@@ -8,17 +8,22 @@
 - from_id · function · L173-L175 — pub fn from_id(id: &str) -> Option<Self>
 - KeyCombo · struct · L180-L186 — pub struct KeyCombo
 - fmt · function · L189-L202 — fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-- KeybindingResolver · struct · L207-L209 — pub struct KeybindingResolver
-- from_bindings · function · L214-L224 — pub fn from_bindings(bindings: &HashMap<String, String>) -> Self
-- resolve · function · L228-L236 — pub fn resolve(&self, key: &Key, modifiers: Modifiers) -> Option<PhotoAction>
-- len · function · L240-L242 — pub fn len(&self) -> usize
-- is_empty · function · L246-L248 — pub fn is_empty(&self) -> bool
-- parse_combo · function · L254-L278 — pub fn parse_combo(s: &str) -> Option<KeyCombo>
-- key_to_string · function · L283-L289 — pub fn key_to_string(key: &Key) -> Option<String>
-- named_to_string · function · L291-L318 — fn named_to_string(named: Named) -> Option<String>
-- tests · module · L321-L403 — mod tests
-- meta_coherence_sur_toutes_les_actions · function · L325-L335 — fn meta_coherence_sur_toutes_les_actions()
-- parsing_tolerant_a_la_casse_et_aux_alias · function · L338-L348 — fn parsing_tolerant_a_la_casse_et_aux_alias()
-- display_reconstruit_la_combinaison · function · L351-L359 — fn display_reconstruit_la_combinaison()
-- resolve_trouve_les_raccourcis_par_defaut · function · L362-L386 — fn resolve_trouve_les_raccourcis_par_defaut()
-- resolution_sensible_aux_modificateurs · function · L389-L402 — fn resolution_sensible_aux_modificateurs()
+- AppKey · enum · L210-L215 — pub enum AppKey
+- NamedKey · enum · L219-L272 — pub enum NamedKey
+- AppModifiers · struct · L276-L285 — pub struct AppModifiers
+- EMPTY · constant · L289-L294 — pub const EMPTY: Self = Self
+- CTRL · constant · L297-L302 — pub const CTRL: Self = Self
+- KeybindingResolver · struct · L307-L309 — pub struct KeybindingResolver
+- from_bindings · function · L314-L324 — pub fn from_bindings(bindings: &HashMap<String, String>) -> Self
+- resolve · function · L328-L336 — pub fn resolve(&self, key: &AppKey, modifiers: AppModifiers) -> Option<PhotoAction>
+- len · function · L340-L342 — pub fn len(&self) -> usize
+- is_empty · function · L346-L348 — pub fn is_empty(&self) -> bool
+- parse_combo · function · L354-L378 — pub fn parse_combo(s: &str) -> Option<KeyCombo>
+- key_to_string · function · L384-L389 — pub fn key_to_string(key: &AppKey) -> Option<String>
+- named_to_string · function · L391-L418 — fn named_to_string(named: NamedKey) -> Option<String>
+- tests · module · L421-L508 — mod tests
+- meta_coherence_sur_toutes_les_actions · function · L425-L435 — fn meta_coherence_sur_toutes_les_actions()
+- parsing_tolerant_a_la_casse_et_aux_alias · function · L438-L448 — fn parsing_tolerant_a_la_casse_et_aux_alias()
+- display_reconstruit_la_combinaison · function · L451-L459 — fn display_reconstruit_la_combinaison()
+- resolve_trouve_les_raccourcis_par_defaut · function · L462-L491 — fn resolve_trouve_les_raccourcis_par_defaut()
+- resolution_sensible_aux_modificateurs · function · L494-L507 — fn resolution_sensible_aux_modificateurs()

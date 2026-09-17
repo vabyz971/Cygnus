@@ -60,6 +60,64 @@ pub enum Icon {
     Check,
     /// Information.
     Info,
-    /// Dossier.
+    /// Dossier ouvert.
     Folder,
+    /// Calque visible.
+    Visibility,
+    /// Calque masqué.
+    VisibilityOff,
+    /// Panneau / liste des calques.
+    Layers,
+    /// Icône image (calque pixel).
+    ImageIcon,
+    /// Pinceau (outil peinture).
+    Brush,
+    /// Gomme (outil).
+    Eraser,
+    /// Main (outil pan).
+    Hand,
+    /// Déplacement / sélection.
+    MoveTool,
+    /// Déplier (chevron bas).
+    ExpandMore,
+    /// Replier (chevron haut).
+    ExpandLess,
+    /// Pipette (détection couleur).
+    Eyedropper,
+    /// Filtre (liste filtres).
+    Filter,
+    /// Masque / texture.
+    Mask,
+    /// Poignée de glisser-déposer.
+    DragHandle,
+    /// Texte (calque).
+    Text,
+    /// Forme vectorielle.
+    Shape,
+    /// Couper.
+    Cut,
+    /// Diverger (video).
+    Split,
+    /// Rougeigner (video).
+    Trim,
+    /// Film (vidéo).
+    Film,
+    /// Arrêt.
+    Stop,
+    /// Enregistrement (audio).
+    Record,
+    /// Note musicale (audio).
+    MusicNote,
+    /// Piano (audio).
+    Piano,
+    /// Micro (audio).
+    Mic,
+    /// Avertissement.
+    Warning,
+    /// Erreur.
+    Error,
+    /// Supprimer un élément.
+    Remove,
+    /// Ajouter un calque.
+    LayerAdd,
 }

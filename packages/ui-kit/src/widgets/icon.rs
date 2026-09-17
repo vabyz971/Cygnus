@@ -128,6 +128,10 @@ pub enum CygnusIcon {
     Error,
     /// Information.
     Info,
+    /// Déplier (chevron bas).
+    ExpandMore,
+    /// Replier (chevron haut).
+    ExpandLess,
 }
 
 /// Liste exhaustive des icônes, utilisée par les tests.
@@ -176,6 +180,8 @@ pub const ALL_ICONS: &[CygnusIcon] = &[
     CygnusIcon::Warning,
     CygnusIcon::Error,
     CygnusIcon::Info,
+    CygnusIcon::ExpandMore,
+    CygnusIcon::ExpandLess,
 ];
 
 impl CygnusIcon {
@@ -226,6 +232,8 @@ impl CygnusIcon {
             Self::Warning => ICON_WARNING,
             Self::Error => ICON_ERROR,
             Self::Info => ICON_INFO,
+            Self::ExpandMore => ICON_EXPAND_MORE,
+            Self::ExpandLess => ICON_EXPAND_LESS,
         }
     }
 
@@ -289,9 +297,9 @@ mod tests {
 
     #[test]
     fn all_icons_list_is_exhaustive() {
-        // 44 variantes déclarées : le test casse si une variante est
+        // 46 variantes déclarées : le test casse si une variante est
         // ajoutée sans être enregistrée dans ALL_ICONS.
-        assert_eq!(ALL_ICONS.len(), 44);
+        assert_eq!(ALL_ICONS.len(), 46);
     }
 
     #[test]

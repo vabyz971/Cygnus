@@ -25,8 +25,9 @@
 //! puis routée par `PhotoApp` (état local ou worker).
 
 use super::types::PhotoLayerInfo;
-use ui_kit::theme::tokens::CygnusTheme;
-use ui_kit::widgets::icon::{CygnusIcon, icon_button};
+use ui_kit::components::{IconButton, menu_row, menu_style};
+use ui_kit::icons::{Icon, IconRegistry};
+use ui_kit::theme::CygnusTheme;
 use uuid::Uuid;
 
 /// État du renommage inline (double-clic sur le nom, détenu par l'app).
@@ -53,6 +54,8 @@ pub enum LayerItemAction {
     ToggleVisibility(Uuid),
     /// Supprimer ce calque.
     DeleteLayer(Uuid),
+    /// Dupliquer ce calque.
+    DuplicateLayer(Uuid),
     /// Déplacer un filtre dans sa pile.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans sa pile.
@@ -65,8 +68,8 @@ pub enum LayerItemAction {
 
 /// Dessine le contenu HUD d'une ligne de calque.
 ///
-/// Toute icône passe par `CygnusIcon`. Retourne les actions, traitées
-/// par l'app (jamais d'envoi worker direct).
+/// Toute icône passe par `Icon` (via [`IconButton`]). Retourne les actions,
+/// traitées par l'app (jamais d'envoi worker direct).
 #[allow(clippy::too_many_lines)]
 pub fn draw_photo_layer_item(
     ui: &mut egui::Ui,
@@ -86,6 +89,34 @@ pub fn draw_photo_layer_item(
     if row_resp.clicked() {
         actions.push(LayerItemAction::Select(layer.id));
     }
+    // Clic droit : sélectionne la rangée et ouvre le menu
+    // contextuel (sections façon rerun : édition, visibilité).
+    if row_resp.secondary_clicked() {
+        actions.push(LayerItemAction::Select(layer.id));
+    }
+    egui::Popup::context_menu(&row_resp)
+        .style(menu_style(&theme))
+        .show(|ui| {
+            if menu_row(ui, &theme, "Renommer") {
+                rename.editing = Some(layer.id);
+                rename.buffer.clone_from(&layer.name);
+                ui.close();
+            }
+            if menu_row(ui, &theme, "Dupliquer") {
+                actions.push(LayerItemAction::DuplicateLayer(layer.id));
+                ui.close();
+            }
+            ui.separator();
+            let visibility_label = if layer.visible { "Masquer" } else { "Afficher" };
+            if menu_row(ui, &theme, visibility_label) {
+                actions.push(LayerItemAction::ToggleVisibility(layer.id));
+                ui.close();
+            }
+            if menu_row(ui, &theme, "Supprimer") {
+                actions.push(LayerItemAction::DeleteLayer(layer.id));
+                ui.close();
+            }
+        });
 
     // Fond de sélection sur toute la largeur de la ligne.
     if selected || row_resp.hovered() {
@@ -103,11 +134,15 @@ pub fn draw_photo_layer_item(
         ui.horizontal(|ui| {
             ui.add_space(theme.spacing.xs);
             let vis_icon = if layer.visible {
-                CygnusIcon::Visibility
+                Icon::Visibility
             } else {
-                CygnusIcon::VisibilityOff
+                Icon::VisibilityOff
             };
-            if icon_button(ui, vis_icon, Some("Afficher / masquer")).clicked() {
+            if IconButton::new(vis_icon)
+                .tooltip("Afficher / masquer")
+                .show(ui, &theme)
+                .clicked()
+            {
                 actions.push(LayerItemAction::ToggleVisibility(layer.id));
             }
             // Visualiseur du calque : vignette symbolique (icône de
@@ -115,7 +150,7 @@ pub fn draw_photo_layer_item(
             // d'apparence moteur).
             ui.add_sized(
                 egui::vec2(28.0, 28.0),
-                egui::Button::new(layer.kind.icon().sized(18.0)).frame(true),
+                egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0)).frame(true),
             );
             ui.add_space(theme.spacing.xs);
             // Nom : double-clic = édition inline, Entrée = valider,
@@ -156,7 +191,11 @@ pub fn draw_photo_layer_item(
             }
             // Bouton de suppression en bout de rangée.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, CygnusIcon::Delete, Some("Supprimer ce calque")).clicked() {
+                if IconButton::new(Icon::Delete)
+                    .tooltip("Supprimer ce calque")
+                    .show(ui, &theme)
+                    .clicked()
+                {
                     actions.push(LayerItemAction::DeleteLayer(layer.id));
                 }
             });
@@ -214,11 +253,11 @@ fn draw_sub_layer(
                     .color(theme.colors.accent),
             );
         } else {
-            ui.label(
-                CygnusIcon::Mask
-                    .sized(theme.typography.caption_size)
-                    .color(theme.colors.fg_secondary),
-            );
+            ui.label(IconRegistry::new().colored(
+                Icon::Mask,
+                theme.typography.caption_size,
+                theme.colors.fg_secondary,
+            ));
         }
         ui.label(
             egui::RichText::new(name)
@@ -270,7 +309,11 @@ fn draw_sub_layer(
                 });
             }
         }
-        if icon_button(ui, CygnusIcon::Close, Some(del_tip)).clicked() {
+        if IconButton::new(Icon::Close)
+            .tooltip(del_tip)
+            .show(ui, theme)
+            .clicked()
+        {
             if is_filter {
                 actions.push(LayerItemAction::RemoveFilter {
                     layer: owner,

@@ -27,11 +27,10 @@
 //! exclusivement ui-kit.
 
 use std::path::PathBuf;
+use ui_kit::components::{Button, ButtonVariant, NumberInput, Select, Slider, TextInput};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::theme::tokens::CygnusTheme;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::theme::typography::body_text;
-use ui_kit::widgets::{CygnusButton, CygnusButtonStyle, CygnusDropdown, CygnusNumberInput};
-use ui_kit::widgets::{CygnusSlider, CygnusTextInput};
 
 /// Résolution d'impression pour les unités physiques (in, cm, pica).
 pub const DOC_DPI: f64 = 300.0;
@@ -255,25 +254,25 @@ pub fn draw_new_document_dialog(
         CygnusModal::new("Nouveau document", "Creer", "Annuler").show(ctx, &mut open, |ui| {
             let presets: Vec<&str> = DOC_PRESETS.to_vec();
             let mut preset = state.preset;
-            CygnusDropdown::new("Format", &presets).show(ui, &mut preset);
+            Select::new("Format", &presets).show(ui, &theme, &mut preset);
             if preset != state.preset {
                 state.apply_preset(preset);
             }
             let units: Vec<&str> = DOC_UNITS.to_vec();
             let mut unit = state.unit;
-            CygnusDropdown::new("Unite", &units).show(ui, &mut unit);
+            Select::new("Unite", &units).show(ui, &theme, &mut unit);
             if unit != state.unit {
                 state.set_unit(unit);
             }
             let max = from_px(DOC_MAX_DIMENSION, state.unit);
             let mut width = state.width;
             let mut height = state.height;
-            CygnusNumberInput::new("Largeur")
+            NumberInput::new("Largeur")
                 .range(0.01..=max)
-                .show(ui, &mut width);
-            CygnusNumberInput::new("Hauteur")
+                .show(ui, &theme, &mut width);
+            NumberInput::new("Hauteur")
                 .range(0.01..=max)
-                .show(ui, &mut height);
+                .show(ui, &theme, &mut height);
             if width != state.width || height != state.height {
                 state.width = width;
                 state.height = height;
@@ -282,25 +281,25 @@ pub fn draw_new_document_dialog(
             ui.horizontal(|ui| {
                 ui.label(body_text(&theme, "Orientation"));
                 let portrait = state.orientation == DocOrientation::Portrait;
-                if CygnusButton::new("Portrait")
-                    .style(if portrait {
-                        CygnusButtonStyle::Primary
+                if Button::new("Portrait")
+                    .variant(if portrait {
+                        ButtonVariant::Primary
                     } else {
-                        CygnusButtonStyle::Secondary
+                        ButtonVariant::Secondary
                     })
-                    .show(ui)
+                    .show(ui, &theme)
                     .clicked()
                 {
                     state.set_orientation(DocOrientation::Portrait);
                 }
                 let paysage = state.orientation == DocOrientation::Paysage;
-                if CygnusButton::new("Paysage")
-                    .style(if paysage {
-                        CygnusButtonStyle::Primary
+                if Button::new("Paysage")
+                    .variant(if paysage {
+                        ButtonVariant::Primary
                     } else {
-                        CygnusButtonStyle::Secondary
+                        ButtonVariant::Secondary
                     })
-                    .show(ui)
+                    .show(ui, &theme)
                     .clicked()
                 {
                     state.set_orientation(DocOrientation::Paysage);
@@ -329,18 +328,26 @@ pub fn draw_export_dialog(
     let mut confirm: Option<ExportRequest> = None;
     let mut open = true;
     let action = CygnusModal::new("Exportation", "Valider", "Annuler").show(ctx, &mut open, |ui| {
-        CygnusTextInput::new("Dossier")
-            .hint("Dossier d'exportation")
-            .show(ui, &mut state.folder);
-        CygnusTextInput::new("Nom")
-            .hint("Nom du fichier")
-            .show(ui, &mut state.filename);
+        ui.horizontal(|ui| {
+            ui.label(body_text(&theme, "Dossier"));
+            TextInput::new().placeholder("Dossier d'exportation").show(
+                ui,
+                &theme,
+                &mut state.folder,
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(body_text(&theme, "Nom"));
+            TextInput::new()
+                .placeholder("Nom du fichier")
+                .show(ui, &theme, &mut state.filename);
+        });
         let formats: Vec<&str> = EXPORT_FORMATS.to_vec();
-        CygnusDropdown::new("Format", &formats).show(ui, &mut state.format);
+        Select::new("Format", &formats).show(ui, &theme, &mut state.format);
         if EXPORT_FORMATS.get(state.format).copied().unwrap_or("PNG") != "PNG"
             && EXPORT_FORMATS.get(state.format).copied().unwrap_or("PNG") != "GIF"
         {
-            CygnusSlider::new("Qualite", 1.0..=100.0).show(ui, &mut state.quality);
+            Slider::new("Qualite", 1.0..=100.0).show(ui, &theme, &mut state.quality);
         }
         let request = state.request();
         ui.label(body_text(

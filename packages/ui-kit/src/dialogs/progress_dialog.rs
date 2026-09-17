@@ -19,7 +19,7 @@
 //! Le travail reste sur thread background ; l'app nourrit `fraction`
 //! depuis son channel et peut annuler via `cancel_requested`.
 
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 use crate::theme::typography::heading_text;
 
 /// Dialogue de progression (export, rendu…).

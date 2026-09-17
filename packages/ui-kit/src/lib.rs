@@ -32,9 +32,9 @@
 //! 6. **`layout`** — état du workspace (`PanelId`, `WorkspaceState`,
 //!    persistence JSON via `preferences`).
 //! 7. **`i18n`** — clés de traduction stables + catalogue.
-//! 8. **`widgets`** — composants historiques génériques
-//!    (`CygnusButton`, `CygnusSlider`, …, `CygnusIcon` — seul contact
-//!    avec `egui_material_icons` — `ReorderableList`).
+//! 8. **`widgets`** — reliquat : `CygnusIcon` (seul contact avec
+//!    `egui_material_icons`). `ReorderableList` est réexporté depuis
+//!    `components` (voir [`crate::components::ReorderableList`]).
 //! 9. **`panels`** — conteneurs historiques (panneau titré, split,
 //!    onglets, repliable, toolbar).
 //! 9. **`viewport`** — état zoom/pan + caméra agnostique

@@ -27,7 +27,8 @@
 
 use super::optionsbar::draw_tool_options;
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
-use ui_kit::widgets::{CygnusButton, CygnusButtonStyle};
+use ui_kit::components::{Button, ButtonVariant};
+use ui_kit::theme::CygnusTheme;
 
 /// Mode d'édition du document (façon personas).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,6 +92,7 @@ pub fn draw_photo_modebar(
     tool: PhotoCanvasTool,
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
+    theme: &CygnusTheme,
 ) -> Option<PhotoEditMode> {
     let mut chosen = None;
     // Rangée 1 : grands boutons de mode
@@ -98,13 +100,13 @@ pub fn draw_photo_modebar(
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             for candidate in PhotoEditMode::ALL {
                 let active = *mode == *candidate;
-                if CygnusButton::new(candidate.label())
-                    .style(if active {
-                        CygnusButtonStyle::Primary
+                if Button::new(candidate.label())
+                    .variant(if active {
+                        ButtonVariant::Primary
                     } else {
-                        CygnusButtonStyle::Secondary
+                        ButtonVariant::Secondary
                     })
-                    .show(ui)
+                    .show(ui, theme)
                     .clicked()
                 {
                     *mode = *candidate;
@@ -116,7 +118,7 @@ pub fn draw_photo_modebar(
     ui.separator();
     // Rangée 2 : nom et paramètres de l'outil sélectionné.
     ui.horizontal(|ui| {
-        draw_tool_options(ui, tool, brush, show_grid);
+        draw_tool_options(ui, tool, brush, show_grid, theme);
     });
     chosen
 }
@@ -152,6 +154,7 @@ mod tests {
     fn modebar_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let theme = ui_kit::theme::CygnusTheme::dark();
         let mut mode = PhotoEditMode::Pixel;
         let mut brush = PhotoBrushSettings::default();
         let mut show_grid = false;
@@ -163,6 +166,7 @@ mod tests {
                     PhotoCanvasTool::Brush,
                     &mut brush,
                     &mut show_grid,
+                    &theme,
                 );
                 assert_eq!(chosen, None);
             });

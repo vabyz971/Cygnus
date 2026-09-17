@@ -22,6 +22,8 @@
 /// Rayons de coins du thème.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusRadius {
+    /// Petit rayon (2px).
+    pub xs: f32,
     /// Pas d'arrondi.
     pub none: f32,
     /// Petit rayon (4px).
@@ -39,6 +41,7 @@ impl CygnusRadius {
     pub fn dark() -> Self {
         Self {
             none: 0.0,
+            xs: 2.0,
             sm: 4.0,
             md: 8.0,
             lg: 12.0,

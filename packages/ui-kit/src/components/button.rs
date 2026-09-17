@@ -139,6 +139,16 @@ impl<'a> Button<'a> {
     }
 }
 
+/// Ligne de menu (barre ou popup contextuel) : bouton fantôme
+/// pleine largeur ; `true` si cliquée (l'appelant ferme le menu).
+pub fn menu_row(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
+    Button::new(label)
+        .variant(ButtonVariant::Ghost)
+        .size(ButtonSize::Medium)
+        .show(ui, theme)
+        .clicked()
+}
+
 /// Fonds idle/survol/pressé d'une variante, 100 % issus du thème.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ButtonFills {
@@ -225,6 +235,20 @@ mod tests {
         assert_eq!(ghost.idle, egui::Color32::TRANSPARENT);
         assert_eq!(ghost.hover, theme.colors.item_hover);
         assert_eq!(ghost.pressed, theme.colors.item_selected);
+    }
+
+    #[test]
+    fn menu_row_renders_and_reports_no_click_idle() {
+        let theme = CygnusTheme::dark();
+        let ctx = egui::Context::default();
+        let mut clicked = true;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                clicked = menu_row(ui, &theme, "Dupliquer");
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(!clicked, "aucun clic sans interaction");
     }
 
     #[test]

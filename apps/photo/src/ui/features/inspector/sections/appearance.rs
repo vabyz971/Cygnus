@@ -16,8 +16,8 @@
 
 //! Section Apparence : visibilité + opacité du calque.
 //!
-//! Construite uniquement avec ui-kit ([`Section`](ui_kit::containers::Section),
-//! [`Toggle`](ui_kit::components::Toggle),
+//! En-tête repliable (état persisté) + corps animé ([`Collapse`](egui_animation::Collapse),
+//! façon rerun), construits avec ui-kit ([`Toggle`](ui_kit::components::Toggle),
 //! [`Slider`](ui_kit::components::Slider)). Les gestes continus
 //! (slider) sont coalescés côté worker (`push_coalesced`) : l'UI
 //! émet sans modération, le moteur snapshotte en PRÉ-mutation.
@@ -25,8 +25,10 @@
 use super::super::InspectorAction;
 use crate::commands::PhotoUiContext;
 use crate::ui::features::layers::PhotoLayerInfo;
-use ui_kit::components::{Slider, Toggle};
-use ui_kit::containers::Section;
+use egui_animation::Collapse;
+use ui_kit::components::{IconButton, Slider, Toggle};
+use ui_kit::icons::Icon;
+use ui_kit::primitives::{Text, divider};
 
 /// Dessine la section et retourne les actions (routées au worker).
 pub fn draw_appearance_section(
@@ -36,7 +38,34 @@ pub fn draw_appearance_section(
 ) -> Vec<InspectorAction> {
     let theme = ctx.shared.theme();
     let mut actions = Vec::new();
-    Section::new("Apparence").show(ui, theme, |ui| {
+    // État replié/déplié persisté (mémoire egui).
+    let state_id = ui.make_persistent_id("photo_appearance_open");
+    let mut open = egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
+        .map(|state| state.is_open())
+        .unwrap_or(true);
+    ui.horizontal(|ui| {
+        let chevron = if open {
+            Icon::ExpandLess
+        } else {
+            Icon::ExpandMore
+        };
+        if IconButton::new(chevron)
+            .tooltip("Replier / déplier")
+            .show(ui, theme)
+            .clicked()
+        {
+            open = !open;
+        }
+        Text::heading(theme, "Apparence").show(ui);
+    });
+    divider(ui, theme);
+    if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
+        && state.is_open() != open
+    {
+        state.toggle(ui);
+        state.store(ui.ctx());
+    }
+    Collapse::vertical(ui.make_persistent_id("photo_appearance_collapse"), open).ui(ui, |ui| {
         let mut visible = layer.visible;
         Toggle::new("Visible").show(ui, theme, &mut visible);
         if visible != layer.visible {

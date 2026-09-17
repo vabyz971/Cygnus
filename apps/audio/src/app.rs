@@ -16,7 +16,7 @@
 
 //! App Audio minimale : placeholder en attendant `audio-engine`.
 
-use ui_kit::theme::tokens::CygnusTheme;
+use ui_kit::theme::CygnusTheme;
 use ui_kit::theme::typography::{body_text, heading_text};
 
 /// App Audio (base minimale).

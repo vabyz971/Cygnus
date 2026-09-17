@@ -29,7 +29,7 @@
 
 use super::viewport_interaction::{ViewportAction, ViewportTool, handle_pointer};
 use super::viewport_state::ViewportState;
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 
 /// UV couvrant toute la texture.
 fn full_uv() -> egui::Rect {

@@ -28,6 +28,7 @@
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::{OpenDocument, sample_preview_color};
 use crate::ui::{PhotoCanvas, PhotoCanvasTool, draw_origin_marker};
+use ui_kit::components::{menu_row, menu_style};
 
 /// Canvas du document + overlays + pipette (contenu de l'onglet
 /// dock, sans `CentralPanel`).
@@ -48,6 +49,33 @@ pub fn draw_canvas_content(
     // Commit du trait : routé au worker par l'app.
     if let Some(paint) = outcome.paint {
         actions.push(PhotoAction::CommitStroke(paint));
+    }
+    // Clic droit : menu contextuel vue (zoom, grille), sections
+    // façon rerun.
+    if let Some(response) = &outcome.response {
+        let theme = ctx.shared.theme();
+        let catalog = ctx.shared.translator();
+        egui::Popup::context_menu(response)
+            .style(menu_style(theme))
+            .show(|ui| {
+                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::ZoomIn)) {
+                    actions.push(PhotoAction::ZoomIn);
+                    ui.close();
+                }
+                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::ZoomOut)) {
+                    actions.push(PhotoAction::ZoomOut);
+                    ui.close();
+                }
+                if menu_row(ui, theme, "Zoom 100 %") {
+                    actions.push(PhotoAction::ZoomReset);
+                    ui.close();
+                }
+                ui.separator();
+                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::Grid)) {
+                    actions.push(PhotoAction::ToggleGrid);
+                    ui.close();
+                }
+            });
     }
     // Pipette : échantillonne le composite sous le curseur (local).
     if doc.ui.tool == PhotoCanvasTool::Eyedropper

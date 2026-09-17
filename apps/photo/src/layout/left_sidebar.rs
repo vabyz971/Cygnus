@@ -16,9 +16,8 @@
 
 //! Contenu de l'onglet dock « Outils » : rail compact 32 px.
 //!
-//! Position-indépendant : le placement (taille, split, fenêtre
-//! flottante) est géré par le [`DockArea`](egui_dock::DockArea)
-//! (voir `super::dock`). Le choix d'outil remonte en
+//! Position-indépendant : le placement (taille, split, grille)
+//! est géré par l'arbre `egui_tiles` (voir `super::dock`). Le choix d'outil remonte en
 //! [`PhotoAction::SetTool`](crate::commands::PhotoAction) ; la
 //! couleur est un état UI local (mutation directe, aucun moteur).
 

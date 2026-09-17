@@ -29,11 +29,11 @@ use super::layer_list::draw_layer_list;
 use super::types::PhotoLayerInfo;
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
-use ui_kit::components::{Select, Slider};
+use ui_kit::components::{IconButton, Select, Slider};
+use ui_kit::icons::Icon;
 use ui_kit::primitives::Text;
 use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::ReorderDragState;
-use ui_kit::widgets::icon::{CygnusIcon, icon_button};
 use uuid::Uuid;
 
 /// Action du panneau calques : barre d'outils + interactions HUD.
@@ -64,6 +64,8 @@ pub enum LayerPanelAction {
     ToggleVisibility(Uuid),
     /// Supprimer un calque (croix de la rangée).
     DeleteLayer(Uuid),
+    /// Dupliquer un calque (menu contextuel de la rangée).
+    DuplicateLayer(Uuid),
     /// Déplacer un filtre dans sa pile.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans sa pile.
@@ -178,6 +180,9 @@ fn draw_layers_panel(
                 actions.push(LayerPanelAction::ToggleVisibility(id));
             }
             LayerItemAction::DeleteLayer(id) => actions.push(LayerPanelAction::DeleteLayer(id)),
+            LayerItemAction::DuplicateLayer(id) => {
+                actions.push(LayerPanelAction::DuplicateLayer(id));
+            }
             LayerItemAction::MoveFilter { layer, filter, up } => {
                 actions.push(LayerPanelAction::MoveFilter { layer, filter, up });
             }
@@ -198,25 +203,49 @@ fn draw_layers_panel(
     // Barre de boutons bas : ajouter image, calque vide, dupliquer,
     // masque, filtre, supprimer.
     ui.horizontal(|ui| {
-        if icon_button(ui, CygnusIcon::ImageIcon, Some("Ajouter une image")).clicked() {
+        if IconButton::new(Icon::ImageIcon)
+            .tooltip("Ajouter une image")
+            .show(ui, theme)
+            .clicked()
+        {
             actions.push(LayerPanelAction::AddImage);
         }
-        if icon_button(ui, CygnusIcon::Add, Some("Nouveau calque vide")).clicked() {
+        if IconButton::new(Icon::Add)
+            .tooltip("Nouveau calque vide")
+            .show(ui, theme)
+            .clicked()
+        {
             actions.push(LayerPanelAction::AddEmpty);
         }
         ui.add_enabled_ui(selected.is_some(), |ui| {
-            if icon_button(ui, CygnusIcon::Duplicate, Some("Dupliquer le calque")).clicked() {
+            if IconButton::new(Icon::Duplicate)
+                .tooltip("Dupliquer le calque")
+                .show(ui, theme)
+                .clicked()
+            {
                 actions.push(LayerPanelAction::Duplicate);
             }
-            if icon_button(ui, CygnusIcon::Mask, Some("Ajouter un masque")).clicked() {
+            if IconButton::new(Icon::Mask)
+                .tooltip("Ajouter un masque")
+                .show(ui, theme)
+                .clicked()
+            {
                 actions.push(LayerPanelAction::AddMask);
             }
         });
-        if icon_button(ui, CygnusIcon::Filter, Some("Liste des filtres")).clicked() {
+        if IconButton::new(Icon::Settings)
+            .tooltip("Liste des filtres")
+            .show(ui, theme)
+            .clicked()
+        {
             actions.push(LayerPanelAction::OpenFilterMenu);
         }
         ui.add_enabled_ui(selected.is_some(), |ui| {
-            if icon_button(ui, CygnusIcon::Delete, Some("Supprimer le calque")).clicked() {
+            if IconButton::new(Icon::Delete)
+                .tooltip("Supprimer le calque")
+                .show(ui, theme)
+                .clicked()
+            {
                 actions.push(LayerPanelAction::Delete);
             }
         });

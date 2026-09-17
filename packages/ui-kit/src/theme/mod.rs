@@ -28,7 +28,6 @@ pub mod spacing;
 // Nom imposé par la structure cible : `theme/theme.rs`.
 #[allow(clippy::module_inception)]
 pub mod theme;
-pub mod tokens;
 pub mod typography;
 pub mod visuals;
 

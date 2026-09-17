@@ -1,47 +1,17 @@
 # apps/photo/src/state.rs
 
-- DocumentState · struct · L41-L48 — pub struct DocumentState
-- default · function · L51-L58 — fn default() -> Self
-- CanvasState · struct · L63-L73 — pub struct CanvasState
-- default · function · L76-L87 — fn default() -> Self
-- ToolState · struct · L92-L122 — pub struct ToolState
-- default · function · L125-L150 — fn default() -> Self
-- RenderingState · struct · L155-L181 — pub struct RenderingState
-- default · function · L184-L202 — fn default() -> Self
-- WorkspaceState · struct · L206-L209 — pub struct WorkspaceState
-- WindowState · struct · L212-L218 — pub struct WindowState
-- BackgroundTasks · struct · L231-L234 — pub struct BackgroundTasks
-- start · function · L239-L244 — pub fn start(&mut self, label: impl Into<String>) -> u64
-- finish · function · L247-L249 — pub fn finish(&mut self, id: u64)
-- is_empty · function · L251-L253 — pub fn is_empty(&self) -> bool
-- labels · function · L256-L258 — pub fn labels(&self) -> impl Iterator<Item = &str>
-- PhotoApp · struct · L261-L268 — pub struct PhotoApp
-- new · function · L275-L285 — pub fn new() -> (Self, Task<Message>)
-- doc_dims · function · L288-L292 — pub(crate) fn doc_dims(&self) -> Option<(u32, u32)>
-- snapshot · function · L295-L297 — pub(crate) fn snapshot(&self) -> photo_engine::history::Snapshot
-- is_preferences_window · function · L301-L303 — pub fn is_preferences_window(&self, window: iced::window::Id) -> bool
-- close_preferences_window · function · L307-L313 — pub(crate) fn close_preferences_window(&mut self) -> Task<Message>
-- needs_fallback · function · L317-L319 — pub(crate) fn needs_fallback(&self) -> bool
-- invalidate_fallback · function · L325-L333 — pub(crate) fn invalidate_fallback(&mut self)
-- take_fallback_task · function · L339-L370 — pub(crate) fn take_fallback_task(&mut self) -> Option<Task<Message>>
-- drag_background_task · function · L374-L405 — pub(crate) fn drag_background_task(&mut self, exclude_id: Uuid) -> Option<Task<Message>>
-- drag_layer_composite_task · function · L410-L449 — pub(crate) fn drag_layer_composite_task(&mut self, layer_id: Uuid) -> Option<Task<Message>>
-- default · function · L453-L489 — fn default() -> Self
-- TransformAnchor · struct · L496-L503 — pub(crate) struct TransformAnchor
-- FallbackJob · enum · L513-L520 — pub enum FallbackJob
-- invalidate · function · L524-L534 — pub(crate) fn invalidate(&mut self)
-- reset_to_idle · function · L537-L539 — pub(crate) fn reset_to_idle(&mut self)
-- start_new_run · function · L543-L556 — pub(crate) fn start_new_run(&mut self) -> Option<u64>
-- in_flight · function · L560-L562 — pub(crate) fn in_flight(&self) -> bool
-- needs_recompute · function · L566-L571 — pub(crate) fn needs_recompute(&self) -> bool
-- finish · function · L574-L593 — pub(crate) fn finish(&mut self, generation: u64) -> Finish
-- Finish · enum · L597-L601 — pub(crate) enum Finish
-- DragBgJob · enum · L605-L609 — pub enum DragBgJob
-- try_start · function · L612-L619 — pub(crate) fn try_start(&mut self, exclude_id: Uuid) -> bool
-- finish · function · L621-L623 — pub(crate) fn finish(&mut self)
-- is_running · function · L625-L627 — pub(crate) fn is_running(&self) -> bool
-- is_running_for · function · L629-L631 — pub(crate) fn is_running_for(&self, id: Uuid) -> bool
-- DragLayerJob · enum · L636-L640 — pub enum DragLayerJob
-- try_start · function · L643-L650 — pub(crate) fn try_start(&mut self) -> bool
-- finish · function · L652-L654 — pub(crate) fn finish(&mut self)
-- is_running · function · L657-L659 — pub(crate) fn is_running(&self) -> bool
+- PhotoUiState · struct · L44-L77 — pub struct PhotoUiState
+- FilterModalState · struct · L81-L86 — pub struct FilterModalState
+- OpenDocument · struct · L89-L102 — pub struct OpenDocument
+- PhotoShellState · struct · L105-L122 — pub struct PhotoShellState
+- default · function · L128-L137 — fn default() -> Self
+- PhotoRuntimeState · struct · L141-L148 — pub struct PhotoRuntimeState
+- new · function · L152-L162 — pub fn new() -> Self
+- default · function · L166-L168 — fn default() -> Self
+- apply_response · function · L176-L222 — pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: PhotoEngineResponse)
+- sample_preview_color · function · L226-L241 — pub fn sample_preview_color(preview: &PreviewImage, x: f32, y: f32) -> Option<[u8; 3]>
+- tests · module · L244-L309 — mod tests
+- sample_preview_color_clamps · function · L248-L270 — fn sample_preview_color_clamps()
+- engine_error_sets_status · function · L273-L284 — fn engine_error_sets_status()
+- export_done_sets_status · function · L287-L298 — fn export_done_sets_status()
+- shell_defaults_to_usable_workspace · function · L301-L308 — fn shell_defaults_to_usable_workspace()

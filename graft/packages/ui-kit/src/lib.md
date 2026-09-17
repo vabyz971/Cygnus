@@ -1,16 +1,15 @@
 # packages/ui-kit/src/lib.rs
 
-- base_panel · module · L38-L38 — pub mod base_panel;
-- dropdown · module · L39-L39 — pub mod dropdown;
-- icon_button · module · L40-L40 — pub mod icon_button;
-- image_canvas · module · L41-L41 — pub mod image_canvas;
-- layer_canvas · module · L42-L42 — pub mod layer_canvas;
-- menu · module · L43-L43 — pub mod menu;
-- piano_roll · module · L44-L44 — pub mod piano_roll;
-- settings · module · L45-L45 — pub mod settings;
-- shell · module · L46-L46 — pub mod shell;
-- shortcuts · module · L47-L47 — pub mod shortcuts;
-- spinner · module · L48-L48 — pub mod spinner;
-- style · module · L49-L49 — pub mod style;
-- theme · module · L50-L50 — pub mod theme;
-- timeline · module · L51-L51 — pub mod timeline;
+- components · module · L53-L53 — pub mod components;
+- containers · module · L54-L54 — pub mod containers;
+- context · module · L55-L55 — pub mod context;
+- dialogs · module · L56-L56 — pub mod dialogs;
+- i18n · module · L57-L57 — pub mod i18n;
+- icons · module · L58-L58 — pub mod icons;
+- layout · module · L59-L59 — pub mod layout;
+- panels · module · L60-L60 — pub mod panels;
+- primitives · module · L61-L61 — pub mod primitives;
+- theme · module · L62-L62 — pub mod theme;
+- utils · module · L63-L63 — pub mod utils;
+- viewport · module · L64-L64 — pub mod viewport;
+- widgets · module · L65-L65 — pub mod widgets;

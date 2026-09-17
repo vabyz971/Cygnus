@@ -1,31 +1,44 @@
 # engines/photo-engine/src/renderer.rs
 
-- CacheEntry · struct · L50-L57 — struct CacheEntry
-- Renderer · struct · L62-L66 — pub struct Renderer
-- without_gpu · function · L72-L74 — pub fn without_gpu() -> Self
-- appearance · function · L78-L84 — pub fn appearance(&mut self, layer: &PixelLayer) -> Appearance
-- appearance_locked · function · L87-L132 — fn appearance_locked(&mut self, layer: &PixelLayer) -> Appearance
-- appearance_hit · function · L144-L153 — pub fn appearance_hit(&mut self, layer: &PixelLayer) -> Option<Appearance>
-- import_from · function · L163-L174 — pub fn import_from(&mut self, src: &Renderer)
-- invalidate_layer · function · L178-L180 — pub fn invalidate_layer(&mut self, layer_id: Uuid)
-- invalidate_all · function · L183-L185 — pub fn invalidate_all(&mut self)
-- sync_tree · function · L190-L193 — pub fn sync_tree(&mut self, doc: &Document)
-- cached_len · function · L196-L198 — pub fn cached_len(&self) -> usize
-- hits · function · L202-L204 — pub fn hits(&self) -> u64
-- misses · function · L207-L209 — pub fn misses(&self) -> u64
-- reset_stats · function · L212-L215 — pub fn reset_stats(&mut self)
-- filters_signature · function · L232-L275 — pub fn filters_signature(filters: &[FilterLayer]) -> u64
-- hash_param_value · function · L277-L312 — fn hash_param_value(
-- tests · module · L315-L512 — mod tests
-- solid · function · L321-L327 — fn solid(value: u8) -> Arc<DynamicImage>
-- layer_with_filter · function · L329-L336 — fn layer_with_filter(brightness: f32) -> PixelLayer
-- premier_acces_miss_puis_hits_sans_recalcul · function · L339-L351 — fn premier_acces_miss_puis_hits_sans_recalcul()
-- changer_un_parametre_provoque_un_seul_nouveau_miss · function · L354-L372 — fn changer_un_parametre_provoque_un_seul_nouveau_miss()
-- remplacer_la_source_invalide_memes_sans_filtres · function · L375-L387 — fn remplacer_la_source_invalide_memes_sans_filtres()
-- desactiver_un_filtre_change_la_signature · function · L390-L404 — fn desactiver_un_filtre_change_la_signature()
-- sync_tree_elague_les_calques_supprimes · function · L407-L426 — fn sync_tree_elague_les_calques_supprimes()
-- deux_calques_sont_cachees_independamment · function · L429-L453 — fn deux_calques_sont_cachees_independamment()
-- ordre_et_etat_actif_comptent_dans_la_signature · function · L456-L477 — fn ordre_et_etat_actif_comptent_dans_la_signature()
-- filter_of · function · L479-L484 — fn filter_of(name: &str, brightness: f32) -> FilterLayer
-- opacite_et_fusion_comptent_dans_la_signature · function · L487-L496 — fn opacite_et_fusion_comptent_dans_la_signature()
-- masque_sous_calque_invalide_le_cache · function · L499-L511 — fn masque_sous_calque_invalide_le_cache()
+- WarmedAppearance · struct · L65-L78 — pub struct WarmedAppearance
+- fmt · function · L81-L93 — fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+- CacheEntry · struct · L103-L117 — struct CacheEntry
+- Renderer · struct · L122-L126 — pub struct Renderer
+- without_gpu · function · L132-L134 — pub fn without_gpu() -> Self
+- appearance · function · L138-L144 — pub fn appearance(&mut self, layer: &PixelLayer) -> Appearance
+- appearance_locked · function · L151-L175 — fn appearance_locked(&mut self, layer: &PixelLayer) -> Appearance
+- unmasked_image · function · L185-L228 — pub fn unmasked_image(&mut self, layer: &PixelLayer) -> Arc<DynamicImage>
+- mask_coverage · function · L233-L248 — pub fn mask_coverage(
+- fresh_cover · function · L250-L252 — fn fresh_cover(masks: &[LayerMask]) -> Option<Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>>
+- bake · function · L256-L266 — fn bake(
+- appearance_hit · function · L278-L291 — pub fn appearance_hit(&mut self, layer: &PixelLayer) -> Option<Appearance>
+- export_warmed · function · L297-L306 — pub fn export_warmed(&self, layer_id: Uuid) -> Option<WarmedAppearance>
+- insert_warmed · function · L312-L324 — pub fn insert_warmed(&mut self, layer_id: Uuid, warmed: WarmedAppearance)
+- import_from · function · L334-L348 — pub fn import_from(&mut self, src: &Renderer)
+- invalidate_layer · function · L352-L354 — pub fn invalidate_layer(&mut self, layer_id: Uuid)
+- invalidate_all · function · L357-L359 — pub fn invalidate_all(&mut self)
+- sync_tree · function · L364-L367 — pub fn sync_tree(&mut self, doc: &Document)
+- cached_len · function · L370-L372 — pub fn cached_len(&self) -> usize
+- hits · function · L376-L378 — pub fn hits(&self) -> u64
+- misses · function · L381-L383 — pub fn misses(&self) -> u64
+- reset_stats · function · L386-L389 — pub fn reset_stats(&mut self)
+- mask_signature · function · L396-L407 — fn mask_signature(masks: &[LayerMask]) -> u64
+- filters_signature · function · L424-L467 — pub fn filters_signature(filters: &[FilterLayer]) -> u64
+- hash_param_value · function · L469-L504 — fn hash_param_value(
+- tests · module · L507-L815 — mod tests
+- solid · function · L513-L519 — fn solid(value: u8) -> Arc<DynamicImage>
+- layer_with_filter · function · L521-L528 — fn layer_with_filter(brightness: f32) -> PixelLayer
+- premier_acces_miss_puis_hits_sans_recalcul · function · L531-L543 — fn premier_acces_miss_puis_hits_sans_recalcul()
+- changer_un_parametre_provoque_un_seul_nouveau_miss · function · L546-L564 — fn changer_un_parametre_provoque_un_seul_nouveau_miss()
+- remplacer_la_source_invalide_memes_sans_filtres · function · L567-L579 — fn remplacer_la_source_invalide_memes_sans_filtres()
+- desactiver_un_filtre_change_la_signature · function · L582-L596 — fn desactiver_un_filtre_change_la_signature()
+- apparence_chauffee_inseree_hit_sans_recalcul · function · L599-L625 — fn apparence_chauffee_inseree_hit_sans_recalcul()
+- toggle_masque_sans_touch_hit_apres_insertion · function · L628-L655 — fn toggle_masque_sans_touch_hit_apres_insertion()
+- sync_tree_elague_les_calques_supprimes · function · L658-L677 — fn sync_tree_elague_les_calques_supprimes()
+- deux_calques_sont_cachees_independamment · function · L680-L704 — fn deux_calques_sont_cachees_independamment()
+- ordre_et_etat_actif_comptent_dans_la_signature · function · L707-L728 — fn ordre_et_etat_actif_comptent_dans_la_signature()
+- filter_of · function · L730-L735 — fn filter_of(name: &str, brightness: f32) -> FilterLayer
+- opacite_et_fusion_comptent_dans_la_signature · function · L738-L747 — fn opacite_et_fusion_comptent_dans_la_signature()
+- masque_sous_calque_invalide_le_cache · function · L750-L762 — fn masque_sous_calque_invalide_le_cache()
+- couverture_masque_combinee_doree · function · L765-L786 — fn couverture_masque_combinee_doree()
+- peinture_masque_ne_reexecute_pas_la_chaine · function · L789-L814 — fn peinture_masque_ne_reexecute_pas_la_chaine()

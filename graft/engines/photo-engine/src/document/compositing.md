@@ -1,25 +1,27 @@
 # engines/photo-engine/src/document/compositing.rs
 
-- needs_fallback_in · function · L9-L45 — pub fn needs_fallback_in(nodes: &[LayerNode]) -> bool
-- preview_buf · function · L52-L67 — pub fn preview_buf(image: &DynamicImage) -> RgbaBuf
-- MAX_PREVIEW · constant · L53-L53 — const MAX_PREVIEW: u32 = 2048;
-- thumb_buf · function · L70-L74 — pub fn thumb_buf(img: &DynamicImage) -> RgbaBuf
-- blend_pixel · function · L82-L124 — pub fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4]
-- blend_into · function · L129-L192 — pub fn blend_into(
-- DrawItem · struct · L195-L198 — pub struct DrawItem<'a>
-- new · function · L203-L205 — pub(crate) fn new(image: &'a DynamicImage, transform: Transform2D) -> Self
-- prepare_top · function · L210-L314 — pub fn prepare_top(item: &DrawItem<'_>) -> (ImageBuffer<Rgba<u8>, Vec<u8>>, f32, f32)
-- prepare_top_affine · function · L321-L405 — fn prepare_top_affine(
-- prepare_mask · function · L409-L424 — pub fn prepare_mask(mask: &LayerMask, transform: Transform2D) -> ImageBuffer<Rgba<u8>, Vec<u8>>
-- combine_masks · function · L430-L440 — pub(crate) fn combine_masks(
-- combine_group_masks · function · L444-L454 — fn combine_group_masks(
-- prepare_group_mask · function · L458-L474 — fn prepare_group_mask(
-- multiply_coverage · function · L477-L499 — fn multiply_coverage(
-- Resolver · type · L505-L505 — type Resolver<'a> = &'a dyn Fn(Uuid) -> Option<Arc<DynamicImage>>;
-- scope_half_extents · function · L510-L521 — pub fn scope_half_extents(
-- extents_visit · function · L523-L559 — pub fn extents_visit(
-- fold_scope · function · L568-L638 — pub fn fold_scope(
-- composite_filter_layer · function · L649-L674 — pub fn composite_filter_layer(
-- attenuate_by_masks · function · L681-L704 — fn attenuate_by_masks(img: DynamicImage, masks: &[LayerMask]) -> DynamicImage
-- mask_coverage · function · L708-L718 — fn mask_coverage(mask: &LayerMask) -> ImageBuffer<Rgba<u8>, Vec<u8>>
-- apply_adjustment · function · L722-L755 — pub fn apply_adjustment(
+- needs_fallback_in · function · L9-L42 — pub fn needs_fallback_in(nodes: &[LayerNode]) -> bool
+- preview_buf · function · L49-L64 — pub fn preview_buf(image: &DynamicImage) -> RgbaBuf
+- MAX_PREVIEW · constant · L50-L50 — const MAX_PREVIEW: u32 = 2048;
+- thumb_buf · function · L67-L71 — pub fn thumb_buf(img: &DynamicImage) -> RgbaBuf
+- blend_pixel · function · L79-L121 — pub fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4]
+- blend_into · function · L126-L189 — pub fn blend_into(
+- DrawItem · struct · L192-L195 — pub struct DrawItem<'a>
+- new · function · L200-L202 — pub(crate) fn new(image: &'a DynamicImage, transform: Transform2D) -> Self
+- prepare_top · function · L207-L311 — pub fn prepare_top(item: &DrawItem<'_>) -> (ImageBuffer<Rgba<u8>, Vec<u8>>, f32, f32)
+- prepare_top_affine · function · L318-L402 — fn prepare_top_affine(
+- combine_group_masks · function · L406-L416 — fn combine_group_masks(
+- prepare_group_mask · function · L420-L436 — fn prepare_group_mask(
+- multiply_coverage · function · L439-L461 — fn multiply_coverage(
+- Resolver · type · L467-L467 — type Resolver<'a> = &'a dyn Fn(Uuid) -> Option<Arc<DynamicImage>>;
+- scope_half_extents · function · L472-L483 — pub fn scope_half_extents(
+- extents_visit · function · L485-L521 — pub fn extents_visit(
+- fold_scope · function · L530-L599 — pub fn fold_scope(
+- composite_filter_layer · function · L610-L635 — pub fn composite_filter_layer(
+- attenuate_by_masks · function · L642-L650 — fn attenuate_by_masks(img: DynamicImage, masks: &[LayerMask]) -> DynamicImage
+- combined_mask_coverage · function · L657-L665 — pub fn combined_mask_coverage(masks: &[LayerMask]) -> Option<ImageBuffer<Rgba<u8>, Vec<u8>>>
+- attenuate_by_coverage · function · L669-L684 — pub fn attenuate_by_coverage(
+- mask_coverage · function · L688-L698 — fn mask_coverage(mask: &LayerMask) -> ImageBuffer<Rgba<u8>, Vec<u8>>
+- apply_layer_masks · function · L707-L712 — pub fn apply_layer_masks(image: Arc<DynamicImage>, masks: &[LayerMask]) -> Arc<DynamicImage>
+- apply_coverage · function · L721-L737 — pub fn apply_coverage(
+- apply_adjustment · function · L741-L774 — pub fn apply_adjustment(

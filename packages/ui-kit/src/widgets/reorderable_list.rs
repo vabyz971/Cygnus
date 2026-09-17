@@ -22,7 +22,7 @@
 //! aucun type métier ici.
 
 use super::super::utils::drag_state::ReorderDragState;
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 
 /// Calcule l'index cible d'insertion selon la position Y de la souris
 /// relativement à la ligne survolee `current_index`.

@@ -22,6 +22,8 @@
 /// Espacements du thème.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusSpacing {
+    /// Très petit espacement (2px).
+    pub xxs: f32,
     /// Très petit espacement (4px).
     pub xs: f32,
     /// Petit espacement (8px).
@@ -38,6 +40,7 @@ impl CygnusSpacing {
     /// Échelle d'espacements du thème sombre.
     pub fn dark() -> Self {
         Self {
+            xxs: 2.0,
             xs: 4.0,
             sm: 8.0,
             md: 12.0,

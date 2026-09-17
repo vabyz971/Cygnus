@@ -14,26 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Widgets de base partagés par les 3 apps (boutons, sliders, inputs…).
+//! Widgets restants hors `components` (voir ce module pour les
+//! boutons, sliders, inputs… génériques) :
 //!
-//! Tous les widgets utilisent exclusivement les tokens de
-//! [`crate::theme`] : aucune couleur ni taille en dur ici.
+//! - [`icon`] : système d'icônes (`CygnusIcon`, seul contact avec
+//!   `egui_material_icons`) ;
+//! - [`reorderable_list`] : drag & drop réordonnable (sans équivalent
+//!   dans `components` pour l'instant).
 
-pub mod button;
-pub mod dropdown;
 pub mod icon;
-pub mod input;
 pub mod reorderable_list;
-pub mod slider;
-pub mod toggle;
-pub mod tooltip;
 
-pub use button::{CygnusButton, CygnusButtonStyle};
-pub use dropdown::CygnusDropdown;
 pub use icon::{ALL_ICONS, CygnusIcon, icon_button};
-pub use input::{CygnusNumberInput, CygnusTextInput};
 pub use reorderable_list::{
     ReorderableList, compute_target_index, draw_drop_indicator, item_background,
 };
-pub use slider::CygnusSlider;
-pub use toggle::CygnusToggle;

@@ -201,7 +201,10 @@ impl<'a> PhotoCanvas<'a> {
             .show_grid(self.show_grid)
             .show(ui, state);
 
-        let mut outcome = PhotoCanvasOutcome::default();
+        let mut outcome = PhotoCanvasOutcome {
+            response: Some(response.response.clone()),
+            ..Default::default()
+        };
         // Écran → pixels image (ajustement + zoom + pan inversés).
         // Sans image (dest None), les positions sont ignorées.
         if let Some(dest) = dest {
@@ -250,6 +253,8 @@ pub struct PhotoCanvasOutcome {
     pub paint: Option<PaintRequest>,
     /// Positions monde du pointeur (clic/drag avec l'outil actif).
     pub pointer_world: Vec<egui::Vec2>,
+    /// Réponse egui du viewport (menus contextuels, survol).
+    pub response: Option<egui::Response>,
 }
 
 #[cfg(test)]

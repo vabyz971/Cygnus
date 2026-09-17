@@ -20,7 +20,7 @@
 //! 1. [`setup_fonts`] : police UI (Hanken Grotesk) + police d'icônes.
 //! 2. [`apply_cygnus_theme`] : couleurs, espacements et rayons.
 
-use super::tokens::CygnusTheme;
+use super::CygnusTheme;
 
 /// Charge la police UI (Hanken Grotesk) PUIS la police d'icônes Material
 /// Symbols via `egui_material_icons`.

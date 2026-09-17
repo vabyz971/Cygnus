@@ -17,54 +17,67 @@
 - duplicate · function · L121-L129 — pub fn duplicate(&mut self, id: Uuid) -> Option<Uuid>
 - move_up · function · L132-L141 — pub fn move_up(&mut self, id: Uuid) -> bool
 - move_down · function · L144-L153 — pub fn move_down(&mut self, id: Uuid) -> bool
-- reorder_before · function · L156-L179 — pub fn reorder_before(&mut self, dragged: Uuid, target: Uuid, before: bool) -> bool
-- contains_id · function · L181-L193 — fn contains_id(nodes: &[LayerNode], id: Uuid) -> bool
-- group · function · L198-L218 — pub fn group(&mut self, ids: &[Uuid]) -> Option<Uuid>
-- ungroup · function · L222-L236 — pub fn ungroup(&mut self, id: Uuid) -> Option<Vec<Uuid>>
-- flip · function · L244-L278 — pub fn flip(&mut self, id: Uuid, horizontal: bool) -> Result<(), String>
-- crop · function · L286-L317 — pub fn crop(&mut self, id: Uuid, x: i32, y: i32, w: u32, h: u32) -> Result<(), String>
-- set_source_image · function · L320-L328 — pub fn set_source_image(&mut self, id: Uuid, image: DynamicImage) -> bool
-- add_filter · function · L336-L350 — pub fn add_filter(&mut self, layer_id: Uuid, filter: FilterLayer) -> Option<Uuid>
-- remove_filter · function · L353-L368 — pub fn remove_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<FilterLayer>
-- set_filter_param · function · L371-L398 — pub fn set_filter_param(
-- set_filter_enabled · function · L401-L423 — pub fn set_filter_enabled(&mut self, layer_id: Uuid, filter_id: Uuid, enabled: bool) -> bool
-- move_filter · function · L427-L448 — pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool
-- duplicate_filter · function · L451-L466 — pub fn duplicate_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<Uuid>
-- touch_pixel · function · L468-L472 — fn touch_pixel(&mut self, layer_id: Uuid)
-- find_filter_layer · function · L478-L480 — pub fn find_filter_layer(&self, filter_id: Uuid) -> Option<&FilterLayer>
-- find_filter_layer_mut · function · L482-L484 — pub fn find_filter_layer_mut(&mut self, filter_id: Uuid) -> Option<&mut FilterLayer>
-- find_filter_parent · function · L487-L489 — pub fn find_filter_parent(&self, filter_id: Uuid) -> Option<Uuid>
-- transform_of · function · L494-L499 — pub fn transform_of(&self, id: Uuid) -> Option<Transform2D>
-- set_transform_any · function · L502-L517 — pub fn set_transform_any(&mut self, id: Uuid, transform: Transform2D) -> bool
-- opacity_of · function · L520-L525 — pub fn opacity_of(&self, id: Uuid) -> Option<f32>
-- set_opacity_any · function · L527-L539 — pub fn set_opacity_any(&mut self, id: Uuid, opacity: f32) -> bool
-- blend_of · function · L542-L547 — pub fn blend_of(&self, id: Uuid) -> Option<BlendMode>
-- set_blend_any · function · L549-L561 — pub fn set_blend_any(&mut self, id: Uuid, mode: BlendMode) -> bool
-- set_name_any · function · L564-L576 — pub fn set_name_any(&mut self, id: Uuid, name: String) -> bool
-- mask_of · function · L581-L583 — pub fn mask_of(&self, owner_id: Uuid, mask_id: Uuid) -> Option<&LayerMask>
-- mask_of_mut · function · L585-L589 — pub fn mask_of_mut(&mut self, owner_id: Uuid, mask_id: Uuid) -> Option<&mut LayerMask>
-- masks_of · function · L592-L597 — pub fn masks_of(&self, owner_id: Uuid) -> Option<&[LayerMask]>
-- masks_of_mut · function · L599-L604 — pub fn masks_of_mut(&mut self, owner_id: Uuid) -> Option<&mut Vec<LayerMask>>
-- apply_command · function · L617-L713 — pub fn apply_command(&mut self, command: crate::command::Command) -> crate::command::Command
-- appearance · function · L721-L724 — pub fn appearance(&self, id: Uuid) -> Option<Appearance>
-- appearance_hit · function · L730-L733 — pub fn appearance_hit(&self, id: Uuid) -> Option<Appearance>
-- appearance_image · function · L736-L738 — pub fn appearance_image(&self, id: Uuid) -> Option<Arc<DynamicImage>>
-- thumb · function · L741-L743 — pub fn thumb(&self, id: Uuid) -> Option<RgbaBuf>
-- warm_cache_from · function · L750-L757 — pub fn warm_cache_from(&mut self, other: &Document)
-- snapshot · function · L762-L767 — pub fn snapshot(&self) -> crate::history::Snapshot
-- restore_snapshot · function · L770-L772 — pub fn restore_snapshot(&mut self, snap: crate::history::Snapshot)
-- composite_preview · function · L779-L781 — pub fn composite_preview(&self) -> Option<DynamicImage>
-- composite_preview_without · function · L788-L797 — pub fn composite_preview_without(&self, exclude_id: Uuid) -> Option<DynamicImage>
-- sample_color · function · L804-L825 — pub fn sample_color(&self, dx: f32, dy: f32) -> Option<[u8; 4]>
-- composite_scope · function · L827-L841 — fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage>
-- composite · function · L844-L853 — pub fn composite(&self) -> Option<DynamicImage>
-- renderer_stats · function · L857-L860 — pub fn renderer_stats(&self) -> (u64, u64)
-- find_in · function · L863-L875 — fn find_in(nodes: &[LayerNode], id: Uuid) -> Option<&LayerNode>
-- find_in_mut · function · L877-L889 — fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode>
-- find_owner_list · function · L892-L904 — fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<LayerNode>, usize)>
-- hide_subtree · function · L907-L915 — fn hide_subtree(node: Option<&mut LayerNode>)
-- collect_pixels · function · L917-L934 — fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>)
-- collect_masks · function · L936-L962 — fn collect_masks<'a>(
-- find_filter_in · function · L965-L982 — fn find_filter_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<&FilterLayer>
-- find_filter_in_mut · function · L984-L1001 — fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut FilterLayer>
-- find_filter_parent_in · function · L1004-L1021 — fn find_filter_parent_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<Uuid>
+- reorder_before · function · L156-L174 — pub fn reorder_before(&mut self, dragged: Uuid, target: Uuid, before: bool) -> bool
+- can_reorder_before · function · L181-L195 — pub fn can_reorder_before(&self, dragged: Uuid, target: Uuid) -> bool
+- move_into · function · L198-L212 — pub fn move_into(&mut self, dragged: Uuid, group: Uuid) -> bool
+- can_move_into · function · L216-L232 — pub fn can_move_into(&self, dragged: Uuid, group: Uuid) -> bool
+- is_noop_reorder · function · L234-L249 — fn is_noop_reorder(&self, dragged: Uuid, target: Uuid, before: bool) -> bool
+- is_noop_move_into · function · L251-L259 — fn is_noop_move_into(&self, dragged: Uuid, group: Uuid) -> bool
+- contains_id · function · L261-L273 — fn contains_id(nodes: &[LayerNode], id: Uuid) -> bool
+- group · function · L278-L298 — pub fn group(&mut self, ids: &[Uuid]) -> Option<Uuid>
+- ungroup · function · L302-L316 — pub fn ungroup(&mut self, id: Uuid) -> Option<Vec<Uuid>>
+- flip · function · L324-L358 — pub fn flip(&mut self, id: Uuid, horizontal: bool) -> Result<(), String>
+- crop · function · L366-L397 — pub fn crop(&mut self, id: Uuid, x: i32, y: i32, w: u32, h: u32) -> Result<(), String>
+- set_source_image · function · L400-L408 — pub fn set_source_image(&mut self, id: Uuid, image: DynamicImage) -> bool
+- add_filter · function · L416-L430 — pub fn add_filter(&mut self, layer_id: Uuid, filter: FilterLayer) -> Option<Uuid>
+- remove_filter · function · L433-L448 — pub fn remove_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<FilterLayer>
+- set_filter_param · function · L451-L478 — pub fn set_filter_param(
+- set_filter_enabled · function · L481-L503 — pub fn set_filter_enabled(&mut self, layer_id: Uuid, filter_id: Uuid, enabled: bool) -> bool
+- move_filter · function · L507-L528 — pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool
+- duplicate_filter · function · L531-L546 — pub fn duplicate_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<Uuid>
+- touch_pixel · function · L548-L552 — fn touch_pixel(&mut self, layer_id: Uuid)
+- find_filter_layer · function · L558-L560 — pub fn find_filter_layer(&self, filter_id: Uuid) -> Option<&FilterLayer>
+- find_filter_layer_mut · function · L562-L564 — pub fn find_filter_layer_mut(&mut self, filter_id: Uuid) -> Option<&mut FilterLayer>
+- find_filter_parent · function · L567-L569 — pub fn find_filter_parent(&self, filter_id: Uuid) -> Option<Uuid>
+- transform_of · function · L574-L579 — pub fn transform_of(&self, id: Uuid) -> Option<Transform2D>
+- set_transform_any · function · L582-L597 — pub fn set_transform_any(&mut self, id: Uuid, transform: Transform2D) -> bool
+- opacity_of · function · L600-L605 — pub fn opacity_of(&self, id: Uuid) -> Option<f32>
+- set_opacity_any · function · L607-L619 — pub fn set_opacity_any(&mut self, id: Uuid, opacity: f32) -> bool
+- blend_of · function · L622-L627 — pub fn blend_of(&self, id: Uuid) -> Option<BlendMode>
+- set_blend_any · function · L629-L641 — pub fn set_blend_any(&mut self, id: Uuid, mode: BlendMode) -> bool
+- set_name_any · function · L644-L667 — pub fn set_name_any(&mut self, id: Uuid, name: String) -> bool
+- mask_owner_of · function · L670-L672 — pub fn mask_owner_of(&self, mask_id: Uuid) -> Option<Uuid>
+- mask_name · function · L675-L681 — pub fn mask_name(&self, mask_id: Uuid) -> Option<String>
+- move_mask · function · L686-L706 — pub fn move_mask(&mut self, owner_id: Uuid, mask_id: Uuid, up: bool) -> bool
+- mask_of · function · L711-L713 — pub fn mask_of(&self, owner_id: Uuid, mask_id: Uuid) -> Option<&LayerMask>
+- mask_of_mut · function · L715-L719 — pub fn mask_of_mut(&mut self, owner_id: Uuid, mask_id: Uuid) -> Option<&mut LayerMask>
+- masks_of · function · L722-L727 — pub fn masks_of(&self, owner_id: Uuid) -> Option<&[LayerMask]>
+- masks_of_mut · function · L729-L734 — pub fn masks_of_mut(&mut self, owner_id: Uuid) -> Option<&mut Vec<LayerMask>>
+- apply_command · function · L747-L843 — pub fn apply_command(&mut self, command: crate::command::Command) -> crate::command::Command
+- appearance · function · L851-L854 — pub fn appearance(&self, id: Uuid) -> Option<Appearance>
+- appearance_hit · function · L860-L863 — pub fn appearance_hit(&self, id: Uuid) -> Option<Appearance>
+- appearance_image · function · L866-L868 — pub fn appearance_image(&self, id: Uuid) -> Option<Arc<DynamicImage>>
+- export_warmed · function · L873-L875 — pub fn export_warmed(&self, id: Uuid) -> Option<crate::renderer::WarmedAppearance>
+- insert_warmed · function · L879-L881 — pub fn insert_warmed(&mut self, id: Uuid, warmed: crate::renderer::WarmedAppearance)
+- thumb · function · L884-L886 — pub fn thumb(&self, id: Uuid) -> Option<RgbaBuf>
+- warm_cache_from · function · L893-L900 — pub fn warm_cache_from(&mut self, other: &Document)
+- snapshot · function · L905-L910 — pub fn snapshot(&self) -> crate::history::Snapshot
+- restore_snapshot · function · L913-L915 — pub fn restore_snapshot(&mut self, snap: crate::history::Snapshot)
+- composite_preview · function · L922-L924 — pub fn composite_preview(&self) -> Option<DynamicImage>
+- composite_preview_without · function · L931-L940 — pub fn composite_preview_without(&self, exclude_id: Uuid) -> Option<DynamicImage>
+- sample_color · function · L947-L968 — pub fn sample_color(&self, dx: f32, dy: f32) -> Option<[u8; 4]>
+- sample_region · function · L975-L1004 — pub fn sample_region(&self, dx: f32, dy: f32, side: u32) -> Option<Vec<u8>>
+- composite_scope · function · L1006-L1020 — fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage>
+- composite · function · L1023-L1032 — pub fn composite(&self) -> Option<DynamicImage>
+- renderer_stats · function · L1036-L1039 — pub fn renderer_stats(&self) -> (u64, u64)
+- find_in · function · L1042-L1054 — fn find_in(nodes: &[LayerNode], id: Uuid) -> Option<&LayerNode>
+- find_in_mut · function · L1056-L1068 — fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode>
+- owner_position · function · L1071-L1087 — fn owner_position(
+- find_owner_list · function · L1090-L1102 — fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<LayerNode>, usize)>
+- hide_subtree · function · L1105-L1113 — fn hide_subtree(node: Option<&mut LayerNode>)
+- collect_pixels · function · L1115-L1132 — fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>)
+- collect_masks · function · L1134-L1160 — fn collect_masks<'a>(
+- find_filter_in · function · L1163-L1180 — fn find_filter_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<&FilterLayer>
+- find_filter_in_mut · function · L1182-L1199 — fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut FilterLayer>
+- find_filter_parent_in · function · L1202-L1219 — fn find_filter_parent_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<Uuid>
+- mask_owner_in · function · L1223-L1248 — fn mask_owner_in(nodes: &[LayerNode], mask_id: Uuid) -> Option<Uuid>

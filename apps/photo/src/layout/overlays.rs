@@ -23,13 +23,13 @@
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::ui::{draw_export_dialog, draw_help_dialog, draw_new_document_dialog};
+use ui_kit::components::Select;
 use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::widgets::dropdown::CygnusDropdown;
 
 /// Toutes les modales (filtre, nouveau document, export, aide).
-pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, _ctx: &PhotoUiContext) -> Vec<PhotoAction> {
+pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    actions.extend(draw_filter_modal(ui, app));
+    actions.extend(draw_filter_modal(ui, app, ctx));
     actions.extend(draw_new_document_overlay(ui, app));
     actions.extend(draw_export_overlay(ui, app));
     draw_help_dialog(ui.ctx(), &mut app.shell.help_open);
@@ -37,7 +37,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, _ctx: &PhotoUiContext) -> Vec
 }
 
 /// Modale d'ajout de filtre (registre moteur statique).
-fn draw_filter_modal(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<PhotoAction> {
+fn draw_filter_modal(
+    ui: &mut egui::Ui,
+    app: &mut PhotoApp,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     if !app.shell.filter_modal.open {
         return actions;
@@ -50,11 +54,15 @@ fn draw_filter_modal(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<PhotoAction> 
         .collect();
     let mut open = true;
     let mut choice = app.shell.filter_modal.choice;
-    let ctx = ui.ctx().clone();
-    let action =
-        CygnusModal::new("Ajouter un filtre", "Ajouter", "Annuler").show(&ctx, &mut open, |ui| {
-            CygnusDropdown::new("Filtre", &names).show(ui, &mut choice);
-        });
+    let ctx_clone = ui.ctx().clone();
+    let theme = ctx.shared.theme();
+    let action = CygnusModal::new("Ajouter un filtre", "Ajouter", "Annuler").show(
+        &ctx_clone,
+        &mut open,
+        |ui| {
+            Select::new("Filtre", &names).show(ui, theme, &mut choice);
+        },
+    );
     app.shell.filter_modal.open = open;
     app.shell.filter_modal.choice = choice;
     if action == Some(ModalAction::Confirm)

@@ -20,7 +20,7 @@
 //! L'état ouvert/fermé est détenu par l'app via `&mut bool`, ce qui
 //! rend la bascule testable sans contexte UI.
 
-use crate::theme::tokens::CygnusTheme;
+use crate::theme::CygnusTheme;
 use crate::theme::typography::heading_text;
 
 /// Section repliable standard Cygnus.
