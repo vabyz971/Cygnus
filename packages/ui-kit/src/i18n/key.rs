@@ -17,8 +17,10 @@
 //! Clés de traduction stables du design system.
 //!
 //! Les composants ne portent aucune chaîne métier : les apps
-//! traduisent via [`Catalog`](super::catalog::Catalog). Les clés sont
-//! stables entre versions (sérialisables, jamais renommées).
+//! traduisent via [`Catalog`](super::catalog::Catalog), dont les
+//! tables vivent dans [`super::en`] (anglais) et [`super::fr`]
+//! (français). Les clés sont stables entre versions
+//! (sérialisables, jamais renommées).
 
 use serde::{Deserialize, Serialize};
 
@@ -65,32 +67,22 @@ pub enum TextKey {
     History,
     /// Chronologie.
     Timeline,
-}
-
-impl TextKey {
-    /// Libellé anglais par défaut (langue de repli).
-    pub fn default_text(self) -> &'static str {
-        match self {
-            Self::Save => "Save",
-            Self::Open => "Open",
-            Self::Cancel => "Cancel",
-            Self::Close => "Close",
-            Self::Undo => "Undo",
-            Self::Redo => "Redo",
-            Self::Delete => "Delete",
-            Self::Duplicate => "Duplicate",
-            Self::NewDocument => "New document",
-            Self::Export => "Export",
-            Self::Layers => "Layers",
-            Self::Settings => "Settings",
-            Self::Quit => "Quit",
-            Self::Copy => "Copy",
-            Self::Paste => "Paste",
-            Self::Tools => "Tools",
-            Self::Inspector => "Inspector",
-            Self::Navigator => "Navigator",
-            Self::History => "History",
-            Self::Timeline => "Timeline",
-        }
-    }
+    /// Menu Fichier.
+    File,
+    /// Menu Édition.
+    Edit,
+    /// Menu Affichage.
+    View,
+    /// Menu Aide.
+    Help,
+    /// Zoom avant.
+    ZoomIn,
+    /// Zoom arrière.
+    ZoomOut,
+    /// Grille.
+    Grid,
+    /// Canevas (zone de dessin).
+    Canvas,
+    /// Fenêtre (menu des panneaux ancrables).
+    Window,
 }

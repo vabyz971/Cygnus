@@ -17,10 +17,11 @@
 //! Catalogue de traductions (anglais / français).
 //!
 //! Tables statiques (`match`), zéro allocation : `get` retourne un
-//! `&'static str`. Toute clé manquante dans une langue retombe sur
-//! [`TextKey::default_text`] (anglais).
+//! `&'static str`. Le dispatch se fait vers [`super::en`] ou
+//! [`super::fr`] ; ajouter une langue = un fichier + une variante
+//! de [`Language`].
 
-use super::key::TextKey;
+use super::{en, fr, key::TextKey};
 
 /// Langue d'affichage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,37 +50,11 @@ impl Catalog {
         self.lang
     }
 
-    /// Traduit `key` (repli anglais si non traduit).
+    /// Traduit `key` dans la langue du catalogue.
     pub fn get(self, key: TextKey) -> &'static str {
         match self.lang {
-            Language::En => key.default_text(),
-            Language::Fr => Self::french(key),
-        }
-    }
-
-    /// Table française (repli anglais pour les clés non traduites).
-    fn french(key: TextKey) -> &'static str {
-        match key {
-            TextKey::Save => "Enregistrer",
-            TextKey::Open => "Ouvrir",
-            TextKey::Cancel => "Annuler",
-            TextKey::Close => "Fermer",
-            TextKey::Undo => "Annuler",
-            TextKey::Redo => "Rétablir",
-            TextKey::Delete => "Supprimer",
-            TextKey::Duplicate => "Dupliquer",
-            TextKey::NewDocument => "Nouveau document",
-            TextKey::Export => "Exporter",
-            TextKey::Layers => "Calques",
-            TextKey::Settings => "Paramètres",
-            TextKey::Quit => "Quitter",
-            TextKey::Copy => "Copier",
-            TextKey::Paste => "Coller",
-            TextKey::Tools => "Outils",
-            TextKey::Inspector => "Inspecteur",
-            TextKey::Navigator => "Navigateur",
-            TextKey::History => "Historique",
-            TextKey::Timeline => "Chronologie",
+            Language::En => en::translate(key),
+            Language::Fr => fr::translate(key),
         }
     }
 }
@@ -96,9 +71,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn english_matches_defaults() {
+    fn english_matches_expected() {
         let catalog = Catalog::new(Language::En);
-        assert_eq!(catalog.get(TextKey::Save), TextKey::Save.default_text());
+        assert_eq!(catalog.get(TextKey::Save), "Save");
         assert_eq!(catalog.get(TextKey::Layers), "Layers");
     }
 

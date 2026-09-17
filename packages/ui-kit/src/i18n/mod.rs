@@ -18,8 +18,12 @@
 //!
 //! Les composants prennent des `&str` déjà traduits ou des
 //! [`TextKey`] : jamais de chaînes métier en dur dans ui-kit.
+//! Une langue = un fichier (`en`, `fr`, …), le [`Catalog`]
+//! dispatche vers la table.
 
 pub mod catalog;
+pub mod en;
+pub mod fr;
 pub mod key;
 
 pub use catalog::{Catalog, Language};

@@ -42,6 +42,8 @@ pub struct CygnusColors {
     pub border: egui::Color32,
     /// Erreur (aussi utilisée pour les actions destructrices).
     pub error: egui::Color32,
+    /// Erreur au survol (boutons destructeurs).
+    pub error_hover: egui::Color32,
     /// Succès.
     pub success: egui::Color32,
     /// Avertissement.
@@ -67,6 +69,7 @@ impl CygnusColors {
             accent_hover: egui::Color32::from_rgb(108, 144, 255),
             border: egui::Color32::from_rgb(48, 48, 60),
             error: egui::Color32::from_rgb(255, 85, 85),
+            error_hover: egui::Color32::from_rgb(255, 105, 105),
             success: egui::Color32::from_rgb(80, 220, 120),
             warning: egui::Color32::from_rgb(255, 190, 60),
             item_selected: egui::Color32::from_rgb(45, 55, 90),
