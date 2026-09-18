@@ -29,7 +29,7 @@
 
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
-    ExportDialogState, LayerRenameState, NewDocumentDialogState, PhotoBrushSettings,
+    CreateDocumentDialogState, ExportDialogState, LayerRenameState, PhotoBrushSettings,
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PreviewImage,
 };
 use std::path::PathBuf;
@@ -113,8 +113,8 @@ pub struct PhotoShellState {
     pub tree: egui_tiles::Tree<PhotoDockTab>,
     /// Modale d'ajout de filtre.
     pub filter_modal: FilterModalState,
-    /// Fenêtre « Nouveau document » (format, dimensions, orientation).
-    pub new_doc_dialog: NewDocumentDialogState,
+    /// Fenêtre « Créer un document » (format, dimensions, orientation).
+    pub new_doc_dialog: CreateDocumentDialogState,
     /// Fenêtre « Exportation » (dossier, format, validation).
     pub export_dialog: ExportDialogState,
     /// Fenêtre d'aide visible.
@@ -130,7 +130,7 @@ impl Default for PhotoShellState {
             workspace: WorkspaceState::default(),
             tree: egui_tiles::Tree::empty("photo-tree"),
             filter_modal: FilterModalState::default(),
-            new_doc_dialog: NewDocumentDialogState::default(),
+            new_doc_dialog: CreateDocumentDialogState::default(),
             export_dialog: ExportDialogState::default(),
             help_open: false,
         }

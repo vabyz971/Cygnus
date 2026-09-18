@@ -35,10 +35,14 @@ use ui_kit::dialogs::pick_image_to_open;
 use ui_kit::layout::PanelId;
 
 /// App Photo : documents à onglets + coquille + runtime + file d'actions.
+///
+/// L'app démarre SANS document : la fenêtre « Créer un document »
+/// s'ouvre pour le premier document (ou une image). Zéro document
+/// ouvert est un état normal (écran d'accueil).
 pub struct PhotoApp {
-    /// Documents ouverts (toujours au moins un).
+    /// Documents ouverts (vide au démarrage).
     pub docs: Vec<OpenDocument>,
-    /// Index du document actif.
+    /// Index du document actif (valide seulement si non vide).
     pub active: usize,
     /// État global de la coquille (workspace, dialogs).
     pub shell: PhotoShellState,
@@ -49,7 +53,8 @@ pub struct PhotoApp {
 }
 
 impl PhotoApp {
-    /// Crée l'app avec un document vide.
+    /// Crée l'app sans document et ouvre la fenêtre de création
+    /// (premier document ou ouverture d'image).
     pub fn new() -> Self {
         // Restauration du layout : aucun JSON stocké pour l'instant
         // (câblage disque via `preferences` : phase suivante).
@@ -66,36 +71,32 @@ impl PhotoApp {
             runtime: PhotoRuntimeState::new(),
             queue: PhotoCommandQueue::new(),
         };
-        app.open_blank_tab();
+        // Pas de document initial : l'utilisateur crée (ou ouvre).
+        app.shell.new_doc_dialog.open();
         // Disposition des docks autour des canevas (câblage disque
         // via `preferences` : phase suivante).
         app.shell.tree = load_tree_or_default(None, &app.doc_ids());
         app
     }
 
-    /// Document actif (toujours présent : jamais zéro document).
-    pub fn active_doc(&self) -> &OpenDocument {
-        &self.docs[self.active.min(self.docs.len().saturating_sub(1))]
+    /// Document actif, s'il y en a un.
+    pub fn active_doc_opt(&self) -> Option<&OpenDocument> {
+        self.docs
+            .get(self.active.min(self.docs.len().saturating_sub(1)))
     }
 
-    /// Document actif mutable.
-    pub fn active_doc_mut(&mut self) -> &mut OpenDocument {
+    /// Document actif mutable, s'il y en a un.
+    pub fn active_doc_mut_opt(&mut self) -> Option<&mut OpenDocument> {
         let index = self.active.min(self.docs.len().saturating_sub(1));
-        &mut self.docs[index]
+        self.docs.get_mut(index)
     }
 
-    /// Ouvre un onglet sur un document neuf et demande son snapshot.
-    pub fn open_blank_tab(&mut self) {
-        self.runtime.untitled_counter += 1;
-        let title = format!("Sans titre {}", self.runtime.untitled_counter);
-        self.spawn_document(title, Document::new(1920, 1080));
-    }
-
-    /// Ouvre un onglet aux dimensions validées (fenêtre Nouveau doc).
+    /// Ouvre un onglet aux dimensions validées (fenêtre Nouveau doc),
+    /// avec un premier calque transparent à ces dimensions.
     pub fn open_sized_tab(&mut self, width: u32, height: u32) {
         self.runtime.untitled_counter += 1;
         let title = format!("Sans titre {}", self.runtime.untitled_counter);
-        self.spawn_document(title, Document::new(width, height));
+        self.spawn_document(title, Document::with_blank_layer(width, height));
     }
 
     /// Crée le worker d'un document, lui ajoute son onglet canevas
@@ -121,7 +122,7 @@ impl PhotoApp {
         });
         self.active = self.docs.len() - 1;
         push_canvas_tab(&mut self.shell.tree, PhotoDockTab::Canvas(id));
-        let _ = self.active_doc().tx.send(PhotoEngineCommand::Refresh);
+        let _ = self.docs[self.active].tx.send(PhotoEngineCommand::Refresh);
     }
 
     /// Ids des documents ouverts (canevas du layout).
@@ -129,11 +130,11 @@ impl PhotoApp {
         self.docs.iter().map(|doc| doc.id).collect()
     }
 
-    /// Ferme l'onglet actif (jamais zéro document : le dernier est
-    /// remplacé par un neuf). Le worker s'arrête à la chute du channel.
+    /// Ferme l'onglet actif (zéro document autorisé : l'écran
+    /// d'accueil prend le relais). Le worker s'arrête à la chute
+    /// du channel.
     pub fn close_active_tab(&mut self) {
         if self.docs.is_empty() {
-            self.open_blank_tab();
             return;
         }
         let index = self.active.min(self.docs.len() - 1);
@@ -141,7 +142,7 @@ impl PhotoApp {
     }
 
     /// Ferme le document `id` et retire son onglet canevas (sans
-    /// effet si inconnu ; jamais zéro document).
+    /// effet si inconnu ; zéro document autorisé).
     pub fn close_document(&mut self, id: uuid::Uuid) {
         if let Some(index) = self.docs.iter().position(|doc| doc.id == id) {
             self.docs.remove(index);
@@ -151,17 +152,15 @@ impl PhotoApp {
                 self.active -= 1;
             }
         }
-        if self.docs.is_empty() {
-            self.open_blank_tab();
-        } else {
-            self.active = self.active.min(self.docs.len() - 1);
-        }
+        self.active = self.active.min(self.docs.len().saturating_sub(1));
     }
 
-    /// Envoie une commande au worker du document actif (échec
-    /// silencieux si le worker est arrêté : l'UI ne panique jamais).
+    /// Envoie une commande au worker du document actif (sans effet
+    /// sans document : l'UI ne panique jamais).
     fn send_active(&self, command: PhotoEngineCommand) {
-        let _ = self.active_doc().tx.send(command);
+        if let Some(doc) = self.active_doc_opt() {
+            let _ = doc.tx.send(command);
+        }
     }
 
     /// Route une action UI : état local ou commande worker.
@@ -189,12 +188,12 @@ impl PhotoApp {
             PhotoAction::Redo => self.send_active(PhotoEngineCommand::Redo),
             PhotoAction::AddEmptyLayer => self.send_active(PhotoEngineCommand::AddEmptyLayer),
             PhotoAction::DuplicateSelectedLayer => {
-                if let Some(id) = self.active_doc().ui.selected {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::DuplicateLayer(id));
                 }
             }
             PhotoAction::DeleteSelectedLayer => {
-                if let Some(id) = self.active_doc().ui.selected {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::DeleteLayer(id));
                 }
             }
@@ -205,19 +204,23 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::DuplicateLayer(id));
             }
             PhotoAction::AddMaskToSelected => {
-                if let Some(id) = self.active_doc().ui.selected {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::AddMask { layer: id });
                 }
             }
             PhotoAction::OpenFilterMenu => {
-                self.shell.filter_modal.open = self.active_doc().ui.selected.is_some();
+                self.shell.filter_modal.open = self
+                    .active_doc_opt()
+                    .is_some_and(|doc| doc.ui.selected.is_some());
                 self.shell.filter_modal.choice = 0;
             }
             PhotoAction::AddFilter { layer, filter_type } => {
                 self.send_active(PhotoEngineCommand::AddFilter { layer, filter_type });
             }
             PhotoAction::SelectLayer(id) => {
-                self.active_doc_mut().ui.selected = Some(id);
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.selected = Some(id);
+                }
             }
             PhotoAction::RenameLayer { layer, name } => {
                 self.send_active(PhotoEngineCommand::RenameLayer { layer, name });
@@ -247,20 +250,29 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::RemoveMask { owner, mask });
             }
             PhotoAction::SetTool(tool) => {
-                self.active_doc_mut().ui.tool = tool;
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.tool = tool;
+                }
             }
             PhotoAction::ToggleGrid => {
-                let ui = &mut self.active_doc_mut().ui;
-                ui.show_grid = !ui.show_grid;
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.show_grid = !doc.ui.show_grid;
+                }
             }
             PhotoAction::ZoomIn => {
-                self.active_doc_mut().ui.viewport.zoom_by(1.25, None);
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.viewport.zoom_by(1.25, None);
+                }
             }
             PhotoAction::ZoomOut => {
-                self.active_doc_mut().ui.viewport.zoom_by(0.8, None);
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.viewport.zoom_by(0.8, None);
+                }
             }
             PhotoAction::ZoomReset => {
-                self.active_doc_mut().ui.viewport.reset();
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.viewport.reset();
+                }
             }
             PhotoAction::CommitStroke(paint) => {
                 self.send_active(PhotoEngineCommand::PaintStroke {
@@ -299,10 +311,16 @@ impl PhotoApp {
                 apply_response(ctx, &mut doc.ui, response);
             }
         }
-        // Ouverture d'image → document actif.
+        // Ouverture d'image → document actif (créé si besoin).
         if let Some(rx) = self.runtime.open_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
+                    if self.docs.is_empty() {
+                        self.runtime.untitled_counter += 1;
+                        let title = format!("Sans titre {}", self.runtime.untitled_counter);
+                        // Dimensions ajustées par le worker à l'image.
+                        self.spawn_document(title, Document::new(1, 1));
+                    }
                     self.send_active(PhotoEngineCommand::OpenImage { path });
                 }
                 Ok(None) => {}
@@ -310,8 +328,9 @@ impl PhotoApp {
                     self.runtime.open_picker = Some(rx);
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.active_doc_mut().ui.status =
-                        String::from("Dialogue de fichier indisponible");
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                    }
                 }
             }
         }
@@ -354,19 +373,10 @@ mod tests {
     use crate::ui::PhotoEngineResponse;
 
     #[test]
-    fn app_boots_with_one_blank_doc() {
-        let mut app = PhotoApp::new();
-        assert_eq!(app.docs.len(), 1);
-        assert_eq!(app.active, 0);
-        // Snapshot initial du worker (document vide).
-        let response = app
-            .active_doc()
-            .rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("snapshot initial");
-        let ctx = egui::Context::default();
-        apply_response(&ctx, &mut app.active_doc_mut().ui, response);
-        assert!(app.active_doc().ui.layers.is_empty());
+    fn app_boots_without_doc_and_open_dialog() {
+        let app = PhotoApp::new();
+        assert!(app.docs.is_empty(), "aucun document au démarrage");
+        assert!(app.shell.new_doc_dialog.open);
     }
 
     #[test]
@@ -374,9 +384,9 @@ mod tests {
         use uuid::Uuid;
 
         let mut app = PhotoApp::new();
-        app.open_blank_tab();
-        app.open_blank_tab();
-        assert_eq!(app.docs.len(), 3);
+        app.open_sized_tab(800, 600);
+        app.open_sized_tab(800, 600);
+        assert_eq!(app.docs.len(), 2);
         // Un onglet canevas par document.
         for doc in &app.docs {
             assert!(crate::layout::dock::has_tab(
@@ -385,42 +395,82 @@ mod tests {
             ));
         }
         // Fermer l'actif retire aussi son canevas.
-        let removed = app.active_doc().id;
+        let removed = app.active_doc_opt().expect("doc actif").id;
         app.close_active_tab();
-        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.docs.len(), 1);
         assert!(!crate::layout::dock::has_tab(
             &app.shell.tree,
             PhotoDockTab::Canvas(removed)
         ));
-        // Fermer jusqu'au dernier : jamais zéro document.
+        // Fermer le dernier : zéro document autorisé (accueil).
         app.close_active_tab();
-        app.close_active_tab();
-        assert_eq!(app.docs.len(), 1);
+        assert!(app.docs.is_empty());
         // Id inconnu : sans effet.
         app.close_document(Uuid::from_u128(999));
+        assert!(app.docs.is_empty());
+    }
+
+    #[test]
+    fn create_document_action_opens_sized_tab_with_layer() {
+        let mut app = PhotoApp::new();
+        assert!(app.docs.is_empty());
+        let ctx = egui::Context::default();
+        app.handle_action(
+            &ctx,
+            PhotoAction::CreateDocument {
+                width: 800,
+                height: 600,
+            },
+        );
         assert_eq!(app.docs.len(), 1);
+        assert_eq!(app.active, 0);
+        assert!(crate::layout::dock::has_tab(
+            &app.shell.tree,
+            PhotoDockTab::Canvas(app.active_doc_opt().expect("doc actif").id)
+        ));
+        // Snapshot initial du worker : le calque vierge aux dimensions.
+        let response = app
+            .active_doc_opt()
+            .expect("doc actif")
+            .rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("snapshot initial");
+        apply_response(
+            &ctx,
+            &mut app.active_doc_mut_opt().expect("doc actif").ui,
+            response,
+        );
+        let layers = &app.active_doc_opt().expect("doc actif").ui.layers;
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].name, "Calque 1");
     }
 
     #[test]
     fn closing_before_active_keeps_selection() {
         let mut app = PhotoApp::new();
-        app.open_blank_tab();
-        app.open_blank_tab();
+        app.open_sized_tab(800, 600);
+        app.open_sized_tab(800, 600);
         let middle = app.docs[1].id;
         app.active = 1;
         app.close_document(app.docs[0].id);
-        assert_eq!(app.docs.len(), 2);
+        assert_eq!(app.docs.len(), 1);
         assert_eq!(app.active, 0);
-        assert_eq!(app.active_doc().id, middle);
+        assert_eq!(app.active_doc_opt().expect("doc actif").id, middle);
     }
 
     #[test]
     fn actions_route_to_local_state() {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
-        let before = app.active_doc().ui.show_grid;
+        // Sans document : sans effet, sans panique.
         app.handle_action(&ctx, PhotoAction::ToggleGrid);
-        assert_eq!(app.active_doc().ui.show_grid, !before);
+        app.open_sized_tab(800, 600);
+        let before = app.active_doc_opt().expect("doc actif").ui.show_grid;
+        app.handle_action(&ctx, PhotoAction::ToggleGrid);
+        assert_eq!(
+            app.active_doc_opt().expect("doc actif").ui.show_grid,
+            !before
+        );
         app.handle_action(&ctx, PhotoAction::ZoomIn);
         app.handle_action(&ctx, PhotoAction::ZoomReset);
         app.handle_action(&ctx, PhotoAction::ShowHelp);
@@ -432,18 +482,32 @@ mod tests {
         use uuid::Uuid;
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
+        // Sans document : sans effet, sans panique.
         let id = Uuid::new_v4();
         app.handle_action(&ctx, PhotoAction::SelectLayer(id));
-        assert_eq!(app.active_doc().ui.selected, Some(id));
+        assert!(app.active_doc_opt().is_none());
+        app.open_sized_tab(800, 600);
+        app.handle_action(&ctx, PhotoAction::SelectLayer(id));
+        assert_eq!(
+            app.active_doc_opt().expect("doc actif").ui.selected,
+            Some(id)
+        );
     }
 
     #[test]
     fn full_layout_draws_without_panic() {
         let mut app = PhotoApp::new();
-        app.active_doc_mut().ui.status = String::from("test");
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let ctx_clone = ctx.clone();
+        // Accueil + dialogue de création (zéro document).
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.draw(&ctx_clone, ui);
+        })
+        .drop_without_applying_deltas();
+        assert!(app.queue.is_empty());
+        // Puis workspace complet avec un document.
+        app.open_sized_tab(64, 64);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             app.draw(&ctx_clone, ui);
         })
@@ -483,8 +547,10 @@ mod tests {
             image::ColorType::Rgb8,
         )
         .expect("image de test");
-        let app = PhotoApp::new();
-        app.active_doc()
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(64, 64);
+        app.active_doc_opt()
+            .expect("doc actif")
             .tx
             .send(PhotoEngineCommand::OpenImage { path: path.clone() })
             .expect("envoi commande");
@@ -496,7 +562,7 @@ mod tests {
         let mut polls = 0;
         let layers = loop {
             polls += 1;
-            match app.active_doc().rx.try_recv() {
+            match app.active_doc_opt().expect("doc actif").rx.try_recv() {
                 Ok(PhotoEngineResponse::LayersChanged { layers, .. })
                     if layers
                         .iter()

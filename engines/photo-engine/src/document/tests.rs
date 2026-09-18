@@ -40,6 +40,25 @@ fn px(img: &DynamicImage, x: u32, y: u32) -> [u8; 4] {
     [p[0], p[1], p[2], p[3]]
 }
 
+#[test]
+fn blank_document_starts_with_sized_transparent_layer() {
+    let doc = Document::with_blank_layer(800, 600);
+    assert_eq!((doc.width, doc.height), (800, 600));
+    assert_eq!(doc.pixel_count(), 1);
+    let layer = &doc.iter_pixels()[0];
+    assert_eq!(layer.name, "Calque 1");
+    assert_eq!(layer.dimensions(), (800, 600));
+    assert_eq!(px(&layer.source_image, 0, 0)[3], 0);
+    assert_eq!(px(&layer.source_image, 799, 599)[3], 0);
+}
+
+#[test]
+fn blank_document_clamps_to_1x1() {
+    let doc = Document::with_blank_layer(0, 0);
+    assert_eq!((doc.width, doc.height), (1, 1));
+    assert_eq!(doc.iter_pixels()[0].dimensions(), (1, 1));
+}
+
 fn assert_close(got: [u8; 4], exp: [u8; 4]) {
     for c in 0..4 {
         assert!(

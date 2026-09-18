@@ -27,6 +27,7 @@
 //! Le pont moteur (`engine_bridge`, channels + worker) ne sait rien
 //! d'egui au-delà des snapshots ; aucun widget n'y envoie directement.
 
+pub mod create_document;
 pub mod dialogs;
 pub mod engine_bridge;
 pub mod features;
@@ -36,10 +37,10 @@ pub mod optionsbar;
 pub mod toolbar;
 pub mod viewport;
 
-pub use dialogs::{
-    ExportDialogState, NewDocumentDialogState, draw_export_dialog, draw_help_dialog,
-    draw_new_document_dialog,
+pub use create_document::{
+    CreateDocumentDialogState, NewDocumentChoice, draw_create_document_dialog,
 };
+pub use dialogs::{ExportDialogState, draw_export_dialog, draw_help_dialog};
 pub use engine_bridge::{
     PhotoEngineCommand, PhotoEngineResponse, PreviewImage, spawn_photo_engine_worker,
 };

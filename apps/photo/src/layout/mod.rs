@@ -37,6 +37,7 @@ pub mod left_sidebar;
 pub mod overlays;
 pub mod right_sidebar;
 pub mod top_bar;
+pub mod welcome;
 pub mod workspace;
 
 pub use workspace::PhotoWorkspace;

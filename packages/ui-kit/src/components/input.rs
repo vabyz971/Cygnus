@@ -77,12 +77,18 @@ impl<'a> TextInput<'a> {
 pub struct NumberInput<'a> {
     label: &'a str,
     range: Option<std::ops::RangeInclusive<f64>>,
+    /// Vrai = libellé au-dessus du champ (colonne verticale).
+    stacked: bool,
 }
 
 impl<'a> NumberInput<'a> {
     /// Crée un champ numérique avec libellé.
     pub fn new(label: &'a str) -> Self {
-        Self { label, range: None }
+        Self {
+            label,
+            range: None,
+            stacked: false,
+        }
     }
 
     /// Plage de valeurs autorisées.
@@ -92,21 +98,40 @@ impl<'a> NumberInput<'a> {
         self
     }
 
+    /// Empile le libellé au-dessus du champ (au lieu de côte à côte).
+    #[must_use]
+    pub fn stacked(mut self) -> Self {
+        self.stacked = true;
+        self
+    }
+
     /// Affiche le champ, met à jour `value`, retourne la réponse egui.
+    /// En mode [`NumberInput::stacked`], le libellé est au-dessus du champ.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, value: &mut f64) -> egui::Response {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(self.label)
-                    .size(theme.typography.body_size)
-                    .color(theme.colors.fg_secondary),
-            );
-            let mut edit = egui::DragValue::new(value).speed(0.1);
-            if let Some(range) = self.range {
-                edit = edit.range(range);
-            }
-            ui.add(edit)
-        })
-        .inner
+        let label = egui::RichText::new(self.label)
+            .size(theme.typography.body_size)
+            .color(theme.colors.fg_secondary);
+        if self.stacked {
+            ui.vertical(|ui| {
+                ui.label(label);
+                let mut edit = egui::DragValue::new(value).speed(0.1);
+                if let Some(range) = self.range {
+                    edit = edit.range(range);
+                }
+                ui.add(edit)
+            })
+            .inner
+        } else {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                let mut edit = egui::DragValue::new(value).speed(0.1);
+                if let Some(range) = self.range {
+                    edit = edit.range(range);
+                }
+                ui.add(edit)
+            })
+            .inner
+        }
     }
 }
 

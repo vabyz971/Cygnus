@@ -267,9 +267,11 @@ fn padded_tile<R>(
 /// Behavior `egui_tiles` : titres traduits + contenus métier.
 ///
 /// Ne possède que les documents (jamais l'arbre) pour respecter le
-/// découpage des emprunts de [`show_tree`].
+/// découpage des emprunts de [`show_tree`]. Les tuiles ne sont
+/// dessinées qu'avec au moins un document (le workspace affiche
+/// l'accueil sinon) ; les bras défensifs évitent tout panic.
 struct PhotoTreeBehavior<'a> {
-    /// Documents ouverts (toujours au moins un).
+    /// Documents ouverts (non vide quand l'arbre est dessiné).
     docs: &'a mut Vec<OpenDocument>,
     /// Index du document actif.
     active: &'a mut usize,
@@ -324,7 +326,10 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         match *pane {
             PhotoDockTab::Tools => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
-                let doc: &mut OpenDocument = &mut self.docs[index];
+                let Some(doc) = self.docs.get_mut(index) else {
+                    ui.label("Aucun document");
+                    return UiResponse::None;
+                };
                 self.actions.extend(left_sidebar::draw_tools_content(
                     ui,
                     doc,
@@ -344,7 +349,10 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             }
             PhotoDockTab::Inspector => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
-                let doc: &OpenDocument = &self.docs[index];
+                let Some(doc) = self.docs.get(index) else {
+                    ui.label("Aucun document");
+                    return UiResponse::None;
+                };
                 let inner = padded_tile(ui, ctx, |ui| {
                     right_sidebar::draw_inspector_content(ui, doc, ctx)
                 });
@@ -352,7 +360,10 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             }
             PhotoDockTab::Layers => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
-                let doc: &mut OpenDocument = &mut self.docs[index];
+                let Some(doc) = self.docs.get_mut(index) else {
+                    ui.label("Aucun document");
+                    return UiResponse::None;
+                };
                 let inner = padded_tile(ui, ctx, |ui| {
                     right_sidebar::draw_layers_content(ui, doc, ctx)
                 });
@@ -499,7 +510,8 @@ mod tests {
         let ctx = egui::Context::default();
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let mut app = PhotoApp::new();
-        let doc_id = app.docs[app.active.min(app.docs.len().saturating_sub(1))].id;
+        app.open_sized_tab(800, 600);
+        let doc_id = app.active_doc_opt().expect("doc actif").id;
         let expected = app
             .docs
             .iter()

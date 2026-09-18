@@ -21,7 +21,7 @@
 //! outils, inspecteur, calques) ensuite, modales par-dessus. Les
 //! barres haute (menus, modes) et basse (statut) restent fixes.
 //! Toute la logique vit dans les régions et les features.
-use super::{bottom_bar, dock, overlays, top_bar};
+use super::{bottom_bar, dock, overlays, top_bar, welcome};
 use crate::app::PhotoApp;
 use crate::commands::PhotoUiContext;
 
@@ -37,9 +37,14 @@ impl PhotoWorkspace {
         actions.extend(top_bar::show_mode_bar(ui, app, ctx));
         // 3. Barre de statut basse (réservée avant la zone centrale).
         bottom_bar::show(ui, app, ctx);
-        // 4. Zone centrale : tuiles ancrables (canevas par document).
+        // 4. Zone centrale : accueil si aucun document, sinon tuiles
+        // ancrables (canevas par document).
         egui::CentralPanel::default().show(ui, |ui| {
-            actions.extend(dock::show_tree(ui, app, ctx));
+            if app.docs.is_empty() {
+                actions.extend(welcome::show(ui, ctx));
+            } else {
+                actions.extend(dock::show_tree(ui, app, ctx));
+            }
         });
         // 5. Modales et dialogs par-dessus.
         actions.extend(overlays::show(ui, app, ctx));

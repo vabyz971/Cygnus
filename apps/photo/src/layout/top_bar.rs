@@ -61,9 +61,12 @@ pub fn show_menu_bar(
         .resizable(false)
         .show(ui, |ui| {
             let availability = MenuAvailability {
-                can_undo: app.active_doc().ui.can_undo,
-                can_redo: app.active_doc().ui.can_redo,
-                has_selection: app.active_doc().ui.selected.is_some(),
+                has_document: app.active_doc_opt().is_some(),
+                can_undo: app.active_doc_opt().is_some_and(|doc| doc.ui.can_undo),
+                can_redo: app.active_doc_opt().is_some_and(|doc| doc.ui.can_redo),
+                has_selection: app
+                    .active_doc_opt()
+                    .is_some_and(|doc| doc.ui.selected.is_some()),
             };
             actions.extend(
                 draw_menu_bar(
@@ -80,16 +83,19 @@ pub fn show_menu_bar(
 }
 
 /// Rangée 2 : modes d'édition + paramètres de l'outil.
+/// Absente sans document ouvert.
 pub fn show_mode_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
     ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
+    let Some(doc) = app.active_doc_mut_opt() else {
+        return actions;
+    };
     egui::Panel::top("photo_modebar")
         .resizable(false)
         .show(ui, |ui| {
-            let doc = app.active_doc_mut();
             let chosen = draw_photo_modebar(
                 ui,
                 &mut doc.ui.edit_mode,

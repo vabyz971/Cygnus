@@ -30,6 +30,18 @@ impl Document {
         }
     }
 
+    /// Document vierge avec un premier calque transparent aux
+    /// dimensions du document (« Créer un document » sans image).
+    pub fn with_blank_layer(width: u32, height: u32) -> Self {
+        let mut doc = Self::new(width.max(1), height.max(1));
+        let blank = DynamicImage::new_rgba8(doc.width, doc.height);
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+            "Calque 1",
+            Arc::new(blank),
+        )));
+        doc
+    }
+
     /// Reconstruit le document depuis un état restauré (undo/redo, projet).
     /// Le cache d'apparence est vidé : les entrées restaurées se
     /// revalideront par signature à la première demande.

@@ -18,7 +18,6 @@
 //!
 //! L'ouverture/fermeture est détenue par l'app (`open: &mut bool`) :
 //! la modale ne fait qu'afficher et rapporter l'action choisie.
-
 use crate::theme::CygnusTheme;
 use crate::theme::typography::heading_text;
 
@@ -48,6 +47,8 @@ pub struct CygnusModal<'a> {
     title: &'a str,
     confirm_label: &'a str,
     cancel_label: &'a str,
+    /// Taille de base (largeur × hauteur) de la fenêtre.
+    size: Option<egui::Vec2>,
 }
 
 impl<'a> CygnusModal<'a> {
@@ -57,7 +58,15 @@ impl<'a> CygnusModal<'a> {
             title,
             confirm_label,
             cancel_label,
+            size: None,
         }
+    }
+
+    /// Fixe la taille de base de la fenêtre (plafonnée à l'écran).
+    #[must_use]
+    pub fn size(mut self, size: impl Into<egui::Vec2>) -> Self {
+        self.size = Some(size.into());
+        self
     }
 
     /// Affiche la modale si `open`. Retourne l'action éventuelle
@@ -73,12 +82,34 @@ impl<'a> CygnusModal<'a> {
         }
         let theme = CygnusTheme::dark();
         let mut action = None;
+
+        // La fenêtre est bornée à l'écran pour ne jamais masquer les
+        // boutons d'action : largeur/hauteur max = ~92% de l'écran et
+        // le contenu défile si nécessaire.
+        let available = ctx.input(|i| i.raw.screen_rect);
+        let available_w = available.map_or(theme.spacing.xl * 12.0, |r| {
+            r.width() - theme.spacing.xl * 2.0
+        });
+        let available_h = available.map_or(theme.spacing.xl * 10.0, |r| {
+            r.height() - theme.spacing.xl * 2.0
+        });
+        let requested = self.size.unwrap_or(egui::vec2(360.0, 240.0));
+        let max_w = available_w.max(280.0);
+        let max_h = available_h.max(240.0);
+
         egui::Window::new(heading_text(&theme, self.title))
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
+            .drag_area(egui::WindowDrag::TitleBar)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .default_width(requested.x.min(max_w))
+            .default_height(requested.y.min(max_h))
+            .max_width(max_w)
+            .max_height(max_h)
             .show(ctx, |ui| {
-                add_contents(ui);
+                egui::ScrollArea::vertical()
+                    .max_height((max_h - theme.spacing.lg * 2.0).max(160.0))
+                    .show(ui, |ui| add_contents(ui));
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button(self.cancel_label).clicked() {

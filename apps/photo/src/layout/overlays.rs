@@ -22,7 +22,9 @@
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
-use crate::ui::{draw_export_dialog, draw_help_dialog, draw_new_document_dialog};
+use crate::ui::{
+    NewDocumentChoice, draw_create_document_dialog, draw_export_dialog, draw_help_dialog,
+};
 use ui_kit::components::Select;
 use ui_kit::dialogs::{CygnusModal, ModalAction};
 
@@ -67,7 +69,7 @@ fn draw_filter_modal(
     app.shell.filter_modal.choice = choice;
     if action == Some(ModalAction::Confirm)
         && let (Some(id), Some((_, type_id))) = (
-            app.active_doc().ui.selected,
+            app.active_doc_opt().and_then(|doc| doc.ui.selected),
             app.runtime.filter_types.get(app.shell.filter_modal.choice),
         )
     {
@@ -79,12 +81,19 @@ fn draw_filter_modal(
     actions
 }
 
-/// Fenêtre « Nouveau document » : validation = nouvel onglet.
+/// Fenêtre « Créer un document » : validation = nouvel onglet,
+/// ouverture d'image = dialogue fichier.
 fn draw_new_document_overlay(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     let ctx = ui.ctx().clone();
-    if let Some((width, height)) = draw_new_document_dialog(&ctx, &mut app.shell.new_doc_dialog) {
-        actions.push(PhotoAction::CreateDocument { width, height });
+    match draw_create_document_dialog(&ctx, &mut app.shell.new_doc_dialog) {
+        Some(NewDocumentChoice::Create(width, height)) => {
+            actions.push(PhotoAction::CreateDocument { width, height });
+        }
+        Some(NewDocumentChoice::OpenImage) => {
+            actions.push(PhotoAction::OpenImageDialog);
+        }
+        None => {}
     }
     actions
 }

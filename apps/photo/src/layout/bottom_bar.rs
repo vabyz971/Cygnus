@@ -29,15 +29,21 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Barre basse (aucune action émise).
 pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
     let theme = ctx.shared.theme();
-    let doc = app.active_doc();
     egui::Panel::bottom("photo_status")
         .resizable(false)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(body_text(theme, doc.ui.tool.hint()));
-                if !doc.ui.status.is_empty() {
-                    ui.separator();
-                    ui.label(body_text(theme, &doc.ui.status));
+                match app.active_doc_opt() {
+                    Some(doc) => {
+                        ui.label(body_text(theme, doc.ui.tool.hint()));
+                        if !doc.ui.status.is_empty() {
+                            ui.separator();
+                            ui.label(body_text(theme, &doc.ui.status));
+                        }
+                    }
+                    None => {
+                        ui.label(body_text(theme, "Aucun document ouvert"));
+                    }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(body_text(theme, &format!("Alpha : {APP_VERSION}")));

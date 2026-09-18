@@ -78,6 +78,8 @@ pub enum PhotoMenuAction {
 /// Disponibilités pour griser les entrées (historique, sélection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MenuAvailability {
+    /// Un document est ouvert (sinon tout le reste est verrouillé).
+    pub has_document: bool,
     /// Undo / redo possibles.
     pub can_undo: bool,
     /// Redo possible.
@@ -126,11 +128,21 @@ pub fn draw_menu_bar(
                         if menu_item(ui, theme, catalog.get(TextKey::Open)) {
                             actions.push(PhotoMenuAction::OpenImage);
                         }
-                        if menu_item(ui, theme, catalog.get(TextKey::Export)) {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            catalog.get(TextKey::Export),
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::Export);
                         }
                         ui.separator();
-                        if menu_item(ui, theme, "Fermer le document") {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            "Fermer le document",
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::CloseDocument);
                         }
                         if menu_item(ui, theme, catalog.get(TextKey::Quit)) {
@@ -158,7 +170,12 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(catalog.get(TextKey::Layer), |ui| {
                         menu_style(theme).apply(ui.style_mut());
-                        if menu_item(ui, theme, "Nouveau calque vide") {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            "Nouveau calque vide",
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::AddEmptyLayer);
                         }
                         if menu_item(ui, theme, "Calque depuis une image") {
@@ -191,16 +208,31 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(catalog.get(TextKey::View), |ui| {
                         menu_style(theme).apply(ui.style_mut());
-                        if menu_item(ui, theme, catalog.get(TextKey::Grid)) {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            catalog.get(TextKey::Grid),
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::ToggleGrid);
                         }
-                        if menu_item(ui, theme, catalog.get(TextKey::ZoomIn)) {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            catalog.get(TextKey::ZoomIn),
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::ZoomIn);
                         }
-                        if menu_item(ui, theme, catalog.get(TextKey::ZoomOut)) {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            catalog.get(TextKey::ZoomOut),
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::ZoomOut);
                         }
-                        if menu_item(ui, theme, "Zoom 100 %") {
+                        if menu_item_enabled(ui, theme, "Zoom 100 %", availability.has_document) {
                             actions.push(PhotoMenuAction::ZoomReset);
                         }
                     });

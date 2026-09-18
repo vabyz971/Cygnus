@@ -40,12 +40,25 @@ pub fn sanitize_selected(selected: usize, len: usize) -> usize {
 pub struct Select<'a> {
     label: &'a str,
     options: &'a [&'a str],
+    /// Vrai = libellé au-dessus du champ (colonne verticale).
+    stacked: bool,
 }
 
 impl<'a> Select<'a> {
     /// Crée une liste avec libellé et options.
     pub fn new(label: &'a str, options: &'a [&'a str]) -> Self {
-        Self { label, options }
+        Self {
+            label,
+            options,
+            stacked: false,
+        }
+    }
+
+    /// Empile le libellé au-dessus du champ (au lieu de côte à côte).
+    #[must_use]
+    pub fn stacked(mut self) -> Self {
+        self.stacked = true;
+        self
     }
 
     /// Nombre d'options.
@@ -59,6 +72,7 @@ impl<'a> Select<'a> {
     }
 
     /// Affiche la liste, met à jour l'index, retourne la réponse egui.
+    /// En mode [`Select::stacked`], le libellé est au-dessus du champ.
     pub fn show(
         self,
         ui: &mut egui::Ui,
@@ -67,22 +81,36 @@ impl<'a> Select<'a> {
     ) -> egui::Response {
         *selected = sanitize_selected(*selected, self.options.len());
         let current = self.options.get(*selected).copied().unwrap_or("");
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(self.label)
-                    .size(theme.typography.body_size)
-                    .color(theme.colors.fg_secondary),
-            );
-            egui::ComboBox::from_label("")
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (index, option) in self.options.iter().enumerate() {
-                        ui.selectable_value(selected, index, *option);
-                    }
-                })
-                .response
-        })
-        .inner
+        let label = egui::RichText::new(self.label)
+            .size(theme.typography.body_size)
+            .color(theme.colors.fg_secondary);
+        if self.stacked {
+            ui.vertical(|ui| {
+                ui.label(label);
+                egui::ComboBox::from_label("")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (index, option) in self.options.iter().enumerate() {
+                            ui.selectable_value(selected, index, *option);
+                        }
+                    })
+                    .response
+            })
+            .inner
+        } else {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                egui::ComboBox::from_label("")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (index, option) in self.options.iter().enumerate() {
+                            ui.selectable_value(selected, index, *option);
+                        }
+                    })
+                    .response
+            })
+            .inner
+        }
     }
 }
 
