@@ -36,6 +36,7 @@ pub fn translate(key: TextKey) -> &'static str {
         TextKey::Duplicate => "Dupliquer",
         TextKey::NewDocument => "Nouveau document",
         TextKey::Export => "Exporter",
+        TextKey::Layer => "Calque",
         TextKey::Layers => "Calques",
         TextKey::Settings => "Paramètres",
         TextKey::Quit => "Quitter",

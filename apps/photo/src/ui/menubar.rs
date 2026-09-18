@@ -101,8 +101,8 @@ pub fn draw_menu_bar(
     let mut actions = Vec::new();
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(
-            theme.spacing.sm as i8,
-            theme.spacing.sm as i8,
+            theme.spacing.xs as i8,
+            theme.spacing.xs as i8,
         ))
         .show(ui, |ui| {
             // Appliquer le style de barre de menus (coins carrés)
@@ -156,7 +156,7 @@ pub fn draw_menu_bar(
                             actions.push(PhotoMenuAction::Redo);
                         }
                     });
-                    ui.menu_button("Calque", |ui| {
+                    ui.menu_button(catalog.get(TextKey::Layer), |ui| {
                         menu_style(theme).apply(ui.style_mut());
                         if menu_item(ui, theme, "Nouveau calque vide") {
                             actions.push(PhotoMenuAction::AddEmptyLayer);

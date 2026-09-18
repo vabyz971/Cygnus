@@ -26,14 +26,10 @@
 use crate::theme::CygnusTheme;
 
 /// Style des popups de menu, dérivé du thème.
-///
-/// Part de la base egui (`menu_style` natif : fonds transparents,
-/// sans contours) puis resserre aux tokens Cygnus. Les coins sont
-/// arrondis selon `theme.radius.sm`.
 pub fn menu_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
-    let row_height = theme.sizes.button_md;
-    let margin = theme.spacing.sm;
-    let padding_x = theme.spacing.sm;
+    let row_height = theme.sizes.button_sm;
+    let margin = theme.spacing.xs;
+    let padding_x = theme.spacing.xs;
     let corner = theme.radius.sm;
     egui::style::StyleModifier::new(move |style| {
         egui::containers::menu::menu_style(style);
@@ -54,21 +50,17 @@ pub fn menu_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
     })
 }
 
-/// Style de la barre de menus haute : coins carrés (pas d'arrondi)
-/// sur les boutons de titre, mais les sous‑menus gardent le rayon
-/// par défaut du thème via `menu_style`.
+/// Style de la barre de menus haute
 pub fn menu_bar_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
-    let row_height = theme.sizes.button_md;
-    let margin = theme.spacing.sm;
-    let padding_x = theme.spacing.sm;
-    let corner = theme.radius.none;
+    let row_height = theme.sizes.button_sm;
+    let margin = theme.spacing.xs;
+    let padding_x = theme.spacing.xs;
+    let corner = theme.radius.sm;
     egui::style::StyleModifier::new(move |style| {
-        // On désactive l'arrondi natif d'egui sur la barre.
         style.spacing.interact_size.y = row_height;
         style.spacing.menu_margin = margin.into();
         style.spacing.button_padding.x = padding_x;
         style.spacing.item_spacing.y = 0.0;
-        // Forcer les coins carrés pour les titres de menu de la barre.
         for visual in [
             &mut style.visuals.widgets.inactive,
             &mut style.visuals.widgets.active,
@@ -90,7 +82,7 @@ pub fn menu_item(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
     use crate::components::ButtonVariant;
     let clicked = Button::new(label)
         .variant(ButtonVariant::Ghost)
-        .size(ButtonSize::Medium)
+        .size(ButtonSize::Small)
         .show(ui, theme)
         .clicked();
     if clicked {

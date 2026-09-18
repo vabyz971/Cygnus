@@ -47,6 +47,8 @@ pub enum TextKey {
     NewDocument,
     /// Exporter.
     Export,
+    /// Layer.
+    Layer,
     /// Calques.
     Layers,
     /// Paramètres.

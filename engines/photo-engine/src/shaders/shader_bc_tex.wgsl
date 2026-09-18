@@ -5,7 +5,7 @@ struct Uniforms { brightness: f32, contrast: f32 };
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let dims = textureDimensions(input_tex);
+    let dims = textureDimensions(input_tex, 0);
     if (gid.x >= dims.x || gid.y >= dims.y) { return; }
     let c = textureLoad(input_tex, gid.xy, 0);
     var rgb = c.rgb;
