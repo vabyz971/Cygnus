@@ -1304,3 +1304,179 @@ fn preview_geometry_vide_sans_calque_visible() {
     assert!(doc.preview_geometry().is_none());
     assert!(doc.composite_preview().is_none());
 }
+
+#[test]
+fn opacite_ne_touche_que_les_bornes_du_calque() {
+    // Couche 4x4 bleue à (4,4) sur fond rouge 8x8 : passer l'opacité à
+    // 50 % ne doit modifier que les pixels couverts par le calque.
+    let fond = solid(8, 8, [200, 40, 40, 255]);
+    let carre = solid(4, 4, [40, 40, 200, 255]);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 100.0, BlendMode::Normal, 4.0, 4.0),
+        ],
+        8,
+        8,
+    );
+    let before = doc.composite_preview().expect("composite");
+    let id = doc.root[1].id();
+    doc.find_mut(id).expect("calque").set_opacity(50.0);
+    let after = doc.composite_preview().expect("composite");
+    // Hors bornes (0..4, 0..4) : rouge intact.
+    assert_eq!(px(&before, 0, 0), px(&after, 0, 0));
+    assert_eq!(px(&after, 0, 0), [200, 40, 40, 255]);
+    // Dedans (6,6) : mélange 50/50, donc modifié.
+    assert_ne!(px(&before, 6, 6), px(&after, 6, 6));
+}
+
+#[test]
+fn deplacement_ne_touche_que_ancien_union_nouveau() {
+    // Carré 2x2 déplacé de (0,0) à (2,0) : tout pixel hors des deux
+    // positions reste identique.
+    let fond = solid(8, 8, [200, 40, 40, 255]);
+    let carre = solid(2, 2, [40, 40, 200, 255]);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 100.0, BlendMode::Normal, 0.0, 0.0),
+        ],
+        8,
+        8,
+    );
+    let before = doc.composite_preview().expect("composite");
+    let id = doc.root[1].id();
+    if let LayerNode::Pixel(l) = doc.find_mut(id).expect("calque") {
+        l.transform.offset_x = 2.0;
+    }
+    let after = doc.composite_preview().expect("composite");
+    // (7,7) hors ancien ∪ nouveau : inchangé.
+    assert_eq!(px(&before, 7, 7), px(&after, 7, 7));
+    // (0,0) révélée (rouge), (2,0) recouverte (bleu) : changées.
+    assert_eq!(px(&after, 0, 0)[0..3], [200, 40, 40]);
+    assert_eq!(px(&after, 2, 0)[0..3], [40, 40, 200]);
+}
+
+#[test]
+fn reordonner_ne_change_que_les_regions_reordonnees() {
+    // L0 rouge plein, L1 bleu 2x2 en (0,0), L2 vert 2x2 en (6,6).
+    // Échanger L0/L1 : le vert du dessus et le champ rouge lointain
+    // restent stables, seul le coin (0,0) change.
+    let (r, b, g) = (
+        solid(8, 8, [200, 40, 40, 255]),
+        solid(2, 2, [40, 40, 200, 255]),
+        solid(2, 2, [40, 200, 40, 255]),
+    );
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&r, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&b, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&g, 100.0, BlendMode::Normal, 6.0, 6.0),
+        ],
+        8,
+        8,
+    );
+    let before = doc.composite_preview().expect("composite");
+    assert_eq!(px(&before, 0, 0)[0..3], [40, 40, 200]);
+    doc.root.swap(0, 1);
+    let after = doc.composite_preview().expect("composite");
+    assert_eq!(px(&after, 6, 6)[0..3], [40, 200, 40], "dessus intact");
+    assert_eq!(px(&after, 4, 4), px(&before, 4, 4), "champ intact");
+    assert_eq!(px(&after, 0, 0)[0..3], [200, 40, 40], "coin recouvert");
+}
+
+#[test]
+fn blend_multiply_depend_du_dessous_meme_opaque() {
+    // Gris opaque Multiply sur fond noir vs blanc : résultats différents
+    // (le mode lit toujours le dessous) ; Normal opaque : identiques.
+    for (mode, same) in [(BlendMode::Multiply, false), (BlendMode::Normal, true)] {
+        let gris = solid(4, 4, [128, 128, 128, 255]);
+        let out_on_black = doc_of(
+            vec![
+                pixel_node(
+                    &solid(4, 4, [0, 0, 0, 255]),
+                    100.0,
+                    BlendMode::Normal,
+                    0.0,
+                    0.0,
+                ),
+                pixel_node(&gris, 100.0, mode, 0.0, 0.0),
+            ],
+            4,
+            4,
+        )
+        .composite_preview()
+        .expect("composite");
+        let out_on_white = doc_of(
+            vec![
+                pixel_node(
+                    &solid(4, 4, [255, 255, 255, 255]),
+                    100.0,
+                    BlendMode::Normal,
+                    0.0,
+                    0.0,
+                ),
+                pixel_node(&gris, 100.0, mode, 0.0, 0.0),
+            ],
+            4,
+            4,
+        )
+        .composite_preview()
+        .expect("composite");
+        assert_eq!(
+            px(&out_on_black, 0, 0) == px(&out_on_white, 0, 0),
+            same,
+            "mode {mode:?}"
+        );
+    }
+}
+
+#[test]
+fn masque_inverse_masque_le_calque_dans_ses_bornes() {
+    // Masque noir (couverture 0) : le calque disparaît, le dessous
+    // apparaît intact, y compris hors des bornes du calque.
+    let fond = solid(8, 8, [200, 40, 40, 255]);
+    let carre = solid(4, 4, [40, 40, 200, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            masked_node(&carre, [0, 0, 0, 255], true, false),
+        ],
+        8,
+        8,
+    );
+    // Le nœud masqué est à l'origine : le déplacer ne change rien ici ;
+    // on vérifie le composite : tout rouge, même sous le carré.
+    let out = doc.composite_preview().expect("composite");
+    assert!(out.pixels().all(|p| p.2.0[..3] == [200, 40, 40]));
+}
+
+#[test]
+fn filtre_ne_touche_que_les_bornes_du_calque() {
+    // Brightness +50 sur le carré 4x4 en (4,4) : le champ rouge reste
+    // intact, seuls les pixels du calque changent.
+    use datatypes::ParamValue;
+    let fond = solid(8, 8, [200, 40, 40, 255]);
+    let carre = solid(4, 4, [40, 40, 200, 255]);
+    let mut l = PixelLayer::new("filtre", arc(&carre));
+    let mut f = FilterLayer::neutral("brightness_contrast", Default::default());
+    f.params
+        .insert("brightness".into(), ParamValue::Float(50.0));
+    l.filter_layers.push(f);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            LayerNode::Pixel(l),
+        ],
+        8,
+        8,
+    );
+    // Le calque filtré doit être positionné à (4,4) comme le carré.
+    if let LayerNode::Pixel(l) = doc.find_mut(doc.root[1].id()).expect("calque") {
+        l.transform.offset_x = 4.0;
+        l.transform.offset_y = 4.0;
+    }
+    let out = doc.composite_preview().expect("composite");
+    assert_eq!(px(&out, 0, 0)[0..3], [200, 40, 40], "champ intact");
+    assert_ne!(px(&out, 6, 6)[0..3], [40, 40, 200], "calque éclairci");
+}

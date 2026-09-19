@@ -31,6 +31,9 @@ pub mod create_document;
 pub mod dialogs;
 pub mod engine_bridge;
 pub mod features;
+/// Campagne de mesures composite (matrices, tests ignorés par défaut).
+#[cfg(test)]
+mod matrix_probe;
 pub mod menubar;
 pub mod modebar;
 pub mod optionsbar;

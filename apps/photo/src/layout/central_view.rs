@@ -132,8 +132,8 @@ pub fn draw_canvas_content(
         doc.ui.tool,
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser
     ) {
-        // Le cercle EST le curseur : le curseur OS est masqué.
-        ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::None);
+        // Curseur OS conservé (croix du viewport) + cercle au diamètre
+        // du pinceau/gomme par-dessus.
         if let (Some(dest), Some(geom)) = (outcome.dest_rect, geom) {
             let to_screen = if geom.thumb_size.x > 0.0 {
                 dest.width() / geom.thumb_size.x / mapping.thumb_to_doc.max(f32::EPSILON)

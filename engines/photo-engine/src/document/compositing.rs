@@ -534,7 +534,44 @@ pub fn fold_scope(
     origin_y: f32,
     resolve: Resolver<'_>,
 ) -> bool {
+    let mut stats = CompositeStats::default();
+    fold_scope_stats(nodes, acc, origin_x, origin_y, resolve, &mut stats)
+}
+
+/// Compteurs d'un repli composite (instrumentation légère, temporaire).
+///
+/// `pixels_processed` compte les pixels réellement parcourus : chaque
+/// `blend_into` / mix d'ajustement balaie TOUT l'accumulateur, donc
+/// `pixels_processed ≈ layers_blended × scope_px` (plus les mixes).
+/// `blend_us` couvre prepare_top + blend par calque (allocs incluses),
+/// hors extents et hors allocation de l'accumulateur.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CompositeStats {
+    /// Pixels de l'accumulateur (scope).
+    pub scope_px: u64,
+    /// Microsecondes d'allocation de l'accumulateur (zéroïsation).
+    pub acc_alloc_us: u128,
+    /// Microsecondes des passes prepare + blend + mix.
+    pub blend_us: u128,
+    /// Calques pixels et groupes effectivement blendés.
+    pub layers_blended: u64,
+    /// Pixels parcourus (somme des balayages d'accumulateur).
+    pub pixels_processed: u64,
+}
+
+/// Variante instrumentée de [`fold_scope`] : corps identique, avec
+/// comptage des calques blendés, des pixels parcourus et du temps
+/// prepare + blend. Comportement de rendu inchangé.
+pub fn fold_scope_stats(
+    nodes: &[LayerNode],
+    acc: &mut ImageBuffer<Rgba<u8>, Vec<u8>>,
+    origin_x: f32,
+    origin_y: f32,
+    resolve: Resolver<'_>,
+    stats: &mut CompositeStats,
+) -> bool {
     let mut contributed = false;
+    let acc_px = u64::from(acc.width()) * u64::from(acc.height());
     for node in nodes {
         match node {
             LayerNode::Pixel(l) => {
@@ -548,6 +585,7 @@ pub fn fold_scope(
                     image: &img,
                     transform: l.transform,
                 };
+                let t_blend = std::time::Instant::now();
                 let (top, ox, oy) = prepare_top(&item);
                 // Masques de calque bakés dans l'apparence (source × filtres ×
                 // masques) : plus rien à atténuer ici — blend direct.
@@ -560,6 +598,9 @@ pub fn fold_scope(
                     ox + origin_x,
                     oy + origin_y,
                 );
+                stats.blend_us += t_blend.elapsed().as_micros();
+                stats.layers_blended += 1;
+                stats.pixels_processed += acc_px;
                 contributed = true;
             }
             LayerNode::Group(g) => {
@@ -571,8 +612,9 @@ pub fn fold_scope(
                     acc.height().max(1),
                     Rgba([0, 0, 0, 0]),
                 );
-                if fold_scope(&g.children, &mut sub, origin_x, origin_y, resolve) {
+                if fold_scope_stats(&g.children, &mut sub, origin_x, origin_y, resolve, stats) {
                     let mask_buf = combine_group_masks(&g.masks, &sub);
+                    let t_blend = std::time::Instant::now();
                     blend_into(
                         acc,
                         &sub,
@@ -582,6 +624,9 @@ pub fn fold_scope(
                         0.0,
                         0.0,
                     );
+                    stats.blend_us += t_blend.elapsed().as_micros();
+                    stats.layers_blended += 1;
+                    stats.pixels_processed += acc_px;
                     contributed = true;
                 }
             }
@@ -589,7 +634,12 @@ pub fn fold_scope(
                 if !a.visible || a.opacity <= 0.01 {
                     continue;
                 }
-                if apply_adjustment(acc, &a.filters, a.opacity) {
+                let t_blend = std::time::Instant::now();
+                let applied = apply_adjustment(acc, &a.filters, a.opacity);
+                stats.blend_us += t_blend.elapsed().as_micros();
+                if applied {
+                    // Mix pleine surface (original + ajusté + fusion).
+                    stats.pixels_processed += acc_px;
                     contributed = true;
                 }
             }

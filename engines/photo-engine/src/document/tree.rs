@@ -1,4 +1,4 @@
-use super::compositing::{fold_scope, needs_fallback_in, scope_half_extents};
+use super::compositing::{needs_fallback_in, scope_half_extents};
 use super::model::{
     Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask, LayerNode, PixelLayer,
     RgbaBuf, Transform2D,
@@ -82,6 +82,17 @@ impl Document {
     pub fn iter_pixels(&self) -> Vec<&PixelLayer> {
         let mut out = Vec::with_capacity(self.root.len());
         collect_pixels(&self.root, &mut out);
+        out
+    }
+
+    /// Ids de TOUS les calques pixels (visibles ou non, groupes inclus),
+    /// ordre DFS. Sert au partage inter-passes : le snapshot a besoin des
+    /// miniatures même des calques masqués (contrairement à
+    /// [`Self::iter_pixels`] qui ne retient que le contribuant).
+    #[must_use]
+    pub fn all_pixel_ids(&self) -> Vec<Uuid> {
+        let mut out = Vec::new();
+        collect_all_pixel_ids(&self.root, &mut out);
         out
     }
 
@@ -1026,14 +1037,34 @@ impl Document {
         self.preview_geometry_of(&self.root)
     }
 
+    /// Variante de [`Self::preview_geometry`] avec résolveur externe :
+    /// partage les apparences déjà résolues pendant la réponse (zéro
+    /// nouvelle résolution). Comportement identique à parité de
+    /// résolveur.
+    pub fn preview_geometry_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<(u32, u32, f32, f32)> {
+        self.preview_geometry_of_with(&self.root, resolve)
+    }
+
     /// Variante de [`Self::preview_geometry`] sur une portée donnée.
     fn preview_geometry_of(&self, nodes: &[LayerNode]) -> Option<(u32, u32, f32, f32)> {
         let resolver = |id: Uuid| self.appearance_image(id);
-        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, &resolver);
+        self.preview_geometry_of_with(nodes, &resolver)
+    }
+
+    /// Corps de [`Self::preview_geometry_of`] à résolveur injecté.
+    fn preview_geometry_of_with(
+        &self,
+        nodes: &[LayerNode],
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<(u32, u32, f32, f32)> {
+        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, resolve);
         let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
         let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
         // Coût nul si rien ne contribue (évite un composite fantôme).
-        if !contributes(nodes, &resolver) {
+        if !contributes(nodes, resolve) {
             return None;
         }
         let origin_x = half_w - self.width as f32 / 2.0;
@@ -1043,15 +1074,53 @@ impl Document {
 
     fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage> {
         let resolver = |id: Uuid| self.appearance_image(id);
-        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, &resolver);
+        let mut stats = super::compositing::CompositeStats::default();
+        self.composite_scope_with(nodes, &resolver, &mut stats)
+    }
+
+    /// Composite du plan infini avec résolveur externe : partage les
+    /// apparences déjà résolues pendant la réponse (zéro nouvelle
+    /// résolution). Comportement identique à parité de résolveur.
+    pub fn composite_preview_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<DynamicImage> {
+        let mut stats = super::compositing::CompositeStats::default();
+        self.composite_scope_with(&self.root, resolve, &mut stats)
+    }
+
+    /// Variante instrumentée de [`Self::composite_preview_with`] : remplit
+    /// `stats` (scope, alloc accumulateur, blends, pixels parcourus).
+    /// Comportement de rendu identique.
+    pub fn composite_preview_with_stats(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+    ) -> Option<DynamicImage> {
+        self.composite_scope_with(&self.root, resolve, stats)
+    }
+
+    /// Corps de [`Self::composite_scope`] à résolveur injecté.
+    fn composite_scope_with(
+        &self,
+        nodes: &[LayerNode],
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+    ) -> Option<DynamicImage> {
+        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, resolve);
         // Clamp pour éviter OOM (16384 ≈ 1 Go RGBA)
         let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
         let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
+        let t_alloc = std::time::Instant::now();
         let mut acc = ImageBuffer::from_pixel(w.max(1), h.max(1), Rgba([0, 0, 0, 0]));
+        stats.acc_alloc_us += t_alloc.elapsed().as_micros();
+        stats.scope_px = u64::from(acc.width()) * u64::from(acc.height());
         // Origine monde (0,0) = coin du buffer moins demi-tailles
         let origin_x = half_w - self.width as f32 / 2.0;
         let origin_y = half_h - self.height as f32 / 2.0;
-        if !fold_scope(nodes, &mut acc, origin_x, origin_y, &resolver) {
+        if !super::compositing::fold_scope_stats(
+            nodes, &mut acc, origin_x, origin_y, resolve, stats,
+        ) {
             return None; // aucun calque visible/contribuant
         }
         Some(DynamicImage::ImageRgba8(acc))
@@ -1074,6 +1143,12 @@ impl Document {
     pub fn renderer_stats(&self) -> (u64, u64) {
         let r = self.cache.borrow();
         (r.hits(), r.misses())
+    }
+
+    /// Compteurs d'apparences (hits, misses, rebuilds preview/thumb) —
+    /// observabilité du partage inter-passes, sans effet sur le rendu.
+    pub fn appearance_stats(&self) -> crate::renderer::AppearanceStats {
+        self.cache.borrow().stats()
     }
 }
 
@@ -1187,6 +1262,20 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
                 }
                 collect_pixels(&g.children, out)
             }
+            LayerNode::Adjustment(_) => {}
+        }
+    }
+}
+
+/// Ids de tous les calques pixels, sans filtre de visibilité (le
+/// snapshot a besoin des miniatures même des calques masqués).
+fn collect_all_pixel_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
+    for n in nodes {
+        match n {
+            LayerNode::Pixel(l) => {
+                out.push(l.id);
+            }
+            LayerNode::Group(g) => collect_all_pixel_ids(&g.children, out),
             LayerNode::Adjustment(_) => {}
         }
     }

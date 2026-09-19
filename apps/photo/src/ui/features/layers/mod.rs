@@ -31,4 +31,4 @@ pub mod types;
 pub use actions::layer_panel_action_to_photo;
 pub use layer_item::LayerRenameState;
 pub use panel::LayersPanel;
-pub use types::{LayerThumbView, PhotoLayerInfo, snapshot_layers};
+pub use types::{LayerThumbView, PhotoLayerInfo, snapshot_layers, snapshot_layers_with};

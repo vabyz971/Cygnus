@@ -141,6 +141,12 @@ pub struct PhotoLayerInfo {
 impl PhotoLayerInfo {
     /// Dérive une entrée d'affichage d'un nœud moteur.
     pub fn from_node(document: &Document, node: &LayerNode) -> Self {
+        Self::from_node_with_thumb(node, document.thumb(node.id()))
+    }
+
+    /// Dérive une entrée d'affichage avec une miniature déjà résolue
+    /// (partage inter-passes : aucune nouvelle résolution d'apparence).
+    pub fn from_node_with_thumb(node: &LayerNode, thumb: Option<photo_engine::RgbaBuf>) -> Self {
         let (filters, masks) = match node {
             LayerNode::Pixel(pixels) => (
                 pixels
@@ -181,7 +187,7 @@ impl PhotoLayerInfo {
         // Miniature servie par le cache d'apparences moteur (zéro
         // recalcul à chaud) : seuls les pixels en ont une.
         let thumb = match node {
-            LayerNode::Pixel(pixels) => document.thumb(node.id()).map(|buf| PhotoLayerThumb {
+            LayerNode::Pixel(pixels) => thumb.map(|buf| PhotoLayerThumb {
                 width: buf.width,
                 height: buf.height,
                 rgba: buf.data.to_vec(),
@@ -218,6 +224,21 @@ pub fn snapshot_layers(document: &Document) -> Vec<PhotoLayerInfo> {
         .iter()
         .rev()
         .map(|node| PhotoLayerInfo::from_node(document, node))
+        .collect()
+}
+
+/// Variante de [`snapshot_layers`] avec miniatures déjà résolues :
+/// `lookup` fournit le `RgbaBuf` miniature d'un calque pixels (issu
+/// du partage inter-passes), sans nouvelle résolution d'apparence.
+pub fn snapshot_layers_with(
+    document: &Document,
+    lookup: &dyn Fn(Uuid) -> Option<photo_engine::RgbaBuf>,
+) -> Vec<PhotoLayerInfo> {
+    document
+        .root
+        .iter()
+        .rev()
+        .map(|node| PhotoLayerInfo::from_node_with_thumb(node, lookup(node.id())))
         .collect()
 }
 

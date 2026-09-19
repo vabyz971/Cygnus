@@ -59,12 +59,23 @@ fn doc_4k() -> Document {
 fn report(worker: &EngineWorker) {
     let m = worker.metrics.last.as_ref().expect("metriques");
     eprintln!(
-        "op={} total={}ms snapshot={}ms composite={}ms thumb={}ms full={}Mpx preview={}Mpx responses={} previews={}",
+        "op={} total={}ms mutation={}ms frame={}ms snapshot={}ms composite={}ms blend={}ms thumb={}ms geometry={}ms resolves={} fhits={} prebuilds={} threbuilds={} layers={} processed={}Mpx scope={}Mpx full={}Mpx preview={}Mpx responses={} previews={}",
         m.op,
         m.total_us as f64 / 1000.0,
+        m.mutation_us as f64 / 1000.0,
+        m.frame_us as f64 / 1000.0,
         m.snapshot_us as f64 / 1000.0,
         m.composite_us as f64 / 1000.0,
+        m.blend_us as f64 / 1000.0,
         m.thumb_us as f64 / 1000.0,
+        m.geometry_us as f64 / 1000.0,
+        m.appearance_resolves,
+        m.appearance_frame_hits,
+        m.preview_rebuilds,
+        m.thumb_rebuilds,
+        m.layers_blended,
+        m.pixels_processed as f64 / 1_000_000.0,
+        m.scope_px as f64 / 1_000_000.0,
         m.full_px as f64 / 1_000_000.0,
         m.preview_px as f64 / 1_000_000.0,
         worker.metrics.responses,
@@ -265,4 +276,18 @@ fn probe_apply_response_upload_cost() {
     );
     assert_eq!(ui.responses_applied, 1);
     assert!(ui.texture_uploads >= 1);
+    // Décomposition conversion RGBA→ColorImage vs mise à jour texture
+    // (mêmes octets que l'aperçu reçu, hors GPU réel en headless).
+    if let Some(preview) = ui.last_preview.as_ref() {
+        let t = Instant::now();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [preview.width as usize, preview.height as usize],
+            &preview.rgba,
+        );
+        let conversion_us = t.elapsed().as_micros();
+        let t = Instant::now();
+        ui.texture_cache.update(&ctx, "photo_preview", image);
+        let update_us = t.elapsed().as_micros();
+        eprintln!("upload split: conversion={conversion_us}us set/update={update_us}us");
+    }
 }

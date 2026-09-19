@@ -41,4 +41,4 @@ pub use filters::{filterable_types, new_filter_layer};
 pub use gpu::GpuContext;
 pub use history::UndoAction;
 pub use registry::{all_definitions, definition_for};
-pub use renderer::{Renderer, WarmedAppearance, filters_signature};
+pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};

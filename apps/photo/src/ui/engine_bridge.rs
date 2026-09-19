@@ -31,9 +31,11 @@
 //! d'affichage. Le worker les reconvertit (`doc = len - 1 - display`)
 //! avant de manipuler `document.root` (index 0 = bas de pile).
 
-use super::features::layers::{PhotoLayerInfo, snapshot_layers};
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use super::features::layers::{PhotoLayerInfo, snapshot_layers, snapshot_layers_with};
+use photo_engine::{Appearance, BlendMode, Document, RenderEvent, RenderRevision};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
@@ -228,6 +230,16 @@ pub struct PreviewTimings {
     pub composite_us: u128,
     /// Miniature (`capped_preview` + `into_raw`).
     pub thumb_us: u128,
+    /// Géométrie document (`preview_geometry`, 3e passe apparences).
+    pub geometry_us: u128,
+    /// Balayages prepare + blend + mix (hors extents, hors alloc).
+    pub blend_us: u128,
+    /// Calques pixels et groupes effectivement blendés.
+    pub layers_blended: u64,
+    /// Pixels parcourus (sommes des balayages d'accumulateur).
+    pub pixels_processed: u64,
+    /// Pixels de l'accumulateur (scope).
+    pub scope_px: u64,
     /// Pixels du composite pleine résolution.
     pub full_px: u64,
     /// Pixels de la miniature envoyée.
@@ -241,12 +253,34 @@ pub struct OpMetrics {
     pub op: &'static str,
     /// Durée totale de `apply` (mutation + snapshot + réponse).
     pub total_us: u128,
+    /// Mutation pure (`mutate` : setters + historique + peinture).
+    pub mutation_us: u128,
     /// Construction du snapshot couches (`snapshot_layers`).
     pub snapshot_us: u128,
     /// Composite pleine résolution.
     pub composite_us: u128,
     /// Miniature + mise en buffer.
     pub thumb_us: u128,
+    /// Géométrie document (origine du plan infini).
+    pub geometry_us: u128,
+    /// Construction du partage inter-passes (résolutions renderer).
+    pub frame_us: u128,
+    /// Apparences résolues auprès du renderer pendant la réponse.
+    pub appearance_resolves: u64,
+    /// Réutilisations inter-passes (zéro nouvelle résolution).
+    pub appearance_frame_hits: u64,
+    /// Buffers `preview` régénérés (delta compteurs renderer).
+    pub preview_rebuilds: u64,
+    /// Miniatures `thumb` régénérées (delta compteurs renderer).
+    pub thumb_rebuilds: u64,
+    /// Balayages prepare + blend + mix (hors extents, hors alloc).
+    pub blend_us: u128,
+    /// Calques pixels et groupes effectivement blendés.
+    pub layers_blended: u64,
+    /// Pixels parcourus (sommes des balayages d'accumulateur).
+    pub pixels_processed: u64,
+    /// Pixels de l'accumulateur (scope).
+    pub scope_px: u64,
     /// Pixels du composite pleine résolution.
     pub full_px: u64,
     /// Pixels de la miniature envoyée.
@@ -475,6 +509,66 @@ fn touch_mask_owner(document: &mut Document, owner: Uuid) {
     }
 }
 
+/// Partage des apparences pendant UNE réponse (`respond()`).
+///
+/// Le renderer persistant décide seul des recalculs pixels ; ce cache
+/// local évite seulement de redemander le même résultat aux trois
+/// consommateurs (snapshot, composite, géométrie) : chaque calque
+/// pixels est résolu une fois, puis cloné en `Arc` partagés (aucune
+/// copie de buffers, conformément à l'objectif 5).
+struct AppearanceFrameCache {
+    /// Apparences résolues, par calque (clones `Arc`, pas de pixels).
+    map: HashMap<Uuid, Appearance>,
+    /// Appels au renderer (premières résolutions).
+    resolves: u64,
+    /// Réutilisations inter-passes (`Cell` : le résolveur est `Fn`).
+    hits: std::cell::Cell<u64>,
+}
+
+impl AppearanceFrameCache {
+    /// Résout chaque calque pixels UNE fois auprès du renderer
+    /// (visibles ou non : le snapshot a besoin des miniatures même
+    /// des calques masqués).
+    fn build(document: &Document) -> Self {
+        let ids: Vec<Uuid> = document.all_pixel_ids();
+        let mut map = HashMap::with_capacity(ids.len());
+        let mut resolves = 0;
+        for id in ids {
+            if let Some(appearance) = document.appearance(id) {
+                map.insert(id, appearance);
+                resolves += 1;
+            }
+        }
+        Self {
+            map,
+            resolves,
+            hits: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Apparence partagée (clone bon marché), comptée en réutilisation.
+    fn appearance(&self, id: Uuid) -> Option<Appearance> {
+        let appearance = self.map.get(&id)?.clone();
+        self.hits.set(self.hits.get() + 1);
+        Some(appearance)
+    }
+
+    /// Image partagée pour le compositing (clone d'`Arc`).
+    fn image(&self, id: Uuid) -> Option<Arc<image::DynamicImage>> {
+        self.appearance(id).map(|appearance| appearance.image)
+    }
+
+    /// Miniature partagée pour le snapshot (clone de `RgbaBuf`).
+    fn thumb(&self, id: Uuid) -> Option<photo_engine::RgbaBuf> {
+        self.appearance(id).map(|appearance| appearance.thumb)
+    }
+
+    /// Compteur de réutilisations (lecture après la réponse).
+    fn hits(&self) -> u64 {
+        self.hits.get()
+    }
+}
+
 /// État du worker : document vivant + historique undo/redo.
 pub struct EngineWorker {
     document: Document,
@@ -531,24 +625,51 @@ impl EngineWorker {
     /// Construit la réponse d'une mutation : nouveau composite
     /// (`Composite`, révision incrémentée) ou snapshot seul
     /// (`StateOnly`/`Unchanged`, texture UI conservée).
+    ///
+    /// En mode `Composite`, les apparences sont résolues UNE fois dans
+    /// un [`AppearanceFrameCache`] local puis partagées entre snapshot,
+    /// composite et géométrie (single-pass, sans toucher au cache
+    /// persistant du renderer).
     /// INSTRUMENTATION TEMPORAIRE : remplit `metrics.last` (hors
-    /// `op` et `total_us`, posés par `apply`/`apply_batch`).
+    /// `op`, `total_us` et `mutation_us`, posés par `apply`/`apply_batch`).
     fn respond(&mut self, invalidation: RenderInvalidation) -> PhotoEngineResponse {
+        let stats_before = self.document.appearance_stats();
+        let t_frame = std::time::Instant::now();
+        let frame = (invalidation == RenderInvalidation::Composite)
+            .then(|| AppearanceFrameCache::build(&self.document));
+        let frame_us = t_frame.elapsed().as_micros();
         let t_snapshot = std::time::Instant::now();
-        let layers = snapshot_layers(&self.document);
+        let layers = match frame.as_ref() {
+            Some(frame) => snapshot_layers_with(&self.document, &|id| frame.thumb(id)),
+            None => snapshot_layers(&self.document),
+        };
         let snapshot_us = t_snapshot.elapsed().as_micros();
         let can_undo = !self.undo.is_empty();
         let can_redo = !self.redo.is_empty();
         if invalidation == RenderInvalidation::Composite {
-            let (preview, timings) = render_preview_timed(&self.document, self.clip_to_doc);
+            let frame = frame.as_ref().expect("cadre construit en mode Composite");
+            let (preview, timings) =
+                render_preview_timed_with(&self.document, self.clip_to_doc, frame);
             let revision = self.revision.bump();
             self.metrics.renders += 1;
+            let stats_after = self.document.appearance_stats();
             self.metrics.last = Some(OpMetrics {
                 op: self.metrics.current_op,
                 total_us: 0,
+                mutation_us: 0,
+                frame_us,
                 snapshot_us,
                 composite_us: timings.composite_us,
                 thumb_us: timings.thumb_us,
+                geometry_us: timings.geometry_us,
+                appearance_resolves: frame.resolves,
+                appearance_frame_hits: frame.hits(),
+                preview_rebuilds: stats_after.preview_rebuilds - stats_before.preview_rebuilds,
+                thumb_rebuilds: stats_after.thumb_rebuilds - stats_before.thumb_rebuilds,
+                blend_us: timings.blend_us,
+                layers_blended: timings.layers_blended,
+                pixels_processed: timings.pixels_processed,
+                scope_px: timings.scope_px,
                 full_px: timings.full_px,
                 preview_px: timings.preview_px,
             });
@@ -563,9 +684,20 @@ impl EngineWorker {
             self.metrics.last = Some(OpMetrics {
                 op: self.metrics.current_op,
                 total_us: 0,
+                mutation_us: 0,
+                frame_us,
                 snapshot_us,
                 composite_us: 0,
                 thumb_us: 0,
+                geometry_us: 0,
+                appearance_resolves: 0,
+                appearance_frame_hits: 0,
+                preview_rebuilds: 0,
+                thumb_rebuilds: 0,
+                blend_us: 0,
+                layers_blended: 0,
+                pixels_processed: 0,
+                scope_px: 0,
                 full_px: 0,
                 preview_px: 0,
             });
@@ -586,7 +718,9 @@ impl EngineWorker {
     pub fn apply(&mut self, command: PhotoEngineCommand) -> PhotoEngineResponse {
         let t_total = std::time::Instant::now();
         self.metrics.current_op = command.op_name();
+        let t_mutation = std::time::Instant::now();
         let mutation = self.mutate(command);
+        let mutation_us = t_mutation.elapsed().as_micros();
         let response = match mutation.immediates.into_iter().next() {
             Some(immediate) => immediate,
             None => self.respond(if mutation.changed {
@@ -599,6 +733,7 @@ impl EngineWorker {
         if let Some(last) = self.metrics.last.as_mut() {
             last.op = self.metrics.current_op;
             last.total_us = total_us;
+            last.mutation_us = mutation_us;
         }
         self.metrics.responses += 1;
         if matches!(
@@ -626,12 +761,14 @@ impl EngineWorker {
         let mut out = Vec::new();
         let mut max_invalidation = RenderInvalidation::Unchanged;
         let mut changed = false;
+        let t_mutation = std::time::Instant::now();
         for command in folded {
             let mutation = self.mutate(command);
             out.extend(mutation.immediates);
             max_invalidation = max_invalidation.max(mutation.invalidation);
             changed |= mutation.changed;
         }
+        let mutation_us = t_mutation.elapsed().as_micros();
         if changed {
             out.push(self.respond(max_invalidation));
         } else if had_commands {
@@ -642,6 +779,7 @@ impl EngineWorker {
         if let Some(last) = self.metrics.last.as_mut() {
             last.op = self.metrics.current_op;
             last.total_us = total_us;
+            last.mutation_us = mutation_us;
         }
         self.metrics.responses += out.len() as u64;
         self.metrics.previews += out
@@ -1054,6 +1192,18 @@ pub fn render_preview_timed(
     document: &Document,
     clip_to_doc: bool,
 ) -> (Option<PreviewImage>, PreviewTimings) {
+    let frame = AppearanceFrameCache::build(document);
+    render_preview_timed_with(document, clip_to_doc, &frame)
+}
+
+/// Variante de [`render_preview_timed`] avec cadre d'apparences déjà
+/// résolu : composite et géométrie partagent les mêmes `Arc` (zéro
+/// nouvelle résolution). Comportement identique à parité de contenu.
+fn render_preview_timed_with(
+    document: &Document,
+    clip_to_doc: bool,
+    frame: &AppearanceFrameCache,
+) -> (Option<PreviewImage>, PreviewTimings) {
     let doc_width = document.width.max(1);
     let doc_height = document.height.max(1);
     if clip_to_doc {
@@ -1084,13 +1234,20 @@ pub fn render_preview_timed(
             PreviewTimings {
                 composite_us,
                 thumb_us,
+                geometry_us: 0,
+                blend_us: 0,
+                layers_blended: 0,
+                pixels_processed: 0,
+                scope_px: u64::from(w) * u64::from(h),
                 full_px: u64::from(w) * u64::from(h),
                 preview_px: u64::from(w) * u64::from(h),
             },
         );
     }
     let t_composite = std::time::Instant::now();
-    let composite = document.composite_preview();
+    let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
+    let composite =
+        document.composite_preview_with_stats(&|id| frame.image(id), &mut composite_stats);
     let composite_us = t_composite.elapsed().as_micros();
     let Some(composite) = composite else {
         return (None, PreviewTimings::default());
@@ -1104,13 +1261,15 @@ pub fn render_preview_timed(
     // Même miniature uniforme : la géométrie pleine résolution est
     // ramenée à l'échelle (demi-extents symétriques → origine exacte,
     // pas un recentrage entier approximatif).
+    let t_geometry = std::time::Instant::now();
     let (origin_x, origin_y) = document
-        .preview_geometry()
+        .preview_geometry_with(&|id| frame.image(id))
         .map(|(_, _, ox, oy)| (ox, oy))
         .unwrap_or((
             (full_w.saturating_sub(doc_width)) as f32 / 2.0,
             (full_h.saturating_sub(doc_height)) as f32 / 2.0,
         ));
+    let geometry_us = t_geometry.elapsed().as_micros();
     let kx = if full_w > 0 {
         w as f32 / full_w as f32
     } else {
@@ -1136,6 +1295,11 @@ pub fn render_preview_timed(
         PreviewTimings {
             composite_us,
             thumb_us,
+            geometry_us,
+            blend_us: composite_stats.blend_us,
+            layers_blended: composite_stats.layers_blended,
+            pixels_processed: composite_stats.pixels_processed,
+            scope_px: composite_stats.scope_px,
             full_px: u64::from(full_w) * u64::from(full_h),
             preview_px: u64::from(w) * u64::from(h),
         },
@@ -1833,5 +1997,288 @@ mod tests {
                 "le cache des autres calques est intact"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod fold_batch_tests {
+    use super::*;
+
+    fn opacity(id: Uuid, value: f32) -> PhotoEngineCommand {
+        PhotoEngineCommand::SetOpacity {
+            layer: id,
+            opacity: value,
+        }
+    }
+
+    fn shifted(id: Uuid, dx: f32, dy: f32) -> PhotoEngineCommand {
+        PhotoEngineCommand::MoveLayer { layer: id, dx, dy }
+    }
+
+    #[test]
+    fn consecutive_same_layer_opacity_keeps_last() {
+        let id = Uuid::new_v4();
+        let folded = fold_batch(vec![
+            opacity(id, 10.0),
+            opacity(id, 20.0),
+            opacity(id, 30.0),
+        ]);
+        assert_eq!(folded, vec![opacity(id, 30.0)]);
+    }
+
+    #[test]
+    fn opacity_does_not_fold_across_other_commands() {
+        let id = Uuid::new_v4();
+        let undo = PhotoEngineCommand::Undo;
+        // Undo interrompt le repli : les trois commandes survivent.
+        let folded = fold_batch(vec![opacity(id, 10.0), undo, opacity(id, 30.0)]);
+        assert_eq!(folded.len(), 3);
+        // Deux calques différents ne se replient pas non plus.
+        let other = Uuid::new_v4();
+        let folded = fold_batch(vec![opacity(id, 10.0), opacity(other, 20.0)]);
+        assert_eq!(folded.len(), 2);
+    }
+
+    #[test]
+    fn consecutive_moves_sum_and_zero_sum_is_dropped() {
+        let id = Uuid::new_v4();
+        let folded = fold_batch(vec![shifted(id, 5.0, 0.0), shifted(id, -2.0, 1.0)]);
+        assert_eq!(folded, vec![shifted(id, 3.0, 1.0)]);
+        // Somme nulle : commande supprimée (aucun rendu à produire).
+        let folded = fold_batch(vec![shifted(id, 5.0, 0.0), shifted(id, -5.0, 0.0)]);
+        assert!(folded.is_empty());
+    }
+
+    #[test]
+    fn noop_batch_returns_single_state_response() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        // Que des no-ops : une seule resynchronisation, aucun rendu.
+        let responses = worker.apply_batch(vec![
+            PhotoEngineCommand::ToggleLayerVisibility(Uuid::new_v4()),
+            PhotoEngineCommand::DeleteLayer(Uuid::new_v4()),
+        ]);
+        assert_eq!(responses.len(), 1);
+        assert!(matches!(
+            responses[0],
+            PhotoEngineResponse::StateChanged { .. }
+        ));
+        assert_eq!(worker.metrics.renders, 0);
+    }
+
+    #[test]
+    fn batch_with_undo_inside_preserves_order() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let id = worker.document.root[0].id();
+        // Opacité appliquée PUIS annulée dans le même lot : retour à 100.
+        let responses = worker.apply_batch(vec![
+            opacity(id, 10.0),
+            opacity(id, 20.0),
+            PhotoEngineCommand::Undo,
+        ]);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(worker.document.find(id).expect("present").opacity(), 100.0);
+        // L'historique garde la trace : redo rejoue la valeur repliée.
+        worker.apply(PhotoEngineCommand::Redo);
+        assert_eq!(worker.document.find(id).expect("present").opacity(), 20.0);
+    }
+
+    fn three_layer_doc_for_fold() -> Document {
+        use photo_engine::{LayerNode, PixelLayer};
+        use std::sync::Arc;
+        let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
+        let mut doc = Document::new(8, 8);
+        for name in ["fond", "milieu", "dessus"] {
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new(name, image.clone())));
+        }
+        doc
+    }
+}
+
+#[cfg(test)]
+mod single_pass_tests {
+    use super::*;
+
+    fn layers_of(response: &PhotoEngineResponse) -> Vec<PhotoLayerInfo> {
+        match response {
+            PhotoEngineResponse::LayersChanged { layers, .. } => layers.clone(),
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+    }
+
+    fn thumb_version(layer: &PhotoLayerInfo) -> u64 {
+        layer.thumb.as_ref().map(|t| t.version).unwrap_or(0)
+    }
+
+    #[test]
+    fn opacity_shares_one_resolution_per_layer_without_rebuilds() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        worker.apply(PhotoEngineCommand::Refresh);
+        let id = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::SetOpacity {
+            layer: id,
+            opacity: 50.0,
+        });
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        // 3 calques → 3 résolutions, partagées entre les consommateurs :
+        // snapshot (3) + extents composite (3) + fold (3) + extents
+        // géométrie (3) + contributes (1, sortie précoce au 1er calque).
+        assert_eq!(m.appearance_resolves, 3);
+        assert_eq!(m.appearance_frame_hits, 13);
+        // Aucun pixel recalculé : ni preview ni thumb reconstruits.
+        assert_eq!(m.preview_rebuilds, 0);
+        assert_eq!(m.thumb_rebuilds, 0);
+        // Le composite lui-même reste produit (re-blend, révision +1).
+        assert_eq!(worker.metrics.renders, 2);
+    }
+
+    #[test]
+    fn paint_rebuilds_only_touched_layer() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let before = layers_of(&worker.apply(PhotoEngineCommand::Refresh));
+        let target = worker.document.root[0].id();
+        let points: Vec<(f32, f32)> = (0..4).map(|i| (i as f32, i as f32)).collect();
+        let after = layers_of(&worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points,
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        }));
+        // Calque peint : nouvelle version ; les autres : intactes.
+        for layer in &after {
+            let old = before
+                .iter()
+                .find(|l| l.id == layer.id)
+                .map(thumb_version)
+                .unwrap_or(0);
+            if layer.id == target {
+                assert_ne!(thumb_version(layer), old, "peinture invalide le calque");
+            } else {
+                assert_eq!(thumb_version(layer), old, "autres calques intacts");
+            }
+        }
+        // Exactement un calque reconstruit (preview + thumb).
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(m.preview_rebuilds, 1);
+        assert_eq!(m.thumb_rebuilds, 1);
+    }
+
+    #[test]
+    fn filter_change_rebuilds_only_concerned_layer() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        worker.apply(PhotoEngineCommand::Refresh);
+        let target = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::AddFilter {
+            layer: target,
+            filter_type: String::from("brightness_contrast"),
+        });
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(m.preview_rebuilds, 1, "seule la chaîne du calque rejoue");
+        assert_eq!(m.thumb_rebuilds, 1);
+    }
+
+    #[test]
+    fn undo_redo_revalidates_versions() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let pristine = layers_of(&worker.apply(PhotoEngineCommand::Refresh));
+        let target = worker.document.root[0].id();
+        let pristine_thumb = pristine
+            .iter()
+            .find(|l| l.id == target)
+            .and_then(|l| l.thumb.clone())
+            .expect("miniature");
+        let points: Vec<(f32, f32)> = (0..4).map(|i| (i as f32, i as f32)).collect();
+        let painted = layers_of(&worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points,
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        }));
+        let painted_thumb = painted
+            .iter()
+            .find(|l| l.id == target)
+            .and_then(|l| l.thumb.clone())
+            .expect("miniature");
+        assert_ne!(painted_thumb.version, pristine_thumb.version);
+        // Undo : pixels et version d'origine restaurés (rebuild ciblé).
+        let undone = layers_of(&worker.apply(PhotoEngineCommand::Undo));
+        let undone_thumb = undone
+            .iter()
+            .find(|l| l.id == target)
+            .and_then(|l| l.thumb.clone())
+            .expect("miniature");
+        assert_eq!(undone_thumb.version, pristine_thumb.version);
+        assert_eq!(undone_thumb.rgba, pristine_thumb.rgba);
+        // Redo : retour exact à l'état peint.
+        let redone = layers_of(&worker.apply(PhotoEngineCommand::Redo));
+        let redone_thumb = redone
+            .iter()
+            .find(|l| l.id == target)
+            .and_then(|l| l.thumb.clone())
+            .expect("miniature");
+        assert_eq!(redone_thumb.version, painted_thumb.version);
+        assert_eq!(redone_thumb.rgba, painted_thumb.rgba);
+    }
+
+    #[test]
+    fn export_neither_renders_nor_bumps_revision() {
+        let dir = std::env::temp_dir().join(format!("cygnus-sp-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        worker.apply(PhotoEngineCommand::Refresh);
+        assert_eq!(worker.metrics.renders, 1);
+        let path = dir.join("rendu.png");
+        let response = worker.apply(PhotoEngineCommand::Export {
+            path: path.clone(),
+            quality: 80,
+        });
+        assert!(matches!(response, PhotoEngineResponse::ExportDone { .. }));
+        assert!(path.is_file(), "fichier écrit");
+        assert_eq!(worker.metrics.renders, 1, "export sans rendu");
+        // Le refresh suivant bump d'exactement une révision.
+        match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged { revision, .. } => {
+                assert_eq!(revision, RenderRevision(2));
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn hidden_layer_keeps_thumb_and_resolves_once() {
+        // Les calques masqués ne contribuent pas au composite mais
+        // gardent leur miniature (parité avec l'ancien chemin thumb()).
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let hidden = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::ToggleLayerVisibility(hidden));
+        let layers = match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged { layers, .. } => layers,
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        };
+        let info = layers.iter().find(|l| l.id == hidden).expect("calque");
+        assert!(!info.visible);
+        assert!(info.thumb.is_some(), "miniature conservée même masqué");
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(
+            m.appearance_resolves, 3,
+            "tous les calques résolus une fois"
+        );
+        assert_eq!(m.preview_rebuilds, 0);
+        assert_eq!(m.thumb_rebuilds, 0);
+    }
+
+    fn three_layer_doc_for_fold() -> Document {
+        use photo_engine::{LayerNode, PixelLayer};
+        use std::sync::Arc;
+        let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
+        let mut doc = Document::new(8, 8);
+        for name in ["fond", "milieu", "dessus"] {
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new(name, image.clone())));
+        }
+        doc
     }
 }

@@ -123,6 +123,23 @@ pub struct Renderer {
     entries: HashMap<Uuid, CacheEntry>,
     hits: u64,
     misses: u64,
+    /// Buffers `preview` (pleine résolution réduite) régénérés.
+    preview_rebuilds: u64,
+    /// Miniatures `thumb` régénérées.
+    thumb_rebuilds: u64,
+}
+
+/// Compteurs d'apparences (observabilité, sans effet sur le rendu).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AppearanceStats {
+    /// Entrées resservies sans recalcul de chaîne.
+    pub hits: u64,
+    /// Entrées recalculées (chaîne ré-exécutée).
+    pub misses: u64,
+    /// Buffers `preview` régénérés (resample inclus).
+    pub preview_rebuilds: u64,
+    /// Miniatures `thumb` régénérées.
+    pub thumb_rebuilds: u64,
 }
 
 impl Renderer {
@@ -148,7 +165,15 @@ impl Renderer {
     /// L'image non masquée et la couverture sont réutilisées séparément :
     /// une édition de masque ne ré-exécute jamais la chaîne de filtres.
     /// Le pixels rendus restent identiques au chemin baké historique.
+    ///
+    /// Si l'entrée est encore valide ([`appearance_hit`](Self::appearance_hit)),
+    /// l'apparence mémorisée est resservie telle quelle : aucun `bake`,
+    /// aucun resample `preview`/`thumb` — même buffers partagés.
     fn appearance_locked(&mut self, layer: &PixelLayer) -> Appearance {
+        if let Some(cached) = self.appearance_hit(layer) {
+            self.hits += 1;
+            return cached;
+        }
         let unmasked = self.unmasked_image(layer);
         let mask_signature = mask_signature(&layer.masks);
         let mask_cover = match self.entries.get_mut(&layer.id) {
@@ -168,6 +193,8 @@ impl Renderer {
             thumb: crate::document::thumb_buf(&baked),
             image: baked,
         };
+        self.preview_rebuilds += 1;
+        self.thumb_rebuilds += 1;
         if let Some(entry) = self.entries.get_mut(&layer.id) {
             entry.appearance = appearance.clone();
         }
@@ -382,10 +409,34 @@ impl Renderer {
         self.misses
     }
 
+    /// Buffers `preview` régénérés depuis la construction (ou le dernier
+    /// reset) : resample inclus, même à signatures inchangées avant le
+    /// fast-path [`appearance_hit`](Self::appearance_hit).
+    pub fn preview_rebuilds(&self) -> u64 {
+        self.preview_rebuilds
+    }
+
+    /// Miniatures `thumb` régénérées.
+    pub fn thumb_rebuilds(&self) -> u64 {
+        self.thumb_rebuilds
+    }
+
+    /// Compteurs groupés (observabilité par fenêtre).
+    pub fn stats(&self) -> AppearanceStats {
+        AppearanceStats {
+            hits: self.hits,
+            misses: self.misses,
+            preview_rebuilds: self.preview_rebuilds,
+            thumb_rebuilds: self.thumb_rebuilds,
+        }
+    }
+
     /// Remet les compteurs à zéro (observabilité par fenêtre).
     pub fn reset_stats(&mut self) {
         self.hits = 0;
         self.misses = 0;
+        self.preview_rebuilds = 0;
+        self.thumb_rebuilds = 0;
     }
 }
 
@@ -540,6 +591,41 @@ mod tests {
         assert_eq!(r.cached_len(), 1);
         // Même Arc d'image : aucun recopiage de pixels
         assert!(Arc::ptr_eq(&a1.image, &a2.image));
+    }
+
+    #[test]
+    fn seconde_lecture_ne_reconstruit_pas_preview_thumb() {
+        // Le fast-path appearance_hit ressert l'apparence mémorisée :
+        // aucun resample, compteurs de rebuilds inchangés.
+        let layer = layer_with_filter(10.0);
+        let mut r = Renderer::default();
+        let a1 = r.appearance(&layer);
+        assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (1, 1));
+        let a2 = r.appearance(&layer);
+        assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (1, 1));
+        assert_eq!((r.misses(), r.hits()), (1, 1));
+        // Mêmes buffers partagés, pas de clones de pixels.
+        assert!(Arc::ptr_eq(&a1.image, &a2.image));
+        assert!(Arc::ptr_eq(&a1.thumb.data, &a2.thumb.data));
+        assert!(Arc::ptr_eq(&a1.preview.data, &a2.preview.data));
+    }
+
+    #[test]
+    fn changement_de_masque_rebake_sans_reexecuter_la_chaine() {
+        use crate::document::LayerMask;
+        let mut layer = layer_with_filter(10.0);
+        let mut r = Renderer::default();
+        let _ = r.appearance(&layer);
+        assert_eq!((r.misses(), r.hits()), (1, 0));
+        // Ajout d'un masque : chaîne épargnée (unmasked HIT), mais
+        // couverture + bake + preview/thumb à refaire une fois.
+        layer.masks.push(LayerMask::full(2, 2));
+        let _ = r.appearance(&layer);
+        assert_eq!((r.misses(), r.hits()), (1, 1));
+        assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (2, 2));
+        // Relecture : tout est stable, aucun rebuild.
+        let _ = r.appearance(&layer);
+        assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (2, 2));
     }
 
     #[test]
