@@ -34,6 +34,9 @@ pub mod features;
 pub mod menubar;
 pub mod modebar;
 pub mod optionsbar;
+/// Sondes de mesure perf (diagnostic temporaire, tests uniquement).
+#[cfg(test)]
+mod perf_probe;
 pub mod toolbar;
 pub mod viewport;
 
@@ -46,11 +49,14 @@ pub use engine_bridge::{
 };
 pub use features::{
     inspector::{InspectorPanel, inspector_action_to_photo},
-    layers::{LayerRenameState, LayersPanel, PhotoLayerInfo, layer_panel_action_to_photo},
+    layers::{
+        LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo, layer_panel_action_to_photo,
+    },
 };
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;
 pub use viewport::{
-    PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool, draw_origin_marker,
+    CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool,
+    draw_brush_cursor, draw_document_bounds,
 };

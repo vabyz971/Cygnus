@@ -66,7 +66,7 @@ impl PhotoCanvasTool {
     /// Aide contextuelle affichée dans la barre de statut (façon Affinity).
     pub fn hint(self) -> &'static str {
         match self {
-            Self::Move => "Glisser : interagir — molette : zoom",
+            Self::Move => "Glisser : deplacer le calque — molette : zoom",
             Self::Pan => "Glisser : deplacer la vue — molette : zoom",
             Self::Zoom => "Clic : zoom avant — clic droit : zoom arriere",
             Self::Brush => "Glisser : peindre — relacher : commettre le trait",
@@ -115,16 +115,74 @@ pub struct PaintRequest {
     pub opacity: f32,
 }
 
+/// Déplacement d'un calque commis au relâchement du drag (outil
+/// sélection, retourné à l'app puis envoyé au worker via
+/// `PhotoAction::MoveLayer`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MoveRequest {
+    /// Calque pixels cible.
+    pub layer: Uuid,
+    /// Décalage horizontal en pixels image.
+    pub dx: f32,
+    /// Décalage vertical en pixels image.
+    pub dy: f32,
+}
+
+/// Correspondance miniature→pixels document pour un aperçu du plan
+/// infini : la miniature affichée peut être plus grande que le
+/// document (calque déplacé hors cadre) et réduite (plafond 1600 px).
+/// Sans mapping (défaut), la miniature vaut le document (identité).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CanvasMapping {
+    /// Coin haut-gauche du document en pixels miniature.
+    pub origin: egui::Vec2,
+    /// Facteur miniature→pixels document (miniature uniforme).
+    pub thumb_to_doc: f32,
+}
+
+impl CanvasMapping {
+    /// Mapping identité (miniature = document).
+    pub fn identity() -> Self {
+        Self {
+            origin: egui::Vec2::ZERO,
+            thumb_to_doc: 1.0,
+        }
+    }
+
+    /// Convertit un point miniature en pixels document.
+    fn to_doc(self, thumb: egui::Vec2) -> egui::Vec2 {
+        let k = if self.thumb_to_doc > 0.0 && self.thumb_to_doc.is_finite() {
+            self.thumb_to_doc
+        } else {
+            1.0
+        };
+        egui::vec2((thumb.x - self.origin.x) * k, (thumb.y - self.origin.y) * k)
+    }
+
+    /// Convertit un delta miniature en delta document (l'origine
+    /// s'annule sur les différences).
+    fn delta_to_doc(self, delta_thumb: egui::Vec2) -> egui::Vec2 {
+        let k = if self.thumb_to_doc > 0.0 && self.thumb_to_doc.is_finite() {
+            self.thumb_to_doc
+        } else {
+            1.0
+        };
+        delta_thumb * k
+    }
+}
+
 /// Canvas photo (builder) : texture moteur + outils par-dessus.
 ///
-/// `stroke` accumule les positions monde du trait en cours (détenu
-/// par l'app, vidé à chaque commit).
+/// `stroke` accumule les positions du geste en cours (trait de
+/// pinceau ou drag de déplacement, en pixels image), détenu par
+/// l'app et vidé à chaque commit.
 pub struct PhotoCanvas<'a> {
     texture: Option<(egui::TextureId, egui::Vec2)>,
     tool: PhotoCanvasTool,
     show_grid: bool,
     active_layer: Option<Uuid>,
     brush: PhotoBrushSettings,
+    mapping: CanvasMapping,
     stroke: &'a mut Vec<egui::Vec2>,
 }
 
@@ -137,6 +195,7 @@ impl<'a> PhotoCanvas<'a> {
             show_grid: false,
             active_layer: None,
             brush: PhotoBrushSettings::default(),
+            mapping: CanvasMapping::identity(),
             stroke,
         }
     }
@@ -176,10 +235,19 @@ impl<'a> PhotoCanvas<'a> {
         self
     }
 
+    /// Correspondance miniature→pixels document (plan infini +
+    /// miniature plafonnée). Identité par défaut.
+    #[must_use]
+    pub fn mapping(mut self, mapping: CanvasMapping) -> Self {
+        self.mapping = mapping;
+        self
+    }
+
     /// Affiche le canvas, applique pan/zoom, accumule puis commet les
-    /// traits. Les positions rapportées sont en PIXELS IMAGE (prise en
-    /// compte de l'ajustement, du zoom et du pan via `dest_rect`) —
-    /// directement exploitables par le worker (transform identité).
+    /// traits (pinceau/gomme) ou les déplacements (sélection). Les
+    /// positions rapportées sont en PIXELS IMAGE (prise en compte de
+    /// l'ajustement, du zoom et du pan via `dest_rect`) — directement
+    /// exploitables par le worker (transform identité).
     pub fn show(self, ui: &mut egui::Ui, state: &mut ViewportState) -> PhotoCanvasOutcome {
         let (texture_id, image_size) = self.texture.unzip();
         // Rectangle de destination AVANT interaction (même géométrie
@@ -203,27 +271,51 @@ impl<'a> PhotoCanvas<'a> {
 
         let mut outcome = PhotoCanvasOutcome {
             response: Some(response.response.clone()),
+            dest_rect: dest,
+            image_size: image_size.unwrap_or(egui::Vec2::ZERO),
+            hover_pos: response.response.hover_pos(),
             ..Default::default()
         };
-        // Écran → pixels image (ajustement + zoom + pan inversés).
-        // Sans image (dest None), les positions sont ignorées.
+        // Écran → miniature → pixels document (origine du plan infini
+        // + échelle de la miniature inversées). Sans image (dest None),
+        // les positions sont ignorées.
         if let Some(dest) = dest {
             let scale = dest.width() / image_size.map_or(1.0, |size| size.x.max(1.0));
             if scale > 0.0 {
                 for action in &response.actions {
                     if let ViewportAction::PointerAtWorld(world) = action {
                         let screen = state.world_to_screen(*world);
-                        outcome.pointer_world.push(egui::vec2(
+                        let thumb = egui::vec2(
                             (screen.x - dest.min.x) / scale,
                             (screen.y - dest.min.y) / scale,
-                        ));
+                        );
+                        outcome.pointer_world.push(self.mapping.to_doc(thumb));
                     }
                 }
             }
         }
+        // Outil déplacement : accumule le drag en pixels image et
+        // commet le décalage total au relâchement.
+        if self.tool == PhotoCanvasTool::Move {
+            self.stroke.extend(outcome.pointer_world.iter().copied());
+            if response.response.drag_stopped() && !self.stroke.is_empty() {
+                let first = self.stroke.first().copied().unwrap_or(egui::Vec2::ZERO);
+                let last = self.stroke.last().copied().unwrap_or(first);
+                self.stroke.clear();
+                let (dx, dy) = (last.x - first.x, last.y - first.y);
+                if let Some(layer) = self.active_layer
+                    && dx.is_finite()
+                    && dy.is_finite()
+                    && (dx != 0.0 || dy != 0.0)
+                {
+                    outcome.move_layer = Some(MoveRequest { layer, dx, dy });
+                }
+            }
+            return outcome;
+        }
         if !self.tool.is_painting() {
-            // Changement d'outil en cours de trait : abandon propre.
-            // (Pipette et déplacement rapportent juste la position.)
+            // Changement d'outil en cours de geste : abandon propre.
+            // (La pipette rapporte juste la position.)
             self.stroke.clear();
             return outcome;
         }
@@ -251,8 +343,16 @@ impl<'a> PhotoCanvas<'a> {
 pub struct PhotoCanvasOutcome {
     /// Trait à commettre (`None` = rien ce frame ; l'app l'envoie).
     pub paint: Option<PaintRequest>,
-    /// Positions monde du pointeur (clic/drag avec l'outil actif).
+    /// Déplacement à commettre (`None` = rien ce frame ; l'app l'envoie).
+    pub move_layer: Option<MoveRequest>,
+    /// Positions en pixels image du pointeur (clic/drag outil actif).
     pub pointer_world: Vec<egui::Vec2>,
+    /// Rectangle écran du document (`None` = pas d'image).
+    pub dest_rect: Option<egui::Rect>,
+    /// Taille image en pixels (zéro = pas d'image).
+    pub image_size: egui::Vec2,
+    /// Position écran du curseur (`None` = hors canvas).
+    pub hover_pos: Option<egui::Pos2>,
     /// Réponse egui du viewport (menus contextuels, survol).
     pub response: Option<egui::Response>,
 }
@@ -261,6 +361,27 @@ pub struct PhotoCanvasOutcome {
 mod tests {
     use super::*;
     use crate::ui::PhotoEngineCommand;
+
+    #[test]
+    fn canvas_mapping_miniature_vers_document() {
+        // Miniature 2x (plan infini réduit) avec origine (20, 10) px miniature.
+        let mapping = CanvasMapping {
+            origin: egui::vec2(20.0, 10.0),
+            thumb_to_doc: 2.0,
+        };
+        let doc = mapping.to_doc(egui::vec2(24.0, 15.0));
+        assert!((doc.x - 8.0).abs() < 1e-4);
+        assert!((doc.y - 10.0).abs() < 1e-4);
+        // Les deltas ignorent l'origine.
+        let delta = mapping.delta_to_doc(egui::vec2(3.0, -4.0));
+        assert!((delta.x - 6.0).abs() < 1e-4);
+        assert!((delta.y + 8.0).abs() < 1e-4);
+        // Identité par défaut.
+        let id = CanvasMapping::identity();
+        let same = id.to_doc(egui::vec2(5.0, 7.0));
+        assert!((same.x - 5.0).abs() < 1e-4);
+        assert!((same.y - 7.0).abs() < 1e-4);
+    }
 
     #[test]
     fn tool_mapping_and_painting_flags() {

@@ -85,6 +85,30 @@ pub struct PhotoSubLayerInfo {
     pub is_filter: bool,
 }
 
+/// Miniature d'un calque pour le panneau (buffer pur, converti en
+/// texture côté app et mis en cache par `appearance_version`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhotoLayerThumb {
+    /// Largeur en pixels (environ 48).
+    pub width: u32,
+    /// Hauteur en pixels (environ 32, ratio préservé).
+    pub height: u32,
+    /// Pixels RGBA8 ligne par ligne.
+    pub rgba: Vec<u8>,
+    /// Version d'apparence : l'UI ne re-téléverse que si elle change.
+    pub version: u64,
+}
+
+/// Miniature téléversée d'un calque, pour la ligne du panneau
+/// (construite par l'app depuis son cache de textures).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayerThumbView {
+    /// Texture GPU de la miniature.
+    pub texture_id: egui::TextureId,
+    /// Dimensions de la miniature en pixels.
+    pub size: egui::Vec2,
+}
+
 /// Données d'affichage d'un calque photo (vue UI, détenue par l'app).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhotoLayerInfo {
@@ -108,13 +132,15 @@ pub struct PhotoLayerInfo {
     pub filters: Vec<PhotoSubLayerInfo>,
     /// Masques du calque, pour la HUD.
     pub masks: Vec<PhotoSubLayerInfo>,
+    /// Miniature pixels (`None` = groupes/ajustements : icône de type).
+    pub thumb: Option<PhotoLayerThumb>,
     /// Sélection courante (état UI).
     pub selected: bool,
 }
 
 impl PhotoLayerInfo {
     /// Dérive une entrée d'affichage d'un nœud moteur.
-    pub fn from_node(node: &LayerNode) -> Self {
+    pub fn from_node(document: &Document, node: &LayerNode) -> Self {
         let (filters, masks) = match node {
             LayerNode::Pixel(pixels) => (
                 pixels
@@ -152,6 +178,17 @@ impl PhotoLayerInfo {
         };
         let has_filters = !filters.is_empty();
         let has_masks = !masks.is_empty();
+        // Miniature servie par le cache d'apparences moteur (zéro
+        // recalcul à chaud) : seuls les pixels en ont une.
+        let thumb = match node {
+            LayerNode::Pixel(pixels) => document.thumb(node.id()).map(|buf| PhotoLayerThumb {
+                width: buf.width,
+                height: buf.height,
+                rgba: buf.data.to_vec(),
+                version: pixels.appearance_version,
+            }),
+            LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+        };
         Self {
             id: node.id(),
             name: node.name().to_owned(),
@@ -163,6 +200,7 @@ impl PhotoLayerInfo {
             has_masks,
             filters,
             masks,
+            thumb,
             selected: false,
         }
     }
@@ -179,7 +217,7 @@ pub fn snapshot_layers(document: &Document) -> Vec<PhotoLayerInfo> {
         .root
         .iter()
         .rev()
-        .map(PhotoLayerInfo::from_node)
+        .map(|node| PhotoLayerInfo::from_node(document, node))
         .collect()
 }
 

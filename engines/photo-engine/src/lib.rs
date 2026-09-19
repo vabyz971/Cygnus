@@ -31,7 +31,7 @@ pub mod registry;
 pub mod render_pool;
 pub mod renderer;
 
-pub use command::{Command, RenderEvent};
+pub use command::{Command, RenderEvent, RenderRevision};
 pub use document::{
     AdjustmentLayer, Appearance, BlendMode, Document, FilterLayer, FilterNode, GroupLayer,
     LayerMask, LayerNode, PixelLayer, RgbaBuf, Transform2D,

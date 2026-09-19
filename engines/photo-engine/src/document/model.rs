@@ -553,6 +553,22 @@ impl LayerNode {
         self.masks_mut()?.iter_mut().find(|m| m.id == id)
     }
 
+    /// Décale la transform du calque de `(dx, dy)` pixels document
+    /// (outil déplacement). Seuls les calques pixels portent une
+    /// transform : groupes et ajustements retournent `false` (no-op).
+    /// Retourne `true` si le calque a été déplacé.
+    pub fn translate_by(&mut self, dx: f32, dy: f32) -> bool {
+        match self {
+            LayerNode::Pixel(l) => {
+                l.transform.offset_x += dx;
+                l.transform.offset_y += dy;
+                l.touch();
+                true
+            }
+            LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
+        }
+    }
+
     /// Réassigne des identifiants frais (duplication) et invalide l'apparence.
     /// Les masques sont inclus : ils sont adressés par id (miniatures UI).
     pub(crate) fn regenerate_ids(&mut self) {

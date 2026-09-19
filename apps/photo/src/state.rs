@@ -32,12 +32,90 @@ use crate::ui::{
     CreateDocumentDialogState, ExportDialogState, LayerRenameState, PhotoBrushSettings,
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PreviewImage,
 };
+use photo_engine::RenderRevision;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use ui_kit::layout::WorkspaceState;
 use ui_kit::utils::ReorderDragState;
 use ui_kit::viewport::{ViewportState, ViewportTextureCache};
 use uuid::Uuid;
+
+/// Géométrie de l'aperçu : où se trouve le document dans la miniature
+/// (plan infini : le composite dépasse dès qu'un calque sort du cadre).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PreviewGeom {
+    /// Dimensions de la miniature en pixels.
+    pub thumb_size: egui::Vec2,
+    /// Dimensions du composite pleine résolution.
+    pub full_size: egui::Vec2,
+    /// Coin haut-gauche du document en pixels miniature.
+    pub origin: egui::Vec2,
+    /// Dimensions du document en pixels.
+    pub doc_size: egui::Vec2,
+}
+
+impl PreviewGeom {
+    /// Facteur miniature→pixels document (miniature uniforme).
+    pub fn thumb_to_doc(self) -> f32 {
+        if self.thumb_size.x > 0.0 && self.full_size.x > 0.0 {
+            self.full_size.x / self.thumb_size.x
+        } else {
+            1.0
+        }
+    }
+
+    /// Rectangle écran du document à partir du rectangle écran de la
+    /// miniature (`None` sans géométrie valide).
+    pub fn doc_rect(self, dest: egui::Rect) -> Option<egui::Rect> {
+        if self.thumb_size.x <= 0.0 || self.doc_size.x <= 0.0 || self.doc_size.y <= 0.0 {
+            return None;
+        }
+        let scale = dest.width() / self.thumb_size.x;
+        if scale <= 0.0 {
+            return None;
+        }
+        let min = egui::pos2(
+            dest.min.x + self.origin.x * scale,
+            dest.min.y + self.origin.y * scale,
+        );
+        let kx = if self.full_size.x > 0.0 {
+            self.thumb_size.x / self.full_size.x
+        } else {
+            1.0
+        };
+        let size = egui::vec2(self.doc_size.x * kx * scale, self.doc_size.y * kx * scale);
+        Some(egui::Rect::from_min_size(min, size))
+    }
+}
+
+/// Miniature de calque téléversée (cache textures du panneau).
+pub(crate) struct CachedLayerThumb {
+    /// Texture GPU (vivante tant que le calque est affiché).
+    handle: egui::TextureHandle,
+    /// Version d'apparence servie (re-téléversement si changée).
+    version: u64,
+    /// Dimensions de la miniature en pixels.
+    size: egui::Vec2,
+}
+
+impl PhotoUiState {
+    /// Vue des miniatures pour le panneau Calques (id texture + taille).
+    pub fn thumb_views(&self) -> HashMap<Uuid, crate::ui::LayerThumbView> {
+        self.thumb_cache
+            .iter()
+            .map(|(id, cached)| {
+                (
+                    *id,
+                    crate::ui::LayerThumbView {
+                        texture_id: cached.handle.id(),
+                        size: cached.size,
+                    },
+                )
+            })
+            .collect()
+    }
+}
 
 /// État UI d'un document ouvert.
 #[derive(Default)]
@@ -56,6 +134,12 @@ pub struct PhotoUiState {
     pub texture_cache: ViewportTextureCache,
     /// Dernier aperçu reçu (échantillonnage pipette).
     pub last_preview: Option<PreviewImage>,
+    /// Géométrie du dernier aperçu (cadre document dans la miniature).
+    pub preview_geom: Option<PreviewGeom>,
+    /// Aperçu rogné au document (menu Affichage, défaut : plan infini).
+    pub preview_clip: bool,
+    /// Textures des miniatures du panneau Calques, par calque.
+    pub thumb_cache: HashMap<Uuid, CachedLayerThumb>,
     /// Trait de pinceau en cours (pixels image).
     pub stroke: Vec<egui::Vec2>,
     /// Réglages pinceau/gomme.
@@ -74,6 +158,15 @@ pub struct PhotoUiState {
     pub show_grid: bool,
     /// Repaint explicite demandé.
     pub needs_repaint: bool,
+    /// INSTRUMENTATION TEMPORAIRE (diagnostic perf) : réponses worker
+    /// appliquées (== previews reçus + erreurs/exports).
+    pub responses_applied: u64,
+    /// INSTRUMENTATION TEMPORAIRE : uploads de textures egui
+    /// (aperçu + miniatures périmées).
+    pub texture_uploads: u64,
+    /// Révision du rendu affiché (`None` = aucune texture) : les
+    /// réponses obsolètes ne re-téléversent pas.
+    pub displayed_revision: Option<RenderRevision>,
 }
 
 /// Modale d'ajout de filtre (sélection dans le registre moteur).
@@ -168,6 +261,42 @@ impl Default for PhotoRuntimeState {
     }
 }
 
+/// Cache des miniatures : re-téléverse uniquement les calques dont
+/// l'apparence a changé, purge les disparus. Partagé par les deux
+/// bras d'état (`LayersChanged` et `StateChanged`).
+fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
+    for layer in &ui.layers {
+        if let Some(thumb) = layer.thumb.as_ref() {
+            let stale = ui
+                .thumb_cache
+                .get(&layer.id)
+                .is_none_or(|cached| cached.version != thumb.version);
+            if stale {
+                let handle = ctx.load_texture(
+                    format!("photo_layer_thumb_{}", layer.id),
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [thumb.width as usize, thumb.height as usize],
+                        &thumb.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                );
+                // INSTRUMENTATION TEMPORAIRE.
+                ui.texture_uploads += 1;
+                ui.thumb_cache.insert(
+                    layer.id,
+                    CachedLayerThumb {
+                        handle,
+                        version: thumb.version,
+                        size: egui::vec2(thumb.width as f32, thumb.height as f32),
+                    },
+                );
+            }
+        }
+    }
+    ui.thumb_cache
+        .retain(|id, _| ui.layers.iter().any(|layer| layer.id == *id));
+}
+
 /// Applique une réponse worker à l'état UI d'un document.
 ///
 /// Seul point de conversion moteur→UI : snapshots + aperçu
@@ -178,36 +307,83 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
         PhotoEngineResponse::LayersChanged {
             layers,
             preview,
+            revision,
             can_undo,
             can_redo,
         } => {
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
+            // INSTRUMENTATION TEMPORAIRE.
+            ui.responses_applied += 1;
             if ui
                 .selected
                 .is_some_and(|id| !ui.layers.iter().any(|layer| layer.id == id))
             {
                 ui.selected = None;
             }
+            sync_thumbs(ctx, ui);
             match preview {
                 Some(image) => {
-                    ui.texture_cache.update(
-                        ctx,
-                        "photo_preview",
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [image.width as usize, image.height as usize],
-                            &image.rgba,
-                        ),
-                    );
-                    ui.last_preview = Some(image);
-                    ui.status.clear();
+                    // Garde anti-obsolescence : une réponse en retard
+                    // (révision <= texture affichée) ne re-téléverse pas.
+                    let fresh = ui
+                        .displayed_revision
+                        .is_none_or(|shown| revision.is_newer_than(shown));
+                    if fresh {
+                        ui.preview_geom = Some(PreviewGeom {
+                            thumb_size: egui::vec2(image.width as f32, image.height as f32),
+                            full_size: egui::vec2(
+                                image.full_width as f32,
+                                image.full_height as f32,
+                            ),
+                            origin: egui::vec2(image.origin_x, image.origin_y),
+                            doc_size: egui::vec2(image.doc_width as f32, image.doc_height as f32),
+                        });
+                        ui.texture_cache.update(
+                            ctx,
+                            "photo_preview",
+                            egui::ColorImage::from_rgba_unmultiplied(
+                                [image.width as usize, image.height as usize],
+                                &image.rgba,
+                            ),
+                        );
+                        // INSTRUMENTATION TEMPORAIRE.
+                        ui.texture_uploads += 1;
+                        ui.last_preview = Some(image);
+                        ui.displayed_revision = Some(revision);
+                        ui.status.clear();
+                    }
                 }
                 None => {
                     ui.texture_cache.clear();
                     ui.last_preview = None;
+                    ui.preview_geom = None;
+                    ui.displayed_revision = None;
                 }
             }
+            ui.needs_repaint = true;
+        }
+        PhotoEngineResponse::StateChanged {
+            layers,
+            revision: _,
+            can_undo,
+            can_redo,
+        } => {
+            // Snapshot seul : la texture affichée est conservée telle
+            // quelle (aucun nouveau rendu produit côté worker).
+            ui.layers = layers;
+            ui.can_undo = can_undo;
+            ui.can_redo = can_redo;
+            // INSTRUMENTATION TEMPORAIRE.
+            ui.responses_applied += 1;
+            if ui
+                .selected
+                .is_some_and(|id| !ui.layers.iter().any(|layer| layer.id == id))
+            {
+                ui.selected = None;
+            }
+            sync_thumbs(ctx, ui);
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::EngineError { message } => {
@@ -253,6 +429,12 @@ mod tests {
                 10, 20, 30, 255, 40, 50, 60, 255, //
                 70, 80, 90, 255, 100, 110, 120, 255,
             ],
+            full_width: 2,
+            full_height: 2,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            doc_width: 2,
+            doc_height: 2,
         };
         assert_eq!(sample_preview_color(&preview, 0.0, 0.0), Some([10, 20, 30]));
         assert_eq!(
@@ -265,6 +447,12 @@ mod tests {
             width: 0,
             height: 0,
             rgba: Vec::new(),
+            full_width: 0,
+            full_height: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            doc_width: 0,
+            doc_height: 0,
         };
         assert_eq!(sample_preview_color(&empty, 0.0, 0.0), None);
     }
@@ -297,6 +485,71 @@ mod tests {
         assert!(ui.status.contains("test.png"));
     }
 
+    fn preview_at_revision(revision: RenderRevision) -> PhotoEngineResponse {
+        PhotoEngineResponse::LayersChanged {
+            layers: Vec::new(),
+            preview: Some(PreviewImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
+                ],
+                full_width: 2,
+                full_height: 2,
+                origin_x: 0.0,
+                origin_y: 0.0,
+                doc_width: 2,
+                doc_height: 2,
+            }),
+            revision,
+            can_undo: false,
+            can_redo: false,
+        }
+    }
+
+    #[test]
+    fn stale_preview_revision_does_not_reupload() {
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(2)));
+        assert_eq!(ui.displayed_revision, Some(RenderRevision(2)));
+        let uploads = ui.texture_uploads;
+        let texture = ui.texture_cache.texture().expect("texture");
+        // Réponse en retard : texture et aperçu conservés.
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(1)));
+        assert_eq!(ui.texture_uploads, uploads, "aucun re-téléversement");
+        assert_eq!(ui.texture_cache.texture().expect("texture"), texture);
+        assert_eq!(ui.displayed_revision, Some(RenderRevision(2)));
+        // Révision plus récente : téléversement normal.
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(3)));
+        assert_eq!(ui.texture_uploads, uploads + 1);
+        assert_eq!(ui.displayed_revision, Some(RenderRevision(3)));
+    }
+
+    #[test]
+    fn state_changed_keeps_displayed_texture() {
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(4)));
+        let uploads = ui.texture_uploads;
+        let texture = ui.texture_cache.texture().expect("texture");
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::StateChanged {
+                layers: Vec::new(),
+                revision: RenderRevision(4),
+                can_undo: true,
+                can_redo: false,
+            },
+        );
+        // Panneau à jour (undo), texture intacte.
+        assert!(ui.can_undo);
+        assert_eq!(ui.texture_uploads, uploads);
+        assert_eq!(ui.texture_cache.texture().expect("texture"), texture);
+        assert_eq!(ui.displayed_revision, Some(RenderRevision(4)));
+    }
+
     #[test]
     fn shell_defaults_to_usable_workspace() {
         use ui_kit::layout::PanelId;
@@ -305,5 +558,36 @@ mod tests {
         assert!(!shell.filter_modal.open);
         assert!(shell.workspace.find(PanelId::Layers).is_some());
         assert!(shell.workspace.find(PanelId::Inspector).is_some());
+    }
+}
+
+#[cfg(test)]
+mod geom_tests {
+    use super::PreviewGeom;
+
+    #[test]
+    fn doc_rect_stable_quand_la_miniature_deborde() {
+        // Miniature 28x8 (plan infini), document 8x8 à l'origine (10, 0).
+        let geom = PreviewGeom {
+            thumb_size: egui::vec2(28.0, 8.0),
+            full_size: egui::vec2(28.0, 8.0),
+            origin: egui::vec2(10.0, 0.0),
+            doc_size: egui::vec2(8.0, 8.0),
+        };
+        assert!((geom.thumb_to_doc() - 1.0).abs() < 1e-5);
+        // Dest écran 280x80 à (0, 0) : échelle 10.
+        let dest = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(280.0, 80.0));
+        let rect = geom.doc_rect(dest).expect("cadre document");
+        assert!((rect.min.x - 100.0).abs() < 1e-3);
+        assert!((rect.min.y - 0.0).abs() < 1e-3);
+        assert!((rect.width() - 80.0).abs() < 1e-3);
+        assert!((rect.height() - 80.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn doc_rect_none_sans_geometrie_valide() {
+        let dest = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0));
+        let empty = PreviewGeom::default();
+        assert!(empty.doc_rect(dest).is_none());
     }
 }

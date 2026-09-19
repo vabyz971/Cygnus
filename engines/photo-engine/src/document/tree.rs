@@ -1015,6 +1015,32 @@ impl Document {
         Some(out)
     }
 
+    /// Géométrie du composite du plan infini : dimensions pleine
+    /// résolution `(w, h)` et coin haut-gauche du DOCUMENT `(ox, oy)`
+    /// dans ces pixels. `None` si rien n'est visible. Les demi-extents
+    /// sont symétriques par construction (`scope_half_extents`) : le
+    /// document est donc toujours centré dans le buffer.
+    /// Partagée avec l'UI (aperçu miniature) pour convertir
+    /// écran→pixels document sans dérive.
+    pub fn preview_geometry(&self) -> Option<(u32, u32, f32, f32)> {
+        self.preview_geometry_of(&self.root)
+    }
+
+    /// Variante de [`Self::preview_geometry`] sur une portée donnée.
+    fn preview_geometry_of(&self, nodes: &[LayerNode]) -> Option<(u32, u32, f32, f32)> {
+        let resolver = |id: Uuid| self.appearance_image(id);
+        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, &resolver);
+        let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
+        let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
+        // Coût nul si rien ne contribue (évite un composite fantôme).
+        if !contributes(nodes, &resolver) {
+            return None;
+        }
+        let origin_x = half_w - self.width as f32 / 2.0;
+        let origin_y = half_h - self.height as f32 / 2.0;
+        Some((w.max(1), h.max(1), origin_x, origin_y))
+    }
+
     fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage> {
         let resolver = |id: Uuid| self.appearance_image(id);
         let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, &resolver);
@@ -1077,6 +1103,29 @@ fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode> {
         }
     }
     None
+}
+
+/// Vrai si au moins un nœud contribuerait au composite (mêmes gardes
+/// que [`fold_scope`](super::compositing::fold_scope), sans rendre).
+/// Un ajustement seul ne compte pas : sur accumulateur vide il ne
+/// produit rien, comme le composite qui retourne alors `None`.
+fn contributes(nodes: &[LayerNode], resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>) -> bool {
+    for node in nodes {
+        match node {
+            LayerNode::Pixel(l) => {
+                if l.visible && l.opacity > 0.01 && resolve(l.id).is_some() {
+                    return true;
+                }
+            }
+            LayerNode::Group(g) => {
+                if g.visible && g.opacity > 0.01 && contributes(&g.children, resolve) {
+                    return true;
+                }
+            }
+            LayerNode::Adjustment(_) => {}
+        }
+    }
+    false
 }
 
 /// Parent (`None` = racine) et index d'un nœud, pour détecter les no-ops.

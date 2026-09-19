@@ -59,6 +59,9 @@ pub enum PhotoMenuAction {
     DeleteLayer,
     /// Basculer la grille du canvas.
     ToggleGrid,
+    /// Rogner l'aperçu au document (sinon plan infini : le contenu
+    /// hors cadre reste visible autour).
+    TogglePreviewClip,
     /// Zoom avant / arrière (ancré au centre).
     ZoomIn,
     /// Zoom arrière.
@@ -86,6 +89,8 @@ pub struct MenuAvailability {
     pub can_redo: bool,
     /// Un calque est sélectionné.
     pub has_selection: bool,
+    /// L'aperçu est rogné au document (coche du menu Affichage).
+    pub preview_clip: bool,
 }
 
 /// Dessine la barre de menus et retourne les actions.
@@ -215,6 +220,18 @@ pub fn draw_menu_bar(
                             availability.has_document,
                         ) {
                             actions.push(PhotoMenuAction::ToggleGrid);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            if availability.preview_clip {
+                                "[x] Rogner l'apercu au document"
+                            } else {
+                                "[ ] Rogner l'apercu au document"
+                            },
+                            availability.has_document,
+                        ) {
+                            actions.push(PhotoMenuAction::TogglePreviewClip);
                         }
                         if menu_item_enabled(
                             ui,

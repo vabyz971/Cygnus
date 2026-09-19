@@ -1270,3 +1270,37 @@ fn composite_masque_calque_redimensionne_conserve_l_echelle() {
         "masque noir → rien de visible"
     );
 }
+
+#[test]
+fn preview_geometry_centre_le_document_quand_un_calque_sort() {
+    // Document 8x8, calque opaque 8x8 décale de +10 px : le composite
+    // couvre 0..18 en X (demi-extent 14 autour du centre 4).
+    let img = solid(8, 8, [200, 40, 40, 255]);
+    let doc = doc_of(
+        vec![pixel_node(&img, 100.0, BlendMode::Normal, 10.0, 0.0)],
+        8,
+        8,
+    );
+    let (w, h, ox, oy) = doc.preview_geometry().expect("geometrie");
+    assert_eq!((w, h), (28, 8));
+    assert!(
+        (ox - 10.0).abs() < 1e-3,
+        "origine X = decalage, obtenu {ox}"
+    );
+    assert!(oy.abs() < 1e-3, "origine Y = 0, obtenu {oy}");
+    // Le composite pleine résolution a les mêmes dimensions.
+    let full = doc.composite_preview().expect("composite");
+    assert_eq!(full.dimensions(), (w, h));
+}
+
+#[test]
+fn preview_geometry_vide_sans_calque_visible() {
+    let img = solid(8, 8, [200, 40, 40, 0]);
+    let doc = doc_of(
+        vec![pixel_node(&img, 0.0, BlendMode::Normal, 0.0, 0.0)],
+        8,
+        8,
+    );
+    assert!(doc.preview_geometry().is_none());
+    assert!(doc.composite_preview().is_none());
+}

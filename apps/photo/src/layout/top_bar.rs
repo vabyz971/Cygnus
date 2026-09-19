@@ -40,6 +40,7 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
         PhotoMenuAction::AddMask => PhotoAction::AddMaskToSelected,
         PhotoMenuAction::DeleteLayer => PhotoAction::DeleteSelectedLayer,
         PhotoMenuAction::ToggleGrid => PhotoAction::ToggleGrid,
+        PhotoMenuAction::TogglePreviewClip => PhotoAction::TogglePreviewClip,
         PhotoMenuAction::ZoomIn => PhotoAction::ZoomIn,
         PhotoMenuAction::ZoomOut => PhotoAction::ZoomOut,
         PhotoMenuAction::ZoomReset => PhotoAction::ZoomReset,
@@ -67,6 +68,7 @@ pub fn show_menu_bar(
                 has_selection: app
                     .active_doc_opt()
                     .is_some_and(|doc| doc.ui.selected.is_some()),
+                preview_clip: app.active_doc_opt().is_some_and(|doc| doc.ui.preview_clip),
             };
             actions.extend(
                 draw_menu_bar(

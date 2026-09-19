@@ -102,6 +102,40 @@ impl ViewportState {
         }
     }
 
+    /// Définit le zoom en gardant fixe le point image sous `anchor`.
+    ///
+    /// Contrairement à [`set_zoom`](Self::set_zoom) (ancre exprimée
+    /// dans le repère écran brut `screen = world * zoom + offset`), ici
+    /// l'ancre est exprimée en coordonnées écran absolues et le
+    /// viewport est centré sur `viewport_center` (géométrie réelle du
+    /// widget : `screen = center + offset + world * zoom`). Sans cette
+    /// correction, le zoom molette dérive vers le centre au lieu de
+    /// rester sous la souris.
+    pub fn set_zoom_around(&mut self, zoom: f32, anchor: egui::Pos2, viewport_center: egui::Pos2) {
+        if !zoom.is_finite() {
+            return;
+        }
+        let old = self.zoom;
+        self.zoom = zoom.clamp(self.min_zoom, self.max_zoom);
+        if old > 0.0 {
+            let ratio = self.zoom / old;
+            let rel = egui::vec2(
+                anchor.x - viewport_center.x - self.offset.x,
+                anchor.y - viewport_center.y - self.offset.y,
+            );
+            self.offset += rel - rel * ratio;
+        }
+    }
+
+    /// Multiplie le zoom par `factor` en gardant fixe le point image
+    /// sous `anchor` (voir [`set_zoom_around`](Self::set_zoom_around)).
+    /// Ignoré si `factor <= 0` ou non fini.
+    pub fn zoom_by_around(&mut self, factor: f32, anchor: egui::Pos2, viewport_center: egui::Pos2) {
+        if factor > 0.0 && factor.is_finite() {
+            self.set_zoom_around(self.zoom * factor, anchor, viewport_center);
+        }
+    }
+
     /// Décale la vue de `delta` pixels écran.
     pub fn pan_by(&mut self, delta: egui::Vec2) {
         self.offset += delta;
@@ -163,6 +197,35 @@ mod tests {
         let after = viewport.screen_to_world(anchor);
         assert!((before.x - after.x).abs() < 1e-4);
         assert!((before.y - after.y).abs() < 1e-4);
+    }
+
+    #[test]
+    fn zoom_around_keeps_image_point_under_cursor() {
+        // Géométrie réelle du widget : dest centré sur `center + offset`.
+        let mut viewport = ViewportState::default();
+        let center = egui::pos2(200.0, 150.0);
+        let anchor = egui::pos2(260.0, 110.0);
+        // Point image sous le curseur avant zoom.
+        let before = egui::vec2(
+            (anchor.x - center.x - viewport.offset().x) / viewport.zoom(),
+            (anchor.y - center.y - viewport.offset().y) / viewport.zoom(),
+        );
+        viewport.zoom_by_around(2.0, anchor, center);
+        let after = egui::vec2(
+            (anchor.x - center.x - viewport.offset().x) / viewport.zoom(),
+            (anchor.y - center.y - viewport.offset().y) / viewport.zoom(),
+        );
+        assert!((before.x - after.x).abs() < 1e-4);
+        assert!((before.y - after.y).abs() < 1e-4);
+    }
+
+    #[test]
+    fn zoom_around_ignores_invalid_factors() {
+        let mut viewport = ViewportState::default();
+        viewport.zoom_by_around(0.0, egui::pos2(10.0, 10.0), egui::pos2(0.0, 0.0));
+        viewport.zoom_by_around(-2.0, egui::pos2(10.0, 10.0), egui::pos2(0.0, 0.0));
+        viewport.zoom_by_around(f32::NAN, egui::pos2(10.0, 10.0), egui::pos2(0.0, 0.0));
+        assert_eq!(viewport.zoom(), 1.0);
     }
 
     #[test]

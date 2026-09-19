@@ -61,6 +61,7 @@ pub fn draw_layers_content(
     {
         doc.ui.rename.editing = None;
     }
+    let thumbs = doc.ui.thumb_views();
     LayersPanel::show(
         ui,
         ctx,
@@ -68,6 +69,7 @@ pub fn draw_layers_content(
         doc.ui.selected,
         &mut doc.ui.rename,
         &mut doc.ui.drag_state,
+        &thumbs,
     )
     .into_iter()
     .map(layer_panel_action_to_photo)

@@ -57,9 +57,12 @@ pub fn load_texture(
 /// Cache applicatif d'une texture canvas (id + taille image).
 ///
 /// L'app en détient une instance, l'alimente depuis son channel moteur
-/// (non bloquant, chaque frame), et passe l'id au widget. La texture
-/// n'est re-téléversée que quand l'image change : zoom/pan/grille ne
-/// touchent jamais aux pixels.
+/// (non bloquant, à chaque nouveau rendu), et passe l'id au widget.
+/// La texture GPU n'est allouée qu'une fois : les images suivantes de
+/// mêmes dimensions mettent à jour le slot existant via
+/// [`egui::TextureHandle::set`] (aucun free/alloc GPU) ; un changement
+/// de dimensions recrée proprement la texture. Zoom/pan/grille et les
+/// simples repaints ne touchent jamais aux pixels ni à la texture.
 #[derive(Default)]
 pub struct ViewportTextureCache {
     handle: Option<egui::TextureHandle>,
@@ -72,20 +75,44 @@ impl ViewportTextureCache {
         Self::default()
     }
 
-    /// Met à jour l'image affichée (re-téléversement GPU).
+    /// Met à jour l'image affichée.
     /// À appeler uniquement à réception d'un nouveau rendu moteur.
+    ///
+    /// - première image : allocation via `ctx.load_texture()` ;
+    /// - mêmes dimensions que la précédente : mise à jour en place
+    ///   (`TextureHandle::set()`, id stable, aucun realloc GPU) ;
+    /// - dimensions différentes : l'ancien handle est libéré et une
+    ///   nouvelle texture est allouée.
+    ///
+    /// Le `ColorImage` fourni est consommé tel quel (aucune copie ni
+    /// conversion supplémentaire ici) : la seule conversion RGBA →
+    /// `ColorImage` a lieu une fois côté appelant, par nouveau rendu.
     pub fn update(&mut self, ctx: &egui::Context, name: &str, image: egui::ColorImage) {
-        self.size = egui::vec2(image.width() as f32, image.height() as f32);
-        self.handle = Some(load_texture(ctx, name, image, true));
+        let size = egui::vec2(image.width() as f32, image.height() as f32);
+        let same_size = self.handle.is_some() && self.size == size;
+        if same_size {
+            if let Some(handle) = self.handle.as_mut() {
+                handle.set(image, egui::TextureOptions::LINEAR);
+            }
+        } else {
+            // Première image ou changement de dimensions : (re)création
+            // (l'ancien handle éventuel est libéré au remplacement).
+            self.handle = Some(load_texture(ctx, name, image, true));
+        }
+        self.size = size;
     }
 
-    /// Vide le cache (fermeture de document).
+    /// Vide le cache (fermeture de document) : le handle est libéré
+    /// (delta `free` egui) et la prochaine image réallouera.
     pub fn clear(&mut self) {
         self.handle = None;
         self.size = egui::Vec2::ZERO;
     }
 
     /// Id de texture et taille image, si une image est chargée.
+    /// Stable entre deux `update()` de mêmes dimensions (aucune
+    /// nouvelle texture GPU sur simple repaint : `show()` ne fait que
+    /// relire cet id).
     pub fn texture(&self) -> Option<(egui::TextureId, egui::Vec2)> {
         self.handle.as_ref().map(|handle| (handle.id(), self.size))
     }
@@ -235,7 +262,7 @@ impl Viewport {
             }
         }
 
-        let actions = handle_pointer(ui, &response, state, self.tool);
+        let actions = handle_pointer(ui, &response, state, self.tool, rect.center());
         ViewportResponse {
             response: response.on_hover_cursor(self.tool.cursor()),
             actions,
@@ -316,6 +343,96 @@ mod tests {
         .drop_without_applying_deltas();
         cache.clear();
         assert!(cache.texture().is_none());
+    }
+
+    fn solid_image(width: usize, height: usize, color: egui::Color32) -> egui::ColorImage {
+        egui::ColorImage::new([width, height], vec![color; width * height])
+    }
+
+    #[test]
+    fn texture_id_stable_on_same_size_update() {
+        // Deuxième image de mêmes dimensions : mise à jour en place,
+        // aucun nouveau slot GPU (id stable).
+        let ctx = egui::Context::default();
+        let mut cache = ViewportTextureCache::new();
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
+        let (first_id, first_size) = cache.texture().expect("texture chargee");
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::BLUE));
+        let (second_id, second_size) = cache.texture().expect("texture chargee");
+        assert_eq!(first_id, second_id, "mêmes dimensions = même texture");
+        assert_eq!(second_size, egui::vec2(4.0, 4.0));
+        assert_eq!(first_size, second_size);
+        // Troisième update identique : toujours stable.
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::GREEN));
+        assert_eq!(cache.texture().expect("texture").0, first_id);
+    }
+
+    #[test]
+    fn texture_recreated_on_dimension_change() {
+        // Changement de dimensions : l'ancien slot est abandonné et une
+        // nouvelle texture est allouée (nouvel id, nouvelle taille).
+        let ctx = egui::Context::default();
+        let mut cache = ViewportTextureCache::new();
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
+        let (small_id, _) = cache.texture().expect("texture chargee");
+        cache.update(&ctx, "test_canvas", solid_image(8, 6, egui::Color32::RED));
+        let (big_id, big_size) = cache.texture().expect("texture chargee");
+        assert_ne!(
+            small_id, big_id,
+            "dimensions différentes = nouvelle texture"
+        );
+        assert_eq!(big_size, egui::vec2(8.0, 6.0));
+        // Retour aux dimensions précédentes : realloc à nouveau (l'ancien
+        // slot 4x4 a été libéré), puis stabilité.
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
+        let (back_id, back_size) = cache.texture().expect("texture chargee");
+        assert_ne!(back_id, big_id);
+        assert_eq!(back_size, egui::vec2(4.0, 4.0));
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::BLUE));
+        assert_eq!(cache.texture().expect("texture").0, back_id);
+    }
+
+    #[test]
+    fn clear_then_update_reallocates() {
+        // `clear()` libère le handle : l'update suivant réalloue même à
+        // dimensions identiques (l'id libéré n'est pas réutilisé).
+        let ctx = egui::Context::default();
+        let mut cache = ViewportTextureCache::new();
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
+        let (before_id, _) = cache.texture().expect("texture chargee");
+        cache.clear();
+        assert!(cache.texture().is_none());
+        cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
+        let (after_id, after_size) = cache.texture().expect("texture chargee");
+        assert_ne!(before_id, after_id, "après clear : nouvelle allocation");
+        assert_eq!(after_size, egui::vec2(4.0, 4.0));
+    }
+
+    #[test]
+    fn repaint_and_zoom_pan_keep_texture_id() {
+        // Sans appel à `update()`, ni les repaints ni zoom/pan/grille ne
+        // créent de texture : l'id reste stable sur plusieurs frames.
+        let ctx = egui::Context::default();
+        let mut cache = ViewportTextureCache::new();
+        cache.update(&ctx, "test_canvas", solid_image(64, 48, egui::Color32::RED));
+        let (expected_id, size) = cache.texture().expect("texture chargee");
+        let mut viewport = ViewportState::default();
+        for _ in 0..3 {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let _ = Viewport::new()
+                        .texture(cache.texture().map(|(id, _)| id))
+                        .image_size(size)
+                        .tool(ViewportTool::Pan)
+                        .show_grid(true)
+                        .show(ui, &mut viewport);
+                });
+            })
+            .drop_without_applying_deltas();
+            viewport.zoom_by(1.5, None);
+            viewport.pan_by(egui::vec2(10.0, -5.0));
+        }
+        assert_eq!(cache.texture().expect("texture").0, expected_id);
     }
 
     #[test]

@@ -81,11 +81,16 @@ pub fn zoom_factor_for_scroll(delta_y: f32) -> f32 {
 ///
 /// À appeler après l'allocation du canvas, avec sa `response`.
 /// Le zoom molette n'est pris en compte que si le canvas est survolé.
+/// `viewport_center` est le centre écran du widget (géométrie réelle
+/// `screen = center + offset + world * zoom`) : le zoom molette et la
+/// loupe y sont ancrés pour que le point image sous la souris reste
+/// fixe (zoom au niveau du curseur).
 pub fn handle_pointer(
     ui: &mut egui::Ui,
     response: &egui::Response,
     state: &mut ViewportState,
     tool: ViewportTool,
+    viewport_center: egui::Pos2,
 ) -> Vec<ViewportAction> {
     let mut actions = Vec::new();
 
@@ -101,21 +106,23 @@ pub fn handle_pointer(
     if response.hovered() {
         let delta_y = ui.input(|input| input.smooth_scroll_delta()).y;
         let factor = zoom_factor_for_scroll(delta_y);
-        if factor != 1.0 {
-            let anchor = ui.ctx().pointer_latest_pos();
-            state.zoom_by(factor, anchor);
+        if factor != 1.0
+            && let Some(anchor) = ui.ctx().pointer_latest_pos()
+        {
+            state.zoom_by_around(factor, anchor, viewport_center);
             actions.push(ViewportAction::Zoomed);
         }
     }
 
     // Clic loupe : avant (gauche) / arrière (droit), ancré au pointeur.
-    if tool == ViewportTool::Zoom {
-        let anchor = ui.ctx().pointer_latest_pos();
+    if tool == ViewportTool::Zoom
+        && let Some(anchor) = ui.ctx().pointer_latest_pos()
+    {
         if response.clicked_by(egui::PointerButton::Primary) {
-            state.zoom_by(1.25, anchor);
+            state.zoom_by_around(1.25, anchor, viewport_center);
             actions.push(ViewportAction::Zoomed);
         } else if response.clicked_by(egui::PointerButton::Secondary) {
-            state.zoom_by(0.8, anchor);
+            state.zoom_by_around(0.8, anchor, viewport_center);
             actions.push(ViewportAction::Zoomed);
         }
     }

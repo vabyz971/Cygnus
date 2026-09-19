@@ -282,6 +282,27 @@ impl Command {
     }
 }
 
+/// Révision monotone du rendu : incrémentée chaque fois qu'un nouveau
+/// composite est produit. L'UI l'attache à la texture affichée et
+/// ignore tout rendu dont la révision est obsolète (réponse en retard
+/// après coalescence d'un geste continu).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RenderRevision(pub u64);
+
+impl RenderRevision {
+    /// Avance d'un cran et retourne la nouvelle révision.
+    pub fn bump(&mut self) -> Self {
+        self.0 = self.0.wrapping_add(1);
+        *self
+    }
+
+    /// Vrai si `self` est strictement plus récente que `other`.
+    #[must_use]
+    pub fn is_newer_than(self, other: Self) -> bool {
+        self > other
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +403,16 @@ mod tests {
             new: t(5.0),
         };
         assert_eq!(transform.render_event(), RenderEvent::NodeInvalidated(id));
+    }
+
+    #[test]
+    fn revision_bump_est_monotone() {
+        let mut revision = RenderRevision::default();
+        assert_eq!(revision, RenderRevision(0));
+        assert_eq!(revision.bump(), RenderRevision(1));
+        assert_eq!(revision.bump(), RenderRevision(2));
+        assert!(RenderRevision(2).is_newer_than(RenderRevision(1)));
+        assert!(!RenderRevision(1).is_newer_than(RenderRevision(1)));
+        assert!(!RenderRevision(1).is_newer_than(RenderRevision(2)));
     }
 }

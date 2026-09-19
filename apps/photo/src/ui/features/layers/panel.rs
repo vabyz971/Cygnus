@@ -26,10 +26,11 @@
 
 use super::layer_item::{LayerItemAction, LayerRenameState};
 use super::layer_list::draw_layer_list;
-use super::types::PhotoLayerInfo;
+use super::types::{LayerThumbView, PhotoLayerInfo};
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
-use ui_kit::components::{IconButton, Select, Slider};
+use std::collections::HashMap;
+use ui_kit::components::{IconButton, Select, Slider, Toggle};
 use ui_kit::icons::Icon;
 use ui_kit::primitives::Text;
 use ui_kit::theme::CygnusTheme;
@@ -94,13 +95,24 @@ impl LayersPanel {
         selected: Option<Uuid>,
         rename: &mut LayerRenameState,
         drag_state: &mut ReorderDragState,
+        thumbs: &HashMap<Uuid, LayerThumbView>,
     ) -> Vec<LayerPanelAction> {
-        draw_layers_panel(ui, ctx.shared.theme(), layers, selected, rename, drag_state)
+        draw_layers_panel(
+            ui,
+            ctx.shared.theme(),
+            layers,
+            selected,
+            rename,
+            drag_state,
+            thumbs,
+        )
     }
 }
 
-/// En-tête : opacité (slider coalescé côté worker) + mode de
-/// fusion de la sélection. Sans sélection : hint explicite.
+/// En-tête : visibilité + opacité (slider coalescé côté worker) +
+/// mode de fusion de la sélection. Sans sélection, l'en-tête agit
+/// sur le calque du dessus (le premier changement le sélectionne) :
+/// visibilité et opacité restent toujours réglables.
 fn draw_selection_header(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
@@ -108,15 +120,31 @@ fn draw_selection_header(
     selected: Option<Uuid>,
 ) -> Vec<LayerPanelAction> {
     let mut actions = Vec::new();
-    let Some(layer) = selected.and_then(|id| layers.iter().find(|item| item.id == id)) else {
-        Text::caption(theme, "Sélectionnez un calque").show(ui);
+    let target = selected
+        .and_then(|id| layers.iter().find(|item| item.id == id))
+        .or_else(|| layers.first());
+    let Some(layer) = target else {
+        Text::caption(theme, "Aucun calque").show(ui);
         ui.separator();
         return actions;
     };
+    // Sans sélection, le premier changement adopte le calque du dessus.
+    let adopt = selected.is_none();
+    let mut visible = layer.visible;
+    Toggle::new("Visible").show(ui, theme, &mut visible);
+    if visible != layer.visible {
+        if adopt {
+            actions.push(LayerPanelAction::Select(layer.id));
+        }
+        actions.push(LayerPanelAction::ToggleVisibility(layer.id));
+    }
     // Unités moteur 0..=100 (comme l'inspecteur).
     let mut opacity = layer.opacity;
     Slider::new("Opacité", 0.0..=100.0).show(ui, theme, &mut opacity);
     if opacity != layer.opacity {
+        if adopt {
+            actions.push(LayerPanelAction::Select(layer.id));
+        }
         actions.push(LayerPanelAction::SetOpacity {
             layer: layer.id,
             opacity,
@@ -131,6 +159,9 @@ fn draw_selection_header(
     if let Some(mode) = BlendMode::ALL.get(choice)
         && *mode != layer.blend_mode
     {
+        if adopt {
+            actions.push(LayerPanelAction::Select(layer.id));
+        }
         actions.push(LayerPanelAction::SetBlendMode {
             layer: layer.id,
             mode: *mode,
@@ -148,6 +179,7 @@ fn draw_layers_panel(
     selected: Option<Uuid>,
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
+    thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> Vec<LayerPanelAction> {
     let mut actions = Vec::new();
     actions.extend(draw_selection_header(ui, theme, layers, selected));
@@ -166,7 +198,7 @@ fn draw_layers_panel(
                 {
                     rename.editing = None;
                 }
-                draw_layer_list(ui, layers, selected, rename, drag_state)
+                draw_layer_list(ui, layers, selected, rename, drag_state, thumbs)
             },
         )
         .inner;
@@ -279,8 +311,15 @@ mod tests {
         let mut reported = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                reported =
-                    LayersPanel::show(ui, &photo_ctx, &layers, None, &mut rename, &mut drag_state);
+                reported = LayersPanel::show(
+                    ui,
+                    &photo_ctx,
+                    &layers,
+                    None,
+                    &mut rename,
+                    &mut drag_state,
+                    &std::collections::HashMap::new(),
+                );
             });
         })
         .drop_without_applying_deltas();
@@ -307,6 +346,7 @@ mod tests {
                     selected,
                     &mut rename,
                     &mut drag_state,
+                    &std::collections::HashMap::new(),
                 );
             });
         })
@@ -326,7 +366,15 @@ mod tests {
         let mut rename = LayerRenameState::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                LayersPanel::show(ui, &photo_ctx, &[], None, &mut rename, &mut drag_state);
+                LayersPanel::show(
+                    ui,
+                    &photo_ctx,
+                    &[],
+                    None,
+                    &mut rename,
+                    &mut drag_state,
+                    &std::collections::HashMap::new(),
+                );
             });
         })
         .drop_without_applying_deltas();

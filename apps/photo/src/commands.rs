@@ -107,6 +107,8 @@ pub enum PhotoAction {
     SetTool(PhotoCanvasTool),
     /// Basculer la grille (état UI local).
     ToggleGrid,
+    /// Rogner l'aperçu au document (worker, sans historique).
+    TogglePreviewClip,
     /// Zoom avant / arrière, ancré au centre.
     ZoomIn,
     /// Zoom arrière.
@@ -115,6 +117,8 @@ pub enum PhotoAction {
     ZoomReset,
     /// Commettre un trait pinceau/gomme (worker).
     CommitStroke(PaintRequest),
+    /// Déplacer un calque pixels (outil sélection, worker).
+    MoveLayer { layer: Uuid, dx: f32, dy: f32 },
     /// Rouvrir un onglet dock fermé (outils, inspecteur, calques).
     ShowDockTab(PhotoDockTab),
     /// Restaurer la disposition des docks par défaut.

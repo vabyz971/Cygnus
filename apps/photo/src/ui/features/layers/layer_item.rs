@@ -24,7 +24,7 @@
 //! via [`LayerItemAction`], convertie en [`PhotoAction`](crate::commands::PhotoAction)
 //! puis routée par `PhotoApp` (état local ou worker).
 
-use super::types::PhotoLayerInfo;
+use super::types::{LayerThumbView, PhotoLayerInfo};
 use ui_kit::components::{IconButton, menu_row, menu_style};
 use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::CygnusTheme;
@@ -76,6 +76,7 @@ pub fn draw_photo_layer_item(
     layer: &PhotoLayerInfo,
     selected: bool,
     rename: &mut LayerRenameState,
+    thumb: Option<LayerThumbView>,
 ) -> Vec<LayerItemAction> {
     let theme = CygnusTheme::dark();
     let mut actions = Vec::new();
@@ -145,13 +146,20 @@ pub fn draw_photo_layer_item(
             {
                 actions.push(LayerItemAction::ToggleVisibility(layer.id));
             }
-            // Visualiseur du calque : vignette symbolique (icône de
-            // type encadrée ; les miniatures pixels viendront du cache
-            // d'apparence moteur).
-            ui.add_sized(
-                egui::vec2(28.0, 28.0),
-                egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0)).frame(true),
-            );
+            // Visualiseur du calque : miniature pixels si disponible,
+            // sinon vignette symbolique (icône de type encadrée).
+            if let Some(view) = thumb {
+                ui.add(
+                    egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
+                        .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                );
+            } else {
+                ui.add_sized(
+                    egui::vec2(28.0, 28.0),
+                    egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0))
+                        .frame(true),
+                );
+            }
             ui.add_space(theme.spacing.xs);
             // Nom : double-clic = édition inline, Entrée = valider,
             // Échap = annuler, perte de focus = valider si modifié.
@@ -355,7 +363,7 @@ mod tests {
         let mut rename = LayerRenameState::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename);
+                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None);
                 assert!(actions.is_empty(), "aucun clic sans interaction");
                 // Tous les types, masqué / visible.
                 for kind in [
@@ -366,7 +374,7 @@ mod tests {
                     let mut probing = layer.clone();
                     probing.kind = kind;
                     probing.visible = false;
-                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename);
+                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename, None);
                 }
             });
         })
@@ -382,7 +390,7 @@ mod tests {
         let mut reported = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                reported = draw_photo_layer_item(ui, &layer, false, &mut rename);
+                reported = draw_photo_layer_item(ui, &layer, false, &mut rename, None);
             });
         })
         .drop_without_applying_deltas();

@@ -163,6 +163,22 @@ impl PhotoApp {
         }
     }
 
+    /// Mise à jour optimiste d'un calque du snapshot local : le
+    /// panneau reflète le changement dès la frame courante, la
+    /// réponse worker (recomposite coûteux) confirme ensuite.
+    fn update_layer_opt(
+        &mut self,
+        id: uuid::Uuid,
+        update: impl Fn(&mut crate::ui::PhotoLayerInfo),
+    ) {
+        if let Some(doc) = self.active_doc_mut_opt()
+            && let Some(layer) = doc.ui.layers.iter_mut().find(|layer| layer.id == id)
+        {
+            update(layer);
+            doc.ui.needs_repaint = true;
+        }
+    }
+
     /// Route une action UI : état local ou commande worker.
     ///
     /// Seul endroit (avec [`apply_response`](crate::state::apply_response))
@@ -229,12 +245,19 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::ReorderLayer { from, to });
             }
             PhotoAction::ToggleLayerVisibility(id) => {
+                // Optimiste : l'œil bascule dès cette frame, le worker
+                // confirme (recomposite) juste après.
+                self.update_layer_opt(id, |layer| layer.visible = !layer.visible);
                 self.send_active(PhotoEngineCommand::ToggleLayerVisibility(id));
             }
             PhotoAction::SetOpacity { layer, opacity } => {
+                // Optimiste : le slider suit le geste sans attendre le
+                // thread background (coalescé côté worker).
+                self.update_layer_opt(layer, |info| info.opacity = opacity.clamp(0.0, 100.0));
                 self.send_active(PhotoEngineCommand::SetOpacity { layer, opacity });
             }
             PhotoAction::SetBlendMode { layer, mode } => {
+                self.update_layer_opt(layer, |info| info.blend_mode = mode);
                 self.send_active(PhotoEngineCommand::SetBlendMode { layer, mode });
             }
             PhotoAction::MoveFilter { layer, filter, up } => {
@@ -258,6 +281,13 @@ impl PhotoApp {
                 if let Some(doc) = self.active_doc_mut_opt() {
                     doc.ui.show_grid = !doc.ui.show_grid;
                 }
+            }
+            PhotoAction::TogglePreviewClip => {
+                let clip = !self.active_doc_opt().is_some_and(|doc| doc.ui.preview_clip);
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.preview_clip = clip;
+                }
+                self.send_active(PhotoEngineCommand::SetPreviewClip { clip });
             }
             PhotoAction::ZoomIn => {
                 if let Some(doc) = self.active_doc_mut_opt() {
@@ -283,6 +313,9 @@ impl PhotoApp {
                     color: paint.color,
                     opacity: paint.opacity,
                 });
+            }
+            PhotoAction::MoveLayer { layer, dx, dy } => {
+                self.send_active(PhotoEngineCommand::MoveLayer { layer, dx, dy });
             }
             PhotoAction::ShowHelp => {
                 self.shell.help_open = true;

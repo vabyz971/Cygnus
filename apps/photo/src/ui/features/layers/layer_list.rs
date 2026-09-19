@@ -23,7 +23,8 @@
 //! [`PhotoAction`](crate::commands::PhotoAction) par [`super::panel`].
 
 use super::layer_item::{LayerItemAction, LayerRenameState, draw_photo_layer_item};
-use super::types::PhotoLayerInfo;
+use super::types::{LayerThumbView, PhotoLayerInfo};
+use std::collections::HashMap;
 use ui_kit::components::ReorderableList;
 use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::ReorderDragState;
@@ -76,6 +77,7 @@ pub fn draw_layer_list(
     selected: Option<Uuid>,
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
+    thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> (Vec<LayerItemAction>, Option<(usize, usize)>) {
     let mut actions = Vec::new();
     let reorder = ReorderableList::new(layers, PHOTO_LAYER_ITEM_HEIGHT, drag_state).show(
@@ -86,6 +88,7 @@ pub fn draw_layer_list(
                 layer,
                 Some(layer.id) == selected,
                 rename,
+                thumbs.get(&layer.id).copied(),
             ));
         },
     );
@@ -119,7 +122,14 @@ mod tests {
         let mut reported = (Vec::new(), None);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                reported = draw_layer_list(ui, &layers, None, &mut rename, &mut drag_state);
+                reported = draw_layer_list(
+                    ui,
+                    &layers,
+                    None,
+                    &mut rename,
+                    &mut drag_state,
+                    &std::collections::HashMap::new(),
+                );
             });
         })
         .drop_without_applying_deltas();
