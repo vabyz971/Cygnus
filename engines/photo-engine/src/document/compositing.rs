@@ -786,8 +786,159 @@ pub fn apply_coverage(
     Arc::new(attenuate_by_coverage(image.as_ref().clone(), &cover))
 }
 
+/// Dépendance spatiale d'un effet pour le compositing fenêtré (Phase 6C).
+///
+/// - [`SpatialScope::Local`] : la sortie d'un pixel ne dépend que du même
+///   pixel (luminosité/contraste, saturation…) — évaluable directement sur
+///   la fenêtre demandée.
+/// - [`SpatialScope::Neighborhood`] : la sortie dépend d'un voisinage
+///   (flou…) — la fenêtre doit être élargie du `halo_px` avant évaluation,
+///   puis rognée.
+/// - [`SpatialScope::Global`] : dépendance potentiellement totale (opération
+///   inconnue d'une version future, décalage arbitraire…) — évaluation
+///   pleine cadre puis découpe. La correction prime sur la performance.
+///
+/// Ne jamais prétendre un ajustement local simplement parce qu'on lui
+/// fournit une petite image : la classification suit la définition RÉELLE
+/// de chaque effet ci-dessous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpatialScope {
+    Local,
+    Neighborhood { halo_px: u32 },
+    Global,
+}
+
+/// Support exact (demi-noyau, en px) du flou `blur(radius)` :
+/// `radius <= 0.1` ⇒ passthrough (`nodes::blur::apply_effect`) ⇒ 0 ;
+/// sinon demi-taille du noyau gaussien CPU (`image 0.25`,
+/// `kernel_size_from_sigma`), qui couvre aussi le box-blur GPU (support =
+/// rayon clampé `1..=50`, toujours inférieur ou égal).
+///
+/// Distinct de `tiles::blur_halo_for_filters` (halo d'invalidation tuile,
+/// convention Phase 6B `ceil(r)`) : ici le chemin de rendu exige le support
+/// exact du noyau, sinon `regional != crop(full)` au bord de fenêtre.
+#[must_use]
+pub fn blur_support_px(radius: f32) -> u32 {
+    if !radius.is_finite() || radius <= 0.1 {
+        return 0;
+    }
+    // Miroir de `GaussianBlurParameters::kernel_size_from_sigma` :
+    // size = impair ≥ ((((σ − 0.8) / 0.3) + 1) × 2) + 1, support = size / 2.
+    let possible = ((((radius - 0.8) / 0.3) + 1.0) * 2.0 + 1.0).max(3.0) as u32;
+    let size = if possible.is_multiple_of(2) {
+        possible + 1
+    } else {
+        possible
+    };
+    size / 2
+}
+
+/// Portée d'un nœud de filtre d'ajustement (`FilterNode`) ACTIF — l'appelant
+/// saute les désactivés exactement comme `render_nodes` (coût nul).
+/// `brightness_contrast` et `color_correct` sont ponctuels (parcours
+/// `par_chunks_mut(4)` sans voisinage) ; `mix`/`input`/`output` transmettent
+/// tel quel en chaîne linéaire (ponctuel) ; `layer` peut décaler
+/// arbitrairement (`offset_x/y`) et tout `type_id` inconnu peut tout faire :
+/// GLOBAL conservateur (pleine cadre puis découpe — jamais de pixels faux).
+#[must_use]
+pub fn filter_spatial_scope(filter: &FilterNode) -> SpatialScope {
+    match filter.type_id.as_str() {
+        "brightness_contrast" | "color_correct" | "mix" | "input_image" | "output" => {
+            SpatialScope::Local
+        }
+        "blur" => {
+            let r = filter
+                .params
+                .get("radius")
+                .and_then(datatypes::ParamValue::as_float)
+                .unwrap_or(5.0);
+            let halo = blur_support_px(r);
+            if halo == 0 {
+                SpatialScope::Local
+            } else {
+                SpatialScope::Neighborhood { halo_px: halo }
+            }
+        }
+        _ => SpatialScope::Global,
+    }
+}
+
+/// Fenêtre de dépendance d'une portée (récursif, groupes inclus) :
+/// `halo_px` = somme des halos séquentiels (chaîne `r1 → r2` ⇒ `h1 + h2`) ;
+/// `global` = repli pleine cadre requis (opération globale OU masque de
+/// groupe actif — les masques de groupe sont alignés sur l'origine de
+/// l'accumulateur, donc non invariants par décalage de fenêtre, contrairement
+/// aux masques de calques bakés dans les apparences pleine taille).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScopeWindow {
+    /// Somme des supports de voisinage (0 = purement local).
+    pub halo_px: u32,
+    /// Vrai ⇒ évaluer pleine cadre puis découper (correction d'abord).
+    pub global: bool,
+}
+
+impl ScopeWindow {
+    /// Ajoute une portée (somme des halos, OU des replis).
+    pub fn add(&mut self, scope: SpatialScope) {
+        match scope {
+            SpatialScope::Local => {}
+            SpatialScope::Neighborhood { halo_px } => {
+                self.halo_px = self.halo_px.saturating_add(halo_px);
+            }
+            SpatialScope::Global => {
+                self.global = true;
+            }
+        }
+    }
+}
+
+/// Fenêtre de dépendance des ajustements de `nodes` (et de leurs groupes
+/// imbriqués). Les filtres désactivés et les calques invisibles/opacité
+/// nulle sont sautés comme dans `fold_scope_stats` (aucune contribution).
+#[must_use]
+pub fn scope_adjustment_window(nodes: &[LayerNode]) -> ScopeWindow {
+    let mut window = ScopeWindow::default();
+    scope_adjustment_window_into(nodes, &mut window);
+    window
+}
+
+fn scope_adjustment_window_into(nodes: &[LayerNode], window: &mut ScopeWindow) {
+    for node in nodes {
+        match node {
+            LayerNode::Pixel(_) => {}
+            LayerNode::Group(g) => {
+                if !g.visible || g.opacity <= 0.01 {
+                    continue;
+                }
+                if g.masks.iter().any(|m| m.enabled) {
+                    window.global = true;
+                }
+                scope_adjustment_window_into(&g.children, window);
+            }
+            LayerNode::Adjustment(a) => {
+                if !a.visible || a.opacity <= 0.01 {
+                    continue;
+                }
+                for f in &a.filters {
+                    if !f.enabled {
+                        continue;
+                    }
+                    window.add(filter_spatial_scope(f));
+                }
+            }
+        }
+    }
+}
+
 /// Applique une chaîne d'ajustements à l'accumulateur, pondérée par
 /// l'opacité (mix linéaire original ↔ ajusté). Retourne true si appliqué.
+///
+/// L'accumulateur peut être une FENÊTRE (compositing régional) : chaque
+/// effet s'évalue sur les pixels fournis — l'appelant
+/// (`Document::composite_region_with`) garantit la fenêtre de dépendance
+/// (`requested + halo`, ou pleine cadre si repli global), donc aucun
+/// traitement pleine cadre inutile n'a lieu ici pour les opérations
+/// locales/voisinées. Le mix final est ponctuel (fenêtre-sûr).
 pub fn apply_adjustment(
     acc: &mut ImageBuffer<Rgba<u8>, Vec<u8>>,
     filters: &[FilterNode],

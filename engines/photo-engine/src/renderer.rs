@@ -444,7 +444,8 @@ impl Renderer {
 /// version (la peinture remplace le buffer ET touche la version → MISS
 /// garanti). Le nom d'un masque en est EXCLU (renommer ne change pas les
 /// pixels). Utilisée pour la couverture cacheable SÉPARÉMENT de l'image.
-fn mask_signature(masks: &[LayerMask]) -> u64 {
+/// `pub(crate)` : réutilisée par `tile_key` (identité tuile) sans duplication.
+pub(crate) fn mask_signature(masks: &[LayerMask]) -> u64 {
     use std::hash::Hasher;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     h.write_usize(masks.len());

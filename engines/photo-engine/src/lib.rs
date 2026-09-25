@@ -28,8 +28,11 @@ pub mod nodes;
 pub mod paint;
 pub mod project;
 pub mod registry;
+pub mod render_overlay;
 pub mod render_pool;
 pub mod renderer;
+pub mod tile_key;
+pub mod tiles;
 
 pub use command::{Command, RenderEvent, RenderRevision};
 pub use document::{
@@ -41,4 +44,9 @@ pub use filters::{filterable_types, new_filter_layer};
 pub use gpu::GpuContext;
 pub use history::UndoAction;
 pub use registry::{all_definitions, definition_for};
+pub use render_overlay::effect_overlay;
 pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};
+pub use tile_key::{
+    BackendTag, CPU_KERNEL_VERSION, GPU_KERNEL_VERSION, GPU_PIXEL_THRESHOLD, TILE_FLAGS_NONE,
+    TileCacheKey, TileContentSignature, grid_signature, tile_cache_key, tile_content_signature,
+};

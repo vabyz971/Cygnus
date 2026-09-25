@@ -6,6 +6,7 @@ use super::model::{
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use std::cell::RefCell;
 use std::sync::Arc;
+use tiles::TileRegion;
 use uuid::Uuid;
 
 pub struct Document {
@@ -18,6 +19,19 @@ pub struct Document {
     /// par la chaîne GPU compute / CPU rayon. Interior mutability car le
     /// cache est un détail de performance invisible depuis l'API (&self).
     cache: RefCell<crate::renderer::Renderer>,
+}
+
+/// Résultat d'un composite régional expérimental (vertical slice
+/// tuiles) : pixels de la région + origine pour recoller/comparer
+/// dans l'espace du composite pleine cadre.
+#[derive(Debug)]
+pub struct RegionalComposite {
+    /// Pixels RGBA8 de la région clippée (dimensions = région utile).
+    pub image: DynamicImage,
+    /// Colonne buffer (espace pleine cadre) du coin haut-gauche.
+    pub origin_x: u32,
+    /// Ligne buffer (espace pleine cadre) du coin haut-gauche.
+    pub origin_y: u32,
 }
 
 impl Document {
@@ -1124,6 +1138,107 @@ impl Document {
             return None; // aucun calque visible/contribuant
         }
         Some(DynamicImage::ImageRgba8(acc))
+    }
+
+    /// Composite RÉGIONAL (fenêtré) : ne calcule que `region`
+    /// (coordonnées DOCUMENT, clampée ici au buffer) avec EXACTEMENT la
+    /// même passe que [`Self::composite_scope_with`] — même
+    /// `prepare_top`, même `blend_into`, mêmes apparences pleine taille —
+    /// sur un accumulateur réduit dont l'origine est décalée.
+    ///
+    /// Correction : le décalage est entier (pixels buffer), et la
+    /// translation entière commute avec l'arrondi de `blend_into`
+    /// (`round(a − K) == round(a) − K`) — l'échantillonnage est donc
+    /// bit-identique au pleine cadre sur la zone couverte.
+    ///
+    /// Fenêtre de dépendance (Phase 6C) : la pile est analysée par
+    /// [`super::compositing::scope_adjustment_window`] —
+    /// - opérations locales/voisinées : repli sur la dépendance
+    ///   `D = R + halo` (halo = somme des supports exacts, cf.
+    ///   [`super::compositing::blur_support_px`]), puis découpe de `R` ;
+    /// - opération globale (effet inconnu, masque de groupe actif…) :
+    ///   repli documenté — évaluation pleine cadre puis découpe de `R`
+    ///   (correction d'abord ; `stats.scope_px` reflète alors le coût
+    ///   pleine cadre).
+    ///
+    /// Les apparences restent calculées pleine taille (aucun readback GPU
+    /// ajouté, aucun realloc shader). `stats.scope_px` = pixels de
+    /// dépendance réellement traités (fenêtre, pas requête).
+    /// `None` si région vide/hors cadre ou rien ne contribue.
+    pub fn composite_region_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+        region: &TileRegion,
+    ) -> Option<RegionalComposite> {
+        if region.is_empty() {
+            return None;
+        }
+        // Même géométrie que le pleine cadre (pas de redérivation
+        // arrondie — cf. `sample_color`).
+        let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, resolve);
+        let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
+        let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
+        let origin_x = half_w - self.width as f32 / 2.0;
+        let origin_y = half_h - self.height as f32 / 2.0;
+        // Document → buffer, bornes entières clampées (plancher en min,
+        // plafond en max : couverture conservative comme les tuiles).
+        let bx0 = (origin_x + region.x as f32).floor().clamp(0.0, w as f32) as u32;
+        let by0 = (origin_y + region.y as f32).floor().clamp(0.0, h as f32) as u32;
+        let bx1 = (origin_x + region.x as f32 + region.width as f32)
+            .ceil()
+            .clamp(0.0, w as f32) as u32;
+        let by1 = (origin_y + region.y as f32 + region.height as f32)
+            .ceil()
+            .clamp(0.0, h as f32) as u32;
+        let (rw, rh) = (bx1.saturating_sub(bx0), by1.saturating_sub(by0));
+        if rw == 0 || rh == 0 {
+            return None;
+        }
+        let window = super::compositing::scope_adjustment_window(&self.root);
+        if window.global {
+            // Repli documenté : pleine cadre puis découpe — bit-identique
+            // par construction, au coût pleine cadre.
+            let full = self.composite_scope_with(&self.root, resolve, stats)?;
+            let rgba = full.to_rgba8();
+            let cropped = image::imageops::crop_imm(&rgba, bx0, by0, rw, rh).to_image();
+            return Some(RegionalComposite {
+                image: DynamicImage::ImageRgba8(cropped),
+                origin_x: bx0,
+                origin_y: by0,
+            });
+        }
+        // D = R + halo (coords buffer, même pas que la région), clampé.
+        // R ⊆ D garanti (R déjà dans le buffer) : la découpe finale est sûre.
+        let halo = u64::from(window.halo_px);
+        let dx0 = u64::from(bx0).saturating_sub(halo).min(u64::from(w)) as u32;
+        let dy0 = u64::from(by0).saturating_sub(halo).min(u64::from(h)) as u32;
+        let dx1 = (u64::from(bx1) + halo).min(u64::from(w)) as u32;
+        let dy1 = (u64::from(by1) + halo).min(u64::from(h)) as u32;
+        let (dw, dh) = (dx1.saturating_sub(dx0), dy1.saturating_sub(dy0));
+        if dw == 0 || dh == 0 {
+            return None;
+        }
+        let t_alloc = std::time::Instant::now();
+        let mut acc = ImageBuffer::from_pixel(dw.max(1), dh.max(1), Rgba([0, 0, 0, 0]));
+        stats.acc_alloc_us += t_alloc.elapsed().as_micros();
+        stats.scope_px = u64::from(acc.width()) * u64::from(acc.height());
+        if !super::compositing::fold_scope_stats(
+            &self.root,
+            &mut acc,
+            origin_x - dx0 as f32,
+            origin_y - dy0 as f32,
+            resolve,
+            stats,
+        ) {
+            return None;
+        }
+        let cropped = image::imageops::crop_imm(&acc, bx0 - dx0, by0 - dy0, rw, rh).to_image();
+        Some(RegionalComposite {
+            image: DynamicImage::ImageRgba8(cropped),
+            origin_x: bx0,
+            origin_y: by0,
+        })
     }
 
     /// Composite CROPÉ aux dimensions du document — utilisé pour l'export.

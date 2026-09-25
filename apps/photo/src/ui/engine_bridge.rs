@@ -273,6 +273,13 @@ pub struct OpMetrics {
     pub preview_rebuilds: u64,
     /// Miniatures `thumb` régénérées (delta compteurs renderer).
     pub thumb_rebuilds: u64,
+    /// OBSERVATION tuiles (vertical slice, sans effet sur le rendu) :
+    /// aire de la région sale du dernier stroke en pixels.
+    pub dirty_region_px: u64,
+    /// OBSERVATION tuiles : tuiles niveau 0 marquées sales.
+    pub dirty_tiles: u64,
+    /// OBSERVATION tuiles : tuiles retenues par le scheduler.
+    pub scheduled_tiles: u64,
     /// Balayages prepare + blend + mix (hors extents, hors alloc).
     pub blend_us: u128,
     /// Calques pixels et groupes effectivement blendés.
@@ -581,6 +588,11 @@ pub struct EngineWorker {
     /// Révision du dernier composite produit (rendus obsolètes
     /// ignorés côté UI).
     revision: RenderRevision,
+    /// OBSERVATION tuiles (vertical slice) : plan calculé pendant la
+    /// mutation d'un stroke, consommé par `respond` dans les métriques.
+    /// Jamais lu par le renderer : pur constat, zéro effet de bord.
+    /// En lot (`apply_batch`), seul le dernier stroke du lot est observé.
+    pending_tile_plan: Option<photo_engine::tiles::StrokeTilePlan>,
     /// INSTRUMENTATION TEMPORAIRE (diagnostic perf).
     pub metrics: WorkerMetrics,
 }
@@ -598,6 +610,7 @@ impl EngineWorker {
             coalesced_opacity_layer: None,
             clip_to_doc: false,
             revision: RenderRevision::default(),
+            pending_tile_plan: None,
             metrics: WorkerMetrics::default(),
         }
     }
@@ -653,6 +666,9 @@ impl EngineWorker {
             let revision = self.revision.bump();
             self.metrics.renders += 1;
             let stats_after = self.document.appearance_stats();
+            // Observation tuiles consommée ici (zéro si la commande
+            // n'était pas un stroke) : le renderer a déjà tourné au-dessus.
+            let tiles = self.pending_tile_plan.take().unwrap_or_default();
             self.metrics.last = Some(OpMetrics {
                 op: self.metrics.current_op,
                 total_us: 0,
@@ -672,6 +688,9 @@ impl EngineWorker {
                 scope_px: timings.scope_px,
                 full_px: timings.full_px,
                 preview_px: timings.preview_px,
+                dirty_region_px: tiles.dirty_region_px,
+                dirty_tiles: tiles.dirty_tiles,
+                scheduled_tiles: tiles.scheduled_tiles,
             });
             PhotoEngineResponse::LayersChanged {
                 layers,
@@ -700,6 +719,9 @@ impl EngineWorker {
                 scope_px: 0,
                 full_px: 0,
                 preview_px: 0,
+                dirty_region_px: 0,
+                dirty_tiles: 0,
+                scheduled_tiles: 0,
             });
             PhotoEngineResponse::StateChanged {
                 layers,
@@ -937,6 +959,37 @@ impl EngineWorker {
                         pixels.touch();
                     }
                 }
+                // OBSERVATION tuiles (vertical slice) : plan calculé sur les
+                // entrées validées de la commande, après peinture réussie.
+                // Points en LAYER SPACE → région DOCUMENT SPACE via la
+                // transform du calque + halo des flous actifs (Phase 6B).
+                // Ne touche ni au document ni au renderer : le composite
+                // pleine cadre reste produit comme avant par `respond`.
+                // La rastérisation ci-dessus est inchangée (espace calque).
+                let (layer_transform, layer_w, layer_h, halo) = match self.document.find(layer) {
+                    Some(photo_engine::LayerNode::Pixel(pixels)) => (
+                        pixels.transform,
+                        pixels.dimensions().0,
+                        pixels.dimensions().1,
+                        photo_engine::tiles::blur_halo_for_filters(&pixels.filter_layers),
+                    ),
+                    _ => (
+                        photo_engine::Transform2D::default(),
+                        self.document.width,
+                        self.document.height,
+                        photo_engine::tiles::Padding::ZERO,
+                    ),
+                };
+                self.pending_tile_plan = Some(photo_engine::tiles::plan_stroke_tiles_layer_space(
+                    &points,
+                    radius,
+                    &layer_transform,
+                    layer_w,
+                    layer_h,
+                    self.document.width,
+                    self.document.height,
+                    halo,
+                ));
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::OpenImage { path } => match image::open(&path) {
@@ -2162,6 +2215,116 @@ mod single_pass_tests {
         let m = worker.metrics.last.as_ref().expect("metriques");
         assert_eq!(m.preview_rebuilds, 1);
         assert_eq!(m.thumb_rebuilds, 1);
+    }
+
+    /// Document large (640x480) pour les tests tuiles multi-cases
+    /// (tuiles d'observation : 256 px, niveau 0 unique).
+    fn wide_doc() -> Document {
+        use photo_engine::{LayerNode, PixelLayer};
+        use std::sync::Arc;
+        let mut doc = Document::new(640, 480);
+        let blank = Arc::new(image::DynamicImage::new_rgba8(640, 480));
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", blank)));
+        doc
+    }
+
+    #[test]
+    fn paint_stroke_observes_tile_plan() {
+        // Cas 1+5 : petit stroke → région exacte + 1 tuile + plan à 1.
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let target = worker.document.root[0].id();
+        let points: Vec<(f32, f32)> = (0..4).map(|i| (i as f32, i as f32)).collect();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points,
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        });
+        // Rendu inchangé : composite produit, révision bumpée comme avant.
+        match response {
+            PhotoEngineResponse::LayersChanged { revision, .. } => {
+                assert_eq!(revision, RenderRevision(1));
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        // Observation : bbox [−2,5)² → 49 px², doc 8x8 → tuile (0,0) unique.
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(m.dirty_region_px, 49);
+        assert_eq!(m.dirty_tiles, 1);
+        assert_eq!(m.scheduled_tiles, 1);
+    }
+
+    #[test]
+    fn paint_stroke_multi_tile_plan() {
+        // Cas 2 : stroke à cheval sur 2x2 tuiles de 256 px.
+        let mut worker = EngineWorker::new(wide_doc());
+        let target = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points: vec![(10.0, 10.0), (500.0, 400.0)],
+            eraser: false,
+            radius: 8.0,
+            color: [255, 0, 0],
+            opacity: 1.0,
+        });
+        assert!(
+            matches!(response, PhotoEngineResponse::LayersChanged { .. }),
+            "rendu produit comme avant"
+        );
+        // x ∈ [2,508) → tuiles 0,1 ; y ∈ [2,408) → tuiles 0,1.
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(m.dirty_region_px, 506 * 406);
+        assert_eq!(m.dirty_tiles, 4);
+        assert_eq!(m.scheduled_tiles, 4, "budget ouvert : tout planifié");
+    }
+
+    #[test]
+    fn stroke_outside_document_marks_no_tiles() {
+        // Cas 3 : région réelle mais hors surface → clipping grille,
+        // aucune tuile invalide (et surtout aucune tuile fantôme).
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let target = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points: vec![(5000.0, 5000.0)],
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        });
+        assert!(
+            matches!(response, PhotoEngineResponse::LayersChanged { .. }),
+            "peinture commise (pixels inchangés hors calque)"
+        );
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert!(m.dirty_region_px > 0, "région calculée");
+        assert_eq!(m.dirty_tiles, 0);
+        assert_eq!(m.scheduled_tiles, 0);
+    }
+
+    #[test]
+    fn invalid_stroke_observes_nothing() {
+        // Cas 4 : geste inexploitable → no-op, aucun travail tuile.
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let target = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points: vec![],
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        });
+        assert!(
+            matches!(response, PhotoEngineResponse::StateChanged { .. }),
+            "no-op sans rendu"
+        );
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert_eq!(m.dirty_region_px, 0);
+        assert_eq!(m.dirty_tiles, 0);
+        assert_eq!(m.scheduled_tiles, 0);
     }
 
     #[test]

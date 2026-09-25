@@ -1480,3 +1480,708 @@ fn filtre_ne_touche_que_les_bornes_du_calque() {
     assert_eq!(px(&out, 0, 0)[0..3], [200, 40, 40], "champ intact");
     assert_ne!(px(&out, 6, 6)[0..3], [40, 40, 200], "calque éclairci");
 }
+
+// ---------------------------------------------------------------------------
+// Composite régional expérimental (vertical slice tuiles) : le pleine cadre
+// reste la référence, le régional doit être bit-identique sur sa zone.
+// Document déterministe SANS calque d'ajustement (un flou verrait un
+// accumulateur réduit et divergerait au bord — limitation documentée
+// dans `composite_region_with`, pas contournée ici).
+// ---------------------------------------------------------------------------
+
+use super::compositing::CompositeStats;
+use crate::tiles::plan_stroke_tiles;
+use tiles::TileRegion;
+
+/// Document 512² : fond rouge opaque + carré vert 200² translucide en
+/// (100,50) + groupe (carré bleu 200² en (300,300), fusion Screen).
+/// Tout tient dans le document → scope == doc, origine (0,0).
+fn doc_regional() -> Document {
+    let fond = solid(512, 512, [200, 40, 40, 255]);
+    let carre = solid(200, 200, [40, 200, 40, 255]);
+    let mut vert = PixelLayer::new("vert", arc(&carre));
+    vert.opacity = 60.0;
+    vert.transform.offset_x = 100.0;
+    vert.transform.offset_y = 50.0;
+    let bleu = solid(200, 200, [40, 40, 200, 255]);
+    let mut dans_groupe = PixelLayer::new("bleu", arc(&bleu));
+    dans_groupe.blend_mode = BlendMode::Screen;
+    dans_groupe.transform.offset_x = 300.0;
+    dans_groupe.transform.offset_y = 300.0;
+    let groupe = LayerNode::Group(crate::document::GroupLayer::new(
+        "g",
+        vec![LayerNode::Pixel(dans_groupe)],
+    ));
+    doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            LayerNode::Pixel(vert),
+            groupe,
+        ],
+        512,
+        512,
+    )
+}
+
+/// Compare le régional à la découpe correspondante du pleine cadre
+/// (égalité stricte des octets : même arithmétique par construction).
+/// Retourne (pixels pleine cadre, pixels régionaux).
+fn assert_region_matches(doc: &Document, region: &TileRegion) -> (u64, u64) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats_full = CompositeStats::default();
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut stats_full)
+        .expect("pleine cadre");
+    assert_eq!(
+        (full.width(), full.height()),
+        (512, 512),
+        "scope == doc (hypothèse du test)"
+    );
+    let mut stats_reg = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(&resolver, &mut stats_reg, region)
+        .expect("région valide");
+    let (rw, rh) = (reg.image.width(), reg.image.height());
+    assert!(rw > 0 && rh > 0, "région utile non vide");
+    let full_rgba = full.to_rgba8();
+    let cropped = image::imageops::crop_imm(&full_rgba, reg.origin_x, reg.origin_y, rw, rh)
+        .to_image()
+        .into_raw();
+    assert_eq!(
+        cropped,
+        reg.image.to_rgba8().into_raw(),
+        "régional bit-identique au pleine cadre sur sa zone"
+    );
+    (stats_full.scope_px, stats_reg.scope_px)
+}
+
+#[test]
+fn regional_interieur_dimensions_offset_pixels() {
+    // Cas B : région centrale 256² en (128,128).
+    let doc = doc_regional();
+    let region = TileRegion::new(128, 128, 256, 256);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(&resolver, &mut stats, &region)
+        .expect("région intérieure");
+    assert_eq!((reg.image.width(), reg.image.height()), (256, 256));
+    assert_eq!((reg.origin_x, reg.origin_y), (128, 128));
+    let (full_px, reg_px) = assert_region_matches(&doc, &region);
+    assert_eq!((full_px, reg_px), (512 * 512, 256 * 256));
+}
+
+#[test]
+fn regional_bords_coin_et_rive() {
+    // Cas C : coin (0,0) et rive droite/basse avec clamp.
+    let doc = doc_regional();
+    let (full_px, reg_px) = assert_region_matches(&doc, &TileRegion::new(0, 0, 128, 128));
+    assert_eq!((full_px, reg_px), (512 * 512, 128 * 128));
+    // (400,400,200,200) dépasse : clampé à (400,400,112,112).
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(&resolver, &mut stats, &TileRegion::new(400, 400, 200, 200))
+        .expect("rive clampée");
+    assert_eq!((reg.image.width(), reg.image.height()), (112, 112));
+    assert_eq!((reg.origin_x, reg.origin_y), (400, 400));
+    assert_region_matches(&doc, &TileRegion::new(400, 400, 200, 200));
+}
+
+#[test]
+fn regional_debordement_clampe_ou_rejete() {
+    // Cas D : partiellement hors cadre → clampé ; entièrement hors → None.
+    let doc = doc_regional();
+    assert_region_matches(&doc, &TileRegion::new(-100, -100, 200, 200));
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(
+            &resolver,
+            &mut stats,
+            &TileRegion::new(-100, -100, 200, 200),
+        )
+        .expect("chevauchement");
+    assert_eq!((reg.image.width(), reg.image.height()), (100, 100));
+    assert_eq!((reg.origin_x, reg.origin_y), (0, 0));
+    assert!(
+        doc.composite_region_with(&resolver, &mut stats, &TileRegion::new(600, 600, 10, 10))
+            .is_none(),
+        "hors cadre → fallback pleine image"
+    );
+}
+
+#[test]
+fn regional_plan_vide_rejette() {
+    // Cas E : région vide → None (fallback automatique FULL_FRAME).
+    let doc = doc_regional();
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    assert!(
+        doc.composite_region_with(&resolver, &mut stats, &TileRegion::EMPTY)
+            .is_none()
+    );
+}
+
+#[test]
+fn plan_stroke_pilote_le_regional() {
+    // Vertical slice bout à bout : le plan consommé donne une région dont
+    // le rendu égale le pleine cadre — sans toucher au chemin historique.
+    let mut doc = doc_regional();
+    // Peint un trait réel (même primitive que le worker) puis compare.
+    let target = match &doc.root[0] {
+        LayerNode::Pixel(l) => l.id,
+        _ => panic!("fond pixels attendu"),
+    };
+    let points = vec![(150.0, 150.0), (350.0, 350.0)];
+    let layer = doc.pixel_layer(target).expect("calque");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    let (w, h) = (layer.dimensions().0, layer.dimensions().1);
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        w,
+        h,
+        &points,
+        &crate::paint::BrushParams {
+            radius: 12.0,
+            color: [255, 255, 0],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    let painted = image::DynamicImage::ImageRgba8(
+        image::RgbaImage::from_raw(w, h, buf).expect("dimensions conservées"),
+    );
+    doc.set_source_image(target, painted);
+    let plan = plan_stroke_tiles(&points, 12.0, doc.width, doc.height);
+    assert!(plan.dirty_tiles > 0);
+    assert!(!plan.bounds.is_empty());
+    assert_region_matches(&doc, &plan.bounds);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6C — compositing fenêtré : `regional == crop(full)` en octets.
+//
+// Tous les documents ci-dessous tiennent sous 65536 px : les chemins GPU
+// (seuil `gpu.rs`) ne s'activent jamais — CPU déterministe partout, avec ou
+// sans adaptateur. Les calques restent dans le document (scope == doc,
+// origine (0,0)) sauf mention contraire.
+// ---------------------------------------------------------------------------
+
+use super::compositing::{
+    ScopeWindow, SpatialScope, blur_support_px, filter_spatial_scope, scope_adjustment_window,
+};
+use crate::document::FilterNode;
+
+/// Fond opaque 200² + carré contrasté 80² en (60,40) : bords francs pour
+/// les flous et les masques. Scope == doc, origine (0,0).
+fn doc_windowed() -> Document {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let carre = solid(80, 80, [40, 200, 40, 255]);
+    doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 100.0, BlendMode::Normal, 60.0, 40.0),
+        ],
+        200,
+        200,
+    )
+}
+
+fn bc_node(brightness: f32, contrast: f32) -> FilterNode {
+    let mut f = FilterNode::new("brightness_contrast");
+    f.params
+        .insert("brightness".to_string(), ParamValue::Float(brightness));
+    f.params
+        .insert("contrast".to_string(), ParamValue::Float(contrast));
+    f
+}
+
+fn sat_node(saturation: f32) -> FilterNode {
+    let mut f = FilterNode::new("color_correct");
+    f.params
+        .insert("saturation".to_string(), ParamValue::Float(saturation));
+    f
+}
+
+fn adj_blur_node(radius: f32) -> FilterNode {
+    let mut f = FilterNode::new("blur");
+    f.params
+        .insert("radius".to_string(), ParamValue::Float(radius));
+    f
+}
+
+fn adj_layer(filters: Vec<FilterNode>) -> LayerNode {
+    LayerNode::Adjustment(AdjustmentLayer::new("ajust", filters))
+}
+
+/// Même contrat que `assert_region_matches` sans l'hypothèse 512² :
+/// octets régionaux == découpe pleine cadre. Retourne
+/// (pixels pleine cadre, pixels de dépendance traités).
+fn assert_region_crop(doc: &Document, region: &TileRegion) -> (u64, u64) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats_full = CompositeStats::default();
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut stats_full)
+        .expect("pleine cadre");
+    let (fw, fh) = (full.width(), full.height());
+    let mut stats_reg = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(&resolver, &mut stats_reg, region)
+        .expect("région valide");
+    let (rw, rh) = (reg.image.width(), reg.image.height());
+    assert!(rw > 0 && rh > 0, "région utile non vide");
+    let full_rgba = full.to_rgba8();
+    let cropped = image::imageops::crop_imm(&full_rgba, reg.origin_x, reg.origin_y, rw, rh)
+        .to_image()
+        .into_raw();
+    assert_eq!(
+        cropped,
+        reg.image.to_rgba8().into_raw(),
+        "régional bit-identique au pleine cadre sur sa zone"
+    );
+    assert!(
+        reg.origin_x + rw <= fw && reg.origin_y + rh <= fh,
+        "fenêtre dans le cadre"
+    );
+    (stats_full.scope_px, stats_reg.scope_px)
+}
+
+#[test]
+fn windowed_background() {
+    let fond = solid(200, 200, [10, 20, 30, 255]);
+    let doc = doc_of(
+        vec![pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0)],
+        200,
+        200,
+    );
+    assert_eq!(
+        assert_region_crop(&doc, &TileRegion::new(50, 50, 64, 64)),
+        (200 * 200, 64 * 64)
+    );
+}
+
+#[test]
+fn windowed_paint() {
+    let mut doc = doc_windowed();
+    let target = doc.root[0].id();
+    let layer = doc.pixel_layer(target).expect("calque");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    let (w, h) = (layer.dimensions().0, layer.dimensions().1);
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        w,
+        h,
+        &[(30.0, 150.0), (170.0, 150.0)],
+        &crate::paint::BrushParams {
+            radius: 8.0,
+            color: [255, 255, 0],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    doc.set_source_image(
+        target,
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(w, h, buf).expect("dimensions conservées"),
+        ),
+    );
+    assert_region_crop(&doc, &TileRegion::new(0, 100, 200, 100));
+}
+
+#[test]
+fn windowed_opacity() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let voile = solid(200, 200, [40, 40, 200, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&voile, 50.0, BlendMode::Normal, 0.0, 0.0),
+        ],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(20, 20, 100, 100));
+}
+
+#[test]
+fn windowed_blend_mode() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let carre = solid(80, 80, [40, 200, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 100.0, BlendMode::Multiply, 60.0, 40.0),
+        ],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120));
+}
+
+#[test]
+fn windowed_group() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let a = solid(80, 80, [40, 200, 40, 255]);
+    let b = solid(80, 80, [40, 40, 200, 255]);
+    let mut la = PixelLayer::new("a", arc(&a));
+    la.transform.offset_x = 10.0;
+    la.transform.offset_y = 10.0;
+    let mut lb = PixelLayer::new("b", arc(&b));
+    lb.blend_mode = BlendMode::Screen;
+    lb.transform.offset_x = 110.0;
+    lb.transform.offset_y = 110.0;
+    let groupe = LayerNode::Group(GroupLayer::new(
+        "g",
+        vec![LayerNode::Pixel(la), LayerNode::Pixel(lb)],
+    ));
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            groupe,
+        ],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(0, 0, 128, 128));
+    assert_region_crop(&doc, &TileRegion::new(100, 100, 100, 100));
+}
+
+#[test]
+fn windowed_nested_group() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let a = solid(60, 60, [40, 200, 40, 255]);
+    let inner = LayerNode::Group(GroupLayer::new(
+        "in",
+        vec![pixel_node(&a, 100.0, BlendMode::Normal, 70.0, 70.0)],
+    ));
+    let outer = LayerNode::Group(GroupLayer::new("out", vec![inner]));
+    let doc = doc_of(
+        vec![pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0), outer],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(50, 50, 100, 100));
+}
+
+fn masked_layer() -> LayerNode {
+    let carre = solid(80, 80, [40, 40, 200, 255]);
+    let mut l = PixelLayer::new("masqué", arc(&carre));
+    l.transform.offset_x = 60.0;
+    l.transform.offset_y = 40.0;
+    // Masque moitié gauche visible (bords francs en x=40 espace calque).
+    let mut cover = ImageBuffer::from_pixel(80, 80, Rgba([255, 255, 255, 255]));
+    for y in 0..80 {
+        for x in 40..80 {
+            cover.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+        }
+    }
+    l.masks.push(LayerMask {
+        id: Uuid::new_v4(),
+        name: String::from("m"),
+        image: Arc::new(cover),
+        enabled: true,
+        inverted: false,
+        version: next_appearance_version(),
+    });
+    LayerNode::Pixel(l)
+}
+
+#[test]
+fn windowed_mask() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            masked_layer(),
+        ],
+        200,
+        200,
+    );
+    // À cheval sur le bord du masque (x=100 en doc).
+    assert_region_crop(&doc, &TileRegion::new(60, 0, 120, 200));
+}
+
+#[test]
+fn windowed_transform_scale() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let petit = solid(40, 40, [40, 200, 40, 255]);
+    let mut l = PixelLayer::new("zoom", arc(&petit));
+    l.transform.scale_x = 2.0;
+    l.transform.scale_y = 2.0;
+    l.transform.offset_x = 60.0;
+    l.transform.offset_y = 40.0;
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            LayerNode::Pixel(l),
+        ],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120));
+}
+
+#[test]
+fn windowed_rotation() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let carre = solid(80, 40, [40, 200, 40, 255]);
+    let mut l = PixelLayer::new("tourné", arc(&carre));
+    l.transform.rotation_deg = 90.0;
+    l.transform.offset_x = 60.0;
+    l.transform.offset_y = 80.0;
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            LayerNode::Pixel(l),
+        ],
+        200,
+        200,
+    );
+    assert_region_crop(&doc, &TileRegion::new(40, 60, 120, 120));
+}
+
+#[test]
+fn windowed_filter_blur_appearance() {
+    // Flou en sous-calque de filtre : apparence calculée pleine taille par
+    // le renderer — le repli régional l'échantillonne, halo inutile.
+    let mut doc = doc_windowed();
+    if let LayerNode::Pixel(l) = doc.find_mut(doc.root[1].id()).expect("carré") {
+        let mut f = crate::document::FilterLayer::neutral("blur", Default::default());
+        f.params
+            .insert("radius".to_string(), ParamValue::Float(3.0));
+        l.filter_layers.push(f);
+    }
+    assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120));
+}
+
+#[test]
+fn windowed_adjust_blur_halo() {
+    let mut doc = doc_windowed();
+    doc.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+    let (full_px, reg_px) = assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120));
+    assert_eq!(full_px, 200 * 200);
+    // Dépendance = région + support exact (halo 8 pour σ=3).
+    let dep = 120 + 2 * blur_support_px(3.0) as u64;
+    assert_eq!(reg_px, dep * dep);
+}
+
+#[test]
+fn windowed_adjust_multi_blur() {
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![adj_blur_node(2.0), adj_blur_node(3.0)]));
+    let (full_px, reg_px) = assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120));
+    assert_eq!(full_px, 200 * 200);
+    // Chaîne séquentielle : halos additionnés (règle Phase 6B).
+    let dep = 120 + 2 * (blur_support_px(2.0) + blur_support_px(3.0)) as u64;
+    assert_eq!(reg_px, dep * dep);
+}
+
+#[test]
+fn windowed_adjust_local() {
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![bc_node(20.0, 10.0), sat_node(1.5)]));
+    // Ponctuel : dépendance == requête, aucun pixel superflu.
+    assert_eq!(
+        assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120)),
+        (200 * 200, 120 * 120)
+    );
+}
+
+#[test]
+fn windowed_adjust_global_unknown() {
+    // Effet inconnu (version future) : passthrough côté rendu, mais repli
+    // pleine cadre + découpe — pixels justes, coût pleine cadre assumé.
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![FilterNode::new("futur_effet")]));
+    assert_eq!(
+        assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120)),
+        (200 * 200, 200 * 200)
+    );
+}
+
+#[test]
+fn windowed_group_plus_adjust() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let a = solid(80, 80, [40, 200, 40, 255]);
+    let groupe = LayerNode::Group(GroupLayer::new(
+        "g",
+        vec![pixel_node(&a, 100.0, BlendMode::Normal, 60.0, 40.0)],
+    ));
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            groupe,
+        ],
+        200,
+        200,
+    );
+    doc.root.push(adj_layer(vec![bc_node(-10.0, 5.0)]));
+    assert_eq!(
+        assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120)),
+        (200 * 200, 120 * 120)
+    );
+}
+
+#[test]
+fn windowed_mask_plus_adjust() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            masked_layer(),
+        ],
+        200,
+        200,
+    );
+    doc.root.push(adj_layer(vec![sat_node(0.5)]));
+    assert_region_crop(&doc, &TileRegion::new(60, 0, 120, 200));
+}
+
+#[test]
+fn windowed_group_mask_fallback_global() {
+    // Masque de groupe actif : aligné sur l'origine de l'accumulateur, donc
+    // non invariant par décalage — repli pleine cadre + découpe (juste).
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let a = solid(80, 80, [40, 40, 200, 255]);
+    let mut g = GroupLayer::new(
+        "g",
+        vec![pixel_node(&a, 100.0, BlendMode::Normal, 60.0, 40.0)],
+    );
+    g.masks.push(LayerMask::full(200, 200));
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            LayerNode::Group(g),
+        ],
+        200,
+        200,
+    );
+    assert_eq!(
+        assert_region_crop(&doc, &TileRegion::new(40, 20, 120, 120)),
+        (200 * 200, 200 * 200)
+    );
+}
+
+#[test]
+fn windowed_partial_outside() {
+    let doc = doc_windowed();
+    let (full_px, reg_px) = assert_region_crop(&doc, &TileRegion::new(-50, -50, 150, 150));
+    assert_eq!(full_px, 200 * 200);
+    assert_eq!(reg_px, 100 * 100, "clampé au cadre");
+}
+
+#[test]
+fn windowed_fully_outside_is_none() {
+    let doc = doc_windowed();
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    assert!(
+        doc.composite_region_with(&resolver, &mut stats, &TileRegion::new(600, 600, 10, 10))
+            .is_none()
+    );
+    assert!(
+        doc.composite_region_with(&resolver, &mut stats, &TileRegion::EMPTY)
+            .is_none()
+    );
+}
+
+#[test]
+fn windowed_tile_boundary() {
+    // Document 512² sans ajustement (aucun noyau GPU en jeu) : région à
+    // cheval sur les frontières x=256 et y=256.
+    let doc = doc_regional();
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let reg = doc
+        .composite_region_with(&resolver, &mut stats, &TileRegion::new(128, 128, 256, 256))
+        .expect("région à cheval");
+    assert_eq!((reg.image.width(), reg.image.height()), (256, 256));
+    assert_eq!((reg.origin_x, reg.origin_y), (128, 128));
+    assert_region_matches(&doc, &TileRegion::new(128, 128, 256, 256));
+}
+
+#[test]
+fn windowed_local_adjust_avoids_full_frame() {
+    // Test critique : petite région + ajustement local ⇒ le calcul traité
+    // (dépendance) reste la fenêtre, très inférieur au pleine cadre.
+    // Document 224² = 50176 px (< 65536 : CPU garanti, même avec GPU).
+    let fond = solid(224, 224, [200, 40, 40, 255]);
+    let carre = solid(80, 80, [40, 200, 40, 255]);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 100.0, BlendMode::Normal, 60.0, 40.0),
+        ],
+        224,
+        224,
+    );
+    doc.root.push(adj_layer(vec![bc_node(15.0, 0.0)]));
+    let (full_px, reg_px) = assert_region_crop(&doc, &TileRegion::new(0, 0, 64, 64));
+    assert_eq!(full_px, 224 * 224);
+    assert_eq!(reg_px, 64 * 64, "fenêtre seule, sans halo");
+    assert!(reg_px * 12 < full_px, "ordre de grandeur du gain");
+}
+
+#[test]
+fn classification_spatiale_des_effets() {
+    assert_eq!(
+        filter_spatial_scope(&bc_node(10.0, 0.0)),
+        SpatialScope::Local
+    );
+    assert_eq!(filter_spatial_scope(&sat_node(2.0)), SpatialScope::Local);
+    assert_eq!(
+        filter_spatial_scope(&adj_blur_node(3.0)),
+        SpatialScope::Neighborhood {
+            halo_px: blur_support_px(3.0)
+        }
+    );
+    // Flou quasi nul ⇒ passthrough ⇒ local.
+    assert_eq!(
+        filter_spatial_scope(&adj_blur_node(0.05)),
+        SpatialScope::Local
+    );
+    assert_eq!(
+        filter_spatial_scope(&FilterNode::new("futur_effet")),
+        SpatialScope::Global
+    );
+    // Supports exacts du noyau gaussien CPU (image 0.25).
+    assert_eq!(blur_support_px(0.0), 0);
+    assert_eq!(blur_support_px(1.0), 2);
+    assert_eq!(blur_support_px(2.0), 5);
+    assert_eq!(blur_support_px(3.0), 8);
+    assert_eq!(blur_support_px(10.0), 32);
+}
+
+#[test]
+fn fenetre_ajustement_somme_et_replis() {
+    // Chaîne : halos additionnés, pas de repli.
+    let nodes = vec![adj_layer(vec![adj_blur_node(2.0), adj_blur_node(3.0)])];
+    assert_eq!(
+        scope_adjustment_window(&nodes),
+        ScopeWindow {
+            halo_px: blur_support_px(2.0) + blur_support_px(3.0),
+            global: false
+        }
+    );
+    // Inconnu ⇒ repli global (halo conservé pour la mesure).
+    let nodes = vec![adj_layer(vec![bc_node(1.0, 0.0), FilterNode::new("x")])];
+    assert!(scope_adjustment_window(&nodes).global);
+    // Désactivés : ignorés (comme render_nodes).
+    let mut f = adj_blur_node(10.0);
+    f.enabled = false;
+    let mut g = FilterNode::new("y");
+    g.enabled = false;
+    let nodes = vec![adj_layer(vec![f, g])];
+    assert_eq!(scope_adjustment_window(&nodes), ScopeWindow::default());
+    // Groupe invisible : ignoré.
+    let mut g = GroupLayer::new("g", nodes);
+    g.visible = false;
+    assert_eq!(
+        scope_adjustment_window(&[LayerNode::Group(g)]),
+        ScopeWindow::default()
+    );
+}
