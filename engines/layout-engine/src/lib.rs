@@ -14,8 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur de mise en page (Studio Mise en page) — SQUELETTE, aucune logique.
+//! Moteur de mise en page : cadres, contraintes, pages, placement.
 //!
-//! Rôle futur : document multi-pages (gabaries, blocs texte/image liés aux
-//! assets des autres studios), évalué en pur (sans dépendance UI, comme
-//! `photo-engine`). Branché au `StudioMode::Layout` en phase 4+.
+//! Ce moteur possède la LOGIQUE MÉTIER layout (boîtes, contraintes,
+//! empilements ligne/colonne, alignement, pagination) — jamais le dessin :
+//! aucun `wgpu`, aucun `egui`, aucun renderer. Le résultat alimente le
+//! Scene Graph ([`apply_to_scene`]) ; la mesure du texte est déléguée au
+//! trait [`TextMeasurer`] (le façonnage vit dans `text-engine`, jamais ici).
+
+pub mod layout;
+pub mod measure;
+pub mod model;
+pub mod scene_bridge;
+
+pub use layout::{ComputedLayout, layout};
+pub use measure::{NullMeasurer, TextMeasurer};
+pub use model::{
+    Alignment, Constraints, Content, Direction, Frame, FrameId, FrameKind, Insets, LayoutDoc,
+};
+pub use scene_bridge::apply_to_scene;

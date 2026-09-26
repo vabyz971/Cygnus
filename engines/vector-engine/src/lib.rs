@@ -14,9 +14,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur vectoriel (Studio Vecteur) — SQUELETTE, aucune logique.
+//! Moteur vectoriel : paths Bézier, formes, remplissages, contours.
 //!
-//! Rôle futur : document de formes (tracés, remplissages, booléens),
-//! évalué en pur (sans dépendance UI, comme `photo-engine`), avec une
-//! apparence par calque dérivable en textures par l'app via la frontière
-//! `ui_handles`. Branché au `StudioMode::Vector` en phase 4+.
+//! Ce moteur possède la LOGIQUE MÉTIER vectorielle (géométrie, styles,
+//! opérations booléennes comme données) — jamais le dessin : aucun `wgpu`,
+//! aucun `egui`, aucune dépendance Vello. Le rendu passe par le trait
+//! [`VectorBackend`] (un futur adaptateur Vello l'implémentera avec ses
+//! propres types, sans que ce modèle ne connaisse Vello).
+//!
+//! Fondations partagées réutilisées : `datatypes::Vec2`/`Rect` (géométrie),
+//! `math-utils::Transform2D` (placement), `ids::EntityId` (identités).
+
+pub mod backend;
+pub mod document;
+pub mod geometry;
+pub mod style;
+
+pub use backend::{NullBackend, VectorBackend, render_scene};
+pub use document::{Shape, ShapeGeometry, ShapeId, VectorScene};
+pub use geometry::{Path, PathVerb};
+pub use ids::EntityId;
+pub use style::{
+    BooleanOp, Color, Fill, GradientStop, LineCap, LineJoin, LinearGradient, RadialGradient, Stroke,
+};

@@ -136,6 +136,16 @@ pub struct PhotoLayerInfo {
     pub thumb: Option<PhotoLayerThumb>,
     /// Sélection courante (état UI).
     pub selected: bool,
+    /// Feedback interactif affichable en overlay pendant un drag (Phase
+    /// 6G.3P) : vrai ssi la transform du calque est plaçable à l'écran
+    /// (identité/translation/échelle — calculé côté moteur, jamais deviné
+    /// par l'UI). Faux pour rotation/skew (présentation désactivée, moteur
+    /// et commit exacts quand même).
+    pub overlay_live: bool,
+    /// Transform du calque (identité pour groupes/ajustements) : placement
+    /// écran de l'overlay (calque→document), translation/échelle seulement
+    /// quand `overlay_live` est vrai.
+    pub transform: photo_engine::Transform2D,
 }
 
 impl PhotoLayerInfo {
@@ -208,6 +218,18 @@ impl PhotoLayerInfo {
             masks,
             thumb,
             selected: false,
+            overlay_live: match node {
+                LayerNode::Pixel(pixels) => {
+                    photo_engine::interaction::overlay_displayable(&pixels.transform)
+                }
+                LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
+            },
+            transform: match node {
+                LayerNode::Pixel(pixels) => pixels.transform,
+                LayerNode::Group(_) | LayerNode::Adjustment(_) => {
+                    photo_engine::Transform2D::default()
+                }
+            },
         }
     }
 }

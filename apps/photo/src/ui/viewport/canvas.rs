@@ -319,6 +319,12 @@ impl<'a> PhotoCanvas<'a> {
             self.stroke.clear();
             return outcome;
         }
+        // Phase 6G.3P : le geste est rapporté en incrémental pour
+        // l'overlay transitoire (l'app alimente `InteractionOverlay`,
+        // jamais le worker avant commit — voir `PhotoCanvasOutcome`).
+        outcome.ink_gesture_started = self.stroke.is_empty() && !outcome.pointer_world.is_empty();
+        outcome.ink_points = outcome.pointer_world.clone();
+        outcome.ink_dragging = response.response.dragged_by(egui::PointerButton::Primary);
         self.stroke.extend(outcome.pointer_world.iter().copied());
         if response.response.drag_stopped() && !self.stroke.is_empty() {
             let points: Vec<(f32, f32)> = self.stroke.iter().map(|v| (v.x, v.y)).collect();
@@ -347,6 +353,15 @@ pub struct PhotoCanvasOutcome {
     pub move_layer: Option<MoveRequest>,
     /// Positions en pixels image du pointeur (clic/drag outil actif).
     pub pointer_world: Vec<egui::Vec2>,
+    /// Phase 6G.3P : points ajoutés CE frame pour l'overlay transitoire
+    /// (== `pointer_world` pour les outils de peinture, vide sinon).
+    /// L'app les verse dans `InteractionOverlay` ; le worker ne voit
+    /// que le commit (`paint`, inchangé).
+    pub ink_points: Vec<egui::Vec2>,
+    /// Vrai si un drag primaire est en cours (geste non commité).
+    pub ink_dragging: bool,
+    /// Vrai si le geste commence ce frame (`stroke` vide + points).
+    pub ink_gesture_started: bool,
     /// Rectangle écran du document (`None` = pas d'image).
     pub dest_rect: Option<egui::Rect>,
     /// Taille image en pixels (zéro = pas d'image).

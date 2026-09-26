@@ -2185,3 +2185,1895 @@ fn fenetre_ajustement_somme_et_replis() {
         ScopeWindow::default()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6D — TileCache + DirtyRegion : `cache(R) == crop(full, R)` en octets.
+//
+// Règle de validité : le dirty décide (§6) — après une mutation marquée,
+// seules les tuiles intersectant la zone sale sont recalculées ; les autres
+// restent des hits (signature rafraîchie). Contrat : marquer AVANT relire,
+// `clear_dirty` après présentation.
+// ---------------------------------------------------------------------------
+
+use super::tile_cache::{TILE_CACHE_FLAGS_NONE, TileCache, get_or_render};
+use super::tree::RegionalComposite;
+use crate::tile_key::{BackendTag, tile_content_signature};
+
+/// Rend R via le cache en comptant les évaluations régionales (1 miss avec
+/// contenu contribuant == 1 rendu). Retourne (tuile, nouveaux renders).
+fn render_cached(
+    cache: &mut TileCache,
+    doc: &Document,
+    region: &TileRegion,
+) -> (Option<RegionalComposite>, u64) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let content = tile_content_signature(doc);
+    let misses_avant = cache.stats().misses;
+    let out = get_or_render(
+        cache,
+        doc,
+        &resolver,
+        &mut stats,
+        region,
+        BackendTag::cpu(),
+        TILE_CACHE_FLAGS_NONE,
+        1.0,
+        content,
+    );
+    (out, cache.stats().misses - misses_avant)
+}
+
+/// La tuile égale la découpe pleine cadre à son origine (octets).
+fn assert_tile_matches_full(doc: &Document, tile: &RegionalComposite) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut stats)
+        .expect("pleine cadre");
+    let (w, h) = (tile.image.width(), tile.image.height());
+    let (fw, fh) = (full.width(), full.height());
+    assert!(
+        tile.origin_x + w <= fw && tile.origin_y + h <= fh,
+        "fenêtre dans le cadre"
+    );
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), tile.origin_x, tile.origin_y, w, h)
+        .to_image()
+        .into_raw();
+    let raw = tile.image.to_rgba8().into_raw();
+    assert_eq!(cropped.len(), raw.len(), "mêmes dimensions");
+    if cropped != raw {
+        let n = cropped
+            .iter()
+            .zip(raw.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        let i = cropped
+            .iter()
+            .zip(raw.iter())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        panic!(
+            "cache(R) == crop(full, R) : {} octets diffèrent sur {}, premier à {} (pixel {},{}, origine {},{})",
+            n,
+            cropped.len(),
+            i,
+            (i / 4) % w as usize,
+            (i / 4) / w as usize,
+            tile.origin_x,
+            tile.origin_y
+        );
+    }
+}
+
+fn cache_4mo() -> TileCache {
+    TileCache::new(1 << 24)
+}
+
+#[test]
+fn cache_miss_puis_hit_un_seul_rendu() {
+    let doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, renders) = render_cached(&mut cache, &doc, &region);
+    let tile = tile.expect("contribue");
+    assert_eq!(renders, 1, "cold = 1 rendu");
+    assert_tile_matches_full(&doc, &tile);
+    let (tile2, renders2) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(renders2, 0, "warm = 0 rendu");
+    assert_eq!(
+        tile2.expect("hit").image.to_rgba8().into_raw(),
+        tile.image.to_rgba8().into_raw()
+    );
+    assert_eq!(cache.stats().renders_avoided(), 1);
+}
+
+#[test]
+fn cache_tuiles_distinctes_et_repetition() {
+    let doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let regions = [
+        TileRegion::new(0, 0, 100, 100),
+        TileRegion::new(100, 0, 100, 100),
+        TileRegion::new(0, 100, 100, 100),
+    ];
+    let mut renders = 0;
+    for r in &regions {
+        let (tile, n) = render_cached(&mut cache, &doc, r);
+        renders += n;
+        assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    }
+    assert_eq!(renders, 3);
+    for _ in 0..2 {
+        for r in &regions {
+            let (_, n) = render_cached(&mut cache, &doc, r);
+            renders += n;
+        }
+    }
+    assert_eq!(renders, 3, "secondes passes = 0 rendu");
+    assert_eq!((cache.stats().hits, cache.stats().misses), (6, 3));
+}
+
+#[test]
+fn cache_paint_invalidation_partielle() {
+    // §17 : petite peinture ⇒ seule la tuile sale est recalculée.
+    let mut doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let sale = TileRegion::new(0, 100, 200, 100);
+    let intacte = TileRegion::new(0, 0, 200, 100);
+    let (_, n0) = render_cached(&mut cache, &doc, &sale);
+    let (_, n1) = render_cached(&mut cache, &doc, &intacte);
+    assert_eq!(n0 + n1, 2);
+    // Peinture réelle sur le fond (identité : layer == doc space).
+    let target = doc.root[0].id();
+    let points = vec![(30.0, 150.0), (170.0, 150.0)];
+    let layer = doc.pixel_layer(target).expect("fond");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    let (w, h) = (layer.dimensions().0, layer.dimensions().1);
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        w,
+        h,
+        &points,
+        &crate::paint::BrushParams {
+            radius: 8.0,
+            color: [255, 255, 0],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    doc.set_source_image(
+        target,
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(w, h, buf).expect("dimensions conservées"),
+        ),
+    );
+    let dirty = crate::tiles::stroke_dirty_region(&points, 8.0, tiles::Padding::ZERO)
+        .expect("geste valide");
+    cache.mark_dirty_scope(
+        dirty,
+        ScopeWindow {
+            halo_px: 0,
+            global: false,
+        },
+        doc.width,
+        doc.height,
+    );
+    let (tile_sale, n_sale) = render_cached(&mut cache, &doc, &sale);
+    assert_eq!(n_sale, 1, "tuile sale recalculée");
+    assert_tile_matches_full(&doc, &tile_sale.expect("contribue"));
+    let (tile_intacte, n_intacte) = render_cached(&mut cache, &doc, &intacte);
+    assert_eq!(n_intacte, 0, "tuile intacte = hit malgré contenu changé");
+    assert_tile_matches_full(&doc, &tile_intacte.expect("hit"));
+}
+
+#[test]
+fn cache_opacity_invalidation() {
+    let mut doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let proche = TileRegion::new(40, 20, 120, 120);
+    let loin = TileRegion::new(140, 120, 60, 80);
+    let (_, n) = render_cached(&mut cache, &doc, &proche);
+    let (_, m) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n + m, 2);
+    let id = doc.root[1].id();
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        l.opacity = 30.0;
+    }
+    cache.mark_dirty(TileRegion::new(60, 40, 80, 80));
+    let (tile, n) = render_cached(&mut cache, &doc, &proche);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (tile, n) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n, 0, "hors empreinte = hit");
+    assert_tile_matches_full(&doc, &tile.expect("hit"));
+}
+
+#[test]
+fn cache_transform_invalidation_old_union_new() {
+    let mut doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let proche = TileRegion::new(40, 20, 120, 120);
+    let loin = TileRegion::new(0, 120, 60, 80);
+    let (_, n) = render_cached(&mut cache, &doc, &proche);
+    let (_, m) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n + m, 2);
+    // Déplacement +40 px : union 6B réelle comme zone sale.
+    let id = doc.root[1].id();
+    let old_t = match doc.find(id) {
+        Some(LayerNode::Pixel(l)) => l.transform,
+        _ => panic!("carré attendu"),
+    };
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        l.transform.offset_x += 40.0;
+    }
+    let new_t = match doc.find(id) {
+        Some(LayerNode::Pixel(l)) => l.transform,
+        _ => panic!("carré attendu"),
+    };
+    let union = crate::tiles::layer_move_dirty_region(&old_t, &new_t, 80, 80, tiles::Padding::ZERO);
+    assert_eq!(union, TileRegion::new(60, 40, 120, 80));
+    cache.mark_dirty(union);
+    let (tile, n) = render_cached(&mut cache, &doc, &proche);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (tile, n) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n, 0);
+    assert_tile_matches_full(&doc, &tile.expect("hit"));
+}
+
+#[test]
+fn cache_mask_invalidation() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let mut doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            masked_layer(),
+        ],
+        200,
+        200,
+    );
+    let mut cache = cache_4mo();
+    let proche = TileRegion::new(60, 0, 120, 200);
+    let loin = TileRegion::new(140, 120, 60, 80);
+    let (_, n) = render_cached(&mut cache, &doc, &proche);
+    let (_, m) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n + m, 2);
+    let id = doc.root[1].id();
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        l.masks[0].enabled = false;
+    }
+    cache.mark_dirty(TileRegion::new(60, 40, 80, 80));
+    let (tile, n) = render_cached(&mut cache, &doc, &proche);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (tile, n) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n, 0);
+    assert_tile_matches_full(&doc, &tile.expect("hit"));
+}
+
+#[test]
+fn cache_filter_invalidation() {
+    let mut doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let proche = TileRegion::new(40, 20, 120, 120);
+    let loin = TileRegion::new(140, 120, 60, 80);
+    let (_, n) = render_cached(&mut cache, &doc, &proche);
+    let (_, m) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n + m, 2);
+    let id = doc.root[1].id();
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        let mut f =
+            crate::document::FilterLayer::neutral("brightness_contrast", Default::default());
+        f.params
+            .insert("brightness".to_string(), ParamValue::Float(25.0));
+        l.filter_layers.push(f);
+    }
+    cache.mark_dirty(TileRegion::new(60, 40, 80, 80));
+    let (tile, n) = render_cached(&mut cache, &doc, &proche);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (tile, n) = render_cached(&mut cache, &doc, &loin);
+    assert_eq!(n, 0);
+    assert_tile_matches_full(&doc, &tile.expect("hit"));
+}
+
+#[test]
+fn cache_local_adjustment() {
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![bc_node(20.0, 10.0), sat_node(1.5)]));
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0, "ajustement local remarché = hit");
+    // Nouveau réglage ⇒ tout l'accumulateur change ⇒ global.
+    if let LayerNode::Adjustment(a) = &mut doc.root[2] {
+        a.filters[0]
+            .params
+            .insert("brightness".to_string(), ParamValue::Float(99.0));
+    }
+    cache.mark_global(doc.width, doc.height);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+}
+
+#[test]
+fn cache_blur_adjustment() {
+    let mut doc = doc_windowed();
+    doc.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0, "même halo déterministe ⇒ hit");
+}
+
+#[test]
+fn cache_multi_blur_adjustment() {
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![adj_blur_node(2.0), adj_blur_node(3.0)]));
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn cache_mixed_adjust_blur() {
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![bc_node(10.0, 0.0), adj_blur_node(2.0)]));
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn cache_global_adjustment_fallback() {
+    // §15 : inconnu ⇒ full-frame + crop, pixels justes, tuile cachée.
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![FilterNode::new("futur_effet")]));
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0, "repli déterministe ⇒ hit");
+    // Modification pertinente ⇒ global ⇒ invalide.
+    if let LayerNode::Adjustment(a) = &mut doc.root[2] {
+        a.filters.push(bc_node(5.0, 0.0));
+    }
+    let window = scope_adjustment_window(&doc.root);
+    assert!(window.global, "inconnu ⇒ global");
+    cache.mark_dirty_scope(region, window, doc.width, doc.height);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+}
+
+#[test]
+fn cache_group_nested() {
+    let fond = solid(200, 200, [200, 40, 40, 255]);
+    let a = solid(80, 80, [40, 200, 40, 255]);
+    let inner = LayerNode::Group(GroupLayer::new(
+        "in",
+        vec![pixel_node(&a, 80.0, BlendMode::Screen, 60.0, 40.0)],
+    ));
+    let outer = LayerNode::Group(GroupLayer::new("out", vec![inner]));
+    let doc = doc_of(
+        vec![pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0), outer],
+        200,
+        200,
+    );
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(40, 20, 120, 120);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn cache_partial_outside() {
+    let doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(-50, -50, 150, 150);
+    let (tile, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 1);
+    let tile = tile.expect("chevauche");
+    assert_eq!((tile.image.width(), tile.image.height()), (100, 100));
+    assert_tile_matches_full(&doc, &tile);
+    let (_, n) = render_cached(&mut cache, &doc, &region);
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn cache_outside_is_none() {
+    let doc = doc_windowed();
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(600, 600, 10, 10);
+    let (tile, n1) = render_cached(&mut cache, &doc, &region);
+    assert!(tile.is_none());
+    let (_, n2) = render_cached(&mut cache, &doc, &region);
+    assert!(tile.is_none());
+    assert_eq!(n1 + n2, 2, "rien stocké ⇒ miss à chaque fois");
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn cache_blur_halo_invalidation() {
+    // §14 : flou σ=3 (support 8, mêmes valeurs que 6C) — pixel sale à 5 px
+    // hors de R mais dans D ⇒ R invalide ; à 50 px ⇒ hit préservé.
+    assert_eq!(blur_support_px(3.0), 8);
+    let mut doc = doc_windowed();
+    doc.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+    let window = scope_adjustment_window(&doc.root);
+    assert_eq!(window.halo_px, blur_support_px(3.0));
+    assert!(!window.global);
+    let mut cache = cache_4mo();
+    let r = TileRegion::new(60, 60, 80, 80);
+    let (_, n) = render_cached(&mut cache, &doc, &r);
+    assert_eq!(n, 1);
+    // Sale à 5 px à gauche de R (dans D = R + 8) ⇒ miss.
+    cache.mark_dirty_scope(TileRegion::new(50, 80, 5, 5), window, doc.width, doc.height);
+    let (tile, n) = render_cached(&mut cache, &doc, &r);
+    assert_eq!(n, 1, "dans la dépendance ⇒ invalide");
+    assert_tile_matches_full(&doc, &tile.expect("contribue"));
+    cache.clear_dirty();
+    // Sale à 50 px (hors D) ⇒ hit.
+    cache.mark_dirty_scope(TileRegion::new(0, 0, 5, 5), window, doc.width, doc.height);
+    let (tile, n) = render_cached(&mut cache, &doc, &r);
+    assert_eq!(n, 0, "hors dépendance ⇒ hit préservé");
+    assert_tile_matches_full(&doc, &tile.expect("hit"));
+}
+
+#[test]
+fn cache_tile_assembly_3x3() {
+    // §16 : 9 tuiles 128² assemblées == pleine cadre 384², octet par octet ;
+    // seconde passe = 9 hits, 0 rendu.
+    let fond = solid(384, 384, [200, 40, 40, 255]);
+    let carre = solid(160, 160, [40, 200, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 70.0, BlendMode::Multiply, 112.0, 112.0),
+        ],
+        384,
+        384,
+    );
+    let mut cache = cache_4mo();
+    let mut renders = 0u64;
+    let mut assembled = image::ImageBuffer::from_pixel(384, 384, image::Rgba([0u8, 0, 0, 0]));
+    for ty in 0..3 {
+        for tx in 0..3 {
+            let region = TileRegion::new(tx * 128, ty * 128, 128, 128);
+            let (tile, n) = render_cached(&mut cache, &doc, &region);
+            renders += n;
+            let tile = tile.expect("contribue");
+            let img = tile.image.to_rgba8();
+            for (x, y, p) in img.enumerate_pixels() {
+                assembled.put_pixel(tile.origin_x + x, tile.origin_y + y, *p);
+            }
+        }
+    }
+    assert_eq!(renders, 9);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut stats)
+        .expect("pleine cadre");
+    assert_eq!(
+        assembled.into_raw(),
+        full.to_rgba8().into_raw(),
+        "assemblage == pleine cadre"
+    );
+    for ty in 0..3 {
+        for tx in 0..3 {
+            let (_, n) = render_cached(
+                &mut cache,
+                &doc,
+                &TileRegion::new(tx * 128, ty * 128, 128, 128),
+            );
+            renders += n;
+        }
+    }
+    assert_eq!(renders, 9, "seconde passe = 9 hits");
+    assert_eq!(cache.stats().renders_avoided(), 9);
+}
+
+#[test]
+fn mesures_full_regional_cache_avec_sans_blur() {
+    // §22 : 512² sans ajustement (aucun noyau GPU : blends CPU seuls).
+    let fond = solid(512, 512, [200, 40, 40, 255]);
+    let carre = solid(200, 200, [40, 200, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 60.0, BlendMode::Normal, 100.0, 50.0),
+        ],
+        512,
+        512,
+    );
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    // Pleine cadre de référence.
+    let mut stats_full = CompositeStats::default();
+    doc.composite_preview_with_stats(&resolver, &mut stats_full)
+        .expect("pleine cadre");
+    assert_eq!(stats_full.scope_px, 512 * 512, "full = 262144 px");
+    // Tuile froide 256² : dépendance == requête (local pur).
+    let mut cache = cache_4mo();
+    let region = TileRegion::new(128, 128, 256, 256);
+    let mut stats_cold = CompositeStats::default();
+    let content = tile_content_signature(&doc);
+    let misses_avant = cache.stats().misses;
+    let tile = get_or_render(
+        &mut cache,
+        &doc,
+        &resolver,
+        &mut stats_cold,
+        &region,
+        BackendTag::cpu(),
+        TILE_CACHE_FLAGS_NONE,
+        1.0,
+        content,
+    )
+    .expect("contribue");
+    assert_eq!(cache.stats().misses - misses_avant, 1);
+    assert_eq!(stats_cold.scope_px, 256 * 256, "dépendance = requête");
+    assert_tile_matches_full(&doc, &tile);
+    // Tuile chaude : aucun calcul (stats vierges + hit).
+    let mut stats_warm = CompositeStats::default();
+    let misses_avant = cache.stats().misses;
+    let tile2 = get_or_render(
+        &mut cache,
+        &doc,
+        &resolver,
+        &mut stats_warm,
+        &region,
+        BackendTag::cpu(),
+        TILE_CACHE_FLAGS_NONE,
+        1.0,
+        content,
+    )
+    .expect("hit");
+    assert_eq!(cache.stats().misses - misses_avant, 0);
+    assert_eq!(stats_warm.scope_px, 0, "aucun pixel retraité");
+    assert_eq!(cache.stats().renders_avoided(), 1);
+    assert_eq!(
+        tile2.image.to_rgba8().into_raw(),
+        tile.image.to_rgba8().into_raw()
+    );
+    // Avec blur σ=3 : requête 256², dépendance (256+16)², rendu == dépendance.
+    let mut doc_blur = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 60.0, BlendMode::Normal, 100.0, 50.0),
+        ],
+        512,
+        512,
+    );
+    doc_blur.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+    let resolver_blur = |id: Uuid| doc_blur.appearance_image(id);
+    let mut stats_blur = CompositeStats::default();
+    let content = tile_content_signature(&doc_blur);
+    let tile = get_or_render(
+        &mut cache,
+        &doc_blur,
+        &resolver_blur,
+        &mut stats_blur,
+        &region,
+        BackendTag::cpu(),
+        TILE_CACHE_FLAGS_NONE,
+        1.0,
+        content,
+    )
+    .expect("contribue");
+    let requested = 256u64 * 256;
+    let dependency = (256 + 2 * u64::from(blur_support_px(3.0))).pow(2);
+    assert_eq!(requested, 65_536);
+    assert_eq!(dependency, 272 * 272);
+    assert_eq!(
+        stats_blur.scope_px, dependency,
+        "pixels de dépendance réellement rendus"
+    );
+    assert_tile_matches_full(&doc_blur, &tile);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6E — RenderWorker : viewport → tiles → cache → assemblage.
+//
+// Le viewport plein document assemblé égale le pleine cadre en octets ;
+// seules les tuiles sales sont réévaluées (comptées, pas estimées).
+// ---------------------------------------------------------------------------
+
+use super::worker::{AssembledView, RenderWorker, RenderWorkerStats, ScopeGeom};
+use crate::tiles::{VIEWPORT_TILE_PX, appearance_spread, dirty_tile_rects, node_footprint};
+
+fn worker_4mo(tile_px: u32) -> RenderWorker {
+    RenderWorker::new(1 << 24, tile_px)
+}
+
+/// Rend le viewport plein document (scope == doc : contenu intérieur) et
+/// retourne (vue, stats worker, stats composite cumulées).
+fn render_doc_viewport(
+    worker: &mut RenderWorker,
+    doc: &Document,
+) -> (Option<AssembledView>, RenderWorkerStats, CompositeStats) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut render_stats = CompositeStats::default();
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let request = RenderRequest::new(
+        TileRegion::new(0, 0, doc.width.max(1), doc.height.max(1)),
+        1.0,
+    );
+    let mut stats = RenderWorkerStats::default();
+    let out = worker.render(
+        doc,
+        &resolver,
+        &mut render_stats,
+        scope,
+        &request,
+        &RenderPriorityContext::idle(),
+        &mut stats,
+    );
+    (out, stats, render_stats)
+}
+
+/// La vue assemblée égale le pleine cadre en octets.
+fn assert_view_matches_full(doc: &Document, view: &AssembledView) {
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = CompositeStats::default();
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut stats)
+        .expect("pleine cadre");
+    assert_eq!((view.origin_x, view.origin_y), (0, 0));
+    assert_eq!(
+        (view.image.width(), view.image.height()),
+        (full.width(), full.height())
+    );
+    assert_eq!(
+        view.image.to_rgba8().into_raw(),
+        full.to_rgba8().into_raw(),
+        "assemblage == pleine cadre"
+    );
+}
+
+/// Document 384² : fond + carré multiply (aucun noyau GPU en jeu).
+fn doc_384() -> Document {
+    let fond = solid(384, 384, [200, 40, 40, 255]);
+    let carre = solid(160, 160, [40, 200, 40, 255]);
+    doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 70.0, BlendMode::Multiply, 112.0, 112.0),
+        ],
+        384,
+        384,
+    )
+}
+
+#[test]
+fn worker_cold_warm_3x3() {
+    // §12 : 9 tuiles froides = 9 rendus ; seconde passe = 9 hits, 0 rendu.
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    let view = view.expect("contribue");
+    assert_eq!(
+        (
+            stats.requested_tiles,
+            stats.rendered_tiles,
+            stats.cache_hits
+        ),
+        (9, 9, 0)
+    );
+    assert_view_matches_full(&doc, &view);
+    let (view2, stats2, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(
+        (
+            stats2.requested_tiles,
+            stats2.rendered_tiles,
+            stats2.cache_hits
+        ),
+        (9, 0, 9)
+    );
+    assert_view_matches_full(&doc, &view2.expect("hit"));
+}
+
+#[test]
+fn worker_petite_modification_minimale() {
+    // §12/§14 : petite peinture ⇒ 1 tuile sale ⇒ 1 rendu ; le reste en hits.
+    let mut doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (_, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 9);
+    // Peinture 40×40 dans la tuile (0,0), calque fond (identité).
+    let target = doc.root[0].id();
+    let points = vec![(20.0, 20.0), (60.0, 60.0)];
+    let layer = doc.pixel_layer(target).expect("fond");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    let (w, h) = (layer.dimensions().0, layer.dimensions().1);
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        w,
+        h,
+        &points,
+        &crate::paint::BrushParams {
+            radius: 4.0,
+            color: [255, 255, 0],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    doc.set_source_image(
+        target,
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(w, h, buf).expect("dimensions conservées"),
+        ),
+    );
+    let dirty = crate::tiles::stroke_dirty_region(&points, 4.0, tiles::Padding::ZERO)
+        .expect("geste valide");
+    worker.cache_mut().mark_dirty(dirty);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.dirty_tiles, 1, "une seule tuile sale");
+    assert_eq!(stats.rendered_tiles, 1, "un seul rendu");
+    assert_eq!(stats.cache_hits, 8, "le reste réutilisé");
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn worker_viewport_scroll() {
+    // §13 : viewport B chevauchant A ⇒ présentes = hits, nouvelles = miss.
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let mut render_stats = CompositeStats::default();
+    let mut stats_a = RenderWorkerStats::default();
+    let view_a = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(0, 0, 256, 256), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats_a,
+        )
+        .expect("viewport A");
+    assert_eq!((stats_a.requested_tiles, stats_a.rendered_tiles), (4, 4));
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 0, 0, 256, 256)
+        .to_image()
+        .into_raw();
+    assert_eq!(view_a.image.to_rgba8().into_raw(), cropped);
+    // B décalé de 128 px : 2 tuiles partagées, 2 nouvelles.
+    let mut stats_b = RenderWorkerStats::default();
+    let view_b = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(128, 0, 256, 256), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats_b,
+        )
+        .expect("viewport B");
+    assert_eq!(stats_b.requested_tiles, 4);
+    assert_eq!(stats_b.rendered_tiles, 2, "seules les nouvelles tuiles");
+    assert_eq!(stats_b.cache_hits, 2, "présentes réutilisées");
+    assert_eq!((view_b.origin_x, view_b.origin_y), (128, 0));
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 128, 0, 256, 256)
+        .to_image()
+        .into_raw();
+    assert_eq!(view_b.image.to_rgba8().into_raw(), cropped);
+}
+
+#[test]
+fn worker_blur_invalidation() {
+    // §9 : halo 6C réel — seules les tuiles dans la dépendance sont refaites.
+    let mut doc = doc_windowed();
+    doc.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+    let mut worker = worker_4mo(100);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (4, 4));
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+    let window = scope_adjustment_window(&doc.root);
+    // Sale en (95,50) : hors de R=(100,0,100,100) mais dans D=R+8 ⇒ R sale ;
+    // les tuiles basses (y≥100) restent propres.
+    worker.cache_mut().mark_dirty_scope(
+        TileRegion::new(95, 50, 3, 3),
+        window,
+        doc.width,
+        doc.height,
+    );
+    let dirty = dirty_tile_rects(worker.cache().dirty(), doc.width, doc.height, 100);
+    assert_eq!(dirty.len(), 2, "dépendance à cheval : 2 tuiles");
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.dirty_tiles, 2);
+    assert_eq!(stats.rendered_tiles, 2);
+    assert_eq!(stats.cache_hits, 2);
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn worker_global_invalidation() {
+    // §10 : opération globale ⇒ toutes les tuiles requises refaites, pixels justes.
+    let mut doc = doc_windowed();
+    doc.root
+        .push(adj_layer(vec![FilterNode::new("futur_effet")]));
+    let mut worker = worker_4mo(100);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (4, 4));
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+    worker.cache_mut().mark_global(doc.width, doc.height);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.dirty_tiles, 4);
+    assert_eq!(stats.rendered_tiles, 4);
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn worker_matrice_pixel() {
+    // §16 : chaque scénario assemblé == pleine cadre en octets.
+    let scenarios: Vec<(&str, Document)> = vec![
+        ("fond", {
+            let fond = solid(200, 200, [10, 20, 30, 255]);
+            doc_of(
+                vec![pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0)],
+                200,
+                200,
+            )
+        }),
+        ("peinture", {
+            let mut doc = doc_windowed();
+            let target = doc.root[0].id();
+            let layer = doc.pixel_layer(target).expect("fond");
+            let mut buf = layer.source_image.to_rgba8().into_raw();
+            let (w, h) = (layer.dimensions().0, layer.dimensions().1);
+            crate::paint::paint_stroke_rgba(
+                &mut buf,
+                w,
+                h,
+                &[(30.0, 150.0), (170.0, 150.0)],
+                &crate::paint::BrushParams {
+                    radius: 8.0,
+                    color: [255, 255, 0],
+                    opacity: 1.0,
+                    mode: crate::paint::StrokeMode::Paint,
+                },
+            );
+            doc.set_source_image(
+                target,
+                image::DynamicImage::ImageRgba8(
+                    image::RgbaImage::from_raw(w, h, buf).expect("dimensions conservées"),
+                ),
+            );
+            doc
+        }),
+        ("opacite", {
+            let fond = solid(200, 200, [200, 40, 40, 255]);
+            let voile = solid(200, 200, [40, 40, 200, 255]);
+            doc_of(
+                vec![
+                    pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+                    pixel_node(&voile, 50.0, BlendMode::Normal, 0.0, 0.0),
+                ],
+                200,
+                200,
+            )
+        }),
+        ("fusion", {
+            let fond = solid(200, 200, [200, 40, 40, 255]);
+            let carre = solid(80, 80, [40, 200, 40, 255]);
+            doc_of(
+                vec![
+                    pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+                    pixel_node(&carre, 100.0, BlendMode::Multiply, 60.0, 40.0),
+                ],
+                200,
+                200,
+            )
+        }),
+        ("groupe", {
+            let fond = solid(200, 200, [200, 40, 40, 255]);
+            let a = solid(80, 80, [40, 200, 40, 255]);
+            let groupe = LayerNode::Group(GroupLayer::new(
+                "g",
+                vec![pixel_node(&a, 100.0, BlendMode::Normal, 60.0, 40.0)],
+            ));
+            doc_of(
+                vec![
+                    pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+                    groupe,
+                ],
+                200,
+                200,
+            )
+        }),
+        ("masque", {
+            let fond = solid(200, 200, [200, 40, 40, 255]);
+            doc_of(
+                vec![
+                    pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+                    masked_layer(),
+                ],
+                200,
+                200,
+            )
+        }),
+        ("transformation", {
+            let fond = solid(200, 200, [200, 40, 40, 255]);
+            let petit = solid(40, 40, [40, 200, 40, 255]);
+            let mut l = PixelLayer::new("zoom", arc(&petit));
+            l.transform.scale_x = 2.0;
+            l.transform.scale_y = 2.0;
+            l.transform.offset_x = 60.0;
+            l.transform.offset_y = 40.0;
+            doc_of(
+                vec![
+                    pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+                    LayerNode::Pixel(l),
+                ],
+                200,
+                200,
+            )
+        }),
+        ("ajustement-local", {
+            let mut doc = doc_windowed();
+            doc.root.push(adj_layer(vec![bc_node(20.0, 10.0)]));
+            doc
+        }),
+        ("flou", {
+            let mut doc = doc_windowed();
+            doc.root.push(adj_layer(vec![adj_blur_node(3.0)]));
+            doc
+        }),
+        ("multi-flou", {
+            let mut doc = doc_windowed();
+            doc.root
+                .push(adj_layer(vec![adj_blur_node(2.0), adj_blur_node(3.0)]));
+            doc
+        }),
+        ("global", {
+            let mut doc = doc_windowed();
+            doc.root
+                .push(adj_layer(vec![FilterNode::new("futur_effet")]));
+            doc
+        }),
+    ];
+    for (name, doc) in &scenarios {
+        let mut worker = worker_4mo(100);
+        let (view, stats, _) = render_doc_viewport(&mut worker, doc);
+        assert_eq!(stats.requested_tiles, 4, "{name} : 4 tuiles");
+        assert_eq!(stats.rendered_tiles, 4, "{name} : froid complet");
+        assert_view_matches_full(doc, &view.expect("contribue"));
+        let (_, stats, _) = render_doc_viewport(&mut worker, doc);
+        assert_eq!(stats.rendered_tiles, 0, "{name} : chaud sans rendu");
+        assert_eq!(stats.cache_hits, 4, "{name} : 4 hits");
+    }
+}
+
+#[test]
+fn worker_bornes_partielles_et_hors_doc() {
+    // §21 : viewport partiel clippé == découpe ; hors doc ⇒ None.
+    let doc = doc_windowed();
+    let mut worker = worker_4mo(100);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(-50, -50, 150, 150), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("chevauche");
+    assert_eq!((view.image.width(), view.image.height()), (100, 100));
+    assert_eq!((view.origin_x, view.origin_y), (0, 0));
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 0, 0, 100, 100)
+        .to_image()
+        .into_raw();
+    assert_eq!(view.image.to_rgba8().into_raw(), cropped);
+    let mut stats = RenderWorkerStats::default();
+    assert!(
+        worker
+            .render(
+                &doc,
+                &resolver,
+                &mut render_stats,
+                scope,
+                &RenderRequest::new(TileRegion::new(600, 600, 10, 10), 1.0),
+                &RenderPriorityContext::idle(),
+                &mut stats,
+            )
+            .is_none(),
+        "hors scope ⇒ None"
+    );
+}
+
+#[test]
+fn worker_eviction_reste_correct() {
+    // §21 : budget de 2,5 tuiles sur 9 — évictions inévitables (le balayage
+    // cyclique bat tout cache plus petit que le jeu de travail : 0 hit
+    // attendu en seconde passe), pixels toujours justes, budget tenu.
+    let doc = doc_384();
+    let mut worker = RenderWorker::new((128 * 128 * 5) / 2, 128);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.requested_tiles, 9);
+    assert!(
+        worker.cache().stats().evictions > 0,
+        "budget dépassé ⇒ évictions"
+    );
+    assert!(
+        worker.cache().cached_pixels() <= worker.cache().max_pixels(),
+        "budget tenu"
+    );
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 9, "tout évincé ⇒ tout recalculé");
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+    assert!(
+        worker.cache().cached_pixels() <= worker.cache().max_pixels(),
+        "budget tenu après 2 passes"
+    );
+}
+
+#[test]
+fn worker_changement_scope_invalide() {
+    // Débordement nouveau ⇒ périmètre suivi ⇒ invalidation totale, pixels justes.
+    let mut doc = doc_windowed();
+    let mut worker = worker_4mo(100);
+    {
+        let resolver = |id: Uuid| doc.appearance_image(id);
+        let scope = worker.scope_for(&doc, &resolver);
+        let mut render_stats = CompositeStats::default();
+        let mut stats = RenderWorkerStats::default();
+        let viewport = TileRegion::new(0, 0, doc.width, doc.height);
+        worker
+            .render(
+                &doc,
+                &resolver,
+                &mut render_stats,
+                scope,
+                &RenderRequest::new(viewport, 1.0),
+                &RenderPriorityContext::idle(),
+                &mut stats,
+            )
+            .expect("passe 1");
+        assert_eq!(stats.rendered_tiles, 4);
+    }
+    // Le carré sort du document : le scope grandit.
+    let id = doc.root[1].id();
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        l.transform.offset_x = 500.0;
+    }
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope2 = worker.scope_for(&doc, &resolver);
+    assert!(scope2.w > doc.width, "le scope a grandi au-delà du doc");
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope2,
+            &RenderWorker::scope_request(scope2, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("passe 2");
+    assert_eq!(
+        stats.rendered_tiles, stats.requested_tiles,
+        "tout réévalué après changement de scope"
+    );
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    assert_eq!(
+        (view.image.width(), view.image.height()),
+        (full.width(), full.height())
+    );
+    assert_eq!(
+        view.image.to_rgba8().into_raw(),
+        full.to_rgba8().into_raw(),
+        "assemblage scope == pleine cadre"
+    );
+}
+
+#[test]
+fn worker_incremental_vs_full_baseline() {
+    // §18 : 512², tuiles 256 — pleine cadre vs froid vs chaud, en scope_px.
+    let fond = solid(512, 512, [200, 40, 40, 255]);
+    let carre = solid(200, 200, [40, 200, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 60.0, BlendMode::Normal, 100.0, 50.0),
+        ],
+        512,
+        512,
+    );
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats_full = CompositeStats::default();
+    doc.composite_preview_with_stats(&resolver, &mut stats_full)
+        .expect("pleine cadre");
+    assert_eq!(stats_full.scope_px, 512 * 512);
+    let mut worker = RenderWorker::new(1 << 24, 256);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let viewport = TileRegion::new(0, 0, 512, 512);
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("froid");
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (4, 4));
+    assert_eq!(
+        stats.dependency_px, stats_full.scope_px,
+        "froid : même travail total (local pur, sans halo)"
+    );
+    assert_view_matches_full(&doc, &view);
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("chaud");
+    assert_eq!((stats.rendered_tiles, stats.cache_hits), (0, 4));
+    assert_eq!(render_stats.scope_px, 0, "chaud : 0 pixel retraité");
+    assert_view_matches_full(&doc, &view);
+}
+
+#[test]
+fn worker_viewport_1x1_et_decale() {
+    // §19 : viewport d'une tuile et viewport non aligné sur la grille —
+    // octets == découpe pleine cadre dans les deux cas.
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    for (name, vx, vy, vw, vh) in [("1x1", 128, 128, 128, 128), ("decale", 64, 64, 256, 256)] {
+        let mut render_stats = CompositeStats::default();
+        let mut stats = RenderWorkerStats::default();
+        let view = worker
+            .render(
+                &doc,
+                &resolver,
+                &mut render_stats,
+                scope,
+                &RenderRequest::new(TileRegion::new(vx, vy, vw, vh), 1.0),
+                &RenderPriorityContext::idle(),
+                &mut stats,
+            )
+            .expect("viewport");
+        assert_eq!(
+            (view.origin_x, view.origin_y),
+            (vx as u32, vy as u32),
+            "{name}"
+        );
+        assert_eq!(
+            (view.image.width(), view.image.height()),
+            (vw, vh),
+            "{name}"
+        );
+        let cropped = image::imageops::crop_imm(&full.to_rgba8(), vx as u32, vy as u32, vw, vh)
+            .to_image()
+            .into_raw();
+        assert_eq!(view.image.to_rgba8().into_raw(), cropped, "{name}");
+    }
+}
+
+#[test]
+fn worker_zoom_cle_scale() {
+    // §14 : même viewport, échelles 1.0 vs 2.0 ⇒ miss (clés distinctes),
+    // mêmes octets (rendu 1.0), retour 1.0 ⇒ hit (conservé).
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let viewport = TileRegion::new(0, 0, 256, 256);
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    let v1 = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("échelle 1.0");
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (4, 4));
+    let mut stats = RenderWorkerStats::default();
+    let v2 = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(viewport, 2.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("échelle 2.0");
+    assert_eq!(stats.rendered_tiles, 4, "échelle distincte ⇒ miss");
+    assert_eq!(
+        v1.image.to_rgba8().into_raw(),
+        v2.image.to_rgba8().into_raw(),
+        "rendu 1.0 dans les deux cas (pas de mipmaps 6F)"
+    );
+    let mut stats = RenderWorkerStats::default();
+    let v1b = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("retour 1.0");
+    assert_eq!((stats.rendered_tiles, stats.cache_hits), (0, 4));
+    assert_eq!(
+        v1b.image.to_rgba8().into_raw(),
+        v1.image.to_rgba8().into_raw()
+    );
+}
+
+#[test]
+fn worker_petit_pan_conserve_tuiles() {
+    // §12 : pan de 32 px sur tuiles 256 ⇒ même tuile ⇒ 0 rendu.
+    let doc = doc_384();
+    let mut worker = worker_4mo(256);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(0, 0, 128, 128), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("A");
+    assert_eq!(stats.rendered_tiles, 1);
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(32, 0, 128, 128), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("B");
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (1, 0));
+    assert_eq!(stats.cache_hits, 1, "tuile conservée");
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 32, 0, 128, 128)
+        .to_image()
+        .into_raw();
+    assert_eq!(view.image.to_rgba8().into_raw(), cropped);
+}
+
+#[test]
+fn worker_meme_tuile_plusieurs_viewports() {
+    // §4 : la tuile (0,0) demandée via deux viewports ⇒ 1 rendu, hits ensuite.
+    let doc = doc_384();
+    let mut worker = worker_4mo(256);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let mut render_stats = CompositeStats::default();
+    let mut stats = RenderWorkerStats::default();
+    worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(0, 0, 256, 256), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("A");
+    assert_eq!(stats.rendered_tiles, 1);
+    let mut stats = RenderWorkerStats::default();
+    worker
+        .render(
+            &doc,
+            &resolver,
+            &mut render_stats,
+            scope,
+            &RenderRequest::new(TileRegion::new(0, 0, 128, 128), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("B");
+    // B tient dans la tuile (0,0) : le worker ne demande que des rects
+    // canoniques ⇒ même clé ⇒ hit.
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (1, 0));
+    assert_eq!(stats.cache_hits, 1, "canonicité : même tuile, même clé");
+}
+
+#[test]
+fn worker_ordre_plan_deterministe_survie_lru() {
+    // §18 : budget 1 tuile — la survivante est la DERNIÈRE du plan (la moins
+    // prioritaire), prouvant l'ordre d'exécution effectif.
+    use super::scheduler::schedule_viewport;
+    let doc = doc_windowed();
+    let mut worker = RenderWorker::new(100 * 100, 100);
+    let request = RenderRequest::new(TileRegion::new(0, 0, 200, 200), 1.0);
+    let idle = RenderPriorityContext::idle();
+    let plan = schedule_viewport(&request, worker.cache().dirty(), 100, &idle);
+    assert_eq!(plan.len(), 4);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let last = plan.last().expect("plan");
+    worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &request,
+            &idle,
+            &mut RenderWorkerStats::default(),
+        )
+        .expect("rendu");
+    // Seule la dernière du plan survit au budget.
+    let mut survivors = 0;
+    for item in &plan {
+        let key = super::tile_cache::DocTileKey::new(
+            item.rect,
+            crate::tile_key::BackendTag::cpu(),
+            0,
+            crate::tile_key::TILE_FLAGS_NONE,
+            1.0,
+        );
+        if worker.cache().cached_content(key).is_some() {
+            survivors += 1;
+        }
+    }
+    assert_eq!(survivors, 1, "budget 1 tuile");
+    let key = super::tile_cache::DocTileKey::new(
+        last.rect,
+        crate::tile_key::BackendTag::cpu(),
+        0,
+        crate::tile_key::TILE_FLAGS_NONE,
+        1.0,
+    );
+    assert!(
+        worker.cache().cached_content(key).is_some(),
+        "la moins prioritaire (dernière) survit"
+    );
+}
+
+#[test]
+fn worker_camera_viewport_de_derive() {
+    // §1 : viewport dérivé d'une vraie caméra ⇒ rendu == découpe.
+    use super::scheduler::Camera;
+    let doc = doc_windowed();
+    let mut worker = worker_4mo(100);
+    // Écran 200×200, zoom 2, pan pour cadrer l'origine : viewport (0,0,100,100).
+    let cam = Camera::new(2.0, -100.0, -100.0);
+    let viewport = cam.document_viewport(200.0, 200.0);
+    assert_eq!(viewport, TileRegion::new(0, 0, 100, 100));
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("viewport caméra");
+    assert_eq!(stats.requested_tiles, 1);
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 0, 0, 100, 100)
+        .to_image()
+        .into_raw();
+    assert_eq!(view.image.to_rgba8().into_raw(), cropped);
+}
+
+#[test]
+fn surface_init_warm_partiel() {
+    // §18 : init (full explicite) → warm (0 écriture) → partiel (1 tuile).
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (9, 9));
+    let surf = worker.surface_stats();
+    assert_eq!(surf.full_updates, 1, "une allocation initiale");
+    assert_eq!(surf.tiles_applied, 9);
+    assert_eq!(surf.pixels_written, 384 * 384, "surface complète écrite");
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+    // Warm : mêmes octets, zéro écriture surface, zéro rendu.
+    let written = worker.surface_stats().pixels_written;
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!((stats.rendered_tiles, stats.cache_hits), (0, 9));
+    assert_eq!(
+        worker.surface_stats().pixels_written,
+        written,
+        "hits n'écrivent rien"
+    );
+    assert_view_matches_full(&doc, &view.expect("hit"));
+    // Petite zone sale simulée : 1 tuile réécrite, le reste intact
+    // (la mutation réelle est couverte par local_mutation).
+    worker.cache_mut().mark_dirty(TileRegion::new(0, 0, 32, 32));
+    let written = worker.surface_stats().pixels_written;
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 1);
+    assert_eq!(stats.cache_hits, 8);
+    assert_eq!(
+        worker.surface_stats().pixels_written - written,
+        128 * 128,
+        "une seule tuile réécrite"
+    );
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn surface_local_mutation_chiffres() {
+    // §21 : paint dans T4 → rendered 1, applied 1, written ≈ T4, reste intact.
+    let mut doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (_, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 9);
+    let written_full = worker.surface_stats().pixels_written;
+    assert_eq!(written_full, 384 * 384);
+    // Peinture réelle au centre de la tuile (1,1) : doc 384, tuile 128.
+    let target = doc.root[0].id();
+    let points = vec![(150.0, 150.0), (170.0, 170.0)];
+    let layer = doc.pixel_layer(target).expect("fond");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        384,
+        384,
+        &points,
+        &crate::paint::BrushParams {
+            radius: 6.0,
+            color: [255, 255, 0],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    doc.set_source_image(
+        target,
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(384, 384, buf).expect("dimensions conservées"),
+        ),
+    );
+    let dirty = crate::tiles::stroke_dirty_region(&points, 6.0, tiles::Padding::ZERO)
+        .expect("geste valide");
+    worker.cache_mut().mark_dirty(dirty);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 1, "T4 seule");
+    assert_eq!(stats.cache_hits, 8);
+    let surf = worker.surface_stats();
+    assert_eq!(surf.tiles_applied, 9 + 1, "9 init + 1 partiel");
+    assert_eq!(surf.pixels_written - written_full, 128 * 128, "≈ aire T4");
+    assert_eq!(surf.full_updates, 1, "aucun rebuild complet");
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn surface_multi_tile_update() {
+    // §18 : trait à cheval sur 2 tuiles ⇒ 2 écritures, reste intact.
+    let mut doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (_, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 9);
+    let written = worker.surface_stats().pixels_written;
+    let target = doc.root[0].id();
+    // Trait vertical x=128 : chevauche les tuiles (0,*) et (1,*).
+    let points = vec![(128.0, 10.0), (128.0, 370.0)];
+    let layer = doc.pixel_layer(target).expect("fond");
+    let mut buf = layer.source_image.to_rgba8().into_raw();
+    crate::paint::paint_stroke_rgba(
+        &mut buf,
+        384,
+        384,
+        &points,
+        &crate::paint::BrushParams {
+            radius: 4.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+            mode: crate::paint::StrokeMode::Paint,
+        },
+    );
+    doc.set_source_image(
+        target,
+        image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(384, 384, buf).expect("dimensions conservées"),
+        ),
+    );
+    let dirty = crate::tiles::stroke_dirty_region(&points, 4.0, tiles::Padding::ZERO)
+        .expect("geste valide");
+    worker.cache_mut().mark_dirty(dirty);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 6, "2 colonnes × 3 lignes");
+    assert_eq!(stats.cache_hits, 3);
+    assert_eq!(
+        worker.surface_stats().pixels_written - written,
+        6 * 128 * 128
+    );
+    assert_view_matches_full(&doc, &view.expect("contribue"));
+}
+
+#[test]
+fn surface_rebuilt_from_cache_zero_compositing() {
+    // §20 : reset puis repeuplement depuis le cache — 0 compositing.
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+    assert_eq!(stats.rendered_tiles, 9);
+    let reference = view.expect("init").image.to_rgba8().into_raw();
+    let misses_avant = worker.cache().stats().misses;
+    worker.reset_surface();
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let repop = worker
+        .repopulate_from_cache(scope, scope.rect(), 1.0)
+        .expect("cache plein");
+    assert_eq!(
+        worker.cache().stats().misses - misses_avant,
+        0,
+        "zéro compositing"
+    );
+    // Compteurs par surface (pas lifetime) : la surface recréée compte sa
+    // propre création (1) + les 9 tuiles repeuplées, sans aucun rendu.
+    assert_eq!(worker.surface_stats().full_updates, 1, "surface recréée");
+    assert_eq!(worker.surface_stats().tiles_applied, 9);
+    assert_eq!(worker.surface_stats().pixels_written, 384 * 384);
+    assert_eq!(
+        repop.image.to_rgba8().into_raw(),
+        reference,
+        "repeuplée == rendue"
+    );
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    assert_eq!(
+        repop.image.to_rgba8().into_raw(),
+        full.to_rgba8().into_raw(),
+        "repeuplée == full"
+    );
+}
+
+#[test]
+fn surface_resize_recree() {
+    // §9 : changement de périmètre ⇒ surface neuve, ancien contenu jamais réutilisé.
+    let mut doc = doc_windowed();
+    let mut worker = worker_4mo(100);
+    {
+        let resolver = |id: Uuid| doc.appearance_image(id);
+        let scope = worker.scope_for(&doc, &resolver);
+        let mut stats = RenderWorkerStats::default();
+        worker
+            .render(
+                &doc,
+                &resolver,
+                &mut CompositeStats::default(),
+                scope,
+                &RenderRequest::new(TileRegion::new(0, 0, 200, 200), 1.0),
+                &RenderPriorityContext::idle(),
+                &mut stats,
+            )
+            .expect("init");
+    }
+    assert_eq!(worker.surface_stats().full_updates, 1);
+    let id = doc.root[1].id();
+    if let Some(LayerNode::Pixel(l)) = doc.find_mut(id) {
+        l.transform.offset_x = 500.0;
+    }
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope2 = worker.scope_for(&doc, &resolver);
+    assert!(scope2.w > doc.width, "périmètre grandi au-delà du doc");
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope2,
+            &RenderWorker::scope_request(scope2, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("resize");
+    assert_eq!(worker.surface_stats().full_updates, 2, "surface recréée");
+    assert_eq!(
+        stats.rendered_tiles, stats.requested_tiles,
+        "tout réévalué (cache invalidé par le scope)"
+    );
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    assert_eq!(view.image.to_rgba8().into_raw(), full.to_rgba8().into_raw());
+}
+
+#[test]
+fn surface_blur_et_global() {
+    // §18 : flou + global — surface exacte dans les deux cas.
+    for (name, filters) in [
+        ("blur", vec![adj_blur_node(3.0)]),
+        ("global", vec![FilterNode::new("futur_effet")]),
+    ] {
+        let mut doc = doc_windowed();
+        doc.root.push(adj_layer(filters));
+        let mut worker = worker_4mo(100);
+        let (view, _, _) = render_doc_viewport(&mut worker, &doc);
+        assert_view_matches_full(&doc, &view.expect("contribue"));
+        let written = worker.surface_stats().pixels_written;
+        // Seconde passe : hits ⇒ 0 écriture même avec halo/global.
+        let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+        assert_eq!((stats.rendered_tiles, stats.cache_hits), (0, 4), "{name}");
+        assert_eq!(
+            worker.surface_stats().pixels_written,
+            written,
+            "{name} : warm sans écriture"
+        );
+        assert_view_matches_full(&doc, &view.expect("hit"));
+    }
+}
+
+#[test]
+fn surface_zoom_state_only() {
+    // §19 : le zoom d'affichage n'atteint jamais le moteur — deux frames
+    // identiques (simulant zoom 1.0 → 2.0 → 0.5 côté canvas) : 0 rendu,
+    // 0 écriture, mêmes stats, même surface.
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let (view, _, _) = render_doc_viewport(&mut worker, &doc);
+    let reference = view.expect("init").image.to_rgba8().into_raw();
+    let written = worker.surface_stats().pixels_written;
+    let misses_avant = worker.cache().stats().misses;
+    for _ in ["zoom 1.0", "zoom 2.0", "zoom 0.5"] {
+        // Aucune commande moteur : le canvas ne fait que re-désigner la même
+        // requête (même viewport document, même échelle de rendu).
+        let (view, stats, _) = render_doc_viewport(&mut worker, &doc);
+        assert_eq!((stats.rendered_tiles, stats.cache_hits), (0, 9));
+        assert_eq!(view.expect("hit").image.to_rgba8().into_raw(), reference);
+    }
+    assert_eq!(worker.surface_stats().pixels_written, written, "0 écriture");
+    assert_eq!(
+        worker.cache().stats().misses,
+        misses_avant,
+        "0 compositing : le zoom n'atteint pas le moteur"
+    );
+}
+
+#[test]
+fn surface_render_scale_change() {
+    // §10/§18 : échelle de rendu 2.0 ⇒ miss (clés distinctes), mêmes octets
+    // (rendu 1.0, pas de mipmaps) ; zoom d'affichage hors sujet (cf. zoom test).
+    let doc = doc_384();
+    let mut worker = worker_4mo(128);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let viewport = TileRegion::new(0, 0, 256, 256);
+    let mut stats = RenderWorkerStats::default();
+    let v1 = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("1.0");
+    let written = worker.surface_stats().pixels_written;
+    let mut stats = RenderWorkerStats::default();
+    let v2 = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(viewport, 2.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("2.0");
+    assert_eq!(stats.rendered_tiles, 4, "échelle distincte ⇒ réévalué");
+    assert_eq!(
+        v1.image.to_rgba8().into_raw(),
+        v2.image.to_rgba8().into_raw()
+    );
+    assert!(
+        worker.surface_stats().pixels_written > written,
+        "surface mise à jour pour la nouvelle échelle"
+    );
+}
+
+#[test]
+fn surface_viewport_partiel_hors_doc() {
+    // §13 : viewport à cheval sur le bord ⇒ clip correct, == découpe.
+    let doc = doc_windowed();
+    let mut worker = worker_4mo(100);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let full = doc
+        .composite_preview_with_stats(&resolver, &mut CompositeStats::default())
+        .expect("pleine cadre");
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(TileRegion::new(150, 150, 100, 100), 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("partiel");
+    assert_eq!((view.image.width(), view.image.height()), (50, 50));
+    assert_eq!((view.origin_x, view.origin_y), (150, 150));
+    let cropped = image::imageops::crop_imm(&full.to_rgba8(), 150, 150, 50, 50)
+        .to_image()
+        .into_raw();
+    assert_eq!(view.image.to_rgba8().into_raw(), cropped);
+}
+
+#[test]
+fn mesures_surface_full_vs_partiel() {
+    // §23 : 512², tuiles 256 — écriture surface pleine vs 1 tuile.
+    let fond = solid(512, 512, [200, 40, 40, 255]);
+    let carre = solid(200, 200, [40, 200, 40, 255]);
+    let doc = doc_of(
+        vec![
+            pixel_node(&fond, 100.0, BlendMode::Normal, 0.0, 0.0),
+            pixel_node(&carre, 60.0, BlendMode::Normal, 100.0, 50.0),
+        ],
+        512,
+        512,
+    );
+    let mut worker = RenderWorker::new(1 << 24, 256);
+    let scope = ScopeGeom::document(doc.width, doc.height);
+    let viewport = TileRegion::new(0, 0, 512, 512);
+    let resolver = |id: Uuid| doc.appearance_image(id);
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("froid");
+    assert_eq!((stats.requested_tiles, stats.rendered_tiles), (4, 4));
+    let surf = worker.surface_stats();
+    assert_eq!(surf.full_updates, 1);
+    assert_eq!(surf.pixels_written, 512 * 512, "pleine surface écrite");
+    assert_view_matches_full(&doc, &view);
+    // 1 tuile sale : seule elle est réécrite.
+    worker
+        .cache_mut()
+        .mark_dirty(TileRegion::new(0, 0, 256, 256));
+    let mut stats = RenderWorkerStats::default();
+    let view = worker
+        .render(
+            &doc,
+            &resolver,
+            &mut CompositeStats::default(),
+            scope,
+            &RenderRequest::new(viewport, 1.0),
+            &RenderPriorityContext::idle(),
+            &mut stats,
+        )
+        .expect("partiel");
+    assert_eq!((stats.rendered_tiles, stats.cache_hits), (1, 3));
+    let surf = worker.surface_stats();
+    assert_eq!(surf.full_updates, 1, "aucun rebuild complet");
+    assert_eq!(
+        surf.pixels_written,
+        512 * 512 + 256 * 256,
+        "seule la tuile sale réécrite"
+    );
+    assert_view_matches_full(&doc, &view);
+}
+
+#[test]
+fn dirty_tile_rects_via_worker() {
+    // §4 : découverte dirty → tuiles, forme en L (T5 T6 / T9 sur 4×4 fictif
+    // ramené à 512² / 256 : sale x[300,400)×y[100,300) ⇒ (1,0),(1,1)).
+    let doc = doc_384();
+    let mut worker = worker_4mo(VIEWPORT_TILE_PX);
+    assert!(
+        dirty_tile_rects(
+            worker.cache().dirty(),
+            doc.width,
+            doc.height,
+            worker.tile_px()
+        )
+        .is_empty()
+    );
+    worker
+        .cache_mut()
+        .mark_dirty(TileRegion::new(300, 100, 100, 200));
+    let tiles = dirty_tile_rects(
+        worker.cache().dirty(),
+        doc.width,
+        doc.height,
+        worker.tile_px(),
+    );
+    assert_eq!(tiles.len(), 2);
+    // node_footprint / appearance_spread exposés au même grain (fumée).
+    let id = doc.root[1].id();
+    let node = doc.find(id).expect("carré");
+    assert!(!node_footprint(node).is_empty());
+    assert_eq!(appearance_spread(&[]), tiles::Padding::ZERO);
+}

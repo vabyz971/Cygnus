@@ -40,11 +40,12 @@
 //! ([`stroke_footprint_in_document`], [`plan_stroke_tiles_layer_space`]).
 //! La rastérisation (`paint_stroke_rgba`, espace calque) est inchangée.
 
-use tiles::{DirtyTiles, TileGrid, TileRegion, TileScheduler, Viewport};
+use tiles::{DirtyTiles, TileGrid, TileScheduler, Viewport};
 
-pub use tiles::Padding;
+pub use tiles::{Padding, TileRegion};
 
-use crate::document::{FilterLayer, Transform2D};
+use crate::document::compositing::blur_support_px;
+use crate::document::{FilterLayer, GroupLayer, LayerNode, Transform2D};
 
 /// Région sale d'un trait de pinceau/gomme (`None` si inexploitable :
 /// aucun point, rayon non fini ou nul, coordonnées non finies).
@@ -80,10 +81,10 @@ pub fn stroke_dirty_region(points: &[(f32, f32)], radius: f32, pad: Padding) -> 
     Some(region.pad(pad))
 }
 
-/// Taille de tuile d'observation (niveau 0 unique, 256 px) : même grain
-/// que les tests du socle, assez fin pour un stroke, assez gros pour
-/// rester lisible dans les métriques.
-const OBSERVE_TILE_PX: u32 = 256;
+/// Taille de tuile du pipeline incrémental (Phase 6E, niveau 0 unique) :
+/// centralisée ici — grille d'observation (6B), de rendu viewport et
+/// d'assemblage partagent le même grain (256 px, comme les tests du socle).
+pub const VIEWPORT_TILE_PX: u32 = 256;
 
 /// Transform clampée comme le renderer (`prepare_top` / `extents_visit` :
 /// échelles 0.05..=8.0) : l'empreinte d'invalidation couvre la même zone
@@ -326,7 +327,7 @@ pub fn plan_stroke_tiles_layer_space(
 fn plan_region_tiles(plan: &mut StrokeTilePlan, region: &TileRegion, doc_w: u32, doc_h: u32) {
     plan.dirty_region_px = region.area();
     let (doc_w, doc_h) = (doc_w.max(1), doc_h.max(1));
-    let grid = TileGrid::new(OBSERVE_TILE_PX, doc_w, doc_h, 1);
+    let grid = TileGrid::new(VIEWPORT_TILE_PX, doc_w, doc_h, 1);
     let range = grid.invalidate(region, 0, Padding::ZERO);
     let mut dirty = DirtyTiles::new(&grid);
     plan.dirty_tiles = dirty.mark_range(range);
@@ -364,6 +365,228 @@ fn plan_region_tiles(plan: &mut StrokeTilePlan, region: &TileRegion, doc_w: u32,
 #[must_use]
 pub fn use_regional_render(dirty_px: u64, scope_px: u64) -> bool {
     dirty_px > 0 && dirty_px < scope_px
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6E — grille viewport, footprints de nœuds, diffusion d'apparence.
+// ---------------------------------------------------------------------------
+
+/// Diffusion spatiale EXACTE d'une chaîne de sous-calques de filtres
+/// (apparences) : somme des supports réels (`blur_support_px` 6C) des flous
+/// ACTIFS. Distinct de [`blur_halo_for_filters`] (convention d'invalidation
+/// 6B `ceil(r)`, suffisante pour l'observation mais pas pour la validité
+/// cache) : ici un sous-marquage produirait du pixel périmé, donc le support
+/// exact du noyau est requis. Ne recrée aucun calcul de halo — réutilise
+/// `blur_support_px` effet par effet.
+#[must_use]
+pub fn appearance_spread(filters: &[FilterLayer]) -> Padding {
+    let mut total = 0u32;
+    for f in filters {
+        if !f.enabled || f.type_id != "blur" {
+            continue;
+        }
+        if let Some(datatypes::ParamValue::Float(r)) = f.params.get("radius") {
+            total = total.saturating_add(blur_support_px(*r));
+        }
+    }
+    Padding::new(total)
+}
+
+/// Empreinte DOCUMENT SPACE d'un nœud : calque pixels via sa transform
+/// (mêmes coins que le renderer), groupe = union récursive des enfants
+/// (transforms enfants en coordonnées canvas, comme le compositing).
+/// Ajustement : `EMPTY` — un ajustement s'applique à tout l'accumulateur,
+/// l'appelant doit utiliser un repli global (jamais une région vide).
+#[must_use]
+pub fn node_footprint(node: &LayerNode) -> TileRegion {
+    match node {
+        LayerNode::Pixel(l) => {
+            let (w, h) = l.dimensions();
+            layer_footprint_in_document(&l.transform, w, h)
+        }
+        LayerNode::Group(g) => group_footprint(g),
+        LayerNode::Adjustment(_) => TileRegion::EMPTY,
+    }
+}
+
+/// Union des empreintes des enfants d'un groupe (récursif).
+#[must_use]
+pub fn group_footprint(group: &GroupLayer) -> TileRegion {
+    let mut region = TileRegion::EMPTY;
+    group_footprint_into(&group.children, &mut region);
+    region
+}
+
+/// Zone d'invalidation d'un nœud (Phase 6E) : empreinte élargie de la
+/// diffusion EXACTE de sa chaîne d'apparence (`appearance_spread`).
+/// Groupes : union récursive des zones enfants. Ajustement : `EMPTY` —
+/// il s'applique à tout l'accumulateur, l'appelant utilise un repli global.
+#[must_use]
+pub fn node_mark_region(node: &LayerNode) -> TileRegion {
+    match node {
+        LayerNode::Pixel(l) => {
+            let (w, h) = l.dimensions();
+            layer_footprint_in_document(&l.transform, w, h).pad(appearance_spread(&l.filter_layers))
+        }
+        LayerNode::Group(g) => {
+            let mut region = TileRegion::EMPTY;
+            group_mark_into(&g.children, &mut region);
+            region
+        }
+        LayerNode::Adjustment(_) => TileRegion::EMPTY,
+    }
+}
+
+fn group_mark_into(nodes: &[LayerNode], region: &mut TileRegion) {
+    for node in nodes {
+        match node {
+            LayerNode::Pixel(_) | LayerNode::Group(_) => {
+                *region = region.union(node_mark_region(node));
+            }
+            LayerNode::Adjustment(_) => {}
+        }
+    }
+}
+
+fn group_footprint_into(nodes: &[LayerNode], region: &mut TileRegion) {
+    for node in nodes {
+        match node {
+            LayerNode::Pixel(l) => {
+                let (w, h) = l.dimensions();
+                *region = region.union(layer_footprint_in_document(&l.transform, w, h));
+            }
+            LayerNode::Group(g) => group_footprint_into(&g.children, region),
+            // Ajustement imbriqué : repli global décidé par l'appelant
+            // (scope_adjustment_window), pas une empreinte vide silencieuse.
+            LayerNode::Adjustment(_) => {}
+        }
+    }
+}
+
+/// Coordonnée canonique de tuile (Phase 6F) : indices de grille positifs ou
+/// nuls dans un pavage d'origine `(0,0)` au pas `tile_px`.
+///
+/// Distinct de `tiles::TileCoord` (socle, `i32` signé pour les contenus
+/// débordants) : ici l'identité Positive des tuiles rendues, stable quel
+/// que soit le viewport demandeur.
+///
+/// L'identité canonique d'une tuile, c'est sa coordonnée (+ pas) : le
+/// rectangle se dérive ([`tile_rect`]), jamais l'inverse. Deux viewports
+/// couvrant la même tuile désignent la même coordonnée — donc la même clé
+/// de cache (§4 6F : pas de double calcul selon le chemin de demande).
+/// Les zones hors document (indices négatifs) n'ont pas de coordonnée :
+/// elles sont ignorées (jamais rendues).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TileCoord {
+    /// Colonne (x / tile_px).
+    pub x: u32,
+    /// Ligne (y / tile_px).
+    pub y: u32,
+}
+
+impl TileCoord {
+    /// Nouvelle coordonnée.
+    #[must_use]
+    pub fn new(x: u32, y: u32) -> Self {
+        Self { x, y }
+    }
+
+    /// Centre en pixels document (pour les tris de distance, entiers).
+    #[must_use]
+    pub fn center(self, tile_px: u32) -> (i64, i64) {
+        let t = i64::from(tile_px.max(1));
+        (i64::from(self.x) * t + t / 2, i64::from(self.y) * t + t / 2)
+    }
+}
+
+/// Rectangle canonique (plein, non clippé) d'une coordonnée au pas `tile_px`.
+#[must_use]
+pub fn tile_rect(coord: TileCoord, tile_px: u32) -> TileRegion {
+    let t = tile_px.max(1);
+    TileRegion::new(
+        (i64::from(coord.x) * i64::from(t)).min(i64::from(i32::MAX)) as i32,
+        (i64::from(coord.y) * i64::from(t)).min(i64::from(i32::MAX)) as i32,
+        t,
+        t,
+    )
+}
+
+/// Coordonnées couvrant `rect` (DOCUMENT SPACE) au pas `tile_px`, en lignes.
+/// Les parties hors document (négatives) sont ignorées ; vide si rien ne
+/// couvre. Déterministe.
+#[must_use]
+pub fn tile_coords_for_rect(rect: &TileRegion, tile_px: u32) -> Vec<TileCoord> {
+    let t = i64::from(tile_px.max(1));
+    if rect.is_empty() {
+        return Vec::new();
+    }
+    // Dernier pixel couvert (borne exclusive − 1), plancher à 0.
+    let x1 = i64::from(rect.x) + i64::from(rect.width) - 1;
+    let y1 = i64::from(rect.y) + i64::from(rect.height) - 1;
+    if x1 < 0 || y1 < 0 {
+        return Vec::new();
+    }
+    let tx0 = i64::from(rect.x).div_euclid(t).max(0);
+    let ty0 = i64::from(rect.y).div_euclid(t).max(0);
+    let tx1 = x1.div_euclid(t);
+    let ty1 = y1.div_euclid(t);
+    let mut out = Vec::new();
+    for ty in ty0..=ty1 {
+        for tx in tx0..=tx1 {
+            // u32 : tx/ty ≥ 0 ici ; garde-fou contre les documents absurdes.
+            if tx <= i64::from(u32::MAX) && ty <= i64::from(u32::MAX) {
+                out.push(TileCoord::new(tx as u32, ty as u32));
+            }
+        }
+    }
+    out
+}
+
+/// Découpe un viewport (DOCUMENT SPACE) en tuiles de `tile_px` (défaut
+/// [`VIEWPORT_TILE_PX`), clippées au document `doc_w × doc_h`, en lignes.
+/// Vide si viewport vide ou hors document. Les tuiles partitionnent la zone
+/// couverte sans trou ni recouvrement (entiers exacts).
+///
+/// Implémenté sur [`tile_coords_for_rect`] : même pavage canonique que le
+/// scheduler — une tuile garde la même identité quel que soit le viewport.
+#[must_use]
+pub fn viewport_tiles(
+    viewport: &TileRegion,
+    doc_w: u32,
+    doc_h: u32,
+    tile_px: u32,
+) -> Vec<TileRegion> {
+    let doc = TileRegion::new(0, 0, doc_w.max(1), doc_h.max(1));
+    let visible = viewport.intersect(doc);
+    if visible.is_empty() {
+        return Vec::new();
+    }
+    tile_coords_for_rect(&visible, tile_px)
+        .into_iter()
+        .map(|c| tile_rect(c, tile_px).intersect(doc))
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Tuiles (même découpage que [`viewport_tiles`]) intersectant au moins une
+/// zone sale : la découverte des tiles à re-rendre (§4 6E). Ordre en lignes,
+/// déterministe. Vide si rien de sale.
+/// `PixelLayer` n'est pas requis : géométrie pure sur `DirtyRegion`.
+#[must_use]
+pub fn dirty_tile_rects(
+    dirty: &crate::document::DirtyRegion,
+    doc_w: u32,
+    doc_h: u32,
+    tile_px: u32,
+) -> Vec<TileRegion> {
+    if dirty.is_empty() {
+        return Vec::new();
+    }
+    // `viewport_tiles` clippe déjà au document : ne reste que le test sale.
+    viewport_tiles(&dirty.bounds(), doc_w, doc_h, tile_px)
+        .into_iter()
+        .filter(|t| dirty.intersects(*t))
+        .collect()
 }
 
 #[cfg(test)]
@@ -797,6 +1020,167 @@ mod tests {
         assert_eq!(
             layer_footprint_in_document(&ident(), 0, 64),
             TileRegion::EMPTY
+        );
+    }
+
+    #[test]
+    fn coordonnees_canoniques_stables() {
+        // Même tuile via deux viewports : même coordonnée, même rect.
+        let a = tile_coords_for_rect(&TileRegion::new(0, 0, 256, 256), 256);
+        let b = tile_coords_for_rect(&TileRegion::new(200, 200, 200, 200), 256);
+        assert_eq!(a, vec![TileCoord::new(0, 0)]);
+        assert!(b.contains(&TileCoord::new(0, 0)));
+        assert!(b.contains(&TileCoord::new(1, 1)));
+        assert_eq!(
+            tile_rect(TileCoord::new(1, 0), 256),
+            TileRegion::new(256, 0, 256, 256)
+        );
+        // Pas 128 : indices doublés, même zone couverte.
+        let c = tile_coords_for_rect(&TileRegion::new(0, 0, 256, 256), 128);
+        assert_eq!(c.len(), 4);
+        // Hors document (négatif) : ignoré, jamais d'indice négatif.
+        assert!(tile_coords_for_rect(&TileRegion::new(-300, -300, 100, 100), 256).is_empty());
+        assert!(tile_coords_for_rect(&TileRegion::EMPTY, 256).is_empty());
+        // Ordre en lignes, déterministe.
+        let d = tile_coords_for_rect(&TileRegion::new(0, 0, 512, 256), 256);
+        assert_eq!(d, vec![TileCoord::new(0, 0), TileCoord::new(1, 0)]);
+    }
+
+    #[test]
+    fn viewport_tiles_partition_3x3() {
+        // Document 384², grain 128 : 9 tuiles en lignes, sans trou.
+        let tiles = viewport_tiles(&TileRegion::new(0, 0, 384, 384), 384, 384, 128);
+        assert_eq!(tiles.len(), 9);
+        assert_eq!(tiles[0], TileRegion::new(0, 0, 128, 128));
+        assert_eq!(tiles[8], TileRegion::new(256, 256, 128, 128));
+        let area: u64 = tiles.iter().map(|t| t.area()).sum();
+        assert_eq!(area, 384 * 384);
+    }
+
+    #[test]
+    fn viewport_tiles_clip_et_hors_doc() {
+        // Doc 200², grain 256 : une seule tuile clippée au document.
+        assert_eq!(
+            viewport_tiles(&TileRegion::new(0, 0, 200, 200), 200, 200, 256),
+            vec![TileRegion::new(0, 0, 200, 200)]
+        );
+        // Partiel : la tuile de grille couvrante, clippée au doc.
+        assert_eq!(
+            viewport_tiles(&TileRegion::new(150, 150, 100, 100), 200, 200, 256),
+            vec![TileRegion::new(0, 0, 200, 200)]
+        );
+        // Hors document / vide : rien.
+        assert!(viewport_tiles(&TileRegion::new(600, 600, 10, 10), 200, 200, 256).is_empty());
+        assert!(viewport_tiles(&TileRegion::EMPTY, 200, 200, 256).is_empty());
+    }
+
+    #[test]
+    fn dirty_tile_rects_decouverte() {
+        use crate::document::DirtyRegion;
+        let mut dirty = DirtyRegion::new();
+        assert!(dirty_tile_rects(&dirty, 512, 512, 256).is_empty());
+        // Sale sur x[300,400)×y[100,300) : tuiles (1,0),(1,1) — pas les voisines.
+        dirty.add(TileRegion::new(300, 100, 100, 200));
+        let tiles = dirty_tile_rects(&dirty, 512, 512, 256);
+        assert_eq!(
+            tiles,
+            vec![
+                TileRegion::new(256, 0, 256, 256),
+                TileRegion::new(256, 256, 256, 256),
+            ]
+        );
+    }
+
+    #[test]
+    fn node_footprint_pixel_groupe_ajustement() {
+        use crate::document::{GroupLayer, LayerNode, PixelLayer};
+        use image::{ImageBuffer, Rgba};
+        use std::sync::Arc;
+        let img = Arc::new(image::DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            40,
+            40,
+            Rgba([1, 2, 3, 255]),
+        )));
+        let mut l = PixelLayer::new("a", Arc::clone(&img));
+        l.transform.offset_x = 10.0;
+        l.transform.offset_y = 20.0;
+        assert_eq!(
+            node_footprint(&LayerNode::Pixel(l.clone())),
+            TileRegion::new(10, 20, 40, 40)
+        );
+        let mut l2 = PixelLayer::new("b", img);
+        l2.transform.offset_x = 100.0;
+        let g = GroupLayer::new("g", vec![LayerNode::Pixel(l), LayerNode::Pixel(l2)]);
+        // l : [10,50)×[20,60) ; l2 : [100,140)×[0,40) ⇒ union (10,0,130,60).
+        assert_eq!(
+            node_footprint(&LayerNode::Group(g)),
+            TileRegion::new(10, 0, 130, 60)
+        );
+        // Ajustement : pas d'empreinte locale — repli global côté appelant.
+        let adj = LayerNode::Adjustment(crate::document::AdjustmentLayer::new("adj", Vec::new()));
+        assert_eq!(node_footprint(&adj), TileRegion::EMPTY);
+    }
+
+    #[test]
+    fn node_mark_region_footprint_plus_spread() {
+        use crate::document::{GroupLayer, LayerNode, PixelLayer};
+        use datatypes::ParamValue;
+        use image::{ImageBuffer, Rgba};
+        use std::sync::Arc;
+        let img = Arc::new(image::DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            40,
+            40,
+            Rgba([1, 2, 3, 255]),
+        )));
+        // Sans filtre : empreinte seule.
+        let l = PixelLayer::new("a", Arc::clone(&img));
+        assert_eq!(
+            node_mark_region(&LayerNode::Pixel(l)),
+            TileRegion::new(0, 0, 40, 40)
+        );
+        // Flou σ=2 (support 5) : empreinte élargie de 5.
+        let mut lf = PixelLayer::new("b", img);
+        let mut blur = FilterLayer::neutral("blur", Default::default());
+        blur.params
+            .insert("radius".to_string(), ParamValue::Float(2.0));
+        lf.filter_layers.push(blur);
+        assert_eq!(
+            node_mark_region(&LayerNode::Pixel(lf)),
+            TileRegion::new(-5, -5, 50, 50)
+        );
+        // Ajustement : repli global décidé par l'appelant.
+        let adj = LayerNode::Adjustment(crate::document::AdjustmentLayer::new("adj", Vec::new()));
+        assert_eq!(node_mark_region(&adj), TileRegion::EMPTY);
+        let _ = GroupLayer::new("g", Vec::new());
+    }
+
+    #[test]
+    fn appearance_spread_supports_exacts() {
+        use datatypes::ParamValue;
+        assert_eq!(appearance_spread(&[]), Padding::ZERO);
+        let mut blur = FilterLayer::neutral("blur", Default::default());
+        blur.params
+            .insert("radius".to_string(), ParamValue::Float(3.0));
+        assert_eq!(
+            appearance_spread(&[blur.clone()]),
+            Padding::new(crate::document::compositing::blur_support_px(3.0))
+        );
+        let mut blur2 = FilterLayer::neutral("blur", Default::default());
+        blur2
+            .params
+            .insert("radius".to_string(), ParamValue::Float(2.0));
+        let mut off = blur2.clone();
+        off.enabled = false;
+        // Somme séquentielle, désactivé et non-flou ignorés.
+        let mut bc = FilterLayer::neutral("brightness_contrast", Default::default());
+        bc.params
+            .insert("brightness".to_string(), ParamValue::Float(5.0));
+        assert_eq!(
+            appearance_spread(&[blur, blur2, off, bc]),
+            Padding::new(
+                crate::document::compositing::blur_support_px(3.0)
+                    + crate::document::compositing::blur_support_px(2.0)
+            )
         );
     }
 }

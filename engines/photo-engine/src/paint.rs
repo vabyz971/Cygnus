@@ -69,23 +69,13 @@ pub fn paint_stroke_ellipse(
     paint_stroke_impl(rgba, w, h, points, b, rx, ry);
 }
 
-fn paint_stroke_impl(
-    rgba: &mut [u8],
-    w: u32,
-    h: u32,
-    points: &[(f32, f32)],
-    b: &BrushParams,
-    rx: f32,
-    ry: f32,
-) {
-    if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 || b.opacity <= 0.0 {
-        return;
+/// Boîte englobante d'un trait élargie du rayon (`pad`), en flottants
+/// (l'appelant planche/clippe). `None` si aucun point. Partagée par le
+/// chemin permanent et l'overlay interactif (même géométrie).
+pub(crate) fn stroke_bbox(points: &[(f32, f32)], rx: f32, ry: f32) -> Option<(f32, f32, f32, f32)> {
+    if points.is_empty() {
+        return None;
     }
-    let opacity = b.opacity.clamp(0.0, 1.0);
-    let rx = rx.max(0.5);
-    let ry = ry.max(0.5);
-
-    // --- Bounding box du trait (limité au calque) ---
     let pad = rx.max(ry).ceil() + 1.0;
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
@@ -97,40 +87,75 @@ fn paint_stroke_impl(
         max_x = max_x.max(x + pad);
         max_y = max_y.max(y + pad);
     }
-    let bx0 = min_x.floor().max(0.0) as u32;
-    let by0 = min_y.floor().max(0.0) as u32;
-    let bx1 = (max_x.ceil() as u32).min(w);
-    let by1 = (max_y.ceil() as u32).min(h);
-    if bx0 >= bx1 || by0 >= by1 {
-        return;
-    }
-    let bw = (bx1 - bx0) as usize;
-    let bh = (by1 - by0) as usize;
+    Some((min_x, min_y, max_x, max_y))
+}
 
-    // --- Masque de couverture 0/255 ---
-    let mut mask = vec![0u8; bw * bh];
-    let stamp = |mask: &mut [u8], cx: f32, cy: f32| {
-        let x0 = (cx - rx).floor().max(bx0 as f32) as i64;
-        let x1 = (cx + rx).ceil().min(bx1 as f32) as i64;
-        let y0 = (cy - ry).floor().max(by0 as f32) as i64;
-        let y1 = (cy + ry).ceil().min(by1 as f32) as i64;
-        for py in y0..y1 {
-            for px in x0..x1 {
-                let dx = px as f32 + 0.5 - cx;
-                let dy = py as f32 + 0.5 - cy;
-                // Ellipse d'axes rx/ry (cercle quand rx == ry)
-                if (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0 {
-                    let mi = ((py - by0 as i64) as usize) * bw + ((px - bx0 as i64) as usize);
-                    mask[mi] = 255;
-                }
+/// Tamponne un disque elliptique dans un masque de couverture (coordonnées
+/// absolues, indexation relative à l'origine `(ox, oy)`, stride `stride`).
+/// Le clip DOIT être contenu dans le masque (garanti par les deux appelants :
+/// boîte locale ici, région overlay là-bas) — aucun pixel hors masque.
+// Signature positionnelle volontaire : primitive chaude partagée par le
+// chemin permanent et l'overlay (un struct grouperait sans gain).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stamp_disc(
+    mask: &mut [u8],
+    stride: usize,
+    ox: i64,
+    oy: i64,
+    clip_x0: i64,
+    clip_y0: i64,
+    clip_x1: i64,
+    clip_y1: i64,
+    cx: f32,
+    cy: f32,
+    rx: f32,
+    ry: f32,
+) {
+    let x0 = (cx - rx).floor().max(clip_x0 as f32) as i64;
+    let x1 = (cx + rx).ceil().min(clip_x1 as f32) as i64;
+    let y0 = (cy - ry).floor().max(clip_y0 as f32) as i64;
+    let y1 = (cy + ry).ceil().min(clip_y1 as f32) as i64;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let dx = px as f32 + 0.5 - cx;
+            let dy = py as f32 + 0.5 - cy;
+            // Ellipse d'axes rx/ry (cercle quand rx == ry)
+            if (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0 {
+                let mi = ((py - oy) as usize) * stride + ((px - ox) as usize);
+                mask[mi] = 255;
             }
         }
-    };
+    }
+}
 
+/// Tamponne une polyligne (premier point + segments espacés d'un pas
+/// ~ rayon/3) dans un masque. L'union est idempotente : tamponner deux fois
+/// les mêmes segments donne le même masque (zéro accumulation) — propriété
+/// qui autorise le tamponnage incrémental par morceaux de l'overlay.
+// Signature positionnelle volontaire : cf. `stamp_disc`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stamp_polyline(
+    mask: &mut [u8],
+    stride: usize,
+    ox: i64,
+    oy: i64,
+    clip_x0: i64,
+    clip_y0: i64,
+    clip_x1: i64,
+    clip_y1: i64,
+    points: &[(f32, f32)],
+    rx: f32,
+    ry: f32,
+) {
+    if points.is_empty() {
+        return;
+    }
     // Tampons espacés le long des segments (pas ~ rayon max / 3 → trait continu)
     let step = (rx.max(ry) / 3.0).max(0.5);
     let mut prev = points[0];
-    stamp(&mut mask, prev.0, prev.1);
+    stamp_disc(
+        mask, stride, ox, oy, clip_x0, clip_y0, clip_x1, clip_y1, prev.0, prev.1, rx, ry,
+    );
     for &p in &points[1..] {
         let dx = p.0 - prev.0;
         let dy = p.1 - prev.1;
@@ -141,24 +166,56 @@ fn paint_stroke_impl(
         let n = (dist / step).ceil() as usize;
         for i in 1..=n {
             let t = i as f32 / n as f32;
-            stamp(&mut mask, prev.0 + dx * t, prev.1 + dy * t);
+            stamp_disc(
+                mask,
+                stride,
+                ox,
+                oy,
+                clip_x0,
+                clip_y0,
+                clip_x1,
+                clip_y1,
+                prev.0 + dx * t,
+                prev.1 + dy * t,
+                rx,
+                ry,
+            );
         }
         prev = p;
     }
+}
 
+/// Composite un masque de couverture sur un tampon RGBA (mêmes formules que
+/// le chemin historique : source-over à opacité uniforme, destination-out
+/// en gomme). `rgba` est indexé en absolu (`stride` = largeur du tampon) ;
+/// `mask` couvre exactement le rect `(x0, y0, w, h)` (origine implicite).
+// Signature positionnelle volontaire : cf. `stamp_disc`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn composite_coverage(
+    rgba: &mut [u8],
+    stride: usize,
+    x0: u32,
+    y0: u32,
+    w: u32,
+    h: u32,
+    mask: &[u8],
+    mask_stride: usize,
+    b: &BrushParams,
+) {
+    let opacity = b.opacity.clamp(0.0, 1.0);
     // --- Composite selon le mode ---
     let a_paint = opacity;
     let (cr, cg, cb) = (b.color[0] as f32, b.color[1] as f32, b.color[2] as f32);
-    for my in 0..bh as u32 {
-        for mx in 0..bw as u32 {
-            let cov = mask[my as usize * bw + mx as usize] as f32 / 255.0;
+    for my in 0..h {
+        for mx in 0..w {
+            let cov = mask[my as usize * mask_stride + mx as usize] as f32 / 255.0;
             if cov <= 0.0 {
                 continue;
             }
             let a = a_paint * cov;
-            let x = bx0 + mx;
-            let y = by0 + my;
-            let idx = ((y as usize * w as usize) + x as usize) * 4;
+            let x = x0 + mx;
+            let y = y0 + my;
+            let idx = ((y as usize * stride) + x as usize) * 4;
             let sa = rgba[idx + 3] as f32 / 255.0;
             match b.mode {
                 StrokeMode::Paint => {
@@ -190,6 +247,47 @@ fn paint_stroke_impl(
             }
         }
     }
+}
+
+fn paint_stroke_impl(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    b: &BrushParams,
+    rx: f32,
+    ry: f32,
+) {
+    if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 || b.opacity <= 0.0 {
+        return;
+    }
+    let rx = rx.max(0.5);
+    let ry = ry.max(0.5);
+
+    // --- Bounding box du trait (limité au calque) ---
+    let Some((min_x, min_y, max_x, max_y)) = stroke_bbox(points, rx, ry) else {
+        return;
+    };
+    let bx0 = min_x.floor().max(0.0) as u32;
+    let by0 = min_y.floor().max(0.0) as u32;
+    let bx1 = (max_x.ceil() as u32).min(w);
+    let by1 = (max_y.ceil() as u32).min(h);
+    if bx0 >= bx1 || by0 >= by1 {
+        return;
+    }
+    let bw = (bx1 - bx0) as usize;
+    let bh = (by1 - by0) as usize;
+
+    // --- Masque de couverture 0/255 ---
+    let mut mask = vec![0u8; bw * bh];
+    stamp_polyline(
+        &mut mask, bw, bx0 as i64, by0 as i64, bx0 as i64, by0 as i64, bx1 as i64, by1 as i64,
+        points, rx, ry,
+    );
+
+    composite_coverage(
+        rgba, w as usize, bx0, by0, bw as u32, bh as u32, &mask, bw, b,
+    );
 }
 
 /// Résultat d'un commit de trait : buffers prêts pour la couche UI

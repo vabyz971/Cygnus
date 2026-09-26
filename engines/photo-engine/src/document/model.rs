@@ -46,92 +46,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Tampon RGBA8 partageable avec l'UI SANS copie (l'app en dérive ses
-/// textures via `Bytes::from_owner` sur l'Arc).
-#[derive(Clone)]
-pub struct RgbaBuf {
-    pub width: u32,
-    pub height: u32,
-    pub data: Arc<[u8]>,
-}
-
-impl RgbaBuf {
-    /// Create a shareable RGBA buffer from raw bytes.
-    #[must_use]
-    pub fn from_vec(width: u32, height: u32, data: Vec<u8>) -> Self {
-        Self {
-            width,
-            height,
-            data: data.into(),
-        }
-    }
-}
+/// Tampon RGBA8 partageable avec l'UI SANS copie : définition canonique
+/// dans `datatypes` (vocabulaire raster partagé avec la vidéo), ré-exporté
+/// ici pour compatibilité (`use crate::document::RgbaBuf` inchangé).
+///
+/// Mode de fusion : définition canonique dans `datatypes` (mêmes
+/// libellés, mêmes ids numériques — projets `.cygp` inchangés),
+/// ré-exporté ici pour compatibilité.
+pub use datatypes::{BlendMode, RgbaBuf};
 
 // ---------------------------------------------------------------------------
 // Types de base du modèle
 // ---------------------------------------------------------------------------
-
-/// Mode de fusion d'un calque ou d'un groupe.
-///
-/// La représentation sérialisée est le nom de la variante (« Normal »,
-/// « Multiply »…) — identique aux libellés historiques de l'app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlendMode {
-    Normal,
-    Multiply,
-    Screen,
-    Overlay,
-    Darken,
-    Lighten,
-}
-
-impl std::fmt::Display for BlendMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
-    }
-}
-
-impl BlendMode {
-    /// Ordre d'affichage dans l'UI (listes déroulantes).
-    pub const ALL: [BlendMode; 6] = [
-        BlendMode::Normal,
-        BlendMode::Multiply,
-        BlendMode::Screen,
-        BlendMode::Overlay,
-        BlendMode::Darken,
-        BlendMode::Lighten,
-    ];
-
-    /// Human-readable label for UI.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            BlendMode::Normal => "Normal",
-            BlendMode::Multiply => "Multiply",
-            BlendMode::Screen => "Screen",
-            BlendMode::Overlay => "Overlay",
-            BlendMode::Darken => "Darken",
-            BlendMode::Lighten => "Lighten",
-        }
-    }
-
-    /// Identifiant numérique (shader GPU + CPU). Doit rester aligné sur
-    /// `SHADER_BLEND` (gpu.rs) et les tests golden.
-    #[must_use]
-    pub fn id(self) -> u32 {
-        match self {
-            BlendMode::Normal => 0,
-            BlendMode::Multiply => 1,
-            BlendMode::Screen => 2,
-            BlendMode::Overlay => 3,
-            BlendMode::Darken => 4,
-            BlendMode::Lighten => 5,
-        }
-    }
-}
 
 /// Transformation affine 2D : définition canonique dans `math-utils`
 /// (partagée avec `ui-kit` qui ne peut pas dépendre des engines).

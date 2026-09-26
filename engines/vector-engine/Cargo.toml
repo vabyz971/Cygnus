@@ -13,3 +13,9 @@ path = "src/lib.rs"
 
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
+ids = { path = "../../core/ids" }
+math-utils = { path = "../../packages/math-utils" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

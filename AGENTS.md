@@ -20,9 +20,18 @@ Le nom de crate diffère parfois du dossier — utiliser `-p` avec le nom de cra
 | Dossier | Crate |
 |---|---|
 | `apps/photo` / `apps/video` / `apps/audio` | `photo` / `video` / `audio` (entrypoint `src/main.rs`) |
-| `core/datatypes` | `datatypes` (nœuds, sockets, Vec2 partagés) |
-| `engines/photo-engine` | `photo-engine` (document, compositing CPU/GPU, historique, projet) |
-| `engines/audio-engine` / `engines/video-engine` | `audio-engine` / `video-engine` (fondations, purs) |
+| `core/datatypes` | `datatypes` (nœuds, sockets, Vec2/Rect, BlendMode, RgbaBuf partagés) |
+| `core/scene` | `scene` (Scene Graph sémantique : hiérarchie, monde dérivé, révisions) |
+| `core/ids` | `ids` (`EntityId` stable + `Revision` monotone partagés) |
+| `core/graph` | `graph` (dépendances génériques : propagation dirty, topo — CPU pur) |
+| `core/render-graph` | `render-graph` (opérations dérivées de la scène : build/sync partiel, backend abstrait — sans wgpu ni UI) |
+| `core/tiles` | `tiles` (invalidation spatiale : grille, dirty bitset, cache CPU/GPU, scheduler progressif — CPU pur) |
+| `engines/photo-engine` | `photo-engine` (document, compositing CPU/GPU, historique, projet ; `BlendMode`/`RgbaBuf` réexportés de `datatypes`) |
+| `engines/vector-engine` | `vector-engine` (paths, formes, styles, booléens + trait `VectorBackend` — sans wgpu) |
+| `engines/layout-engine` | `layout-engine` (frames, contraintes, algo + `apply_to_scene` — sans wgpu/egui) |
+| `engines/text-engine` | `text-engine` (modèle → layout → glyph runs ; mesure pour layout) |
+| `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait ; registre nodal legacy conservé) |
+| `engines/audio-engine` | `audio-engine` (timeline + graphe DSP sur `graph`, backend DSP ; hors Scene ; registre legacy conservé) |
 | `packages/ui-kit` | `ui-kit` (lib `ui_kit`, design system egui : theme, widgets, panels, viewport, dialogs) |
 | `packages/math-utils` | `math-utils` (transformation affine `Transform2D` ; Vec2 canonique = datatypes) |
 | `packages/file-utils` | `file-utils` (erreurs fichiers, drag & drop, dialogues) |

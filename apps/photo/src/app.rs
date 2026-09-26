@@ -564,6 +564,63 @@ mod tests {
     }
 
     #[test]
+    fn zoom_actions_send_no_worker_command() {
+        // §28 6G.1 : zoom d'affichage = state-only. Aucune commande worker,
+        // donc aucune réponse, aucun rendu, aucun upload, aucune régénération.
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(64, 64);
+        let zoom_before = app.active_doc_opt().expect("doc").ui.viewport.zoom();
+        // Barrière déterministe : drain jusqu'au SILENCE (le boot émet
+        // `LayersChanged` puis, depuis la 6G.3, `ThumbnailUpdated` en tâche
+        // de fond — compter UNE réponse casse dès que le thread miniature
+        // devance le drain). Après 300 ms sans réponse, tout trafic
+        // ultérieur ne peut venir que du zoom testé ci-dessous.
+        let start = Instant::now();
+        let mut last_traffic = Instant::now();
+        let mut saw_response = false;
+        loop {
+            match app.active_doc_opt().expect("doc").rx.try_recv() {
+                Ok(_) => {
+                    saw_response = true;
+                    last_traffic = Instant::now();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    assert!(
+                        start.elapsed() < Duration::from_secs(60),
+                        "réponse de boot attendue"
+                    );
+                    if saw_response && last_traffic.elapsed() > Duration::from_millis(300) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("worker arrêté prématurément")
+                }
+            }
+        }
+        // Gestes de zoom : état display seul, zéro trafic worker.
+        fn zoom_of(app: &PhotoApp) -> f32 {
+            app.active_doc_opt().expect("doc").ui.viewport.zoom()
+        }
+        app.handle_action(&ctx, crate::commands::PhotoAction::ZoomIn);
+        assert_ne!(zoom_before, zoom_of(&app), "le zoom display a bougé");
+        app.handle_action(&ctx, crate::commands::PhotoAction::ZoomOut);
+        app.handle_action(&ctx, crate::commands::PhotoAction::ZoomReset);
+        std::thread::sleep(Duration::from_millis(300));
+        match app.active_doc_opt().expect("doc").rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Ok(_) => panic!("le zoom ne doit provoquer aucune réponse worker"),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panic!("worker arrêté prématurément")
+            }
+        }
+    }
+
+    #[test]
     fn heavy_image_open_never_blocks_ui_thread() {
         use crate::ui::PhotoEngineCommand;
         use std::time::{Duration, Instant};

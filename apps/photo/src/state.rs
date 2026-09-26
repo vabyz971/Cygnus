@@ -30,7 +30,8 @@
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
     CreateDocumentDialogState, ExportDialogState, LayerRenameState, PhotoBrushSettings,
-    PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PreviewImage,
+    PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PhotoLayerThumb,
+    PreviewImage,
 };
 use photo_engine::RenderRevision;
 use std::collections::HashMap;
@@ -142,6 +143,13 @@ pub struct PhotoUiState {
     pub thumb_cache: HashMap<Uuid, CachedLayerThumb>,
     /// Trait de pinceau en cours (pixels image).
     pub stroke: Vec<egui::Vec2>,
+    /// Surface transitoire du geste en cours (Phase 6G.3P) : jamais vers le
+    /// worker avant commit, vidée au commit/annulation/changement d'outil.
+    pub ink_overlay: photo_engine::interaction::InteractionOverlay,
+    /// Texture du trait transitoire (région bornée au geste).
+    pub ink_texture: Option<egui::TextureHandle>,
+    /// Dernières métriques d'interaction (rapport/tests, pas d'affichage).
+    pub ink_metrics: photo_engine::interaction::InteractionMetrics,
     /// Réglages pinceau/gomme.
     pub brush: PhotoBrushSettings,
     /// État de drag du panneau calques.
@@ -164,9 +172,32 @@ pub struct PhotoUiState {
     /// INSTRUMENTATION TEMPORAIRE : uploads de textures egui
     /// (aperçu + miniatures périmées).
     pub texture_uploads: u64,
+    /// INSTRUMENTATION 6G.1 (diagnostic présentation, aucun effet) :
+    /// octets téléversés vers le GPU (aperçu + miniatures).
+    pub texture_upload_bytes: u64,
+    /// INSTRUMENTATION 6G.1 : dernière présentation mesurée.
+    pub last_presentation: PresentationTimings,
     /// Révision du rendu affiché (`None` = aucune texture) : les
     /// réponses obsolètes ne re-téléversent pas.
     pub displayed_revision: Option<RenderRevision>,
+}
+
+/// Chronos et volumes de présentation (Phase 6G.1 §9–13) : mesurés à
+/// l'appelant (`apply_response`), jamais dans les widgets (ui-kit intact).
+/// `texture_set_us` = coût CPU observable de l'appel d'upload, PAS une
+/// latence GPU exacte (le transfert peut finir après le retour).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PresentationTimings {
+    /// Application totale de la réponse (décodage match inclus).
+    pub response_apply_us: u128,
+    /// Synchronisation des miniatures (`sync_thumbs`, panneau Calques).
+    pub thumb_sync_us: u128,
+    /// Construction `ColorImage` depuis le RGBA preview.
+    pub colorimage_us: u128,
+    /// Appel `texture.set` (upload aperçu).
+    pub texture_set_us: u128,
+    /// Application de l'aperçu (ColorImage + upload).
+    pub preview_apply_us: u128,
 }
 
 /// Modale d'ajout de filtre (sélection dans le registre moteur).
@@ -261,36 +292,64 @@ impl Default for PhotoRuntimeState {
     }
 }
 
+/// Téléverse une miniature (sans condition : l'appelant a déjà vérifié la
+/// garde). Factorise `sync_thumbs` et le bras `ThumbnailUpdated` (même
+/// téléversement, mêmes compteurs) — le CHOIX de la garde reste à l'appelant
+/// pour préserver exactement les sémantiques historiques de chaque chemin.
+fn upload_layer_thumb(
+    ctx: &egui::Context,
+    ui: &mut PhotoUiState,
+    id: Uuid,
+    thumb: &PhotoLayerThumb,
+) {
+    let handle = ctx.load_texture(
+        format!("photo_layer_thumb_{id}"),
+        egui::ColorImage::from_rgba_unmultiplied(
+            [thumb.width as usize, thumb.height as usize],
+            &thumb.rgba,
+        ),
+        egui::TextureOptions::LINEAR,
+    );
+    // INSTRUMENTATION TEMPORAIRE.
+    ui.texture_uploads += 1;
+    // INSTRUMENTATION 6G.1 : volume miniature (§14 : séparer
+    // le coût du panneau Calques de celui du canvas).
+    ui.texture_upload_bytes += thumb.width as u64 * thumb.height as u64 * 4;
+    ui.thumb_cache.insert(
+        id,
+        CachedLayerThumb {
+            handle,
+            version: thumb.version,
+            size: egui::vec2(thumb.width as f32, thumb.height as f32),
+        },
+    );
+}
+
 /// Cache des miniatures : re-téléverse uniquement les calques dont
 /// l'apparence a changé, purge les disparus. Partagé par les deux
-/// bras d'état (`LayersChanged` et `StateChanged`).
+/// bras d'état (`LayersChanged` et `StateChanged`). Garde `!=` historique
+/// INCHANGÉE (y compris downgrade de version au undo — comportement préservé
+/// à l'octet).
 fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
-    for layer in &ui.layers {
-        if let Some(thumb) = layer.thumb.as_ref() {
-            let stale = ui
-                .thumb_cache
-                .get(&layer.id)
-                .is_none_or(|cached| cached.version != thumb.version);
-            if stale {
-                let handle = ctx.load_texture(
-                    format!("photo_layer_thumb_{}", layer.id),
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [thumb.width as usize, thumb.height as usize],
-                        &thumb.rgba,
-                    ),
-                    egui::TextureOptions::LINEAR,
-                );
-                // INSTRUMENTATION TEMPORAIRE.
-                ui.texture_uploads += 1;
-                ui.thumb_cache.insert(
-                    layer.id,
-                    CachedLayerThumb {
-                        handle,
-                        version: thumb.version,
-                        size: egui::vec2(thumb.width as f32, thumb.height as f32),
-                    },
-                );
+    // Par index (pas d'emprunt maintenu sur `layers`) : l'upload emprunte
+    // `ui` en mutable via le helper partagé. Clone borné (miniature 48×32).
+    for index in 0..ui.layers.len() {
+        let pending = {
+            let layer = &ui.layers[index];
+            match layer.thumb.as_ref() {
+                Some(thumb)
+                    if ui
+                        .thumb_cache
+                        .get(&layer.id)
+                        .is_none_or(|cached| cached.version != thumb.version) =>
+                {
+                    Some((layer.id, thumb.clone()))
+                }
+                _ => None,
             }
+        };
+        if let Some((id, thumb)) = pending {
+            upload_layer_thumb(ctx, ui, id, &thumb);
         }
     }
     ui.thumb_cache
@@ -303,6 +362,9 @@ fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
 /// composite (texture téléversée côté app, zéro régénération au
 /// zoom/pan — state-only).
 pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: PhotoEngineResponse) {
+    // INSTRUMENTATION 6G.1 (aucun effet) : chrono total d'application.
+    let t_apply = std::time::Instant::now();
+    let mut presentation = PresentationTimings::default();
     match response {
         PhotoEngineResponse::LayersChanged {
             layers,
@@ -322,7 +384,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             {
                 ui.selected = None;
             }
+            let t_thumbs = std::time::Instant::now();
             sync_thumbs(ctx, ui);
+            presentation.thumb_sync_us = t_thumbs.elapsed().as_micros();
             match preview {
                 Some(image) => {
                     // Garde anti-obsolescence : une réponse en retard
@@ -340,16 +404,21 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                             origin: egui::vec2(image.origin_x, image.origin_y),
                             doc_size: egui::vec2(image.doc_width as f32, image.doc_height as f32),
                         });
-                        ui.texture_cache.update(
-                            ctx,
-                            "photo_preview",
-                            egui::ColorImage::from_rgba_unmultiplied(
-                                [image.width as usize, image.height as usize],
-                                &image.rgba,
-                            ),
+                        let t_preview = std::time::Instant::now();
+                        let t_color = std::time::Instant::now();
+                        let color = egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width as usize, image.height as usize],
+                            &image.rgba,
                         );
+                        presentation.colorimage_us = t_color.elapsed().as_micros();
+                        let t_set = std::time::Instant::now();
+                        ui.texture_cache.update(ctx, "photo_preview", color);
+                        presentation.texture_set_us = t_set.elapsed().as_micros();
+                        presentation.preview_apply_us = t_preview.elapsed().as_micros();
                         // INSTRUMENTATION TEMPORAIRE.
                         ui.texture_uploads += 1;
+                        // INSTRUMENTATION 6G.1 : volume téléversé (octets).
+                        ui.texture_upload_bytes += image.width as u64 * image.height as u64 * 4;
                         ui.last_preview = Some(image);
                         ui.displayed_revision = Some(revision);
                         ui.status.clear();
@@ -383,7 +452,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             {
                 ui.selected = None;
             }
+            let t_thumbs = std::time::Instant::now();
             sync_thumbs(ctx, ui);
+            presentation.thumb_sync_us = t_thumbs.elapsed().as_micros();
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::EngineError { message } => {
@@ -394,7 +465,27 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.status = format!("Exporte : {}", path.display());
             ui.needs_repaint = true;
         }
+        PhotoEngineResponse::ThumbnailUpdated { layer, thumb } => {
+            // Phase 6G.3 §4A : miniature secondaire, arrivée après le canvas.
+            // Garde STRICTE `>` (seconde barrière après la garde worker) :
+            // un résultat plus ancien qu'un affichage existant est ignoré —
+            // jamais de retour visuel en arrière (ordre d'achèvement vs
+            // ordre d'envoi découplés par le thread). Calque inconnu :
+            // ignoré sans téléversement (pas d'orphelin dans le cache).
+            if ui.layers.iter().any(|l| l.id == layer) {
+                let current = ui.thumb_cache.get(&layer).map(|cached| cached.version);
+                if current.is_none_or(|v| thumb.version > v) {
+                    if let Some(info) = ui.layers.iter_mut().find(|l| l.id == layer) {
+                        info.thumb = Some(thumb.clone());
+                    }
+                    upload_layer_thumb(ctx, ui, layer, &thumb);
+                }
+            }
+            ui.needs_repaint = true;
+        }
     }
+    presentation.response_apply_us = t_apply.elapsed().as_micros();
+    ui.last_presentation = presentation;
 }
 
 /// Échantillonne la couleur du composite sous `(x, y)` pixels image.
@@ -548,6 +639,92 @@ mod tests {
         assert_eq!(ui.texture_uploads, uploads);
         assert_eq!(ui.texture_cache.texture().expect("texture"), texture);
         assert_eq!(ui.displayed_revision, Some(RenderRevision(4)));
+    }
+
+    #[test]
+    fn upload_volumes_bytes_et_chronos() {
+        // §26/§27 6G.1 : chaque upload frais comptabilise ses octets
+        // (2×2×4) et ses chronos ; réponse périmée ⇒ rien.
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(2)));
+        assert_eq!(ui.texture_uploads, 1);
+        assert_eq!(ui.texture_upload_bytes, 2 * 2 * 4);
+        let t = ui.last_presentation;
+        assert!(
+            t.response_apply_us >= t.preview_apply_us,
+            "apply englobe preview"
+        );
+        assert!(
+            t.preview_apply_us >= t.colorimage_us + t.texture_set_us,
+            "preview = colorimage + texture (+ epsilon)"
+        );
+        // Périmée : aucun volume, aucun chrono d'upload.
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(1)));
+        assert_eq!(ui.texture_uploads, 1);
+        assert_eq!(ui.texture_upload_bytes, 2 * 2 * 4);
+    }
+
+    #[test]
+    fn thumbnail_updated_applique_que_le_plus_recent() {
+        // §16 6G.3 au niveau UI : B appliqué, A antérieur rejeté ensuite —
+        // jamais de retour visuel en arrière, sans thread ni race.
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        let mut doc = photo_engine::Document::new(4, 4);
+        doc.push_layer(photo_engine::LayerNode::Pixel(
+            photo_engine::PixelLayer::new(
+                "a",
+                std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+            ),
+        ));
+        let id = doc.root[0].id();
+        ui.layers
+            .push(crate::ui::PhotoLayerInfo::from_node_with_thumb(
+                &doc.root[0],
+                None,
+            ));
+        let thumb_at = |version: u64, first: u8| PhotoLayerThumb {
+            width: 2,
+            height: 2,
+            rgba: [first, 0, 0, 255].repeat(4),
+            version,
+        };
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::ThumbnailUpdated {
+                layer: id,
+                thumb: thumb_at(12, 90),
+            },
+        );
+        assert_eq!(ui.texture_uploads, 1);
+        assert_eq!(ui.layers[0].thumb.as_ref().expect("miniature").version, 12);
+        // Ancienne génération arrivant après : ignorée (ni upload, ni état).
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::ThumbnailUpdated {
+                layer: id,
+                thumb: thumb_at(11, 10),
+            },
+        );
+        assert_eq!(ui.texture_uploads, 1, "aucun re-téléversement");
+        assert_eq!(
+            ui.layers[0].thumb.as_ref().expect("miniature").rgba[0],
+            90,
+            "B conservé, A rejeté"
+        );
+        // Calque inconnu : ignoré sans panic.
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::ThumbnailUpdated {
+                layer: Uuid::new_v4(),
+                thumb: thumb_at(99, 1),
+            },
+        );
+        assert_eq!(ui.texture_uploads, 1);
     }
 
     #[test]

@@ -29,7 +29,8 @@
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::{OpenDocument, sample_preview_color};
 use crate::ui::{
-    CanvasMapping, PhotoCanvas, PhotoCanvasTool, draw_brush_cursor, draw_document_bounds,
+    CanvasMapping, PhotoCanvas, PhotoCanvasTool, clear_ink, draw_brush_cursor,
+    draw_document_bounds, ink_brush_params, ink_overlay_screen_rect, ink_tool_active,
 };
 use ui_kit::components::{menu_row, menu_style};
 
@@ -61,8 +62,81 @@ pub fn draw_canvas_content(
         .mapping(mapping)
         .show(ui, &mut doc.ui.viewport);
     // Commit du trait : routé au worker par l'app.
+    let committed = outcome.paint.is_some();
     if let Some(paint) = outcome.paint {
         actions.push(PhotoAction::CommitStroke(paint));
+    }
+    // Phase 6G.3P : feedback interactif pendant le drag (AUCUNE action
+    // worker ici — le worker ne voit que le commit ci-dessus, inchangé ;
+    // les miniatures sont donc différées au commit, §11).
+    if !ink_tool_active(doc.ui.tool) {
+        // Changement d'outil en cours de geste : abandon propre (le
+        // canvas a déjà vidé `stroke`).
+        clear_ink(&mut doc.ui);
+    } else if committed {
+        // Le commit couvre le geste : l'overlay a rempli son rôle.
+        clear_ink(&mut doc.ui);
+    } else if ui.input(|input| input.key_pressed(egui::Key::Escape)) && !doc.ui.stroke.is_empty() {
+        // Échap : annule le geste (AUCUN commit — l'historique et les
+        // miniatures sont intacts, §10).
+        clear_ink(&mut doc.ui);
+        doc.ui.needs_repaint = true;
+    } else if !outcome.ink_points.is_empty()
+        && let Some(selected) = doc.ui.selected
+        && let Some(info) = doc.ui.layers.iter().find(|layer| layer.id == selected)
+        && info.overlay_live
+    {
+        let transform = info.transform;
+        let eraser = doc.ui.tool == PhotoCanvasTool::Eraser;
+        if outcome.ink_gesture_started {
+            doc.ui
+                .ink_overlay
+                .begin_stroke(ink_brush_params(&doc.ui.brush, eraser));
+        }
+        let points: Vec<(f32, f32)> = outcome
+            .ink_points
+            .iter()
+            .map(|point| (point.x, point.y))
+            .collect();
+        doc.ui.ink_overlay.add_points(&points);
+        if let Some(frame) = doc.ui.ink_overlay.render() {
+            doc.ui.ink_metrics = doc.ui.ink_overlay.metrics();
+            // Rejet périmé (§10) : une frame d'une génération antérieure
+            // (geste annulé/commis entre-temps) ne s'affiche jamais.
+            if doc.ui.ink_overlay.is_current(frame.generation)
+                && let (Some(dest), Some(view_geom)) = (outcome.dest_rect, geom)
+                && let Some(rect) = ink_overlay_screen_rect(
+                    &frame,
+                    &transform,
+                    dest,
+                    view_geom.origin,
+                    mapping.thumb_to_doc,
+                    view_geom.thumb_size.x,
+                )
+            {
+                // Téléversement CHAQUE frame (la génération est par geste :
+                // la région grandit à chaque paquet de points — seule une
+                // frame périmée, rejetée plus haut, ne monte jamais au GPU).
+                let handle = ui.ctx().load_texture(
+                    "photo_ink_overlay",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width as usize, frame.height as usize],
+                        &frame.rgba,
+                    ),
+                    egui::TextureOptions::NEAREST,
+                );
+                doc.ui.ink_texture = Some(handle);
+                if let Some(texture) = &doc.ui.ink_texture {
+                    ui.painter().image(
+                        texture.id(),
+                        rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+            }
+        }
+        doc.ui.needs_repaint = true;
     }
     // Commit du déplacement (outil sélection) : routé au worker.
     if let Some(moving) = outcome.move_layer {

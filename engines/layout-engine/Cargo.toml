@@ -13,3 +13,10 @@ path = "src/lib.rs"
 
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
+ids = { path = "../../core/ids" }
+scene = { path = "../../core/scene" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+text-engine = { path = "../text-engine" }

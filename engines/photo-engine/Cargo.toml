@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
 math-utils = { path = "../../packages/math-utils" }
+render-graph = { path = "../../core/render-graph" }
+tiles = { path = "../../core/tiles" }
 image = { workspace = true }
 rayon = { workspace = true }
 wgpu = { workspace = true }

@@ -14,41 +14,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Audio Engine — FL Studio-like : piano roll, mixer, effets
-//! Définitions datatypes (sockets AudioBuffer Float/Vector)
+//! Moteur audio : timeline, graphe DSP, effets — HORS Scene Graph.
+//!
+//! L'audio n'est PAS spatial : aucun `Scene`, aucun `Transform2D`, aucun
+//! pixel. Il partage avec les autres domaines les fondations génériques
+//! (`ids`, `graph` : dépendances + cycles + topo, `Revision`, sérialisation)
+//! et garde ses propres nœuds métier :
+//!
+//! ```text
+//! Audio Timeline → Audio Graph → DSP Backend
+//!   (régions)      (Source/Gain/EQ/Compressor/Reverb/Mixer)
+//! ```
 
-use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
+pub mod dsp;
+pub mod graph;
+pub mod node;
+pub mod registry;
+pub mod timeline;
 
-pub fn all_definitions() -> Vec<NodeDefinition> {
-    vec![
-        NodeDefinition::new("sample_input", "Sample", NodeCategory::Input)
-            .output(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .header_color([0.20, 0.55, 0.35])
-            .description("Sample audio"),
-        NodeDefinition::new("oscillator", "Oscillateur", NodeCategory::Utility)
-            .output(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .param("freq", ParamValue::Float(440.0))
-            .param("wave", ParamValue::Enum("Sine".into()))
-            .header_color([0.85, 0.55, 0.10])
-            .description("FL Studio oscillator"),
-        NodeDefinition::new("filter", "Filtre", NodeCategory::Filter)
-            .input(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .output(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .param("cutoff", ParamValue::Float(1000.0))
-            .param("res", ParamValue::Float(0.5))
-            .header_color([0.20, 0.55, 0.75])
-            .description("Filtre passe-bas"),
-        NodeDefinition::new("mixer", "Mixer", NodeCategory::Compositing)
-            .input(SocketDef::new("audio_a", "Audio A", SocketType::Vector))
-            .input(SocketDef::new("audio_b", "Audio B", SocketType::Vector))
-            .input(SocketDef::new("gain", "Gain", SocketType::Float))
-            .output(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .param("gain", ParamValue::Float(0.8))
-            .header_color([0.45, 0.35, 0.65])
-            .description("Table de mixage"),
-        NodeDefinition::new("output_audio", "Master Out", NodeCategory::Output)
-            .input(SocketDef::new("audio", "Audio", SocketType::Vector))
-            .header_color([0.65, 0.20, 0.20])
-            .description("Sortie master"),
-    ]
-}
+pub use dsp::{DspBackend, NullBackend, ProcessReport, SampleBuffer, gain_linear, mix_into};
+pub use graph::AudioGraph;
+pub use ids::EntityId;
+pub use node::{AudioId, AudioNode, AudioNodeKind, SourceKind, Wave};
+pub use registry::all_definitions;
+pub use timeline::{AudioTimeline, Region};

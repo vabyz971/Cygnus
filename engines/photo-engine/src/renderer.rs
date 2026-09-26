@@ -44,7 +44,7 @@ use std::sync::Arc;
 use image::{DynamicImage, ImageBuffer, Rgba};
 use uuid::Uuid;
 
-use crate::document::{Appearance, Document, FilterLayer, LayerMask, PixelLayer};
+use crate::document::{Appearance, Document, FilterLayer, LayerMask, PixelLayer, RgbaBuf};
 
 /// Entrée de cache pré-calculée HORS thread UI, transférable vers le
 /// document vivant.
@@ -199,6 +199,61 @@ impl Renderer {
             entry.appearance = appearance.clone();
         }
         appearance
+    }
+
+    /// Image + miniature pour le cadre de réponse (Phase 6G.2 §2), SANS le
+    /// buffer `preview` : `appearance.preview` n'est lu par AUCUN chemin de
+    /// production (vérifié : seuls Debug/tests le touchent) alors que son
+    /// resample pleine taille domine le rebuild (≈ 1/3, mesuré).
+    ///
+    /// Validité STRICTEMENT identique à [`Self::appearance_hit`] (filtres +
+    /// masques + identité source) : hit ⇒ mêmes `Arc`/buffers partagés,
+    /// compteurs `hits` partagés. Miss ⇒ chaîne via [`Self::unmasked_image`]
+    /// (compteur `misses` partagé) + couverture + bake + miniature
+    /// (`thumb_rebuilds`, pas `preview_rebuilds`), entrée mise à jour avec
+    /// un marqueur `preview` VIDE (documenté, jamais lu en production).
+    /// Pixels rendus bit-identiques au chemin complet.
+    pub fn appearance_frame(&mut self, layer: &PixelLayer) -> Option<(Arc<DynamicImage>, RgbaBuf)> {
+        crate::render_pool::run_parallel(|| self.appearance_frame_locked(layer))
+    }
+
+    /// Corps de [`Self::appearance_frame`] — jamais appelé directement.
+    fn appearance_frame_locked(
+        &mut self,
+        layer: &PixelLayer,
+    ) -> Option<(Arc<DynamicImage>, RgbaBuf)> {
+        if let Some(cached) = self.appearance_hit(layer) {
+            self.hits += 1;
+            return Some((cached.image, cached.thumb));
+        }
+        let unmasked = self.unmasked_image(layer);
+        let mask_signature = mask_signature(&layer.masks);
+        let mask_cover = match self.entries.get_mut(&layer.id) {
+            Some(entry) if entry.mask_signature == mask_signature => entry.mask_cover.clone(),
+            Some(entry) => {
+                let cover = Self::fresh_cover(&layer.masks);
+                entry.mask_signature = mask_signature;
+                entry.mask_cover = cover.clone();
+                cover
+            }
+            // Inatteignable en pratique : `unmasked_image` crée l'entrée.
+            None => Self::fresh_cover(&layer.masks),
+        };
+        let baked = Self::bake(&unmasked, &mask_cover);
+        let thumb = crate::document::thumb_buf(&baked);
+        self.thumb_rebuilds += 1;
+        if let Some(entry) = self.entries.get_mut(&layer.id) {
+            entry.appearance.image = Arc::clone(&baked);
+            entry.appearance.thumb = thumb.clone();
+            // Marqueur VIDE : le `preview` pleine taille n'est pas dérivé
+            // ici (jamais lu en production — voir docs du module).
+            entry.appearance.preview = RgbaBuf {
+                width: 0,
+                height: 0,
+                data: Arc::from([]),
+            };
+        }
+        Some((baked, thumb))
     }
 
     /// Image NON masquée par les masques DU CALQUE (source × filtres, les
@@ -680,6 +735,33 @@ mod tests {
         let rgba = out.image.to_rgba8();
         let p = rgba.get_pixel(0, 0);
         assert_eq!(p[0], 100);
+    }
+
+    #[test]
+    fn cadre_partage_sans_preview() {
+        // Chemin cadre 6G.2 : image + miniature partagées, AUCUN preview
+        // dérivé (marqueur vide documenté), compteurs honnêtes.
+        let layer = layer_with_filter(10.0);
+        let mut r = Renderer::default();
+        let (img1, thumb1) = r.appearance_frame(&layer).expect("cadre");
+        assert_eq!((r.misses(), r.hits()), (1, 0));
+        assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (0, 1));
+        let (img2, thumb2) = r.appearance_frame(&layer).expect("cadre");
+        assert_eq!((r.misses(), r.hits()), (1, 1));
+        assert!(Arc::ptr_eq(&img1, &img2), "image partagée");
+        assert_eq!(
+            (thumb1.width, thumb1.height),
+            (thumb2.width, thumb2.height),
+            "miniature stable"
+        );
+        // Le chemin complet reste cohérent (HIT, image + miniature partagées).
+        let a = r.appearance(&layer);
+        assert!(Arc::ptr_eq(&a.image, &img2));
+        assert_eq!(
+            (a.thumb.width, a.thumb.height),
+            (thumb2.width, thumb2.height)
+        );
+        assert_eq!((a.preview.width, a.preview.height), (0, 0), "marqueur vide");
     }
 
     #[test]

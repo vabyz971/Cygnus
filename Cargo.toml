@@ -2,11 +2,17 @@
 resolver = "2"
 members = [
     "core/datatypes",
+    "core/ids",
+    "core/scene",
+    "core/graph",
+    "core/render-graph",
+    "core/tiles",
     "engines/photo-engine",
     "engines/video-engine",
     "engines/audio-engine",
     "engines/vector-engine",
     "engines/layout-engine",
+    "engines/text-engine",
     "packages/ui-kit",
     "packages/math-utils",
     "packages/file-utils",

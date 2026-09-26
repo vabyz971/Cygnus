@@ -522,6 +522,10 @@ name = "audio-engine"
 version = "0.1.0"
 dependencies = [
  "datatypes",
+ "graph",
+ "ids",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -935,6 +939,7 @@ name = "datatypes"
 version = "0.2.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1690,6 +1695,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "graph"
+version = "0.1.0"
+dependencies = [
+ "ids",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "guillotiere"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1866,6 +1881,14 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "ids"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -2066,6 +2089,11 @@ name = "layout-engine"
 version = "0.1.0"
 dependencies = [
  "datatypes",
+ "ids",
+ "scene",
+ "serde",
+ "serde_json",
+ "text-engine",
 ]
 
 [[package]]
@@ -2922,8 +2950,10 @@ dependencies = [
  "math-utils",
  "pollster 1.0.1",
  "rayon",
+ "render-graph",
  "serde",
  "serde_json",
+ "tiles",
  "uuid",
  "wgpu",
 ]
@@ -3376,6 +3406,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "render-graph"
+version = "0.1.0"
+dependencies = [
+ "graph",
+ "ids",
+ "scene",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3471,6 +3513,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scene"
+version = "0.1.0"
+dependencies = [
+ "ids",
+ "math-utils",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -3812,6 +3865,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-engine"
+version = "0.1.0"
+dependencies = [
+ "datatypes",
+ "ids",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3863,6 +3926,15 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
+]
+
+[[package]]
+name = "tiles"
+version = "0.1.0"
+dependencies = [
+ "ids",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4076,6 +4148,10 @@ name = "vector-engine"
 version = "0.1.0"
 dependencies = [
  "datatypes",
+ "ids",
+ "math-utils",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4125,6 +4201,9 @@ name = "video-engine"
 version = "0.1.0"
 dependencies = [
  "datatypes",
+ "ids",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use super::compositing::{needs_fallback_in, scope_half_extents};
+use super::compositing::{apply_coverage, needs_fallback_in, scope_half_extents};
 use super::model::{
     Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask, LayerNode, PixelLayer,
     RgbaBuf, Transform2D,
@@ -24,7 +24,11 @@ pub struct Document {
 /// Résultat d'un composite régional expérimental (vertical slice
 /// tuiles) : pixels de la région + origine pour recoller/comparer
 /// dans l'espace du composite pleine cadre.
-#[derive(Debug)]
+///
+/// `Clone` : le `TileCache` (Phase 6D) ressert la tuile par clone
+/// (recopie pixels — fondation correctness-first, partage `Arc` ultérieur
+/// si les mesures l'exigent).
+#[derive(Debug, Clone)]
 pub struct RegionalComposite {
     /// Pixels RGBA8 de la région clippée (dimensions = région utile).
     pub image: DynamicImage,
@@ -902,6 +906,32 @@ impl Document {
     /// Image seule (chemin compositing — évite de régénérer preview/thumb).
     pub fn appearance_image(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
         self.appearance(id).map(|a| a.image)
+    }
+
+    /// Image seule SANS miniature ni preview (Phase 6G.3) : compose les
+    /// morceaux déjà cacheables (`unmasked_image` + `mask_coverage`, mêmes
+    /// gardes que le chemin complet) et bake. Pixels bit-identiques à
+    /// [`Self::appearance`] ; compteurs `hits`/`misses` partagés ; aucun
+    /// `thumb`/`preview_rebuild` compté ici (les miniatures partent en
+    /// tâche secondaire — voir le worker applicatif).
+    pub fn appearance_image_only(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        let layer = self.pixel_layer(id)?;
+        let mut cache = self.cache.borrow_mut();
+        let unmasked = cache.unmasked_image(layer);
+        match cache.mask_coverage(layer) {
+            None => Some(unmasked),
+            Some(cover) => Some(apply_coverage(unmasked, &cover)),
+        }
+    }
+
+    /// Image + miniature pour le cadre de réponse (Phase 6G.2 §2) : ne
+    /// dérive jamais le buffer `preview` (illisible en production).
+    /// Pixels bit-identiques à [`Self::appearance`] ; compteurs `hits` /
+    /// `misses` / `thumb_rebuilds` partagés (`preview_rebuilds` intact :
+    /// aucun preview reconstruit ici).
+    pub fn appearance_frame(&self, id: Uuid) -> Option<(Arc<DynamicImage>, RgbaBuf)> {
+        let layer = self.pixel_layer(id)?;
+        self.cache.borrow_mut().appearance_frame(layer)
     }
 
     /// Exporte l'entrée d'apparence chaude d'un calque pixels (transfert

@@ -31,6 +31,7 @@ pub mod create_document;
 pub mod dialogs;
 pub mod engine_bridge;
 pub mod features;
+pub mod ink_overlay;
 /// Campagne de mesures composite (matrices, tests ignorés par défaut).
 #[cfg(test)]
 mod matrix_probe;
@@ -40,6 +41,7 @@ pub mod optionsbar;
 /// Sondes de mesure perf (diagnostic temporaire, tests uniquement).
 #[cfg(test)]
 mod perf_probe;
+pub mod thumb_worker;
 pub mod toolbar;
 pub mod viewport;
 
@@ -53,9 +55,11 @@ pub use engine_bridge::{
 pub use features::{
     inspector::{InspectorPanel, inspector_action_to_photo},
     layers::{
-        LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo, layer_panel_action_to_photo,
+        LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo, PhotoLayerThumb,
+        layer_panel_action_to_photo,
     },
 };
+pub use ink_overlay::{clear_ink, ink_brush_params, ink_overlay_screen_rect, ink_tool_active};
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;

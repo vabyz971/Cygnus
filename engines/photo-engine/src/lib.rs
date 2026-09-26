@@ -24,6 +24,7 @@ pub mod export;
 pub mod filters;
 pub mod gpu;
 pub mod history;
+pub mod interaction;
 pub mod nodes;
 pub mod paint;
 pub mod project;

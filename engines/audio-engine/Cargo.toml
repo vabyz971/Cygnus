@@ -9,3 +9,9 @@ workspace = true
 
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
+graph = { path = "../../core/graph" }
+ids = { path = "../../core/ids" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

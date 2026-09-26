@@ -39,13 +39,36 @@ aucune connaissance d'egui ou de ses types. Les buffers portés par le modèle
 document restent purs (`RgbaBuf`, `Arc<[u8]>`) ; les apps envoient des
 commandes via `mpsc` à un worker propriétaire du `Document` et reçoivent
 snapshots + aperçu composite (conversion texture côté app).
-- `photo-engine` : document, compositing CPU/GPU, historique, projet `.cygp`.
-- `video-engine`, `audio-engine` : fondations.
+- `photo-engine` : document, compositing CPU/GPU, historique, projet `.cygp`
+  (raster uniquement ; `BlendMode`/`RgbaBuf` viennent de `datatypes`).
+- `vector-engine` : paths Bézier, formes, styles, booléens (données) +
+  trait `VectorBackend` (Vello ou autre derrière le trait — sans `wgpu`).
+- `layout-engine` : frames, contraintes, pages, algo ligne/colonne +
+  `apply_to_scene` (le layout calcule, la scène place — sans `wgpu`/`egui`).
+- `text-engine` : modèle → layout → glyph runs (façonnage derrière
+  `FontProvider` ; mesure pour `layout-engine`, jamais de rendu direct).
+- `video-engine` : clips, timeline éditoriale, transitions, trait
+  `FrameDecoder`, compositing décrit (`BlendMode` partagé) — pas de lecteur.
+- `audio-engine` : timeline + graphe DSP sur `graph` (cycles rejetés),
+  trait `DspBackend` — HORS Scene Graph, nœuds métier propres.
 
-Ils peuvent dépendre de `core/*` et de `packages/*` (hors UI).
+Ils peuvent dépendre de `core/*` et de `packages/*` (hors UI) ; pas de
+dépendances entre engines (seule exception documentée : `layout-engine`
+en dev-dependency de test vers `text-engine`, jamais au runtime).
 
 ### core/
-Socle transverse : `datatypes` (nœuds, sockets, `Vec2`).
+Socle transverse : `datatypes` (nœuds, sockets, `Vec2`/`Rect`, `BlendMode`,
+`RgbaBuf`), `ids`
+(`EntityId` stable + `Revision` monotone partagés) et `scene`
+(Scene Graph sémantique : hiérarchie, transforms locaux, monde dérivé,
+révisions — sans wgpu ni egui, sans état renderer), `graph` (graphe de
+dépendances générique : nœuds, arêtes, propagation dirty, ordre
+topologique — CPU pur, sans logique de domaine) et `render-graph`
+(opérations dérivées de la scène : `Source → Transform → Effect → Mask →
+Blend → Output`, sync incrémental par portée, trait `Backend` abstrait —
+sans wgpu, ni egui, ni UI) et `tiles` (invalidation spatiale : `TileGrid`
+rect ↔ tuiles, `DirtyTiles` en bitset, `TileCache` CPU/GPU séparés,
+`TileScheduler` progressif visible/proche/grossier d'abord — CPU pur).
 
 ### apps/
 Applications finales qui combinent packages, core et engines. Découpage par rôle

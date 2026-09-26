@@ -34,7 +34,8 @@ Cargo.lock
 **/.env
 **/.env.local
 **/*.env.*
-graft/
+**/graft/
+**/graft/*
 
 # Editors
 **/.vscode/

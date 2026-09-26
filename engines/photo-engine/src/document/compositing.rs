@@ -71,6 +71,253 @@ pub fn thumb_buf(img: &DynamicImage) -> RgbaBuf {
 }
 
 // ---------------------------------------------------------------------------
+// Downscale rapide bit-exact (Phase 6G.2 §3.5D)
+// ---------------------------------------------------------------------------
+
+/// Dimensions cibles d'une miniature bornée (`max_dim`), réplique exacte
+/// de `DynamicImage::thumbnail(max, max)` (aspect préservé, `fill=false`) :
+/// `None` si aucun rétrécissement (`max(w, h) <= max_dim`, legacy inchangé),
+/// sinon `(nw, nh)` garantis non nuls. Mêmes opérations `f64` dans le même
+/// ordre que `resize_dimensions` (privé, image 0.25) — vérifié par fuzz
+/// contre les dimensions de sortie de `thumbnail`.
+#[must_use]
+pub fn capped_thumbnail_dims(w: u32, h: u32, max_dim: u32) -> Option<(u32, u32)> {
+    if w.max(h) <= max_dim {
+        return None;
+    }
+    // Miroir exact de resize_dimensions(w, h, max, max, fill=false).
+    let wratio = f64::from(max_dim) / f64::from(w);
+    let hratio = f64::from(max_dim) / f64::from(h);
+    let ratio = wratio.min(hratio);
+    let nw = ((f64::from(w) * ratio).round() as u64).max(1);
+    let nh = ((f64::from(h) * ratio).round() as u64).max(1);
+    Some(if nw > u64::from(u32::MAX) {
+        let ratio = f64::from(u32::MAX) / f64::from(w);
+        (u32::MAX, ((f64::from(h) * ratio).round() as u32).max(1))
+    } else if nh > u64::from(u32::MAX) {
+        let ratio = f64::from(u32::MAX) / f64::from(h);
+        (((f64::from(w) * ratio).round() as u32).max(1), u32::MAX)
+    } else {
+        (nw as u32, nh as u32)
+    })
+}
+
+/// Rééchantillonnage boîte RGBA8 octets-identique à
+/// `image::imageops::thumbnail` (image 0.25), lignes en parallèle.
+///
+/// Réplique EXACTEMENT l'algorithme de référence : mêmes bornes (`ceil` +
+/// clamp dans le même ordre), mêmes sommes `u32`, mêmes moyennes entières
+/// `(somme + n/2) / n`, mêmes formules `f32` dans le même ordre et même
+/// conversion (troncature saturée vers zéro, comme `NumCast`). Chaque pixel
+/// de sortie est indépendant (accumulation `y` puis `x` comme la référence)
+/// : le résultat est donc identique en séquentiel comme en parallèle, quel
+/// que soit le nombre de threads — déterminisme total.
+///
+/// Exécution sur le pool de rendu DÉDIÉ (`run_parallel`, jamais de pool
+/// supplémentaire) ; les dimensions nulles rendent un buffer vide comme la
+/// référence. Hors RGBA8 ou cas dégénéré : l'appelant garde le chemin
+/// legacy (`thumbnail`), jamais de divergence silencieuse.
+pub fn fast_thumbnail_rgba8(
+    src: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    nw: u32,
+    nh: u32,
+) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    let (w, h) = (src.width(), src.height());
+    let mut out = ImageBuffer::from_pixel(nw, nh, Rgba([0, 0, 0, 0]));
+    if w == 0 || h == 0 || nw == 0 || nh == 0 {
+        return out;
+    }
+    let raw = src.as_raw();
+    let x_ratio = w as f32 / nw as f32;
+    let y_ratio = h as f32 / nh as f32;
+    // Bornes horizontales précalculées UNE fois (constantes par colonne —
+    // mêmes valeurs que la boucle de référence, sans les recalculer par
+    // ligne). Seules les bornes verticales restent par ligne.
+    let mut col_bounds: Vec<(u32, u32, f32, f32)> = Vec::with_capacity(nw as usize);
+    for ox in 0..nw {
+        let leftf = ox as f32 * x_ratio;
+        let rightf = leftf + x_ratio;
+        col_bounds.push((
+            (leftf.ceil() as u32).clamp(0, w - 1),
+            (rightf.ceil() as u32).clamp((leftf.ceil() as u32).clamp(0, w - 1), w),
+            leftf,
+            rightf,
+        ));
+    }
+    let stride = nw as usize * 4;
+    crate::render_pool::run_parallel(|| {
+        out.as_flat_samples_mut()
+            .samples
+            .par_chunks_mut(stride)
+            .enumerate()
+            .for_each(|(oy, row)| {
+                let oy = oy as u32;
+                let bottomf = oy as f32 * y_ratio;
+                let topf = bottomf + y_ratio;
+                let bottom = (bottomf.ceil() as u32).clamp(0, h - 1);
+                let top = (topf.ceil() as u32).clamp(bottom, h);
+                for (ox, px) in row.chunks_exact_mut(4).enumerate() {
+                    let (left, right, leftf, rightf) = col_bounds[ox];
+                    let (r, g, b, a) = if bottom != top && left != right {
+                        sample_block(raw, w, left, right, bottom, top)
+                    } else if bottom != top {
+                        // left == right : fraction horizontale (même
+                        // branchement et mêmes valeurs que la référence).
+                        let fraction = (leftf.fract() + rightf.fract()) / 2.0;
+                        sample_fraction_horizontal(raw, w, right - 1, fraction, bottom, top)
+                    } else if left != right {
+                        // bottom == top : fraction verticale.
+                        let fraction = (topf.fract() + bottomf.fract()) / 2.0;
+                        sample_fraction_vertical(raw, w, left, right, top - 1, fraction)
+                    } else {
+                        // Noms croisés conservés de la référence (les valeurs
+                        // comptent, pas les noms) : horizontal ← topf/bottomf,
+                        // vertical ← leftf/rightf.
+                        let fraction_horizontal = (topf.fract() + bottomf.fract()) / 2.0;
+                        let fraction_vertical = (leftf.fract() + rightf.fract()) / 2.0;
+                        sample_fraction_both(
+                            raw,
+                            w,
+                            right - 1,
+                            fraction_horizontal,
+                            top - 1,
+                            fraction_vertical,
+                        )
+                    };
+                    px[0] = r;
+                    px[1] = g;
+                    px[2] = b;
+                    px[3] = a;
+                }
+            });
+    });
+    out
+}
+
+/// Moyenne entière d'un bloc (mêmes sommes `u32` et `(s + n/2) / n`).
+fn sample_block(
+    raw: &[u8],
+    w: u32,
+    left: u32,
+    right: u32,
+    bottom: u32,
+    top: u32,
+) -> (u8, u8, u8, u8) {
+    let mut sum = [0u32; 4];
+    for y in bottom..top {
+        for x in left..right {
+            let i = ((y * w + x) * 4) as usize;
+            sum[0] += u32::from(raw[i]);
+            sum[1] += u32::from(raw[i + 1]);
+            sum[2] += u32::from(raw[i + 2]);
+            sum[3] += u32::from(raw[i + 3]);
+        }
+    }
+    let n = (right - left) * (top - bottom);
+    let round = n / 2;
+    (
+        ((sum[0] + round) / n).min(255) as u8,
+        ((sum[1] + round) / n).min(255) as u8,
+        ((sum[2] + round) / n).min(255) as u8,
+        ((sum[3] + round) / n).min(255) as u8,
+    )
+}
+
+/// Troncature saturée vers zéro : équivalent prouvé de `NumCast::from(f32)`
+/// pour `u8` sur tout le domaine atteignable (moyennes dans `[0, 255]`,
+/// la référence paniquerait hors `(-1, 256)` — ici clampé, jamais de crash).
+#[inline]
+fn cast_u8(v: f32) -> u8 {
+    v.clamp(0.0, 255.0) as u8
+}
+
+/// Mélange horizontal de deux colonnes (mêmes formules `f32`).
+fn sample_fraction_horizontal(
+    raw: &[u8],
+    w: u32,
+    left: u32,
+    fract: f32,
+    bottom: u32,
+    top: u32,
+) -> (u8, u8, u8, u8) {
+    let mut sum_left = [0u32; 4];
+    let mut sum_right = [0u32; 4];
+    for y in bottom..top {
+        let i = ((y * w + left) * 4) as usize;
+        let j = ((y * w + left + 1) * 4) as usize;
+        for c in 0..4 {
+            sum_left[c] += u32::from(raw[i + c]);
+            sum_right[c] += u32::from(raw[j + c]);
+        }
+    }
+    let fact_right = fract / ((top - bottom) as f32);
+    let fact_left = (1.0 - fract) / ((top - bottom) as f32);
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        out[c] = cast_u8(fact_left * sum_left[c] as f32 + fact_right * sum_right[c] as f32);
+    }
+    (out[0], out[1], out[2], out[3])
+}
+
+/// Mélange vertical de deux lignes (mêmes formules `f32`).
+fn sample_fraction_vertical(
+    raw: &[u8],
+    w: u32,
+    left: u32,
+    right: u32,
+    bottom: u32,
+    fract: f32,
+) -> (u8, u8, u8, u8) {
+    let mut sum_bot = [0u32; 4];
+    let mut sum_top = [0u32; 4];
+    for x in left..right {
+        let i = ((bottom * w + x) * 4) as usize;
+        let j = (((bottom + 1) * w + x) * 4) as usize;
+        for c in 0..4 {
+            sum_bot[c] += u32::from(raw[i + c]);
+            sum_top[c] += u32::from(raw[j + c]);
+        }
+    }
+    let fact_top = fract / ((right - left) as f32);
+    let fact_bot = (1.0 - fract) / ((right - left) as f32);
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        out[c] = cast_u8(fact_bot * sum_bot[c] as f32 + fact_top * sum_top[c] as f32);
+    }
+    (out[0], out[1], out[2], out[3])
+}
+
+/// Mélange bilinéaire 2×2 (mêmes formules `f32`, mêmes accès).
+fn sample_fraction_both(
+    raw: &[u8],
+    w: u32,
+    left: u32,
+    fract_h: f32,
+    bottom: u32,
+    fract_v: f32,
+) -> (u8, u8, u8, u8) {
+    let idx = |x: u32, y: u32| ((y * w + x) * 4) as usize;
+    let bl = idx(left, bottom);
+    let tl = idx(left, bottom + 1);
+    let br = idx(left + 1, bottom);
+    let tr = idx(left + 1, bottom + 1);
+    let fact_tr = fract_v * fract_h;
+    let fact_tl = fract_v * (1.0 - fract_h);
+    let fact_br = (1.0 - fract_v) * fract_h;
+    let fact_bl = (1.0 - fract_v) * (1.0 - fract_h);
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        out[c] = cast_u8(
+            fact_br * f32::from(raw[br + c])
+                + fact_tr * f32::from(raw[tr + c])
+                + fact_bl * f32::from(raw[bl + c])
+                + fact_tl * f32::from(raw[tl + c]),
+        );
+    }
+    (out[0], out[1], out[2], out[3])
+}
+
+// ---------------------------------------------------------------------------
 // Primitives de fusion CPU (inchangées, éprouvées par les tests golden)
 // ---------------------------------------------------------------------------
 
@@ -972,4 +1219,140 @@ pub fn apply_adjustment(
             }
         });
     true
+}
+
+#[cfg(test)]
+mod downsample_tests {
+    use super::*;
+
+    /// LCG déterministe (aucune dépendance aléatoire) : contenu varié,
+    /// alphas extrêmes inclus.
+    fn pseudo_random_rgba(w: u32, h: u32, seed: u64) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        let mut state = seed.max(1);
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+        ImageBuffer::from_fn(w.max(1), h.max(1), |_, _| {
+            Rgba([next(), next(), next(), next()])
+        })
+    }
+
+    fn assert_thumbnail_identical(w: u32, h: u32, nw: u32, nh: u32, seed: u64) {
+        let src = pseudo_random_rgba(w, h, seed);
+        let expected = image::imageops::thumbnail(&src, nw, nh);
+        let got = fast_thumbnail_rgba8(&src, nw, nh);
+        assert_eq!(
+            got.dimensions(),
+            expected.dimensions(),
+            "dims {w}x{h} → {nw}x{nh}"
+        );
+        assert_eq!(
+            got.as_raw(),
+            expected.as_raw(),
+            "octets {w}x{h} → {nw}x{nh} (seed {seed})"
+        );
+    }
+
+    #[test]
+    fn fast_thumbnail_egale_reference_petites_tailles() {
+        // Balayage exhaustif 1..=32 (downscale, upscale, carrés, lignes).
+        for h in 1..=32u32 {
+            for w in 1..=32u32 {
+                for (nw, nh) in [(1, 1), (2, 2), (w / 2 + 1, h / 2 + 1), (w * 2, h * 2)] {
+                    assert_thumbnail_identical(
+                        w,
+                        h,
+                        nw.max(1),
+                        nh.max(1),
+                        u64::from(w) * 1000 + u64::from(h),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fast_thumbnail_egale_reference_tailles_reelles() {
+        // Production (preview 2048→1600) + rapports impairs + premiers.
+        for (w, h, nw, nh) in [
+            (2048, 2048, 1600, 1600),
+            (512, 512, 200, 200),
+            (1000, 777, 500, 389),
+            (127, 129, 64, 65),
+            (255, 256, 100, 100),
+            (511, 511, 256, 256),
+            (3840, 2160, 1600, 900),
+            (7, 5, 3, 2),
+            (5, 7, 2, 3),
+        ] {
+            assert_thumbnail_identical(w, h, nw, nh, 0xC10C);
+        }
+    }
+
+    #[test]
+    fn capped_dims_egales_thumbnail() {
+        // `capped_thumbnail_dims` ≡ dimensions de sortie de `thumbnail`
+        // (ou `None` ⟺ inchangé), sur tailles réelles et cas limites.
+        for (w, h, max) in [
+            (2048, 2048, 1600),
+            (2048, 1024, 1600),
+            (1024, 2048, 1600),
+            (3000, 100, 1600),
+            (100, 3000, 1600),
+            (1600, 1600, 1600),
+            (1599, 800, 1600),
+            (800, 1599, 1600),
+            (4096, 4096, 1600),
+            (512, 512, 1600),
+            (3, 2000, 100),
+            (2000, 3, 100),
+        ] {
+            let src = pseudo_random_rgba(w, h, 7);
+            let dynimg = DynamicImage::ImageRgba8(src);
+            let shrunk = dynimg.thumbnail(max, max);
+            match capped_thumbnail_dims(w, h, max) {
+                None => assert!(
+                    w.max(h) <= max,
+                    "pas de shrink ⇒ déjà borné ({w}x{h}, max {max})"
+                ),
+                Some((nw, nh)) => {
+                    assert!(w.max(h) > max);
+                    assert_eq!((shrunk.width(), shrunk.height()), (nw, nh));
+                    // Et les pixels suivent (chemin capé complet).
+                    let fast = fast_thumbnail_rgba8(dynimg.as_rgba8().expect("rgba8"), nw, nh);
+                    assert_eq!(fast.as_raw(), shrunk.as_rgba8().expect("rgba8").as_raw());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fast_thumbnail_solid_et_bords() {
+        // Contenus dégénérés : uni, damier, alpha 0/255.
+        let uni = ImageBuffer::from_pixel(100, 100, Rgba([200, 40, 40, 255]));
+        for nw in [1, 37, 100] {
+            let expected = image::imageops::thumbnail(&uni, nw, nw);
+            assert_eq!(
+                fast_thumbnail_rgba8(&uni, nw, nw).as_raw(),
+                expected.as_raw()
+            );
+        }
+        let mut checker = ImageBuffer::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
+        for (x, y, px) in checker.enumerate_pixels_mut() {
+            if (x + y) % 2 == 0 {
+                *px = Rgba([255, 255, 255, 255]);
+            }
+        }
+        for (nw, nh) in [(32, 32), (7, 7), (1, 1)] {
+            let expected = image::imageops::thumbnail(&checker, nw, nh);
+            assert_eq!(
+                fast_thumbnail_rgba8(&checker, nw, nh).as_raw(),
+                expected.as_raw(),
+                "damier {nw}x{nh}"
+            );
+        }
+    }
 }
