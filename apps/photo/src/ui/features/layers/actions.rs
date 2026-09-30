@@ -34,7 +34,19 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::Delete => PhotoAction::DeleteSelectedLayer,
         LayerPanelAction::Select(id) => PhotoAction::SelectLayer(id),
         LayerPanelAction::RenameCommit { layer, name } => PhotoAction::RenameLayer { layer, name },
-        LayerPanelAction::Reorder { from, to } => PhotoAction::ReorderLayers { from, to },
+        LayerPanelAction::ReorderNodes {
+            dragged,
+            target,
+            before,
+        } => PhotoAction::ReorderNodes {
+            dragged,
+            target,
+            before,
+        },
+        LayerPanelAction::MoveIntoGroup { layer, group } => {
+            PhotoAction::MoveIntoGroup { layer, group }
+        }
+        LayerPanelAction::ToggleCollapsed(id) => PhotoAction::ToggleGroupCollapsed(id),
         LayerPanelAction::ToggleVisibility(id) => PhotoAction::ToggleLayerVisibility(id),
         LayerPanelAction::DeleteLayer(id) => PhotoAction::DeleteLayer(id),
         LayerPanelAction::DuplicateLayer(id) => PhotoAction::DuplicateLayer(id),
@@ -66,8 +78,30 @@ mod tests {
             PhotoAction::SelectLayer(id)
         );
         assert_eq!(
-            layer_panel_action_to_photo(LayerPanelAction::Reorder { from: 0, to: 2 }),
-            PhotoAction::ReorderLayers { from: 0, to: 2 }
+            layer_panel_action_to_photo(LayerPanelAction::ReorderNodes {
+                dragged: id,
+                target: id,
+                before: true,
+            }),
+            PhotoAction::ReorderNodes {
+                dragged: id,
+                target: id,
+                before: true,
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::MoveIntoGroup {
+                layer: id,
+                group: id
+            }),
+            PhotoAction::MoveIntoGroup {
+                layer: id,
+                group: id
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::ToggleCollapsed(id)),
+            PhotoAction::ToggleGroupCollapsed(id)
         );
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::ToggleVisibility(id)),

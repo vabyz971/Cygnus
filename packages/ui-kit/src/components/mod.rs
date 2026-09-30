@@ -32,7 +32,7 @@ pub mod tabs;
 pub mod toggle;
 
 pub use crate::widgets::reorderable_list::{
-    ReorderableList, compute_target_index, draw_drop_indicator, item_background,
+    HierarchicalDrop, ReorderableList, compute_target_index, draw_drop_indicator, item_background,
 };
 pub use button::{Button, ButtonSize, ButtonVariant, menu_row};
 pub use checkbox::Checkbox;

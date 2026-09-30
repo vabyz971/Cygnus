@@ -16,12 +16,13 @@
 
 //! HUD d'un calque photo (ligne du panneau Calques, widget métier).
 //!
-//! Ligne en deux temps : rangée principale (bouton de visibilité,
-//! visualiseur du calque, nom éditable au double-clic, bouton de
-//! suppression en bout) puis bandeau compact des sous-couches
-//! (filtres live `FX` et masques, avec boutons monter/descendre/
-//! supprimer). AUCUN envoi moteur ici : toute interaction remonte
-//! via [`LayerItemAction`], convertie en [`PhotoAction`](crate::commands::PhotoAction)
+//! Ligne en une rangée centrée (`Align::Center`) : chevron
+//! repli/dépli, bouton de visibilité, visualiseur du calque, nom
+//! éditable au double-clic, bouton de suppression en bout. Les
+//! filtres live et les masques sont des lignes enfants à part
+//! entière ([`draw_attachment_row`]), indentées sous leur porteur.
+//! AUCUN envoi moteur ici : toute interaction remonte via
+//! [`LayerItemAction`], convertie en [`PhotoAction`](crate::commands::PhotoAction)
 //! puis routée par `PhotoApp` (état local ou worker).
 
 use super::types::{LayerThumbView, PhotoLayerInfo};
@@ -56,6 +57,8 @@ pub enum LayerItemAction {
     DeleteLayer(Uuid),
     /// Dupliquer ce calque.
     DuplicateLayer(Uuid),
+    /// Replier / déplier un groupe (état moteur, sans re-rendu).
+    ToggleCollapsed(Uuid),
     /// Déplacer un filtre dans sa pile.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans sa pile.
@@ -68,8 +71,11 @@ pub enum LayerItemAction {
 
 /// Dessine le contenu HUD d'une ligne de calque.
 ///
-/// Toute icône passe par `Icon` (via [`IconButton`]). Retourne les actions,
-/// traitées par l'app (jamais d'envoi worker direct).
+/// Toute icône passe par `Icon` (via [`IconButton`]). La rangée est
+/// en `Align::Center` : œil, vignette et nom sont centrés
+/// verticalement (jamais de chevauchement : la hauteur est allouée
+/// par la liste, voir `layer_list`). Retourne les actions, traitées
+/// par l'app (jamais d'envoi worker direct).
 #[allow(clippy::too_many_lines)]
 pub fn draw_photo_layer_item(
     ui: &mut egui::Ui,
@@ -77,6 +83,7 @@ pub fn draw_photo_layer_item(
     selected: bool,
     rename: &mut LayerRenameState,
     thumb: Option<LayerThumbView>,
+    depth: usize,
 ) -> Vec<LayerItemAction> {
     let theme = CygnusTheme::dark();
     let mut actions = Vec::new();
@@ -129,131 +136,124 @@ pub fn draw_photo_layer_item(
         ui.painter().rect_filled(row_rect, theme.radius.sm, bg);
     }
 
-    ui.vertical(|ui| {
-        ui.add_space(theme.spacing.xs);
-        // Rangée principale : oeil, visualiseur, nom, suppression.
-        ui.horizontal(|ui| {
-            ui.add_space(theme.spacing.xs);
-            let vis_icon = if layer.visible {
-                Icon::Visibility
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        // Indentation hiérarchique (un cran par niveau).
+        ui.add_space(depth as f32 * theme.spacing.lg);
+        // Chevron repli/dépli (groupes avec enfants) ou espace
+        // équivalent pour aligner les colonnes.
+        if layer.kind == super::types::PhotoLayerKind::Group && !layer.children.is_empty() {
+            let chevron = if layer.collapsed {
+                Icon::ExpandMore
             } else {
-                Icon::VisibilityOff
+                Icon::ExpandLess
             };
-            if IconButton::new(vis_icon)
-                .tooltip("Afficher / masquer")
+            if IconButton::new(chevron)
+                .tooltip(if layer.collapsed {
+                    "Déplier"
+                } else {
+                    "Replier"
+                })
                 .show(ui, &theme)
                 .clicked()
             {
-                actions.push(LayerItemAction::ToggleVisibility(layer.id));
+                actions.push(LayerItemAction::ToggleCollapsed(layer.id));
             }
-            // Visualiseur du calque : miniature pixels si disponible,
-            // sinon vignette symbolique (icône de type encadrée).
-            if let Some(view) = thumb {
-                ui.add(
-                    egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
-                        .fit_to_exact_size(egui::vec2(28.0, 28.0)),
-                );
-            } else {
-                ui.add_sized(
-                    egui::vec2(28.0, 28.0),
-                    egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0))
-                        .frame(true),
-                );
-            }
-            ui.add_space(theme.spacing.xs);
-            // Nom : double-clic = édition inline, Entrée = valider,
-            // Échap = annuler, perte de focus = valider si modifié.
-            if rename.editing == Some(layer.id) {
-                let edit = egui::TextEdit::singleline(&mut rename.buffer)
-                    .desired_width(ui.available_width() - 40.0)
-                    .show(ui);
-                if edit.response.lost_focus()
-                    && ui.input(|input| input.key_pressed(egui::Key::Escape))
-                {
-                    rename.editing = None;
-                } else if edit.response.lost_focus()
-                    || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                {
-                    let name = rename.buffer.trim().to_owned();
-                    rename.editing = None;
-                    if !name.is_empty() && name != layer.name {
-                        actions.push(LayerItemAction::RenameCommit {
-                            layer: layer.id,
-                            name,
-                        });
-                    }
-                }
-                // Focus immédiat à l'ouverture de l'édition.
-                edit.response.request_focus();
-            } else {
-                let name_resp = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&layer.name).size(theme.typography.body_size),
-                    )
-                    .truncate(),
-                );
-                if name_resp.double_clicked() {
-                    rename.editing = Some(layer.id);
-                    rename.buffer = layer.name.clone();
-                }
-            }
-            // Bouton de suppression en bout de rangée.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if IconButton::new(Icon::Delete)
-                    .tooltip("Supprimer ce calque")
-                    .show(ui, &theme)
-                    .clicked()
-                {
-                    actions.push(LayerItemAction::DeleteLayer(layer.id));
-                }
-            });
-        });
-        // Bandeau des sous-couches : filtres live puis masques, avec
-        // réordonnancement (haut/bas) et suppression. Le drag & drop
-        // imbriqué viendra plus tard : les boutons couvrent groupes,
-        // filtres et masques dès maintenant.
-        if !layer.filters.is_empty() || !layer.masks.is_empty() {
-            egui::ScrollArea::horizontal()
-                .max_height(24.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for filter in &layer.filters {
-                            actions.extend(draw_sub_layer(
-                                ui,
-                                &theme,
-                                layer.id,
-                                filter.id,
-                                &filter.name,
-                                true,
-                            ));
-                        }
-                        for mask in &layer.masks {
-                            actions.extend(draw_sub_layer(
-                                ui, &theme, layer.id, mask.id, &mask.name, false,
-                            ));
-                        }
-                    });
-                });
+        } else {
+            ui.add_space(theme.sizes.icon_button);
         }
+        let vis_icon = if layer.visible {
+            Icon::Visibility
+        } else {
+            Icon::VisibilityOff
+        };
+        if IconButton::new(vis_icon)
+            .tooltip("Afficher / masquer")
+            .show(ui, &theme)
+            .clicked()
+        {
+            actions.push(LayerItemAction::ToggleVisibility(layer.id));
+        }
+        // Visualiseur du calque : miniature pixels si disponible,
+        // sinon vignette symbolique (icône de type encadrée).
+        if let Some(view) = thumb {
+            ui.add(
+                egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
+                    .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+            );
+        } else {
+            ui.add_sized(
+                egui::vec2(28.0, 28.0),
+                egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0)).frame(true),
+            );
+        }
+        ui.add_space(theme.spacing.xs);
+        // Nom : double-clic = édition inline, Entrée = valider,
+        // Échap = annuler, perte de focus = valider si modifié.
+        if rename.editing == Some(layer.id) {
+            let edit = egui::TextEdit::singleline(&mut rename.buffer)
+                .desired_width(ui.available_width() - 40.0)
+                .show(ui);
+            if edit.response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape))
+            {
+                rename.editing = None;
+            } else if edit.response.lost_focus()
+                || ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
+                let name = rename.buffer.trim().to_owned();
+                rename.editing = None;
+                if !name.is_empty() && name != layer.name {
+                    actions.push(LayerItemAction::RenameCommit {
+                        layer: layer.id,
+                        name,
+                    });
+                }
+            }
+            // Focus immédiat à l'ouverture de l'édition.
+            edit.response.request_focus();
+        } else {
+            let name_resp = ui.add(
+                egui::Label::new(egui::RichText::new(&layer.name).size(theme.typography.body_size))
+                    .truncate(),
+            );
+            if name_resp.double_clicked() {
+                rename.editing = Some(layer.id);
+                rename.buffer = layer.name.clone();
+            }
+        }
+        // Bouton de suppression en bout de rangée.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if IconButton::new(Icon::Delete)
+                .tooltip("Supprimer ce calque")
+                .show(ui, &theme)
+                .clicked()
+            {
+                actions.push(LayerItemAction::DeleteLayer(layer.id));
+            }
+        });
     });
     actions
 }
 
-/// Pastille d'une sous-couche (filtre ou masque) : nom + monter /
-/// descendre / supprimer. Retourne les actions (routées au worker
-/// par l'app).
-#[allow(clippy::too_many_arguments)]
-fn draw_sub_layer(
+/// Ligne enfant d'une pièce jointe (filtre live ou masque) : même
+/// statut visuel qu'un calque (icône centrée, nom, actions), indentée
+/// sous son porteur. Retourne les actions (routées au worker par
+/// l'app). Les pièces jointes ne sont ni sélectionnables ni
+/// renommables, et ne participent pas au drag & drop entre calques
+/// (leur ordre se règle aux boutons monter/descendre).
+pub fn draw_attachment_row(
     ui: &mut egui::Ui,
-    theme: &CygnusTheme,
     owner: Uuid,
     sub_id: Uuid,
     name: &str,
     is_filter: bool,
+    depth: usize,
 ) -> Vec<LayerItemAction> {
+    let theme = CygnusTheme::dark();
     let mut actions = Vec::new();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 1.0;
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.add_space(depth as f32 * theme.spacing.lg);
+        // Colonne du chevron (vide ici : alignée sur les calques).
+        ui.add_space(theme.sizes.icon_button);
         if is_filter {
             ui.label(
                 egui::RichText::new("FX")
@@ -267,10 +267,14 @@ fn draw_sub_layer(
                 theme.colors.fg_secondary,
             ));
         }
-        ui.label(
-            egui::RichText::new(name)
-                .size(theme.typography.caption_size)
-                .color(theme.colors.fg_secondary),
+        ui.add_space(theme.spacing.xs);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(name)
+                    .size(theme.typography.caption_size)
+                    .color(theme.colors.fg_secondary),
+            )
+            .truncate(),
         );
         let (up_tip, down_tip, del_tip) = if is_filter {
             (
@@ -287,54 +291,55 @@ fn draw_sub_layer(
         };
         // Monte/descend : pas de flèches au registre d'icônes —
         // petits boutons texte ASCII ("^"/"v"), jamais d'unicode.
-        if ui.small_button("^").on_hover_text(up_tip).clicked() {
-            if is_filter {
-                actions.push(LayerItemAction::MoveFilter {
-                    layer: owner,
-                    filter: sub_id,
-                    up: true,
-                });
-            } else {
-                actions.push(LayerItemAction::MoveMask {
-                    owner,
-                    mask: sub_id,
-                    up: true,
-                });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if IconButton::new(Icon::Close)
+                .tooltip(del_tip)
+                .show(ui, &theme)
+                .clicked()
+            {
+                if is_filter {
+                    actions.push(LayerItemAction::RemoveFilter {
+                        layer: owner,
+                        filter: sub_id,
+                    });
+                } else {
+                    actions.push(LayerItemAction::RemoveMask {
+                        owner,
+                        mask: sub_id,
+                    });
+                }
             }
-        }
-        if ui.small_button("v").on_hover_text(down_tip).clicked() {
-            if is_filter {
-                actions.push(LayerItemAction::MoveFilter {
-                    layer: owner,
-                    filter: sub_id,
-                    up: false,
-                });
-            } else {
-                actions.push(LayerItemAction::MoveMask {
-                    owner,
-                    mask: sub_id,
-                    up: false,
-                });
+            if ui.small_button("v").on_hover_text(down_tip).clicked() {
+                if is_filter {
+                    actions.push(LayerItemAction::MoveFilter {
+                        layer: owner,
+                        filter: sub_id,
+                        up: false,
+                    });
+                } else {
+                    actions.push(LayerItemAction::MoveMask {
+                        owner,
+                        mask: sub_id,
+                        up: false,
+                    });
+                }
             }
-        }
-        if IconButton::new(Icon::Close)
-            .tooltip(del_tip)
-            .show(ui, theme)
-            .clicked()
-        {
-            if is_filter {
-                actions.push(LayerItemAction::RemoveFilter {
-                    layer: owner,
-                    filter: sub_id,
-                });
-            } else {
-                actions.push(LayerItemAction::RemoveMask {
-                    owner,
-                    mask: sub_id,
-                });
+            if ui.small_button("^").on_hover_text(up_tip).clicked() {
+                if is_filter {
+                    actions.push(LayerItemAction::MoveFilter {
+                        layer: owner,
+                        filter: sub_id,
+                        up: true,
+                    });
+                } else {
+                    actions.push(LayerItemAction::MoveMask {
+                        owner,
+                        mask: sub_id,
+                        up: true,
+                    });
+                }
             }
-        }
-        ui.separator();
+        });
     });
     actions
 }
@@ -363,7 +368,7 @@ mod tests {
         let mut rename = LayerRenameState::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None);
+                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None, 0);
                 assert!(actions.is_empty(), "aucun clic sans interaction");
                 // Tous les types, masqué / visible.
                 for kind in [
@@ -374,7 +379,7 @@ mod tests {
                     let mut probing = layer.clone();
                     probing.kind = kind;
                     probing.visible = false;
-                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename, None);
+                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename, None, 1);
                 }
             });
         })
@@ -390,7 +395,7 @@ mod tests {
         let mut reported = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                reported = draw_photo_layer_item(ui, &layer, false, &mut rename, None);
+                reported = draw_photo_layer_item(ui, &layer, false, &mut rename, None, 0);
             });
         })
         .drop_without_applying_deltas();
@@ -402,5 +407,24 @@ mod tests {
         let state = LayerRenameState::default();
         assert_eq!(state.editing, None);
         assert!(state.buffer.is_empty());
+    }
+
+    #[test]
+    fn attachment_rows_render_without_panic_and_report_nothing() {
+        use uuid::Uuid;
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let owner = Uuid::new_v4();
+        let filter = Uuid::new_v4();
+        let mask = Uuid::new_v4();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let fx = draw_attachment_row(ui, owner, filter, "luminosite", true, 1);
+                assert!(fx.is_empty(), "aucun clic sans interaction");
+                let mk = draw_attachment_row(ui, owner, mask, "masque 1", false, 1);
+                assert!(mk.is_empty(), "aucun clic sans interaction");
+            });
+        })
+        .drop_without_applying_deltas();
     }
 }

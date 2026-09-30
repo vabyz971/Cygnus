@@ -26,7 +26,7 @@
 
 use super::layer_item::{LayerItemAction, LayerRenameState};
 use super::layer_list::draw_layer_list;
-use super::types::{LayerThumbView, PhotoLayerInfo};
+use super::types::{FlatRowKind, LayerDrop, LayerThumbView, PhotoLayerInfo, find_layer_in};
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ use ui_kit::components::{IconButton, Select, Slider, Toggle};
 use ui_kit::icons::Icon;
 use ui_kit::primitives::Text;
 use ui_kit::theme::CygnusTheme;
-use ui_kit::utils::ReorderDragState;
+use ui_kit::utils::{DropPosition, ReorderDragState};
 use uuid::Uuid;
 
 /// Action du panneau calques : barre d'outils + interactions HUD.
@@ -59,8 +59,25 @@ pub enum LayerPanelAction {
     Select(Uuid),
     /// Valider le renommage d'un calque.
     RenameCommit { layer: Uuid, name: String },
-    /// Réordonner (indices d'affichage, drop drag & drop).
-    Reorder { from: usize, to: usize },
+    /// Réordonner par drag & drop hiérarchique : `dragged` avant ou
+    /// après `target` (même parent ou non — nesting libre moteur).
+    ReorderNodes {
+        /// Calque déplacé.
+        dragged: Uuid,
+        /// Calque cible.
+        target: Uuid,
+        /// Vrai = avant la cible, faux = après.
+        before: bool,
+    },
+    /// Imbriquer un calque en tête d'un groupe (drop dedans).
+    MoveIntoGroup {
+        /// Calque déplacé.
+        layer: Uuid,
+        /// Groupe d'accueil.
+        group: Uuid,
+    },
+    /// Replier / déplier un groupe (sans re-rendu).
+    ToggleCollapsed(Uuid),
     /// Basculer la visibilité d'un calque (œil).
     ToggleVisibility(Uuid),
     /// Supprimer un calque (croix de la rangée).
@@ -171,6 +188,40 @@ fn draw_selection_header(
     actions
 }
 
+/// Convertit un drop hiérarchique en action panneau : avant/après
+/// entre calques ⇒ `ReorderNodes` (même parent ou non), dedans un
+/// groupe déplié ⇒ `MoveIntoGroup`. Les pièces jointes ne se
+/// déplacent pas par DnD (`None` : leur ordre se règle aux boutons
+/// de leur ligne), pas plus qu'un dépôt dedans un non-groupe
+/// (garde-fou : `can_nest` l'interdit déjà côté liste).
+fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanelAction> {
+    if drop.dragged.kind != FlatRowKind::Layer {
+        return None;
+    }
+    match (drop.target.kind, drop.position) {
+        (FlatRowKind::Layer, DropPosition::Before) => Some(LayerPanelAction::ReorderNodes {
+            dragged: drop.dragged.id,
+            target: drop.target.id,
+            before: true,
+        }),
+        (FlatRowKind::Layer, DropPosition::After) => Some(LayerPanelAction::ReorderNodes {
+            dragged: drop.dragged.id,
+            target: drop.target.id,
+            before: false,
+        }),
+        (FlatRowKind::Layer, DropPosition::Into) => {
+            let groupe = find_layer_in(layers, drop.target.id)?;
+            (groupe.kind == super::types::PhotoLayerKind::Group).then_some(
+                LayerPanelAction::MoveIntoGroup {
+                    layer: drop.dragged.id,
+                    group: drop.target.id,
+                },
+            )
+        }
+        _ => None,
+    }
+}
+
 /// En-tête + liste bornée (réserve la barre de boutons) + barre bas.
 fn draw_layers_panel(
     ui: &mut egui::Ui,
@@ -215,6 +266,9 @@ fn draw_layers_panel(
             LayerItemAction::DuplicateLayer(id) => {
                 actions.push(LayerPanelAction::DuplicateLayer(id));
             }
+            LayerItemAction::ToggleCollapsed(id) => {
+                actions.push(LayerPanelAction::ToggleCollapsed(id));
+            }
             LayerItemAction::MoveFilter { layer, filter, up } => {
                 actions.push(LayerPanelAction::MoveFilter { layer, filter, up });
             }
@@ -229,8 +283,10 @@ fn draw_layers_panel(
             }
         }
     }
-    if let Some((from, to)) = drop {
-        actions.push(LayerPanelAction::Reorder { from, to });
+    if let Some(drop) = drop
+        && let Some(action) = convert_drop(layers, drop)
+    {
+        actions.push(action);
     }
     // Barre de boutons bas : ajouter image, calque vide, dupliquer,
     // masque, filtre, supprimer.
@@ -287,6 +343,7 @@ fn draw_layers_panel(
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::{FlatRow, FlatRowKind, LayerDrop};
     use super::*;
     use photo_engine::{Document, LayerNode, PixelLayer};
     use std::sync::Arc;
@@ -378,5 +435,97 @@ mod tests {
             });
         })
         .drop_without_applying_deltas();
+    }
+
+    fn flat_layer(id: Uuid, depth: usize, nestable: bool) -> FlatRow {
+        FlatRow {
+            id,
+            kind: FlatRowKind::Layer,
+            depth,
+            nestable,
+        }
+    }
+
+    #[test]
+    fn convert_drop_maps_before_after_into() {
+        use super::super::types::snapshot_layers;
+        use ui_kit::utils::DropPosition;
+        let dragged = Uuid::new_v4();
+        let target = Uuid::new_v4();
+        // Avant / après entre calques (même parent ou non).
+        for (position, before) in [(DropPosition::Before, true), (DropPosition::After, false)] {
+            let action = convert_drop(
+                &[],
+                LayerDrop {
+                    dragged: flat_layer(dragged, 0, false),
+                    target: flat_layer(target, 0, false),
+                    position,
+                },
+            );
+            assert_eq!(
+                action,
+                Some(LayerPanelAction::ReorderNodes {
+                    dragged,
+                    target,
+                    before,
+                })
+            );
+        }
+        // Dedans un groupe déplié du snapshot : imbrication.
+        let mut doc = photo_engine::Document::new(8, 8);
+        let inner = photo_engine::LayerNode::Pixel(photo_engine::PixelLayer::new(
+            "d",
+            std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+        ));
+        doc.push_layer(photo_engine::LayerNode::Group(
+            photo_engine::GroupLayer::new("g", vec![inner]),
+        ));
+        let layers = snapshot_layers(&doc);
+        let group_id = layers[0].id;
+        let action = convert_drop(
+            &layers,
+            LayerDrop {
+                dragged: flat_layer(dragged, 0, false),
+                target: flat_layer(group_id, 0, true),
+                position: DropPosition::Into,
+            },
+        );
+        assert_eq!(
+            action,
+            Some(LayerPanelAction::MoveIntoGroup {
+                layer: dragged,
+                group: group_id,
+            })
+        );
+        // Dedans un calque pixels : refusé (garde-fou).
+        let pixel_id = layers[0].children[0].id;
+        assert_eq!(
+            convert_drop(
+                &layers,
+                LayerDrop {
+                    dragged: flat_layer(dragged, 0, false),
+                    target: flat_layer(pixel_id, 1, false),
+                    position: DropPosition::Into,
+                },
+            ),
+            None
+        );
+        // Pièce jointe déplacée : refusée (ordre aux boutons).
+        assert_eq!(
+            convert_drop(
+                &layers,
+                LayerDrop {
+                    dragged: FlatRow {
+                        id: Uuid::new_v4(),
+                        kind: FlatRowKind::Filter { owner: group_id },
+                        depth: 1,
+                        nestable: false,
+                    },
+                    target: flat_layer(group_id, 0, true),
+                    position: DropPosition::Before,
+                },
+            ),
+            None
+        );
     }
 }

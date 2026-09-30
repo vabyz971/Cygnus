@@ -29,8 +29,24 @@ pub struct ReorderDragState {
     pub current_mouse_pos: egui::Pos2,
     /// Index d'insertion courant, pendant un drag.
     pub target_index: Option<usize>,
+    /// Position du dépôt courant (avant / dedans / après la cible).
+    pub drop_position: DropPosition,
     /// Vrai si un drag est en cours.
     pub is_dragging: bool,
+}
+
+/// Position d'un dépôt par rapport à sa ligne cible (listes
+/// hiérarchiques : `Into` = imbriquer dedans, la cible doit
+/// l'accepter).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DropPosition {
+    /// Insérer avant la ligne cible.
+    #[default]
+    Before,
+    /// Déposer dedans la cible (imbrication).
+    Into,
+    /// Insérer après la ligne cible.
+    After,
 }
 
 impl ReorderDragState {
@@ -51,6 +67,23 @@ impl ReorderDragState {
     pub fn end_drag(&mut self) -> Option<(usize, usize)> {
         let result = match (self.dragging_index, self.target_index) {
             (Some(from), Some(to)) if from != to => Some((from, to)),
+            _ => None,
+        };
+        self.reset();
+        result
+    }
+
+    /// Termine le drag et retourne `(from, to, position)` pour les
+    /// listes hiérarchiques (`Into` = imbriquer, même index que
+    /// l'origine accepté). Réinitialise dans tous les cas.
+    pub fn end_drag_hierarchical(&mut self) -> Option<(usize, usize, DropPosition)> {
+        let result = match (self.dragging_index, self.target_index) {
+            (Some(from), Some(to)) => match self.drop_position {
+                DropPosition::Into if from != to => Some((from, to, DropPosition::Into)),
+                DropPosition::Into => None,
+                position if from != to => Some((from, to, position)),
+                _ => None,
+            },
             _ => None,
         };
         self.reset();
@@ -91,5 +124,32 @@ mod tests {
         let mut state = ReorderDragState::default();
         state.start(0);
         assert_eq!(state.end_drag(), None);
+    }
+
+    #[test]
+    fn end_drag_hierarchical_keeps_position() {
+        use super::DropPosition;
+        let mut state = ReorderDragState::default();
+        state.start(1);
+        state.target_index = Some(3);
+        state.drop_position = DropPosition::After;
+        assert_eq!(
+            state.end_drag_hierarchical(),
+            Some((1, 3, DropPosition::After))
+        );
+        assert!(!state.is_dragging);
+        // Into sur soi-même : no-op (jamais de commande).
+        state.start(2);
+        state.target_index = Some(2);
+        state.drop_position = DropPosition::Into;
+        assert_eq!(state.end_drag_hierarchical(), None);
+        // Into ailleurs : conservé (le moteur valide ensuite).
+        state.start(2);
+        state.target_index = Some(5);
+        state.drop_position = DropPosition::Into;
+        assert_eq!(
+            state.end_drag_hierarchical(),
+            Some((2, 5, DropPosition::Into))
+        );
     }
 }

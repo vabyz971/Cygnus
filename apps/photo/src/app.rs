@@ -144,15 +144,8 @@ impl PhotoApp {
     /// Ferme le document `id` et retire son onglet canevas (sans
     /// effet si inconnu ; zéro document autorisé).
     pub fn close_document(&mut self, id: uuid::Uuid) {
-        if let Some(index) = self.docs.iter().position(|doc| doc.id == id) {
-            self.docs.remove(index);
-            crate::layout::dock::remove_canvas_tab(&mut self.shell.tree, id);
-            // Un document avant l'actif décalerait la sélection.
-            if index < self.active {
-                self.active -= 1;
-            }
-        }
-        self.active = self.active.min(self.docs.len().saturating_sub(1));
+        remove_document(&mut self.docs, &mut self.active, id);
+        crate::layout::dock::remove_canvas_tab(&mut self.shell.tree, id);
     }
 
     /// Envoie une commande au worker du document actif (sans effet
@@ -241,8 +234,22 @@ impl PhotoApp {
             PhotoAction::RenameLayer { layer, name } => {
                 self.send_active(PhotoEngineCommand::RenameLayer { layer, name });
             }
-            PhotoAction::ReorderLayers { from, to } => {
-                self.send_active(PhotoEngineCommand::ReorderLayer { from, to });
+            PhotoAction::ReorderNodes {
+                dragged,
+                target,
+                before,
+            } => {
+                self.send_active(PhotoEngineCommand::ReorderNodes {
+                    dragged,
+                    target,
+                    before,
+                });
+            }
+            PhotoAction::MoveIntoGroup { layer, group } => {
+                self.send_active(PhotoEngineCommand::MoveIntoGroup { layer, group });
+            }
+            PhotoAction::ToggleGroupCollapsed(id) => {
+                self.send_active(PhotoEngineCommand::ToggleGroupCollapsed(id));
             }
             PhotoAction::ToggleLayerVisibility(id) => {
                 // Optimiste : l'œil bascule dès cette frame, le worker
@@ -390,6 +397,22 @@ impl Default for PhotoApp {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Retire le document `id` de `docs` et recale `active` (zéro
+/// document autorisé : l'accueil prend le relais). Le worker du
+/// document s'arrête à la chute de ses channels. Partagée par
+/// `PhotoApp::close_document` (menu) et la croix des onglets canevas
+/// (`layout::dock`, qui retire aussi la tuile).
+pub(crate) fn remove_document(docs: &mut Vec<OpenDocument>, active: &mut usize, id: uuid::Uuid) {
+    if let Some(index) = docs.iter().position(|doc| doc.id == id) {
+        docs.remove(index);
+        // Un document avant l'actif décalerait la sélection.
+        if index < *active {
+            *active -= 1;
+        }
+    }
+    *active = (*active).min(docs.len().saturating_sub(1));
 }
 
 impl eframe::App for PhotoApp {

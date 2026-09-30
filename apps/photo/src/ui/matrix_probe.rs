@@ -283,7 +283,15 @@ fn to_command(worker: &EngineWorker, op: &MatrixOp) -> (PhotoEngineCommand, usiz
             (cmd, i + 1, bbox_area(bbox_union(before, after)))
         }
         MatrixOp::Reorder(from, to) => {
-            let cmd = PhotoEngineCommand::ReorderLayer { from, to };
+            // Équivalent ids du déplacement display : avant la cible en
+            // montée, après en descente.
+            let dragged = display_id(worker, from);
+            let target = display_id(worker, to);
+            let cmd = PhotoEngineCommand::ReorderNodes {
+                dragged,
+                target,
+                before: from > to,
+            };
             let affected = n - from.min(to);
             // Région : union des bornes des calques dont l'ordre change.
             let region = union_display_range(doc, from.max(to));

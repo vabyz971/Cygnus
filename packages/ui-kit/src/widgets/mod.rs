@@ -27,5 +27,5 @@ pub mod reorderable_list;
 
 pub use icon::{ALL_ICONS, CygnusIcon, icon_button};
 pub use reorderable_list::{
-    ReorderableList, compute_target_index, draw_drop_indicator, item_background,
+    HierarchicalDrop, ReorderableList, compute_target_index, draw_drop_indicator, item_background,
 };

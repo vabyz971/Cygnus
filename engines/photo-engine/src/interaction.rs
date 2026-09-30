@@ -397,6 +397,19 @@ impl InteractionOverlay {
     pub fn is_dirty(&self) -> bool {
         self.dirty && !self.is_empty()
     }
+
+    /// Géométrie de la frame courante `(x, y, w, h, génération)` SANS
+    /// cloner les pixels : permet à l'app de replacer sa texture en
+    /// cache à chaque frame (zoom/pan state-only) sans re-rendre.
+    /// `None` si vide (rien à afficher).
+    #[must_use]
+    pub fn frame_geom(&self) -> Option<(i32, i32, u32, u32, u64)> {
+        if self.is_empty() {
+            None
+        } else {
+            Some((self.ox, self.oy, self.w, self.h, self.generation))
+        }
+    }
 }
 
 impl Default for InteractionOverlay {
@@ -675,6 +688,63 @@ mod tests {
         assert!(bad.is_empty());
     }
 
+    #[test]
+    fn frame_geom_reexpose_sans_recloner() {
+        // Support du redraw persistant côté app : la géométrie reste
+        // disponible après `render()` (qui a consommé le dirty) sans
+        // toucher aux pixels, et disparaît au `clear()`.
+        let mut overlay = InteractionOverlay::new();
+        assert!(overlay.frame_geom().is_none());
+        overlay.begin_stroke(brush_paint());
+        overlay.add_points(&[(10.0, 10.0), (20.0, 20.0)]);
+        let frame = overlay.render().expect("frame");
+        let geom = overlay.frame_geom().expect("géométrie conservée");
+        assert_eq!(
+            (geom.0, geom.1, geom.2, geom.3),
+            (frame.x, frame.y, frame.width, frame.height)
+        );
+        assert_eq!(geom.4, frame.generation);
+        assert!(overlay.is_current(geom.4));
+        overlay.clear();
+        assert!(overlay.frame_geom().is_none());
+    }
+
+    #[test]
+    fn region_bornee_au_trait_grands_documents() {
+        // 1920x1080, 2048², 4096² : un PETIT trait reste petit — la
+        // région overlay est en O(stroke), jamais en O(document).
+        for (doc_w, doc_h) in [(1920.0, 1080.0), (2048.0, 2048.0), (4096.0, 4096.0)] {
+            let points = ligne(100.0, 100.0, 300.0, 250.0, 16);
+            let mut overlay = InteractionOverlay::new();
+            overlay.begin_stroke(BrushParams {
+                radius: 8.0,
+                color: [200, 30, 30],
+                opacity: 1.0,
+                mode: StrokeMode::Paint,
+            });
+            for chunk in points.chunks(8) {
+                overlay.add_points(chunk);
+            }
+            let frame = overlay.render().expect("frame non vide");
+            let area = u64::from(frame.width) * u64::from(frame.height);
+            let doc_area = (doc_w as u64) * (doc_h as u64);
+            assert!(
+                area * 20 < doc_area,
+                "région {w}x{h} bornée au trait (< 5 % du document {doc_w}x{doc_h})",
+                w = frame.width,
+                h = frame.height,
+            );
+            assert!(
+                frame.x >= 0 && frame.y >= 0,
+                "région dans l'espace document {doc_w}x{doc_h}"
+            );
+            // Mémoire bornée : masque + image de la région seule.
+            assert_eq!(
+                frame.rgba.len(),
+                frame.width as usize * frame.height as usize * 4
+            );
+        }
+    }
     /// Mesure un geste : `add_points` incrémental (par paquets de 8, comme
     /// un drag) + `render()` final. Retourne le mur total (µs) et la taille
     /// de la région overlay. JAMAIS d'assert sur le mur (matériel variable).

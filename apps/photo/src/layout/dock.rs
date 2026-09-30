@@ -26,19 +26,19 @@
 //!
 //! Les barres haute (menus, modes) et basse (statut) restent des
 //! `egui::Panel` fixes. Chaque document ouvert a son panneau
-//! « Canevas », titré `nom | zoom %` et épinglé (non fermable) :
-//! l'activer active le document, le fermer passe par le menu
-//! Fichier. Le rail d'outils est compact, titré d'une icône de
-//! drag (la barre d'onglet porte le DnD) ; l'inspecteur est
-//! au-dessus des calques, tous deux avec padding interne `sm`.
-//! Masquer un panneau (croix) le rend
+//! « Canevas », titré `nom | zoom %` et FERMABLE (croix de l'onglet) :
+//! l'activer active le document, le fermer ferme le document (retour
+//! à l'accueil si c'était le dernier). Le rail d'outils est compact,
+//! titré d'une icône de drag (la barre d'onglet porte le DnD) ;
+//! l'inspecteur est au-dessus des calques, tous deux avec padding
+//! interne `sm`. Masquer un autre panneau (croix) le rend
 //! invisible en gardant sa place ; le menu Fenêtre le réaffiche
 //! ([`PhotoAction::ShowDockTab`](crate::commands::PhotoAction)).
 //! Le style hérite d'egui (donc du thème Cygnus) : aucune couleur
 //! en dur ici.
 
 use super::{central_view, left_sidebar, right_sidebar};
-use crate::app::PhotoApp;
+use crate::app::{PhotoApp, remove_document};
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use egui_tiles::{Behavior, Container, TileId, Tiles, Tree, UiResponse};
@@ -373,20 +373,25 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         UiResponse::None
     }
 
-    /// Les canevas sont épinglés : pas de croix, sinon un
-    /// document serait fermé sans passer par le menu Fichier
-    /// (dernier document jamais à zéro). Masquer un autre panneau
-    /// le rend invisible en gardant sa place (menu Fenêtre).
-    fn is_tab_closable(&self, _tiles: &Tiles<PhotoDockTab>, tile_id: TileId) -> bool {
-        !matches!(
-            _tiles.get(tile_id),
-            Some(egui_tiles::Tile::Pane(PhotoDockTab::Canvas(_)))
-        )
+    /// Tous les onglets sont fermables : la croix d'un canevas ferme
+    /// son document (voir `on_tab_close`), celle d'un autre panneau
+    /// le masque en gardant sa place (menu Fenêtre pour rouvrir).
+    fn is_tab_closable(&self, _tiles: &Tiles<PhotoDockTab>, _tile_id: TileId) -> bool {
+        true
     }
 
     fn on_tab_close(&mut self, tiles: &mut Tiles<PhotoDockTab>, tile_id: TileId) -> bool {
-        // `false` = la tuile reste : on la masque au lieu de la
-        // détruire pour garder sa place dans le layout.
+        // Canevas : fermer le DOCUMENT (retiré des docs, worker arrêté
+        // à la chute des channels) et détruire la tuile (`true`).
+        // Zéro document restant = retour à l'accueil (le workspace
+        // n'affiche l'arbre que s'il reste un document).
+        if let Some(egui_tiles::Tile::Pane(PhotoDockTab::Canvas(id))) = tiles.get(tile_id) {
+            let id = *id;
+            remove_document(self.docs, self.active, id);
+            return true;
+        }
+        // Autre panneau : on le masque au lieu de le détruire pour
+        // garder sa place dans le layout (`false` = la tuile reste).
         tiles.set_visible(tile_id, false);
         false
     }
@@ -483,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_is_pinned_other_tabs_closeable() {
+    fn all_tabs_are_closable() {
         let ctx = egui::Context::default();
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let mut app = PhotoApp::new();
@@ -502,7 +507,61 @@ mod tests {
             );
         }
         let canvas_tile = find_tile(&tree, canvas(1)).expect("canevas présent");
-        assert!(!behavior.is_tab_closable(&tree.tiles, canvas_tile));
+        assert!(
+            behavior.is_tab_closable(&tree.tiles, canvas_tile),
+            "canevas fermable (ferme son document)"
+        );
+    }
+
+    #[test]
+    fn closing_canvas_tab_closes_document_and_returns_home() {
+        let ctx = egui::Context::default();
+        let photo_ctx = PhotoUiContext::for_frame(&ctx);
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(64, 64);
+        app.open_sized_tab(64, 64);
+        let first = app.docs[0].id;
+        let second = app.docs[1].id;
+        let mut tree = default_tree(vec![
+            PhotoDockTab::Canvas(first),
+            PhotoDockTab::Canvas(second),
+        ]);
+        // Fermer le premier canevas : document retiré, tuile détruite
+        // (`true` = egui_tiles détruit la tuile — reproduit ici par
+        // `remove_recursively`), second document actif.
+        {
+            let tile = find_tile(&tree, PhotoDockTab::Canvas(first)).expect("canevas 1");
+            let mut behavior = PhotoTreeBehavior {
+                docs: &mut app.docs,
+                active: &mut app.active,
+                ctx: &photo_ctx,
+                actions: Vec::new(),
+            };
+            assert!(behavior.on_tab_close(&mut tree.tiles, tile));
+            tree.remove_recursively(tile);
+        }
+        assert_eq!(app.docs.len(), 1);
+        assert_eq!(app.active_doc_opt().expect("doc restant").id, second);
+        assert!(!has_tab(&tree, PhotoDockTab::Canvas(first)));
+        assert!(has_tab(&tree, PhotoDockTab::Canvas(second)));
+        // Fermer le dernier : zéro document = retour à l'accueil.
+        {
+            let tile = find_tile(&tree, PhotoDockTab::Canvas(second)).expect("canevas 2");
+            let mut behavior = PhotoTreeBehavior {
+                docs: &mut app.docs,
+                active: &mut app.active,
+                ctx: &photo_ctx,
+                actions: Vec::new(),
+            };
+            assert!(behavior.on_tab_close(&mut tree.tiles, tile));
+            tree.remove_recursively(tile);
+        }
+        assert!(app.docs.is_empty(), "accueil : aucun document");
+        assert!(!has_tab(&tree, PhotoDockTab::Canvas(second)));
+        // Panneaux conservés pour la prochaine ouverture.
+        for tab in FIXED_TABS {
+            assert!(has_tab(&tree, tab), "panneau perdu : {tab:?}");
+        }
     }
 
     #[test]

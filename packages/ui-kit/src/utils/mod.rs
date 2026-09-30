@@ -18,4 +18,4 @@
 
 pub mod drag_state;
 
-pub use drag_state::ReorderDragState;
+pub use drag_state::{DropPosition, ReorderDragState};

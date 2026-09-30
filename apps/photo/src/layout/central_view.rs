@@ -29,8 +29,8 @@
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::{OpenDocument, sample_preview_color};
 use crate::ui::{
-    CanvasMapping, PhotoCanvas, PhotoCanvasTool, clear_ink, draw_brush_cursor,
-    draw_document_bounds, ink_brush_params, ink_overlay_screen_rect, ink_tool_active,
+    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasTool, clear_ink, draw_brush_cursor,
+    draw_cached_ink, draw_document_bounds, feed_ink_frame, ink_tool_active,
 };
 use ui_kit::components::{menu_row, menu_style};
 
@@ -81,62 +81,66 @@ pub fn draw_canvas_content(
         // miniatures sont intacts, §10).
         clear_ink(&mut doc.ui);
         doc.ui.needs_repaint = true;
-    } else if !outcome.ink_points.is_empty()
-        && let Some(selected) = doc.ui.selected
-        && let Some(info) = doc.ui.layers.iter().find(|layer| layer.id == selected)
-        && info.overlay_live
-    {
-        let transform = info.transform;
-        let eraser = doc.ui.tool == PhotoCanvasTool::Eraser;
-        if outcome.ink_gesture_started {
+    } else {
+        let origin = geom.map(|g| g.origin).unwrap_or(egui::Vec2::ZERO);
+        let thumb_w = geom.map(|g| g.thumb_size.x).unwrap_or(0.0);
+        // Snapshot panneau copié AVANT l'emprunt mutable (transform +
+        // gate : jamais devinés par l'UI).
+        let live = doc.ui.selected.and_then(|id| {
             doc.ui
-                .ink_overlay
-                .begin_stroke(ink_brush_params(&doc.ui.brush, eraser));
+                .layers
+                .iter()
+                .find(|layer| layer.id == id)
+                .map(|info| (info.transform, info.overlay_live))
+        });
+        let mut fed = false;
+        if !outcome.ink_points.is_empty()
+            && let Some((transform, true)) = live
+        {
+            let eraser = doc.ui.tool == PhotoCanvasTool::Eraser;
+            let brush = doc.ui.brush;
+            let points: Vec<(f32, f32)> = outcome
+                .ink_points
+                .iter()
+                .map(|point| (point.x, point.y))
+                .collect();
+            fed = feed_ink_frame(
+                ui,
+                &mut doc.ui,
+                InkFrameInput {
+                    points: &points,
+                    gesture_started: outcome.ink_gesture_started,
+                    eraser,
+                    brush,
+                    transform,
+                    overlay_live: true,
+                    dest: outcome.dest_rect,
+                    origin,
+                    thumb_to_doc: mapping.thumb_to_doc,
+                    thumb_w,
+                },
+            )
+            .is_some();
         }
-        let points: Vec<(f32, f32)> = outcome
-            .ink_points
-            .iter()
-            .map(|point| (point.x, point.y))
-            .collect();
-        doc.ui.ink_overlay.add_points(&points);
-        if let Some(frame) = doc.ui.ink_overlay.render() {
-            doc.ui.ink_metrics = doc.ui.ink_overlay.metrics();
-            // Rejet périmé (§10) : une frame d'une génération antérieure
-            // (geste annulé/commis entre-temps) ne s'affiche jamais.
-            if doc.ui.ink_overlay.is_current(frame.generation)
-                && let (Some(dest), Some(view_geom)) = (outcome.dest_rect, geom)
-                && let Some(rect) = ink_overlay_screen_rect(
-                    &frame,
-                    &transform,
-                    dest,
-                    view_geom.origin,
-                    mapping.thumb_to_doc,
-                    view_geom.thumb_size.x,
-                )
-            {
-                // Téléversement CHAQUE frame (la génération est par geste :
-                // la région grandit à chaque paquet de points — seule une
-                // frame périmée, rejetée plus haut, ne monte jamais au GPU).
-                let handle = ui.ctx().load_texture(
-                    "photo_ink_overlay",
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [frame.width as usize, frame.height as usize],
-                        &frame.rgba,
-                    ),
-                    egui::TextureOptions::NEAREST,
-                );
-                doc.ui.ink_texture = Some(handle);
-                if let Some(texture) = &doc.ui.ink_texture {
-                    ui.painter().image(
-                        texture.id(),
-                        rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                }
-            }
+        if fed {
+            // Nouveau segment affiché ce frame : le drag continue.
+            doc.ui.needs_repaint = true;
+        } else if outcome.ink_dragging
+            && draw_cached_ink(
+                ui,
+                &doc.ui,
+                outcome.dest_rect,
+                origin,
+                mapping.thumb_to_doc,
+                thumb_w,
+            )
+        {
+            // Palier du drag (bouton tenu, aucun point ce frame) : la
+            // texture en cache est replacée au `dest` courant — visible
+            // sans attendre le `MouseUp`, sans re-rendre (zoom/pan
+            // state-only : même id de texture).
+            doc.ui.needs_repaint = true;
         }
-        doc.ui.needs_repaint = true;
     }
     // Commit du déplacement (outil sélection) : routé au worker.
     if let Some(moving) = outcome.move_layer {

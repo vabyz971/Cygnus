@@ -87,8 +87,26 @@ pub enum PhotoAction {
     SelectLayer(Uuid),
     /// Renommer un calque (worker).
     RenameLayer { layer: Uuid, name: String },
-    /// Réordonner (indices d'affichage, worker).
-    ReorderLayers { from: usize, to: usize },
+    /// Réordonner par ids (drag & drop hiérarchique, worker) :
+    /// `dragged` avant (`before`) ou après (`!before`) `target`
+    /// (même parent ou non — nesting libre).
+    ReorderNodes {
+        /// Calque déplacé.
+        dragged: Uuid,
+        /// Calque cible.
+        target: Uuid,
+        /// Vrai = avant la cible, faux = après.
+        before: bool,
+    },
+    /// Imbriquer un calque en tête d'un groupe (worker).
+    MoveIntoGroup {
+        /// Calque déplacé.
+        layer: Uuid,
+        /// Groupe d'accueil.
+        group: Uuid,
+    },
+    /// Replier / déplier un groupe (worker, sans re-rendu).
+    ToggleGroupCollapsed(Uuid),
     /// Basculer la visibilité (worker).
     ToggleLayerVisibility(Uuid),
     /// Régler l'opacité (unités moteur 0..=100, worker).

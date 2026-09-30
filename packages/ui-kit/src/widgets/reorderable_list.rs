@@ -21,7 +21,7 @@
 //! par video (clips) et audio (pistes). Strictement domain-agnostic :
 //! aucun type métier ici.
 
-use super::super::utils::drag_state::ReorderDragState;
+use super::super::utils::drag_state::{DropPosition, ReorderDragState};
 use crate::theme::CygnusTheme;
 
 /// Calcule l'index cible d'insertion selon la position Y de la souris
@@ -96,6 +96,18 @@ pub fn draw_drop_indicator(
         y,
         egui::Stroke::new(2.0, theme.colors.drop_indicator),
     );
+}
+
+/// Drop hiérarchique : indices dans `items` + position par rapport
+/// à la cible (`Into` = imbriquer dedans).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HierarchicalDrop {
+    /// Index d'origine du drag.
+    pub from: usize,
+    /// Index de la ligne cible.
+    pub to: usize,
+    /// Position par rapport à la cible.
+    pub position: DropPosition,
 }
 
 /// Liste GÉNÉRIQUE réordonnable par drag & drop avec virtualisation.
@@ -196,6 +208,135 @@ impl<'a, T> ReorderableList<'a, T> {
 
         dropped
     }
+
+    /// Affiche une liste NON virtualisée à hauteurs variables avec
+    /// drops hiérarchiques (avant / dedans / après).
+    ///
+    /// Pour les listes hétérogènes de taille raisonnable (panneau
+    /// calques : lignes parents + enfants indentés) où chaque item a
+    /// sa hauteur (`heights`) : fini les chevauchements de la
+    /// virtualisation à hauteur fixe. `can_nest` dit quelles lignes
+    /// acceptent un dépôt dedans (tiers central) ; `can_drag` dit
+    /// quelles lignes peuvent être déplacées ; les autres n'ont que
+    /// avant/après (moitiés). Retourne le drop hiérarchique.
+    pub fn show_variable(
+        self,
+        ui: &mut egui::Ui,
+        heights: impl Fn(&T) -> f32,
+        can_nest: impl Fn(&T) -> bool,
+        can_drag: impl Fn(&T) -> bool,
+        mut draw_item: impl FnMut(&mut egui::Ui, &T, usize, bool),
+    ) -> Option<HierarchicalDrop> {
+        let mut dropped = None;
+        // Lignes visibles : (index, rect réel) — les cibles se
+        // calculent sur la géométrie allouée, jamais sur une hauteur
+        // supposée.
+        let mut rows: Vec<(usize, egui::Rect)> = Vec::new();
+        let panel_rect = ui.min_rect();
+        let total = self.items.len();
+        let drag = self.drag_state;
+        let items = self.items;
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (index, item) in items.iter().enumerate() {
+                let height = heights(item).max(1.0);
+                let is_dragging_this = drag.dragging_index == Some(index);
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), height),
+                    egui::Sense::click_and_drag(),
+                );
+                rows.push((index, rect));
+
+                if response.drag_started() {
+                    // Seules les lignes déplaçables ouvrent un geste
+                    // (les autres restent cliquables normalement).
+                    if can_drag(item) {
+                        drag.start(index);
+                        drag.drop_position = DropPosition::Before;
+                    }
+                }
+                if response.dragged()
+                    && let Some(pos) = ui.ctx().pointer_latest_pos()
+                {
+                    drag.current_mouse_pos = pos;
+                    let mut target = drag.dragging_index.unwrap_or(index);
+                    let mut position = DropPosition::After;
+                    for (row_index, row_rect) in &rows {
+                        if row_rect.contains(pos) {
+                            target = *row_index;
+                            position =
+                                drop_position_in(pos, row_rect, can_nest(&items[*row_index]));
+                            break;
+                        }
+                    }
+                    drag.target_index = Some(target.min(total));
+                    drag.drop_position = position;
+                }
+                if response.drag_stopped()
+                    && let Some((from, to, position)) = drag.end_drag_hierarchical()
+                {
+                    dropped = Some(HierarchicalDrop { from, to, position });
+                }
+
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    draw_item(ui, item, index, is_dragging_this);
+                });
+            }
+        });
+
+        if drag.is_dragging {
+            paint_variable_indicator(ui, drag, &rows, panel_rect);
+        }
+
+        dropped
+    }
+}
+
+/// Position du dépôt dans une ligne : tiers central + `nestable` ⇒
+/// `Into`, sinon moitié haute/basse ⇒ `Before`/`After`.
+fn drop_position_in(pos: egui::Pos2, rect: &egui::Rect, nestable: bool) -> DropPosition {
+    let third = rect.height() / 3.0;
+    if nestable && pos.y >= rect.top() + third && pos.y < rect.top() + 2.0 * third {
+        DropPosition::Into
+    } else if pos.y < rect.center().y {
+        DropPosition::Before
+    } else {
+        DropPosition::After
+    }
+}
+
+/// Indicateur de drop variable : fond sur la cible (`Into`), ligne
+/// d'insertion sinon (haut de la cible, ou bas de liste en fin).
+fn paint_variable_indicator(
+    ui: &mut egui::Ui,
+    drag: &ReorderDragState,
+    rows: &[(usize, egui::Rect)],
+    panel_rect: egui::Rect,
+) {
+    let theme = CygnusTheme::dark();
+    let Some(target) = drag.target_index else {
+        return;
+    };
+    if drag.drop_position == DropPosition::Into {
+        if let Some((_, rect)) = rows.iter().find(|(index, _)| *index == target) {
+            ui.painter()
+                .rect_filled(*rect, theme.radius.sm, theme.colors.item_selected);
+        }
+        return;
+    }
+    let y = rows
+        .iter()
+        .find(|(index, _)| *index == target)
+        .map(|(_, rect)| rect.top())
+        .unwrap_or_else(|| {
+            rows.last()
+                .map_or(panel_rect.top(), |(_, rect)| rect.bottom())
+        });
+    ui.painter().hline(
+        egui::Rangef::new(panel_rect.left(), panel_rect.right()),
+        y,
+        egui::Stroke::new(2.0, theme.colors.drop_indicator),
+    );
 }
 
 #[cfg(test)]
@@ -357,5 +498,60 @@ mod tests {
             mean_ms < budget_ms,
             "rendu moyen trop lent avec 200 items : {mean_ms:.2}ms/frame (budget {budget_ms}ms)"
         );
+    }
+
+    #[test]
+    fn drop_position_in_tiers_central_si_nestable() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 90.0), egui::vec2(300.0, 90.0));
+        // Tiers central + nestable => Into.
+        assert_eq!(
+            drop_position_in(egui::pos2(10.0, 135.0), &rect, true),
+            DropPosition::Into
+        );
+        // Tiers central + non nestable => moitié (haute ici).
+        assert_eq!(
+            drop_position_in(egui::pos2(10.0, 130.0), &rect, false),
+            DropPosition::Before
+        );
+        // Haut => Before, bas => After (nestable ou non).
+        assert_eq!(
+            drop_position_in(egui::pos2(10.0, 95.0), &rect, true),
+            DropPosition::Before
+        );
+        assert_eq!(
+            drop_position_in(egui::pos2(10.0, 170.0), &rect, true),
+            DropPosition::After
+        );
+        assert_eq!(
+            drop_position_in(egui::pos2(10.0, 170.0), &rect, false),
+            DropPosition::After
+        );
+    }
+
+    #[test]
+    fn show_variable_without_interaction_returns_none() {
+        let ctx = egui::Context::default();
+        let items: Vec<(String, f32)> = (0..5)
+            .map(|i| (format!("item {i}"), 40.0 + i as f32 * 8.0))
+            .collect();
+        let mut drag = ReorderDragState::default();
+        let mut drawn = 0;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let result = ReorderableList::new(&items, 0.0, &mut drag).show_variable(
+                    ui,
+                    |(_, height)| *height,
+                    |_| false,
+                    |_| true,
+                    |ui, (label, _), _index, _dragging| {
+                        drawn += 1;
+                        ui.label(label);
+                    },
+                );
+                assert_eq!(result, None);
+            });
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(drawn, 5, "toutes les lignes dessinées, hauteurs variables");
     }
 }

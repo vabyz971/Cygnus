@@ -59,7 +59,9 @@ pub use features::{
         layer_panel_action_to_photo,
     },
 };
-pub use ink_overlay::{clear_ink, ink_brush_params, ink_overlay_screen_rect, ink_tool_active};
+pub use ink_overlay::{
+    InkFrameGeom, InkFrameInput, clear_ink, draw_cached_ink, feed_ink_frame, ink_tool_active,
+};
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;

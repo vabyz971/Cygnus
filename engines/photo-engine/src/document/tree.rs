@@ -193,6 +193,19 @@ impl Document {
         true
     }
 
+    /// Bascule l'état replié/déplié d'un groupe (affichage panneau
+    /// Calques uniquement : aucun pixel touché). Faux si `id` n'est
+    /// pas un groupe.
+    pub fn set_collapsed(&mut self, id: Uuid, collapsed: bool) -> bool {
+        match self.find_mut(id) {
+            Some(LayerNode::Group(groupe)) => {
+                groupe.collapsed = collapsed;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Réordonne par drag & drop : déplace `dragged` avant ou après `target`.
     pub fn reorder_before(&mut self, dragged: Uuid, target: Uuid, before: bool) -> bool {
         if !self.can_reorder_before(dragged, target)

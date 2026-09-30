@@ -27,12 +27,13 @@
 //! pour le canvas.
 //!
 //! Convention d'indices : le panneau affiche le haut de pile en
-//! premier ; `ReorderLayer { from, to }` utilise ces indices
-//! d'affichage. Le worker les reconvertit (`doc = len - 1 - display`)
-//! avant de manipuler `document.root` (index 0 = bas de pile).
+//! premier, hiérarchie récursive incluse (`children`) ; les drops
+//! hiérarchiques sont résolus en ids par le panneau, le worker ne
+//! manipule que des ids (`reorder_before` / `move_into`, récursifs
+//! côté moteur).
 
 use super::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with,
+    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
 };
 use photo_engine::tiles::TileRegion;
 use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
@@ -78,8 +79,26 @@ pub struct PreviewImage {
 pub enum PhotoEngineCommand {
     /// Basculer la visibilité d'un calque.
     ToggleLayerVisibility(Uuid),
-    /// Réordonner (indices d'affichage : 0 = haut de pile).
-    ReorderLayer { from: usize, to: usize },
+    /// Réordonner par ids (drop hiérarchique avant/après : même
+    /// parent ou non — nesting libre via `reorder_before` moteur).
+    ReorderNodes {
+        /// Calque déplacé.
+        dragged: Uuid,
+        /// Calque cible.
+        target: Uuid,
+        /// Vrai = avant la cible, faux = après.
+        before: bool,
+    },
+    /// Imbriquer un calque en tête d'un groupe (`move_into` moteur).
+    MoveIntoGroup {
+        /// Calque déplacé.
+        layer: Uuid,
+        /// Groupe d'accueil.
+        group: Uuid,
+    },
+    /// Replier / déplier un groupe (affichage seul : snapshot sans
+    /// nouveau composite).
+    ToggleGroupCollapsed(Uuid),
     /// Régler l'opacité d'un calque (unités moteur 0..=100).
     SetOpacity { layer: Uuid, opacity: f32 },
     /// Régler le mode de fusion d'un calque (choix discret).
@@ -222,16 +241,6 @@ pub enum PhotoEngineResponse {
     },
 }
 
-/// Convertit un index d'affichage (0 = haut de pile) en index
-/// document (`root[0]` = bas de pile). `None` si hors limites.
-pub fn display_to_doc_index(display: usize, len: usize) -> Option<usize> {
-    if display < len {
-        Some(len - 1 - display)
-    } else {
-        None
-    }
-}
-
 // ---------------------------------------------------------------------------
 // INSTRUMENTATION TEMPORAIRE (diagnostic perf, aucune incidence
 // fonctionnelle) : timings worker + compteurs, à retirer une fois le
@@ -369,7 +378,9 @@ impl PhotoEngineCommand {
     pub fn op_name(&self) -> &'static str {
         match self {
             Self::ToggleLayerVisibility(_) => "toggle_visibility",
-            Self::ReorderLayer { .. } => "reorder",
+            Self::ReorderNodes { .. } => "reorder_nodes",
+            Self::MoveIntoGroup { .. } => "move_into_group",
+            Self::ToggleGroupCollapsed(_) => "toggle_collapsed",
             Self::SetOpacity { .. } => "set_opacity",
             Self::SetBlendMode { .. } => "set_blend_mode",
             Self::Undo => "undo",
@@ -414,13 +425,13 @@ pub enum RenderInvalidation {
 /// Note : `SetOpacity`/`MoveLayer` sont `NodeInvalidated` au sens de
 /// `Command::affects_composite` (pensé pour un futur draw GPU), mais
 /// le composite CPU doit quand même être re-blendé → `Composite`.
-/// Seul le renommage est purement `StateOnly` aujourd'hui.
+/// Renommage et repli de groupe sont purement `StateOnly`.
 pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInvalidation) {
     match command {
         PhotoEngineCommand::ToggleLayerVisibility(_) => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
-        PhotoEngineCommand::ReorderLayer { .. } => {
+        PhotoEngineCommand::ReorderNodes { .. } | PhotoEngineCommand::MoveIntoGroup { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
         PhotoEngineCommand::SetOpacity { layer, .. } => (
@@ -454,7 +465,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::SetPreviewClip { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
-        PhotoEngineCommand::RenameLayer { layer, .. } => (
+        PhotoEngineCommand::RenameLayer { layer, .. }
+        | PhotoEngineCommand::ToggleGroupCollapsed(layer) => (
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::StateOnly,
         ),
@@ -800,6 +812,15 @@ impl EngineWorker {
         } else {
             SubmitDecision::Submit
         }
+    }
+
+    /// État replié courant d'un groupe (faux si `id` n'est pas un
+    /// groupe) : le toggle worker inverse cette valeur.
+    fn is_collapsed(&self, id: Uuid) -> bool {
+        matches!(
+            self.document.find(id),
+            Some(photo_engine::LayerNode::Group(groupe)) if groupe.collapsed
+        )
     }
 
     /// Soumet les miniatures périmées (version live inconnue du store ET non
@@ -1292,22 +1313,47 @@ impl EngineWorker {
                     .map_or(DirtyMark::Global, mark_for_node);
                 Mutation::changed(invalidation).with_dirty(dirty)
             }
-            PhotoEngineCommand::ReorderLayer { from, to } => {
-                // Indices d'affichage (0 = haut de pile) vers `root`
-                // (index 0 = bas de pile) : `to == len` = bas de pile.
-                let len = self.document.root.len();
-                if len == 0 || from >= len {
-                    return Mutation::unchanged();
-                }
-                let to = to.min(len);
-                if from == to {
+            PhotoEngineCommand::ReorderNodes {
+                dragged,
+                target,
+                before,
+            } => {
+                // Drop hiérarchique avant/après : le moteur déplace le
+                // sous-arbre (même parent ou non — nesting libre).
+                if !self.document.can_reorder_before(dragged, target) {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                let node = self.document.root.remove(len - 1 - from);
-                let remaining = self.document.root.len();
-                let insert_at = remaining.saturating_sub(to).min(remaining);
-                self.document.root.insert(insert_at, node);
+                if !self.document.reorder_before(dragged, target, before) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::MoveIntoGroup { layer, group } => {
+                // Drop dedans un groupe : insertion en tête des enfants.
+                if !self.document.can_move_into(layer, group) {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                if !self.document.move_into(layer, group) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::ToggleGroupCollapsed(id) => {
+                // Affichage seul : aucun pixel touché (snapshot seul).
+                // Snapshot PRÉ-mutation (jamais après).
+                if !matches!(
+                    self.document.find(id),
+                    Some(photo_engine::LayerNode::Group(_))
+                ) {
+                    return Mutation::unchanged();
+                }
+                let collapsed = !self.is_collapsed(id);
+                self.push_history(None);
+                self.document.set_collapsed(id, collapsed);
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::SetOpacity { layer, opacity } => {
@@ -2101,14 +2147,6 @@ mod tests {
     }
 
     #[test]
-    fn display_index_conversion() {
-        assert_eq!(display_to_doc_index(0, 3), Some(2));
-        assert_eq!(display_to_doc_index(2, 3), Some(0));
-        assert_eq!(display_to_doc_index(3, 3), None);
-        assert_eq!(display_to_doc_index(0, 0), None);
-    }
-
-    #[test]
     fn toggle_visibility_command() {
         let mut doc = three_layer_doc();
         let id = doc.root[0].id();
@@ -2120,12 +2158,20 @@ mod tests {
     }
 
     #[test]
-    fn reorder_command_moves_display_top_to_bottom() {
-        // Affichage [dessus, milieu, fond] ; (0 -> 3) = "dessus" en bas.
+    fn reorder_nodes_moves_by_ids() {
+        // Affichage [dessus, milieu, fond] ; "dessus" avant "fond"
+        // (ordre racine : juste au-dessus du bas = bas de pile
+        // affiché) : [milieu, fond, dessus].
         let mut doc = three_layer_doc();
+        let dragged = doc.root[2].id();
+        let target = doc.root[0].id();
         apply_command(
             &mut doc,
-            PhotoEngineCommand::ReorderLayer { from: 0, to: 3 },
+            PhotoEngineCommand::ReorderNodes {
+                dragged,
+                target,
+                before: true,
+            },
         );
         let names: Vec<String> = snapshot_layers(&doc)
             .iter()
@@ -2135,12 +2181,19 @@ mod tests {
     }
 
     #[test]
-    fn reorder_command_bottom_to_top() {
-        // (2 -> 0) = "fond" tout en haut.
+    fn reorder_nodes_bottom_to_top() {
+        // "fond" après "dessus" (ordre racine : au-dessus = tout en
+        // haut affiché) : [fond, dessus, milieu].
         let mut doc = three_layer_doc();
+        let dragged = doc.root[0].id();
+        let target = doc.root[2].id();
         apply_command(
             &mut doc,
-            PhotoEngineCommand::ReorderLayer { from: 2, to: 0 },
+            PhotoEngineCommand::ReorderNodes {
+                dragged,
+                target,
+                before: false,
+            },
         );
         let names: Vec<String> = snapshot_layers(&doc)
             .iter()
@@ -2150,19 +2203,119 @@ mod tests {
     }
 
     #[test]
+    fn reorder_nodes_into_group_and_back() {
+        // Nesting libre : un calque entre dans un groupe puis en sort
+        // (avant un calque racine) — undo/redo suivent.
+        use photo_engine::GroupLayer;
+        let mut worker = EngineWorker::new({
+            let mut doc = Document::new(8, 8);
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", test_image())));
+            doc.push_layer(LayerNode::Group(GroupLayer::new(
+                "groupe",
+                vec![LayerNode::Pixel(PixelLayer::new("dedans", test_image()))],
+            )));
+            doc
+        });
+        let fond = worker.document.root[0].id();
+        let groupe = worker.document.root[1].id();
+        worker.apply(PhotoEngineCommand::MoveIntoGroup {
+            layer: fond,
+            group: groupe,
+        });
+        let layers = snapshot_layers(&worker.document);
+        assert_eq!(layers.len(), 1, "tout est dans le groupe");
+        assert_eq!(layers[0].children.len(), 2);
+        // Sortie : "fond" après le groupe (haut de pile racine).
+        worker.apply(PhotoEngineCommand::ReorderNodes {
+            dragged: fond,
+            target: groupe,
+            before: false,
+        });
+        let names: Vec<String> = snapshot_layers(&worker.document)
+            .iter()
+            .map(|l| l.name.clone())
+            .collect();
+        assert_eq!(names, ["fond", "groupe"]);
+        // Undo x2 : retour à l'état initial (fond hors groupe).
+        worker.apply(PhotoEngineCommand::Undo);
+        worker.apply(PhotoEngineCommand::Undo);
+        let names: Vec<String> = snapshot_layers(&worker.document)
+            .iter()
+            .map(|l| l.name.clone())
+            .collect();
+        assert_eq!(names, ["groupe", "fond"]);
+        assert!(snapshot_layers(&worker.document)[1].children.is_empty());
+    }
+
+    #[test]
+    fn toggle_collapsed_is_state_only_with_undo() {
+        // Repli : snapshot seul (aucun composite), undo restaure.
+        use photo_engine::GroupLayer;
+        let mut worker = EngineWorker::new({
+            let mut doc = Document::new(8, 8);
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", test_image())));
+            doc.push_layer(LayerNode::Group(GroupLayer::new(
+                "groupe",
+                vec![LayerNode::Pixel(PixelLayer::new("dedans", test_image()))],
+            )));
+            doc
+        });
+        let groupe = worker.document.root[1].id();
+        let renders = worker.metrics.renders;
+        assert_eq!(
+            flattened_len(&snapshot_layers(&worker.document)),
+            3,
+            "groupe déplié : fond + groupe + enfant"
+        );
+        let response = worker.apply(PhotoEngineCommand::ToggleGroupCollapsed(groupe));
+        assert!(
+            matches!(response, PhotoEngineResponse::StateChanged { .. }),
+            "repli = snapshot seul"
+        );
+        assert_eq!(worker.metrics.renders, renders, "aucun re-rendu");
+        let layers = snapshot_layers(&worker.document);
+        assert!(layers[0].collapsed, "groupe replié");
+        assert_eq!(flattened_len(&layers), 2, "enfant masqué de la liste");
+        // Id inconnu : no-op.
+        worker.apply(PhotoEngineCommand::ToggleGroupCollapsed(Uuid::new_v4()));
+        // Undo : déplié à nouveau.
+        worker.apply(PhotoEngineCommand::Undo);
+        let layers = snapshot_layers(&worker.document);
+        assert!(!layers[0].collapsed);
+        assert_eq!(flattened_len(&layers), 3);
+    }
+
+    #[test]
     fn invalid_commands_are_noops() {
         let mut doc = three_layer_doc();
+        let target = doc.root[0].id();
         apply_command(
             &mut doc,
             PhotoEngineCommand::ToggleLayerVisibility(Uuid::new_v4()),
         );
+        // Cible inconnue ou sur soi-même : no-op.
         apply_command(
             &mut doc,
-            PhotoEngineCommand::ReorderLayer { from: 9, to: 0 },
+            PhotoEngineCommand::ReorderNodes {
+                dragged: Uuid::new_v4(),
+                target,
+                before: true,
+            },
         );
         apply_command(
             &mut doc,
-            PhotoEngineCommand::ReorderLayer { from: 1, to: 1 },
+            PhotoEngineCommand::ReorderNodes {
+                dragged: target,
+                target,
+                before: true,
+            },
+        );
+        apply_command(
+            &mut doc,
+            PhotoEngineCommand::MoveIntoGroup {
+                layer: target,
+                group: Uuid::new_v4(),
+            },
         );
         let names: Vec<String> = snapshot_layers(&doc)
             .iter()
@@ -2254,7 +2407,14 @@ mod tests {
             }
         ));
         assert_eq!(worker.metrics.renders, 0);
-        worker.apply(PhotoEngineCommand::ReorderLayer { from: 0, to: 3 });
+        // "dessus" avant "fond" (bas de pile), comme l'ancien (0 -> 3).
+        let dragged = worker.document.root[2].id();
+        let target = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::ReorderNodes {
+            dragged,
+            target,
+            before: true,
+        });
         worker.apply(PhotoEngineCommand::Undo);
         let names: Vec<String> = snapshot_layers(&worker.document)
             .iter()
@@ -2298,6 +2458,8 @@ mod tests {
     #[test]
     fn worker_roundtrip_over_channels() {
         let doc = three_layer_doc();
+        let dragged = doc.root[2].id();
+        let target = doc.root[0].id();
         let (cmd_tx, cmd_rx) = channel();
         let (resp_tx, resp_rx) = channel();
         let handle = spawn_photo_engine_worker(doc, cmd_rx, resp_tx);
@@ -2305,7 +2467,11 @@ mod tests {
         // Le thread UI ne bloque jamais : poll immédiat vide…
         assert!(resp_rx.try_recv().is_err());
         cmd_tx
-            .send(PhotoEngineCommand::ReorderLayer { from: 0, to: 3 })
+            .send(PhotoEngineCommand::ReorderNodes {
+                dragged,
+                target,
+                before: true,
+            })
             .expect("envoi commande");
         // …puis réponse du worker (opération lourde hors UI).
         let response = resp_rx.recv().expect("reponse worker");
@@ -2525,10 +2691,27 @@ mod tests {
         use RenderEvent::{FullInvalidation, NodeInvalidated};
         use RenderInvalidation::{Composite, StateOnly};
         let id = Uuid::new_v4();
+        let other = Uuid::new_v4();
         // Structurel : invalidation composite totale.
         assert_eq!(
-            render_routing(&PhotoEngineCommand::ReorderLayer { from: 0, to: 1 }),
+            render_routing(&PhotoEngineCommand::ReorderNodes {
+                dragged: id,
+                target: other,
+                before: true,
+            }),
             (FullInvalidation, Composite)
+        );
+        assert_eq!(
+            render_routing(&PhotoEngineCommand::MoveIntoGroup {
+                layer: id,
+                group: other,
+            }),
+            (FullInvalidation, Composite)
+        );
+        // Repli : seul l'état change, aucun pixel.
+        assert_eq!(
+            render_routing(&PhotoEngineCommand::ToggleGroupCollapsed(id)),
+            (NodeInvalidated(id), StateOnly)
         );
         // Visibilité : affecte le blending global (affects_composite).
         assert_eq!(
@@ -3024,6 +3207,172 @@ mod single_pass_tests {
         assert_eq!(m.dirty_region_px, 0);
         assert_eq!(m.dirty_tiles, 0);
         assert_eq!(m.scheduled_tiles, 0);
+    }
+
+    #[test]
+    fn paint_commit_undo_redo_geste_complet() {
+        // Geste complet : UN PaintStroke au MouseUp (tout le drag
+        // coalescé par le canvas) ⇒ UNE entrée d'historique ; Undo
+        // restaure les pixels, Redo rejoue le trait.
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let target = worker.document.root[0].id();
+        let pixel = |worker: &EngineWorker| {
+            worker
+                .test_document()
+                .pixel_layer(target)
+                .expect("calque present")
+                .source_image
+                .to_rgba8()
+                .get_pixel(1, 1)
+                .0
+        };
+        assert_eq!(pixel(&worker)[3], 0, "fond transparent au départ");
+        // Points tels que le canvas les accumule pendant le drag.
+        let points: Vec<(f32, f32)> = (0..8).map(|i| (i as f32, i as f32)).collect();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points,
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        });
+        match response {
+            PhotoEngineResponse::LayersChanged {
+                revision,
+                can_undo,
+                can_redo,
+                ..
+            } => {
+                assert_eq!(revision, RenderRevision(1));
+                assert!(can_undo);
+                assert!(!can_redo);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        assert_eq!(worker.undo.len(), 1, "un geste = une entrée");
+        assert_eq!(&pixel(&worker)[0..3], &[0, 0, 255]);
+        assert_eq!(pixel(&worker)[3], 255);
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(pixel(&worker)[3], 0, "undo restaure le transparent");
+        assert_eq!(worker.undo.len(), 0);
+        worker.apply(PhotoEngineCommand::Redo);
+        assert_eq!(&pixel(&worker)[0..3], &[0, 0, 255], "redo rejoue le trait");
+        assert_eq!(worker.undo.len(), 1);
+    }
+
+    #[test]
+    #[ignore = "mesure commit (mur indicatif, jamais asserté)"]
+    fn perf_commit_2048() {
+        // Temps du commit au MouseUp sur 2048² : mutation + composite +
+        // miniature secondaire (inline ici). Mur indicatif seulement.
+        let mut worker = EngineWorker::new({
+            use photo_engine::{LayerNode, PixelLayer};
+            use std::sync::Arc;
+            let mut doc = Document::new(2048, 2048);
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+                "fond",
+                Arc::new(image::DynamicImage::new_rgba8(2048, 2048)),
+            )));
+            doc
+        });
+        worker.apply(PhotoEngineCommand::Refresh);
+        let target = worker.document.root[0].id();
+        let points: Vec<(f32, f32)> = (0..64)
+            .map(|i| (100.0 + i as f32 * 24.0, 260.0 + i as f32 * 3.0))
+            .collect();
+        worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points,
+            eraser: false,
+            radius: 8.0,
+            color: [200, 30, 30],
+            opacity: 1.0,
+        });
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        eprintln!(
+            "commit-2048 : total={}µs mutation={}µs composite={}µs canvas_critical={}µs dirty_px={} dirty_tiles={}",
+            m.total_us,
+            m.mutation_us,
+            m.composite_us,
+            m.canvas_critical_us,
+            m.dirty_region_px,
+            m.dirty_tiles,
+        );
+    }
+
+    #[test]
+    fn paint_commit_chemin_canvas_critical_avant_miniatures() {
+        // Après MouseUp : commit ⇒ DirtyRegion observée + rendu canvas
+        // (révision bumpée, preview présent) + miniatures en secondaire
+        // (1 job, jamais pendant le drag — le drag n'envoie rien).
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        worker.apply(PhotoEngineCommand::Refresh);
+        let submitted_before = worker.metrics.thumb.submitted;
+        let target = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points: vec![(1.0, 1.0), (2.0, 2.0)],
+            eraser: false,
+            radius: 2.0,
+            color: [0, 0, 255],
+            opacity: 1.0,
+        });
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        assert!(m.dirty_region_px > 0, "DirtyRegion calculée au commit");
+        assert!(
+            m.canvas_critical_us >= m.composite_us,
+            "canvas-critical mesuré"
+        );
+        assert_eq!(
+            worker.metrics.thumb.submitted,
+            submitted_before + 1,
+            "miniature soumise AU commit, jamais pendant le drag"
+        );
+        assert_eq!(m.thumbnail_jobs_completed, 1);
+        match response {
+            PhotoEngineResponse::LayersChanged { preview, .. } => {
+                assert!(preview.is_some(), "CanvasCritical produit le preview");
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paint_grand_document_1920_reste_borne() {
+        // 1920x1080 : commit d'un petit trait ⇒ dirty région petite
+        // devant le document, tuiles marquées < total, révision +1.
+        let mut worker = EngineWorker::new({
+            use photo_engine::{LayerNode, PixelLayer};
+            use std::sync::Arc;
+            let mut doc = Document::new(1920, 1080);
+            doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+                "fond",
+                Arc::new(image::DynamicImage::new_rgba8(1920, 1080)),
+            )));
+            doc
+        });
+        let target = worker.document.root[0].id();
+        let response = worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: target,
+            points: vec![(100.0, 100.0), (300.0, 250.0)],
+            eraser: false,
+            radius: 8.0,
+            color: [200, 30, 30],
+            opacity: 1.0,
+        });
+        match response {
+            PhotoEngineResponse::LayersChanged { revision, .. } => {
+                assert_eq!(revision, RenderRevision(1));
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        let m = worker.metrics.last.as_ref().expect("metriques");
+        let doc_px = 1920u64 * 1080;
+        assert!(m.dirty_region_px < doc_px / 10, "région bornée au trait");
+        // Grille 256 px sur 1920x1080 ⇒ 8x5 = 40 tuiles au plus.
+        assert!(m.dirty_tiles < 40, "tuiles marquées < total");
+        assert!(m.dirty_tiles >= 1);
     }
 
     #[test]

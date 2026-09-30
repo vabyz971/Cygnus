@@ -418,6 +418,91 @@ mod tests {
     }
 
     #[test]
+    fn drag_rapporte_ink_avant_commit_puis_commit_au_relachement() {
+        // Contrat MouseMove→MouseUp : pendant le drag, `paint` est None
+        // (AUCUN commit, AUCUN worker) et `ink_points` est non vide
+        // (feedback live) ; au relâchement, `paint` porte tout le geste.
+        use std::cell::{Cell, RefCell};
+
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let layer = uuid::Uuid::new_v4();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let center = Cell::new(egui::pos2(400.0, 300.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 600.0))))
+                        .tool(PhotoCanvasTool::Brush)
+                        .active_layer(Some(layer))
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+
+        // Frame 0 : sans interaction — géométrie apprise, rien d'autre.
+        let out = frame(vec![]);
+        assert!(out.paint.is_none());
+        assert!(out.ink_points.is_empty());
+        if let Some(dest) = out.dest_rect {
+            center.set(dest.center());
+        }
+        let c = center.get();
+        // Frames 1..=4 : pressé puis déplacé — feedback, jamais de commit.
+        let moved = |p: egui::Pos2| egui::Event::PointerMoved(p);
+        let press = |p: egui::Pos2| egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let release = |p: egui::Pos2| egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        let p0 = c;
+        let pts = [
+            p0,
+            c + egui::vec2(20.0, 5.0),
+            c + egui::vec2(40.0, 15.0),
+            c + egui::vec2(60.0, 10.0),
+        ];
+        let out = frame(vec![moved(p0), press(p0)]);
+        assert!(out.paint.is_none(), "press seul : aucun commit");
+        let mut saw_ink = false;
+        for p in pts.iter().skip(1) {
+            let out = frame(vec![moved(*p)]);
+            assert!(out.paint.is_none(), "pendant le drag : aucun commit");
+            if !out.ink_points.is_empty() {
+                saw_ink = true;
+            }
+        }
+        assert!(saw_ink, "feedback visible AVANT le MouseUp");
+        // Relâchement : le geste complet est commis en UNE fois.
+        let out = frame(vec![moved(pts[3]), release(pts[3])]);
+        let paint = out.paint.expect("commit au MouseUp");
+        assert_eq!(paint.layer, layer);
+        assert!(paint.points.len() >= 3, "tout le drag commis");
+        assert!(stroke.is_empty(), "points vidés au commit");
+        assert!(!paint.eraser);
+    }
+
+    #[test]
     fn canvas_renders_with_every_tool_without_panic() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);

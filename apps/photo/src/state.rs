@@ -148,6 +148,8 @@ pub struct PhotoUiState {
     pub ink_overlay: photo_engine::interaction::InteractionOverlay,
     /// Texture du trait transitoire (région bornée au geste).
     pub ink_texture: Option<egui::TextureHandle>,
+    /// Géométrie de la frame en cache (redraw persistant sans re-rendre).
+    pub ink_frame: Option<crate::ui::InkFrameGeom>,
     /// Dernières métriques d'interaction (rapport/tests, pas d'affichage).
     pub ink_metrics: photo_engine::interaction::InteractionMetrics,
     /// Réglages pinceau/gomme.

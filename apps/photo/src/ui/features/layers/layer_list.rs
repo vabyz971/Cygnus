@@ -14,35 +14,57 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Liste des calques : virtualisation + réordonnancement.
+//! Liste des calques : hiérarchie aplatie + réordonnancement.
 //!
-//! Toute la mécanique de drag & drop est déléguée à
-//! `ui_kit::components::ReorderableList` (générique) ; ce module ne contient que
-//! le rendu photo (voir [`super::layer_item`]) et le fantôme de drag.
-//! Le drop remonte en `(from, to)` (indices d'affichage), converti en
-//! [`PhotoAction`](crate::commands::PhotoAction) par [`super::panel`].
+//! La hiérarchie (`children`, filtres, masques) est aplatie en lignes
+//! à hauteur connue ([`super::types::flatten_layers`]) puis affichée
+//! via `ui_kit::components::ReorderableList::show_variable` : chaque
+//! ligne alloue EXACTEMENT sa hauteur — aucun chevauchement possible.
+//! Le drop remonte en [`LayerDrop`](super::types::LayerDrop) (avant /
+//! dedans / après), converti en [`PhotoAction`](crate::commands::PhotoAction)
+//! par [`super::panel`] (jamais d'envoi worker ici).
 
-use super::layer_item::{LayerItemAction, LayerRenameState, draw_photo_layer_item};
-use super::types::{LayerThumbView, PhotoLayerInfo};
+use super::layer_item::{
+    LayerItemAction, LayerRenameState, draw_attachment_row, draw_photo_layer_item,
+};
+use super::types::{
+    FlatRow, FlatRowKind, LayerDrop, LayerThumbView, PhotoLayerInfo, find_attachment_in,
+    find_layer_in, flat_row_name, flatten_layers,
+};
 use std::collections::HashMap;
-use ui_kit::components::ReorderableList;
+use ui_kit::components::{HierarchicalDrop, ReorderableList};
 use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::ReorderDragState;
 use uuid::Uuid;
 
-/// Hauteur d'une ligne de calque HUD (rangée principale + bandeau
-/// sous-couches, virtualisation à hauteur fixe).
-pub const PHOTO_LAYER_ITEM_HEIGHT: f32 = 76.0;
+/// Hauteur d'une ligne de calque (rangée centrée 28 px + marges).
+pub const LAYER_ROW_HEIGHT: f32 = 44.0;
+/// Hauteur d'une ligne enfant (filtre, masque).
+pub const ATTACHMENT_ROW_HEIGHT: f32 = 30.0;
+
+/// Hauteur allouée d'une ligne aplatie (jamais de chevauchement : la
+/// liste alloue exactement cette hauteur par ligne).
+pub fn row_height_for(kind: FlatRowKind) -> f32 {
+    match kind {
+        FlatRowKind::Layer => LAYER_ROW_HEIGHT,
+        FlatRowKind::Filter { .. } | FlatRowKind::Mask { .. } => ATTACHMENT_ROW_HEIGHT,
+    }
+}
 
 /// Dessine le fantôme semi-transparent qui suit la souris pendant le drag.
-fn draw_drag_ghost(ui: &mut egui::Ui, drag_state: &ReorderDragState, layers: &[PhotoLayerInfo]) {
+fn draw_drag_ghost(
+    ui: &mut egui::Ui,
+    drag_state: &ReorderDragState,
+    rows: &[FlatRow],
+    layers: &[PhotoLayerInfo],
+) {
     if !drag_state.is_dragging {
         return;
     }
     let Some(dragging) = drag_state.dragging_index else {
         return;
     };
-    let Some(layer) = layers.get(dragging) else {
+    let Some(row) = rows.get(dragging) else {
         return;
     };
     let Some(pointer) = ui.ctx().pointer_latest_pos() else {
@@ -61,16 +83,28 @@ fn draw_drag_ghost(ui: &mut egui::Ui, drag_state: &ReorderDragState, layers: &[P
     painter.text(
         rect.left_center() + egui::vec2(theme.spacing.sm, 0.0),
         egui::Align2::LEFT_CENTER,
-        layer.name.clone(),
+        flat_row_name(layers, row),
         egui::FontId::proportional(theme.typography.body_size),
         theme.colors.fg_primary,
     );
 }
 
-/// Dessine la liste virtualisée et réordonnable.
+/// Convertit un drop d'indices aplatis en [`LayerDrop`] (bornes
+/// vérifiées : `None` si la liste a changé entre-temps).
+fn resolve_drop(rows: &[FlatRow], drop: HierarchicalDrop) -> Option<LayerDrop> {
+    let dragged = rows.get(drop.from).copied()?;
+    let target = rows.get(drop.to).copied()?;
+    Some(LayerDrop {
+        dragged,
+        target,
+        position: drop.position,
+    })
+}
+
+/// Dessine la liste hiérarchique réordonnable.
 ///
 /// Retourne les actions des lignes et, le cas échéant, le drop
-/// `(from, to)` en indices d'affichage (jamais d'envoi worker ici).
+/// hiérarchique résolu en lignes (jamais d'envoi worker ici).
 pub fn draw_layer_list(
     ui: &mut egui::Ui,
     layers: &[PhotoLayerInfo],
@@ -78,22 +112,41 @@ pub fn draw_layer_list(
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
     thumbs: &HashMap<Uuid, LayerThumbView>,
-) -> (Vec<LayerItemAction>, Option<(usize, usize)>) {
+) -> (Vec<LayerItemAction>, Option<LayerDrop>) {
     let mut actions = Vec::new();
-    let reorder = ReorderableList::new(layers, PHOTO_LAYER_ITEM_HEIGHT, drag_state).show(
+    let rows = flatten_layers(layers);
+    let drop = ReorderableList::new(&rows, LAYER_ROW_HEIGHT, drag_state).show_variable(
         ui,
-        |ui, layer, _index, _is_dragging| {
-            actions.extend(draw_photo_layer_item(
-                ui,
-                layer,
-                Some(layer.id) == selected,
-                rename,
-                thumbs.get(&layer.id).copied(),
-            ));
+        |row| row_height_for(row.kind),
+        |row| row.nestable,
+        // Seuls les calques se déplacent par DnD (les pièces jointes
+        // se réordonnent aux boutons monter/descendre de leur ligne).
+        |row| row.kind == FlatRowKind::Layer,
+        |ui, row, _index, _is_dragging| match row.kind {
+            FlatRowKind::Layer => {
+                if let Some(layer) = find_layer_in(layers, row.id) {
+                    actions.extend(draw_photo_layer_item(
+                        ui,
+                        layer,
+                        Some(layer.id) == selected,
+                        rename,
+                        thumbs.get(&layer.id).copied(),
+                        row.depth,
+                    ));
+                }
+            }
+            FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
+                let is_filter = matches!(row.kind, FlatRowKind::Filter { .. });
+                if let Some((sub, _)) = find_attachment_in(layers, owner, row.id) {
+                    actions.extend(draw_attachment_row(
+                        ui, owner, sub.id, &sub.name, is_filter, row.depth,
+                    ));
+                }
+            }
         },
     );
-    draw_drag_ghost(ui, drag_state, layers);
-    let drop = reorder.filter(|(from, to)| from != to);
+    draw_drag_ghost(ui, drag_state, &rows, layers);
+    let drop = drop.and_then(|d| resolve_drop(&rows, d));
     (actions, drop)
 }
 
@@ -136,5 +189,65 @@ mod tests {
         assert!(reported.0.is_empty(), "aucun clic sans interaction");
         assert_eq!(reported.1, None);
         assert!(!drag_state.is_dragging);
+    }
+
+    #[test]
+    fn rows_allocate_exact_heights_by_kind() {
+        use super::super::types::{FlatRowKind, flatten_layers};
+        // 3 calques plats : 3 lignes à hauteur calque, somme exacte.
+        let layers = fixture_layers();
+        let rows = flatten_layers(&layers);
+        assert_eq!(rows.len(), 3);
+        let total: f32 = rows.iter().map(|row| row_height_for(row.kind)).sum();
+        assert_eq!(total, 3.0 * LAYER_ROW_HEIGHT);
+        assert!(rows.iter().all(|row| row.kind == FlatRowKind::Layer));
+        // Un calque avec filtre : 2 lignes (calque + enfant), le
+        // bandeau horizontal a disparu — plus de dépassement.
+        let mut doc = Document::new(8, 8);
+        let mut pixels = PixelLayer::new("fond", Arc::new(image::DynamicImage::new_rgba8(4, 4)));
+        pixels.filter_layers.push(photo_engine::FilterLayer::new(
+            "brightness_contrast",
+            "luminosite",
+            std::collections::HashMap::new(),
+        ));
+        doc.push_layer(LayerNode::Pixel(pixels));
+        let layers = super::super::types::snapshot_layers(&doc);
+        let rows = flatten_layers(&layers);
+        assert_eq!(rows.len(), 2, "filtre = ligne à part entière");
+        let total: f32 = rows.iter().map(|row| row_height_for(row.kind)).sum();
+        assert_eq!(total, LAYER_ROW_HEIGHT + ATTACHMENT_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn hierarchical_list_renders_group_and_attachment_without_panic() {
+        use photo_engine::GroupLayer;
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut doc = Document::new(8, 8);
+        let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", image.clone())));
+        doc.push_layer(LayerNode::Group(GroupLayer::new(
+            "groupe",
+            vec![LayerNode::Pixel(PixelLayer::new("dedans", image))],
+        )));
+        let layers = super::super::types::snapshot_layers(&doc);
+        let mut drag_state = ReorderDragState::default();
+        let mut rename = LayerRenameState::default();
+        let mut reported = (Vec::new(), None);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                reported = draw_layer_list(
+                    ui,
+                    &layers,
+                    None,
+                    &mut rename,
+                    &mut drag_state,
+                    &std::collections::HashMap::new(),
+                );
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(reported.0.is_empty(), "aucun clic sans interaction");
+        assert_eq!(reported.1, None);
     }
 }
