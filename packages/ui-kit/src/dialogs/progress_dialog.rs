@@ -19,7 +19,7 @@
 //! Le travail reste sur thread background ; l'app nourrit `fraction`
 //! depuis son channel et peut annuler via `cancel_requested`.
 
-use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
 /// Dialogue de progression (export, rendu…).
@@ -59,7 +59,7 @@ impl<'a> CygnusProgressDialog<'a> {
         if !*open {
             return;
         }
-        let theme = CygnusTheme::dark();
+        let theme = ctx.cygnus_theme();
         egui::Window::new(heading_text(&theme, self.title))
             .collapsible(false)
             .resizable(false)

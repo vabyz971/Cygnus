@@ -235,7 +235,7 @@ fn draw_layers_panel(
     let mut actions = Vec::new();
     actions.extend(draw_selection_header(ui, theme, layers, selected));
     // Liste bornée : réserve l'en-tête et la barre de boutons.
-    let bar_height = 40.0;
+    let bar_height = theme.sizes.bar_height;
     let list_height = (ui.available_height() - bar_height).max(80.0);
     let (item_actions, drop) = ui
         .allocate_ui_with_layout(

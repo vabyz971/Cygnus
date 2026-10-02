@@ -23,6 +23,7 @@
 use crate::i18n::Catalog;
 use crate::icons::IconRegistry;
 use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 
 /// Dépendances communes à toute frame UI.
 #[derive(Debug, Clone)]
@@ -54,14 +55,11 @@ impl UiContext {
         }
     }
 
-    /// Contexte standard : thème sombre, registre et catalogue par défaut.
+    /// Contexte standard : thème installé (sombre par défaut),
+    /// registre et catalogue par défaut.
     pub fn dark(ctx: egui::Context) -> Self {
-        Self::new(
-            ctx,
-            CygnusTheme::dark(),
-            IconRegistry::new(),
-            Catalog::default(),
-        )
+        let theme = ctx.cygnus_theme();
+        Self::new(ctx, theme, IconRegistry::new(), Catalog::default())
     }
 
     /// Contexte egui.

@@ -57,7 +57,7 @@ pub fn draw_tool_rail(
         for (index, tool) in mode.tools().iter().enumerate() {
             let tool = *tool;
             let (icon, tip) = tool_icon(tool);
-            let size = egui::vec2(28.0, 28.0);
+            let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
             let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
             // Fondu d'apparition (egui natif) vers survol/sélection.
             let active = *current_tool == tool;
@@ -78,7 +78,10 @@ pub fn draw_tool_rail(
             let response = ui
                 .put(
                     rect,
-                    egui::Button::new(IconRegistry::new().sized(icon, 16.0)).frame(false),
+                    egui::Button::new(
+                        IconRegistry::new().sized(icon, theme.typography.heading_size),
+                    )
+                    .frame(false),
                 )
                 .on_hover_text(tip);
             if response.clicked() {

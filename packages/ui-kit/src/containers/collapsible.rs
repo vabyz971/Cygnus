@@ -20,7 +20,7 @@
 //! L'état ouvert/fermé est détenu par l'app via `&mut bool`, ce qui
 //! rend la bascule testable sans contexte UI.
 
-use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
 /// Section repliable standard Cygnus.
@@ -49,7 +49,7 @@ impl<'a> Collapsible<'a> {
     /// Dessine le chevron d'ouverture (peint, sans glyphe).
     /// Chevron ">" fermé, "v" ouvert.
     fn paint_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool) {
-        let theme = CygnusTheme::dark();
+        let theme = ui.cygnus_theme();
         let stroke = egui::Stroke::new(1.5, theme.colors.fg_secondary);
         let center = rect.center();
         let half = 4.0;
@@ -94,7 +94,7 @@ impl<'a> Collapsible<'a> {
         open: &mut bool,
         add_contents: impl FnOnce(&mut egui::Ui) -> R,
     ) -> (egui::Response, Option<egui::InnerResponse<R>>) {
-        let theme = CygnusTheme::dark();
+        let theme = ui.cygnus_theme();
         let header = ui.horizontal(|ui| {
             let (rect, chevron) =
                 ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());

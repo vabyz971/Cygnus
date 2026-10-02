@@ -37,6 +37,18 @@ pub struct CygnusSizes {
     pub input_height: f32,
     /// Taille d'un bouton icône carré (28px).
     pub icon_button: f32,
+    /// Hauteur d'une ligne de calque photo (44px).
+    pub layer_row: f32,
+    /// Hauteur d'une ligne de pièce jointe (30px).
+    pub attachment_row: f32,
+    /// Miniature carrée d'un calque (28px).
+    pub layer_thumb: f32,
+    /// Bouton d'outil carré de la barre d'outils (28px).
+    pub tool_button: f32,
+    /// Carte de préréglage du dialogue de création (90px).
+    pub preset_card: f32,
+    /// Hauteur d'une barre de sélection photo (40px).
+    pub bar_height: f32,
     /// Hauteur d'un onglet (28px).
     pub tab_height: f32,
     /// Cible tactile minimale (24px).
@@ -54,6 +66,12 @@ impl CygnusSizes {
             button_lg: 40.0,
             input_height: 30.0,
             icon_button: 28.0,
+            layer_row: 44.0,
+            attachment_row: 30.0,
+            layer_thumb: 28.0,
+            tool_button: 28.0,
+            preset_card: 90.0,
+            bar_height: 40.0,
             tab_height: 28.0,
             min_touch: 24.0,
         }

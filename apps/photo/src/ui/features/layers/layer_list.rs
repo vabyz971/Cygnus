@@ -34,20 +34,17 @@ use super::types::{
 use std::collections::HashMap;
 use ui_kit::components::{HierarchicalDrop, ReorderableList};
 use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use ui_kit::utils::ReorderDragState;
 use uuid::Uuid;
 
-/// Hauteur d'une ligne de calque (rangée centrée 28 px + marges).
-pub const LAYER_ROW_HEIGHT: f32 = 44.0;
-/// Hauteur d'une ligne enfant (filtre, masque).
-pub const ATTACHMENT_ROW_HEIGHT: f32 = 30.0;
-
 /// Hauteur allouée d'une ligne aplatie (jamais de chevauchement : la
-/// liste alloue exactement cette hauteur par ligne).
-pub fn row_height_for(kind: FlatRowKind) -> f32 {
+/// liste alloue exactement cette hauteur par ligne). Les valeurs
+/// vivent dans le thème (`sizes.layer_row`, `sizes.attachment_row`).
+pub fn row_height_for(theme: &CygnusTheme, kind: FlatRowKind) -> f32 {
     match kind {
-        FlatRowKind::Layer => LAYER_ROW_HEIGHT,
-        FlatRowKind::Filter { .. } | FlatRowKind::Mask { .. } => ATTACHMENT_ROW_HEIGHT,
+        FlatRowKind::Layer => theme.sizes.layer_row,
+        FlatRowKind::Filter { .. } | FlatRowKind::Mask { .. } => theme.sizes.attachment_row,
     }
 }
 
@@ -70,7 +67,7 @@ fn draw_drag_ghost(
     let Some(pointer) = ui.ctx().pointer_latest_pos() else {
         return;
     };
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     let rect = egui::Rect::from_min_size(
         egui::pos2(pointer.x + 12.0, pointer.y - 16.0),
         egui::vec2(200.0, 32.0),
@@ -115,9 +112,10 @@ pub fn draw_layer_list(
 ) -> (Vec<LayerItemAction>, Option<LayerDrop>) {
     let mut actions = Vec::new();
     let rows = flatten_layers(layers);
-    let drop = ReorderableList::new(&rows, LAYER_ROW_HEIGHT, drag_state).show_variable(
+    let theme = ui.cygnus_theme();
+    let drop = ReorderableList::new(&rows, theme.sizes.layer_row, drag_state).show_variable(
         ui,
-        |row| row_height_for(row.kind),
+        |row| row_height_for(&theme, row.kind),
         |row| row.nestable,
         // Seuls les calques se déplacent par DnD (les pièces jointes
         // se réordonnent aux boutons monter/descendre de leur ligne).
@@ -194,12 +192,16 @@ mod tests {
     #[test]
     fn rows_allocate_exact_heights_by_kind() {
         use super::super::types::{FlatRowKind, flatten_layers};
+        let theme = CygnusTheme::dark();
         // 3 calques plats : 3 lignes à hauteur calque, somme exacte.
         let layers = fixture_layers();
         let rows = flatten_layers(&layers);
         assert_eq!(rows.len(), 3);
-        let total: f32 = rows.iter().map(|row| row_height_for(row.kind)).sum();
-        assert_eq!(total, 3.0 * LAYER_ROW_HEIGHT);
+        let total: f32 = rows
+            .iter()
+            .map(|row| row_height_for(&theme, row.kind))
+            .sum();
+        assert_eq!(total, 3.0 * theme.sizes.layer_row);
         assert!(rows.iter().all(|row| row.kind == FlatRowKind::Layer));
         // Un calque avec filtre : 2 lignes (calque + enfant), le
         // bandeau horizontal a disparu — plus de dépassement.
@@ -214,8 +216,11 @@ mod tests {
         let layers = super::super::types::snapshot_layers(&doc);
         let rows = flatten_layers(&layers);
         assert_eq!(rows.len(), 2, "filtre = ligne à part entière");
-        let total: f32 = rows.iter().map(|row| row_height_for(row.kind)).sum();
-        assert_eq!(total, LAYER_ROW_HEIGHT + ATTACHMENT_ROW_HEIGHT);
+        let total: f32 = rows
+            .iter()
+            .map(|row| row_height_for(&theme, row.kind))
+            .sum();
+        assert_eq!(total, theme.sizes.layer_row + theme.sizes.attachment_row);
     }
 
     #[test]

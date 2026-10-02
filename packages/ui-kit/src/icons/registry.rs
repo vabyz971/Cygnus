@@ -23,6 +23,7 @@
 
 use super::glyph::CygnusIcon;
 use super::icon::Icon;
+use crate::theme::UiThemeExt;
 
 /// Fournisseur de glyphes pour les apps (zéro dépendance externe).
 #[derive(Debug, Clone, Copy, Default)]
@@ -174,7 +175,9 @@ pub const ALL_ICONS: &[Icon] = &[
 /// ```
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: Option<&str>) -> egui::Response {
     let registry = IconRegistry::new();
-    let response = ui.add(egui::Button::new(registry.sized(icon, 18.0)).frame(false));
+    let theme = ui.cygnus_theme();
+    let response =
+        ui.add(egui::Button::new(registry.sized(icon, theme.typography.icon_size)).frame(false));
     if let Some(tip) = tooltip {
         response.clone().on_hover_text(tip)
     } else {

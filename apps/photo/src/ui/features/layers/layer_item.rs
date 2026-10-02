@@ -28,7 +28,7 @@
 use super::types::{LayerThumbView, PhotoLayerInfo};
 use ui_kit::components::{IconButton, menu_row, menu_style};
 use ui_kit::icons::{Icon, IconRegistry};
-use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
 /// État du renommage inline (double-clic sur le nom, détenu par l'app).
@@ -85,7 +85,7 @@ pub fn draw_photo_layer_item(
     thumb: Option<LayerThumbView>,
     depth: usize,
 ) -> Vec<LayerItemAction> {
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     let mut actions = Vec::new();
 
     // Interaction de la rangée (clic = sélection, double-clic sur le
@@ -178,12 +178,18 @@ pub fn draw_photo_layer_item(
         if let Some(view) = thumb {
             ui.add(
                 egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
-                    .fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                    .fit_to_exact_size(egui::vec2(
+                        theme.sizes.layer_thumb,
+                        theme.sizes.layer_thumb,
+                    )),
             );
         } else {
             ui.add_sized(
-                egui::vec2(28.0, 28.0),
-                egui::Button::new(IconRegistry::new().sized(layer.kind.icon(), 18.0)).frame(true),
+                egui::vec2(theme.sizes.layer_thumb, theme.sizes.layer_thumb),
+                egui::Button::new(
+                    IconRegistry::new().sized(layer.kind.icon(), theme.typography.icon_size),
+                )
+                .frame(true),
             );
         }
         ui.add_space(theme.spacing.xs);
@@ -248,7 +254,7 @@ pub fn draw_attachment_row(
     is_filter: bool,
     depth: usize,
 ) -> Vec<LayerItemAction> {
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     let mut actions = Vec::new();
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.add_space(depth as f32 * theme.spacing.lg);

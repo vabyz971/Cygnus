@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use ui_kit::context::UiContext;
 use ui_kit::i18n::{Catalog, Language};
 use ui_kit::icons::IconRegistry;
-use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
 /// Action UI émise par un panel, le viewport ou un menu.
@@ -207,7 +207,7 @@ impl PhotoUiContext {
         Self {
             shared: UiContext::new(
                 ctx.clone(),
-                CygnusTheme::dark(),
+                ctx.cygnus_theme(),
                 IconRegistry::new(),
                 Catalog::new(Language::Fr),
             ),

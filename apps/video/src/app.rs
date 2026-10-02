@@ -16,7 +16,7 @@
 
 //! App Video minimale : placeholder en attendant `video-engine`.
 
-use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::{body_text, heading_text};
 
 /// App Video (base minimale).
@@ -33,7 +33,7 @@ impl VideoApp {
 
     /// Dessine le placeholder central.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
-        let theme = CygnusTheme::dark();
+        let theme = ui.cygnus_theme();
         egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label(heading_text(&theme, "Cygnus Video"));

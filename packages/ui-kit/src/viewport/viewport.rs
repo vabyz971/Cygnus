@@ -29,7 +29,7 @@
 
 use super::viewport_interaction::{ViewportAction, ViewportTool, handle_pointer};
 use super::viewport_state::ViewportState;
-use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 
 /// UV couvrant toute la texture.
 fn full_uv() -> egui::Rect {
@@ -210,7 +210,7 @@ impl Viewport {
 
     /// Dessine la grille dans `rect` (pas écran de 32px, plafonnée).
     fn paint_grid(ui: &mut egui::Ui, rect: egui::Rect) {
-        let theme = CygnusTheme::dark();
+        let theme = ui.cygnus_theme();
         let stroke = egui::Stroke::new(1.0, theme.colors.border.linear_multiply(0.5));
         let step = 32.0;
         let vertical = ((rect.width() / step) as usize).min(100);
@@ -233,7 +233,7 @@ impl Viewport {
 
     /// Affiche le canvas et applique les interactions au `state`.
     pub fn show(self, ui: &mut egui::Ui, state: &mut ViewportState) -> ViewportResponse {
-        let theme = CygnusTheme::dark();
+        let theme = ui.cygnus_theme();
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         ui.painter()

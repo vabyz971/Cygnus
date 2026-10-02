@@ -29,6 +29,8 @@ pub struct CygnusBorders {
     pub medium: f32,
     /// Trait épais, drag & drop (3px).
     pub thick: f32,
+    /// Trait de sélection (2.5px).
+    pub selected: f32,
 }
 
 impl CygnusBorders {
@@ -38,6 +40,7 @@ impl CygnusBorders {
             thin: 1.0,
             medium: 2.0,
             thick: 3.0,
+            selected: 2.5,
         }
     }
 }

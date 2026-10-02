@@ -22,7 +22,7 @@
 //! aucun type métier ici.
 
 use super::super::utils::drag_state::{DropPosition, ReorderDragState};
-use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 
 /// Calcule l'index cible d'insertion selon la position Y de la souris
 /// relativement à la ligne survolee `current_index`.
@@ -47,7 +47,7 @@ pub fn compute_target_index(
 /// Helper pour les callbacks `draw_item` des apps (évite de dupliquer
 /// la logique dans photo/video/audio).
 pub fn item_background(ui: &mut egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) {
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     let bg = if selected {
         theme.colors.item_selected
     } else if hovered {
@@ -90,7 +90,7 @@ pub fn draw_drop_indicator(
         rows.last()
             .map_or(ui.min_rect().top(), |(_, top)| top + row_height)
     });
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     ui.painter().hline(
         egui::Rangef::new(left, right),
         y,
@@ -313,7 +313,7 @@ fn paint_variable_indicator(
     rows: &[(usize, egui::Rect)],
     panel_rect: egui::Rect,
 ) {
-    let theme = CygnusTheme::dark();
+    let theme = ui.cygnus_theme();
     let Some(target) = drag.target_index else {
         return;
     };

@@ -21,6 +21,7 @@ use ui_kit::components::Tabs;
 use ui_kit::components::{Button, ButtonVariant};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
 use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::{body_size, body_text, heading_text};
 
 /// Résolution d'impression pour les unités physiques (in, cm, pica).
@@ -30,9 +31,6 @@ pub const DOC_MAX_DIMENSION: f64 = 16_000.0;
 
 /// Unités de dimension (pica = 1/6 de pouce, unité typographique).
 pub const DOC_UNITS: &[&str] = &["px", "in", "cm", "pica"];
-
-/// Largeur d'une carte de préset (carré, sa hauteur est identique).
-const PRESET_CARD_SIZE: f32 = 90.0;
 
 /// Préset de nouveau document (dimensions en pixels).
 struct Preset {
@@ -266,7 +264,7 @@ fn draw_preset_card(
     preset: &Preset,
     selected: bool,
 ) -> bool {
-    let size = egui::vec2(PRESET_CARD_SIZE, PRESET_CARD_SIZE);
+    let size = egui::vec2(theme.sizes.preset_card, theme.sizes.preset_card);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
 
     // Carré blanc arrondi dont les proportions reflètent le ratio du canvas.
@@ -280,7 +278,11 @@ fn draw_preset_card(
 
     let painter = ui.painter();
     painter.rect_filled(card, theme.radius.md, theme.colors.fg_primary);
-    let stroke_width = if selected { 2.5 } else { 1.0 };
+    let stroke_width = if selected {
+        theme.borders.selected
+    } else {
+        theme.borders.thin
+    };
     let stroke_color = if selected {
         theme.colors.accent
     } else if resp.hovered() {
@@ -354,7 +356,7 @@ pub fn draw_create_document_dialog(
     if !state.open {
         return None;
     }
-    let theme = CygnusTheme::dark();
+    let theme = ctx.cygnus_theme();
     let mut confirm: Option<NewDocumentChoice> = None;
     let mut open = true;
     let mut open_image = false;

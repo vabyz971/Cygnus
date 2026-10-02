@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use ui_kit::components::{Select, Slider, TextInput};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::theme::CygnusTheme;
+use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::body_text;
 
 /// Formats d'export proposés.
@@ -93,7 +93,7 @@ pub fn draw_export_dialog(
     if !state.open {
         return None;
     }
-    let theme = CygnusTheme::dark();
+    let theme = ctx.cygnus_theme();
     let mut confirm: Option<ExportRequest> = None;
     let mut open = true;
     let action = CygnusModal::new("Exportation", "Valider", "Annuler").show(ctx, &mut open, |ui| {
@@ -136,7 +136,7 @@ pub fn draw_help_dialog(ctx: &egui::Context, open: &mut bool) {
     if !*open {
         return;
     }
-    let theme = CygnusTheme::dark();
+    let theme = ctx.cygnus_theme();
     let mut stays_open = true;
     CygnusModal::new("Aide de Photo", "Fermer", "Fermer").show(ctx, &mut stays_open, |ui| {
         ui.label(body_text(

@@ -18,7 +18,7 @@
 //!
 //! L'ouverture/fermeture est détenue par l'app (`open: &mut bool`) :
 //! la modale ne fait qu'afficher et rapporter l'action choisie.
-use crate::theme::CygnusTheme;
+use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
 /// Action rapportée par [`CygnusModal::show`].
@@ -80,7 +80,7 @@ impl<'a> CygnusModal<'a> {
         if !*open {
             return None;
         }
-        let theme = CygnusTheme::dark();
+        let theme = ctx.cygnus_theme();
         let mut action = None;
 
         // La fenêtre est bornée à l'écran pour ne jamais masquer les

@@ -22,6 +22,7 @@
 
 pub mod borders;
 pub mod colors;
+pub mod context;
 pub mod radius;
 pub mod sizes;
 pub mod spacing;
@@ -33,6 +34,7 @@ pub mod visuals;
 
 pub use borders::CygnusBorders;
 pub use colors::CygnusColors;
+pub use context::{THEME_DATA_ID, UiThemeExt, install_theme};
 pub use radius::CygnusRadius;
 pub use sizes::CygnusSizes;
 pub use spacing::CygnusSpacing;

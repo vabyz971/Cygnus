@@ -286,7 +286,12 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         match *pane {
             // Rail étroit : icône de drag au lieu du texte (le DnD
             // passe par la barre d'onglet, qu'il faut conserver).
-            PhotoDockTab::Tools => IconRegistry::new().sized(Icon::DragHandle, 13.0).into(),
+            PhotoDockTab::Tools => IconRegistry::new()
+                .sized(
+                    Icon::DragHandle,
+                    self.ctx.shared.theme().typography.body_size,
+                )
+                .into(),
             // Titre document : nom + zoom. (Profil couleur et
             // profondeur 16/32 bits : le moteur est 100 % RGBA 8
             // bits sans profil — à ajouter ici quand le `Document`

@@ -21,6 +21,7 @@
 //! 2. [`apply_cygnus_theme`] : couleurs, espacements et rayons.
 
 use super::CygnusTheme;
+use super::context::install_theme;
 
 /// Charge la police UI (Hanken Grotesk) PUIS la police d'icônes Material
 /// Symbols via `egui_material_icons`.
@@ -56,6 +57,7 @@ pub fn setup_fonts(ctx: &egui::Context) {
 /// [`setup_fonts`].
 pub fn apply_cygnus_theme(ctx: &egui::Context) {
     let theme = CygnusTheme::dark();
+    install_theme(ctx, theme);
     ctx.set_theme(egui::Theme::Dark);
     ctx.style_mut_of(egui::Theme::Dark, |style| {
         style.visuals = egui::Visuals {
