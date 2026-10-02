@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(app.docs.len(), 2);
         // Un onglet canevas par document.
         for doc in &app.docs {
-            assert!(crate::layout::dock::has_tab(
+            assert!(app_shell::dock::has_tab(
                 &app.shell.tree,
                 PhotoDockTab::Canvas(doc.id)
             ));
@@ -454,7 +454,7 @@ mod tests {
         let removed = app.active_doc_opt().expect("doc actif").id;
         app.close_active_tab();
         assert_eq!(app.docs.len(), 1);
-        assert!(!crate::layout::dock::has_tab(
+        assert!(!app_shell::dock::has_tab(
             &app.shell.tree,
             PhotoDockTab::Canvas(removed)
         ));
@@ -480,7 +480,7 @@ mod tests {
         );
         assert_eq!(app.docs.len(), 1);
         assert_eq!(app.active, 0);
-        assert!(crate::layout::dock::has_tab(
+        assert!(app_shell::dock::has_tab(
             &app.shell.tree,
             PhotoDockTab::Canvas(app.active_doc_opt().expect("doc actif").id)
         ));

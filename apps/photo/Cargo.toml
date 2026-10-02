@@ -16,6 +16,7 @@ egui_tiles.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ui-kit = { path = "../../packages/ui-kit" }
+app-shell = { path = "../../packages/app-shell" }
 photo-engine = { path = "../../engines/photo-engine" }
 preferences = { path = "../../packages/preferences" }
 uuid.workspace = true

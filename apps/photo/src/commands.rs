@@ -148,45 +148,10 @@ pub enum PhotoAction {
 }
 
 /// File d'actions UI drainée une fois par frame par `PhotoApp`.
-#[derive(Debug, Default)]
-pub struct PhotoCommandQueue {
-    actions: Vec<PhotoAction>,
-}
-
-// `push` / `len` / `is_empty` : API du bus couverte par tests,
-// câblage progressif par le workspace (qui utilise `extend`).
-#[allow(dead_code)]
-impl PhotoCommandQueue {
-    /// File vide.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Ajoute une action en fin de file.
-    pub fn push(&mut self, action: PhotoAction) {
-        self.actions.push(action);
-    }
-
-    /// Ajoute plusieurs actions en fin de file.
-    pub fn extend(&mut self, actions: impl IntoIterator<Item = PhotoAction>) {
-        self.actions.extend(actions);
-    }
-
-    /// Nombre d'actions en attente.
-    pub fn len(&self) -> usize {
-        self.actions.len()
-    }
-
-    /// Vrai si aucune action en attente.
-    pub fn is_empty(&self) -> bool {
-        self.actions.is_empty()
-    }
-
-    /// Vide la file et retourne les actions (ordre d'émission).
-    pub fn drain(&mut self) -> Vec<PhotoAction> {
-        std::mem::take(&mut self.actions)
-    }
-}
+///
+/// Alias de la file générique [`ActionQueue`](app_shell::ActionQueue)
+/// instanciée sur [`PhotoAction`].
+pub type PhotoCommandQueue = app_shell::ActionQueue<PhotoAction>;
 
 /// Dépendances d'affichage partagées par les features.
 ///

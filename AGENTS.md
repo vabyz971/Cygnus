@@ -32,7 +32,8 @@ Le nom de crate diffère parfois du dossier — utiliser `-p` avec le nom de cra
 | `engines/text-engine` | `text-engine` (modèle → layout → glyph runs ; mesure pour layout) |
 | `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait ; registre nodal legacy conservé) |
 | `engines/audio-engine` | `audio-engine` (timeline + graphe DSP sur `graph`, backend DSP ; hors Scene ; registre legacy conservé) |
-| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, design system egui : theme, widgets, panels, viewport, dialogs) |
+| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, design system egui : theme, components, containers, viewport, dialogs) |
+| `packages/app-shell` | `app-shell` (lib `app_shell`, squelette d'app : `ActionQueue`, dock générique sur `DockTab`) |
 | `packages/math-utils` | `math-utils` (transformation affine `Transform2D` ; Vec2 canonique = datatypes) |
 | `packages/file-utils` | `file-utils` (erreurs fichiers, drag & drop, dialogues) |
 | `packages/preferences` | `preferences` (préférences persistantes, matériel, raccourcis) |
@@ -56,8 +57,8 @@ Découpée par rôle (même schéma pour les futures apps) :
 
 ## Architecture de `packages/ui-kit` (en couches, voir lib.rs)
 1. **`theme`** = SEULE source des couleurs/tailles/rayons (tokens `colors`, `spacing`, `radius`, `typography`).
-2. **`widgets`** = composants génériques (`CygnusButton`, `CygnusSlider`, `CygnusDropdown`, inputs, `CygnusToggle`, `icon_button`/`CygnusIcon` — seul contact avec `egui_material_icons` — `ReorderableList`). Un composant n'écrit JAMAIS de couleur/taille en dur : il référence les tokens.
-3. **Conteneurs** (`panels` : panneau titré, split, onglets, repliable, toolbar) → 4. **Viewport générique** (affichage texture + zoom/pan) → 5. **`dialogs`** (modale, file picker, progression) → 6. **`utils`** (état drag générique).
+2. **`components`** = composants génériques (`Button`, `Slider`, `Select`, `Tabs`, inputs, `Toggle`, `IconButton`, `icon_button`/`Icon` — seul contact avec `egui_material_icons` via `icons::glyph` — `ReorderableList`). Un composant n'écrit JAMAIS de couleur/taille en dur : il référence les tokens.
+3. **Conteneurs** (`containers` : `Panel`, `Split` + `SplitState`, `Collapsible`, `Toolbar`, `Section`, `Card`, `Stack`) → 4. **Viewport générique** (affichage texture + zoom/pan, état canonique `ViewportState`) → 5. **`dialogs`** (modale, file picker, progression) → 6. **`utils`** (état drag générique).
 - Les éléments spécifiques à une app restent dans `apps/<app>/src/ui/`. Promotion vers `packages/ui-kit` seulement quand une 2e app en a besoin (et jamais de types métier : ui-kit reste domain-agnostic, vérifié par `scripts/check_uikit_domain_agnostic.sh`).
 - **Interdit de coder une couleur en dur hors `theme/`** — y compris dans les canvas (la sélection utilise `item_selected`, les indicateurs `drop_indicator`). Tailles de texte : passer par `typography`.
 

@@ -15,18 +15,26 @@ graphe nodal générique, widgets et bibliothèques utilitaires.
 apps/       Applications finales (binaires indépendants)
 engines/    Moteurs métier PURS — zéro dépendance UI
 core/       Socle commun : datatypes
-packages/   Bibliothèques réutilisables : ui-kit, math-utils, file-utils
+packages/   Bibliothèques réutilisables : ui-kit, app-shell, math-utils, file-utils
 assets/     Ressources partagées (polices)
 ```
 
 ### packages/
 Bibliothèques partagées réutilisables entre toutes les applications.
 - `ui-kit` (crate `ui_kit`) : design system egui en couches — `theme`
-  (seule source des couleurs/tailles, tokens dans `theme/`), `widgets`
-  génériques (dont `CygnusIcon`, `ReorderableList`), `panels`,
-  `viewport` pan/zoom générique, `dialogs`. Strictement
+  (seule source des couleurs/tailles, tokens dans `theme/`),
+  `components` génériques (dont `icon_button`, `ReorderableList`),
+  `containers`, `viewport` pan/zoom générique, `dialogs`. Strictement
   domain-agnostic : aucun type métier (vérifié par
   `scripts/check_uikit_domain_agnostic.sh`).
+- `app-shell` (crate `app_shell`) : squelette d'app générique —
+  `ActionQueue<A>` (file d'actions drainée par frame) et logique de
+  dock `egui_tiles` générique sur le trait `DockTab` (`has_tab`,
+  `ensure_tab`, `push/remove_canvas_tab`, `reconcile_canvases`,
+  `default_tree`, `set_linear_shares`). Dépend uniquement de `egui`,
+  `egui_tiles`, `serde`, `uuid` : jamais d'engines ni d'apps, aucun
+  type métier (le `Behavior` — titres, contenus — reste dans chaque
+  app).
 - `math-utils` : transformation affine 2D canonique (`Transform2D`) ;
   le `Vec2` canonique reste `datatypes::Vec2`, réexporté.
 - `file-utils` : erreurs fichiers, types drag & drop et dialogues.

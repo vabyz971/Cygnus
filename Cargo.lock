@@ -218,6 +218,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app-shell"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui_tiles",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2927,6 +2937,7 @@ dependencies = [
 name = "photo"
 version = "0.7.0"
 dependencies = [
+ "app-shell",
  "eframe",
  "egui",
  "egui_animation",

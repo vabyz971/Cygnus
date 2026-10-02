@@ -41,11 +41,16 @@ use super::{central_view, left_sidebar, right_sidebar};
 use crate::app::{PhotoApp, remove_document};
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
-use egui_tiles::{Behavior, Container, TileId, Tiles, Tree, UiResponse};
+use app_shell::dock::DockTab;
+use egui_tiles::{Behavior, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
 use ui_kit::i18n::TextKey;
 use ui_kit::icons::{Icon, IconRegistry};
 use uuid::Uuid;
+
+/// Mécanique de dock générique (recherche, onglets canevas,
+/// réconciliation) : voir `app-shell`.
+pub use app_shell::dock::{ensure_tab, push_canvas_tab, reconcile_canvases, remove_canvas_tab};
 
 /// Panneau ancrable du workspace Photo (stable entre versions :
 /// sérialisé dans les préférences, ne jamais renommer sans
@@ -74,164 +79,29 @@ impl PhotoDockTab {
     }
 }
 
-/// Parts de largeur : outils ~1/30 (≈32 px à l'ouverture).
-const SHARE_TOOLS: f32 = 1.0;
-/// Parts de largeur : canevas ~22/30.
-const SHARE_CANVAS: f32 = 22.0;
-/// Parts de largeur : colonne droite ~7/30.
-const SHARE_SIDE: f32 = 7.0;
-/// Parts de hauteur : inspecteur 40 % de la colonne droite.
-const SHARE_INSPECTOR: f32 = 2.0;
-/// Parts de hauteur : calques 60 % de la colonne droite.
-const SHARE_LAYERS: f32 = 3.0;
-
-/// Layout par défaut : canevas au centre, outils à gauche,
-/// inspecteur au-dessus des calques à droite.
-pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
-    debug_assert!(
-        canvases
-            .iter()
-            .all(|tab| matches!(tab, PhotoDockTab::Canvas(_))),
-        "la racine ne porte que des canevas"
-    );
-    let mut tiles = Tiles::default();
-    let tools = tiles.insert_pane(PhotoDockTab::Tools);
-    let canvas_ids: Vec<TileId> = canvases
-        .into_iter()
-        .map(|tab| tiles.insert_pane(tab))
-        .collect();
-    let canvas_tabs = tiles.insert_tab_tile(canvas_ids);
-    let inspector = tiles.insert_pane(PhotoDockTab::Inspector);
-    let layers = tiles.insert_pane(PhotoDockTab::Layers);
-    let right = tiles.insert_vertical_tile(vec![inspector, layers]);
-    let root = tiles.insert_horizontal_tile(vec![tools, canvas_tabs, right]);
-    set_linear_shares(
-        &mut tiles,
-        root,
-        &[
-            (tools, SHARE_TOOLS),
-            (canvas_tabs, SHARE_CANVAS),
-            (right, SHARE_SIDE),
-        ],
-    );
-    set_linear_shares(
-        &mut tiles,
-        right,
-        &[(inspector, SHARE_INSPECTOR), (layers, SHARE_LAYERS)],
-    );
-    Tree::new("photo-tree", root, tiles)
-}
-
-/// Assigne les parts d'un conteneur linéaire (ignore silencieusement
-/// un conteneur manquant : arbre restauré d'une ancienne version).
-fn set_linear_shares(tiles: &mut Tiles<PhotoDockTab>, container: TileId, shares: &[(TileId, f32)]) {
-    if let Some(egui_tiles::Tile::Container(Container::Linear(linear))) = tiles.get_mut(container) {
-        for (child, share) in shares {
-            linear.shares.set_share(*child, *share);
-        }
-    }
-}
-
-/// Vrai si `tab` existe quelque part dans l'arbre.
-pub fn has_tab(tree: &Tree<PhotoDockTab>, tab: PhotoDockTab) -> bool {
-    tree.tiles.find_pane(&tab).is_some()
-}
-
-/// Trouve le `TileId` du panneau `tab`, s'il existe.
-fn find_tile(tree: &Tree<PhotoDockTab>, tab: PhotoDockTab) -> Option<TileId> {
-    tree.tiles.find_pane(&tab)
-}
-
-/// Réaffiche `tab` s'il a été masqué (idempotent), et l'active dans
-/// son onglet. Les panneaux masqués gardent leur place grâce aux
-/// tuiles invisibles d'`egui_tiles`.
-pub fn ensure_tab(tree: &mut Tree<PhotoDockTab>, tab: PhotoDockTab) {
-    if let Some(tile) = find_tile(tree, tab) {
-        tree.set_visible(tile, true);
-        activate_tile(tree, tile);
-    }
-}
-
-/// Active `tile` dans son conteneur d'onglets, s'il y en a un.
-fn activate_tile(tree: &mut Tree<PhotoDockTab>, tile: TileId) {
-    if let Some(parent) = tree.tiles.parent_of(tile)
-        && let Some(egui_tiles::Tile::Container(Container::Tabs(tabs))) = tree.tiles.get_mut(parent)
-    {
-        tabs.set_active(tile);
-    }
-}
-
-/// Ajoute l'onglet canevas d'un document : dans le conteneur des
-/// autres canevas si possible (onglets côte à côte, nouveau actif),
-/// sinon dans le premier conteneur d'onglets trouvé.
-pub fn push_canvas_tab(tree: &mut Tree<PhotoDockTab>, tab: PhotoDockTab) {
-    // Feuille des canevas existants d'abord…
-    let mut target = tree
-        .tiles
-        .iter()
-        .filter_map(|(id, tile)| match tile {
-            egui_tiles::Tile::Pane(PhotoDockTab::Canvas(_)) => tree.tiles.parent_of(*id),
+impl DockTab for PhotoDockTab {
+    fn canvas_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Canvas(id) => Some(*id),
             _ => None,
-        })
-        .find(|parent| {
-            matches!(
-                tree.tiles.get(*parent),
-                Some(egui_tiles::Tile::Container(Container::Tabs(_)))
-            )
-        });
-    // …sinon le premier conteneur d'onglets (repli : jamais vide en
-    // pratique, le layout garantit le conteneur des canevas).
-    if target.is_none() {
-        target = tree.tiles.iter().find_map(|(id, tile)| {
-            matches!(tile, egui_tiles::Tile::Container(Container::Tabs(_))).then_some(*id)
-        });
-    }
-    if let Some(parent) = target {
-        let id = tree.tiles.insert_pane(tab);
-        if let Some(egui_tiles::Tile::Container(Container::Tabs(tabs))) = tree.tiles.get_mut(parent)
-        {
-            tabs.add_child(id);
-            tabs.set_active(id);
         }
+    }
+
+    fn canvas(id: Uuid) -> Self {
+        Self::Canvas(id)
     }
 }
 
-/// Retire l'onglet canevas du document `id` (sans effet s'il est
-/// absent). Utilisé à la fermeture d'un document.
-pub fn remove_canvas_tab(tree: &mut Tree<PhotoDockTab>, id: Uuid) {
-    if let Some(tile) = find_tile(tree, PhotoDockTab::Canvas(id)) {
-        tree.remove_recursively(tile);
-    }
-}
-
-/// Réconcilie un layout restauré avec les documents réellement
-/// ouverts : les ids changent à chaque lancement, donc les canevas
-/// persistés sont orphelins — on retire ceux sans document et on
-/// ajoute ceux manquants (outils, inspecteur, calques gardent leurs
-/// places et visibilités persistées).
-pub fn reconcile_canvases(tree: &mut Tree<PhotoDockTab>, ids: &[Uuid]) {
-    loop {
-        let stale = tree
-            .tiles
-            .iter()
-            .filter_map(|(id, tile)| match tile {
-                egui_tiles::Tile::Pane(PhotoDockTab::Canvas(doc)) if !ids.contains(doc) => {
-                    Some(*id)
-                }
-                _ => None,
-            })
-            .next();
-        let Some(tile) = stale else {
-            break;
-        };
-        tree.remove_recursively(tile);
-    }
-    for id in ids {
-        let tab = PhotoDockTab::Canvas(*id);
-        if !has_tab(tree, tab) {
-            push_canvas_tab(tree, tab);
-        }
-    }
+/// Layout photo par défaut : canevas au centre, outils à gauche,
+/// inspecteur au-dessus des calques à droite (voir
+/// `app-shell::dock::default_tree`).
+pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
+    app_shell::dock::default_tree(
+        PhotoDockTab::Tools,
+        canvases,
+        PhotoDockTab::Inspector,
+        PhotoDockTab::Layers,
+    )
 }
 
 /// Dessine l'arbre dans le panneau central et retourne les actions
@@ -413,6 +283,13 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use app_shell::dock::has_tab;
+    use egui_tiles::Container;
+
+    /// Trouve le `TileId` du panneau `tab`, s'il existe.
+    fn find_tile(tree: &Tree<PhotoDockTab>, tab: PhotoDockTab) -> Option<TileId> {
+        tree.tiles.find_pane(&tab)
+    }
 
     /// Panneaux fixes de test.
     const FIXED_TABS: [PhotoDockTab; 3] = [
