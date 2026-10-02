@@ -32,15 +32,12 @@ pub mod dialogs;
 pub mod engine_bridge;
 pub mod features;
 pub mod ink_overlay;
-/// Campagne de mesures composite (matrices, tests ignorés par défaut).
-#[cfg(test)]
-mod matrix_probe;
 pub mod menubar;
 pub mod modebar;
 pub mod optionsbar;
 /// Sondes de mesure perf (diagnostic temporaire, tests uniquement).
 #[cfg(test)]
-mod perf_probe;
+mod probes;
 pub mod thumb_worker;
 pub mod toolbar;
 pub mod viewport;

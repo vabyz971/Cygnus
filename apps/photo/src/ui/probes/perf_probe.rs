@@ -26,7 +26,7 @@
 //!
 //! À SUPPRIMER une fois le rapport validé et les correctifs en place.
 
-use super::engine_bridge::{EngineWorker, PhotoEngineCommand, PhotoEngineResponse};
+use super::super::engine_bridge::{EngineWorker, PhotoEngineCommand, PhotoEngineResponse};
 use image::GenericImageView;
 use photo_engine::{Document, LayerNode, PixelLayer};
 use std::sync::Arc;

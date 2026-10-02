@@ -23,12 +23,12 @@
 //! Méthodologie par cellule `(document, opération)` :
 //! - `cold` : worker neuf, première application (caches renderer froids) ;
 //! - `warm` : `Refresh` sur le même worker (mêmes pixels, caches chauds).
-//! Pour Undo/Redo : une mutation de setup (non mesurée) puis Undo (warm)
-//! puis Redo (warm). `affected_px` est théorique (bboxes géométriques via
-//! `Transform2D::doc_corners`) ; `processed`/`blend`/`layers` sont mesurés.
-//! Une seule répétition par cellule en release (n=1).
+//!   Pour Undo/Redo : une mutation de setup (non mesurée) puis Undo (warm)
+//!   puis Redo (warm). `affected_px` est théorique (bboxes géométriques via
+//!   `Transform2D::doc_corners`) ; `processed`/`blend`/`layers` sont mesurés.
+//!   Une seule répétition par cellule en release (n=1).
 
-use super::engine_bridge::{EngineWorker, OpMetrics, PhotoEngineCommand};
+use super::super::engine_bridge::{EngineWorker, OpMetrics, PhotoEngineCommand};
 use image::GenericImageView;
 use photo_engine::{Document, LayerNode, PixelLayer};
 use std::sync::Arc;
