@@ -53,6 +53,7 @@ pub mod dialogs;
 pub mod i18n;
 pub mod icons;
 pub mod layout;
+pub mod prelude;
 pub mod primitives;
 pub mod theme;
 pub mod utils;

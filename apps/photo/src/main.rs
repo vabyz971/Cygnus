@@ -26,6 +26,7 @@
 
 mod app;
 mod commands;
+mod i18n;
 mod layout;
 mod persistence;
 mod shortcuts;

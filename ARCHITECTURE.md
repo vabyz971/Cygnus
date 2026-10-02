@@ -84,6 +84,50 @@ Applications finales qui combinent packages, core et engines. Découpage par rô
 propre, `ui/` widgets métier). Chaque app est un binaire indépendant ;
 photo est complète, video/audio sont des bases en attendant leurs moteurs.
 
+## Flux de données (vue d'ensemble)
+
+```
+┌─────────────────────────────┐
+│  App eframe (photo/video/   │
+│  audio) — egui, thread UI   │
+└──────────────┬──────────────┘
+               │ PhotoCommandQueue
+               │ (ActionQueue<A>, drainée frame)
+               ▼
+┌─────────────────────────────┐      ┌───────────────────────────┐
+│  PhotoApp / Behavior        │──────│  PhotoUiContext           │
+│  - ActionQueue              │      │  (egui Context, theme,    │
+│  - docs: Vec<Arc<Document>> │      │   icons, Catalog<Fr>)     │
+│  - dock layout              │      └───────────────────────────┘
+└───────┬─────────────────────┘
+        │ PhotoAction
+        │
+        ▼
+┌─────────────────────────────┐     ┌──────────────────────────────┐
+│  ui/ (widgets métier)       │────▶│  engine_bridge (worker)      │
+│  - draw_menu_bar → Catalog  │     │  (PhotoEngineCommand)        │
+│  - canvas (state-only draw) │     │  - sync / apply / composite  │
+│  - dock/panels              │     │  - undo-redo, history        │
+│                             │     └──────────────┬───────────────┘
+└─────────────────────────────┘                    │
+                                                   │ mpsc (LayersChanged,
+                                                   │  ProjectSaved, PerfMetrics)
+                                                   ▼
+                                          ┌─────────────────────────────┐
+                                          │ photo-engine                  │
+                                          │  - Document / layers          │
+                                          │  - compositing CPU ou wgpu      │
+                                          │  - RenderGraph                  │
+                                          │  - TileCache (GPU)            │
+                                          └─────────────────────────────┘
+```
+
+- `app-shell` apporte le modèle générique `ActionQueue<A>` + `DockTab`
+  (file + docks), réutilisé par photo / video / audio.
+- Le worker répond par `mpsc` ; l'app lit en non bloquant (`try_recv`)
+  frame par frame et met à jour son état (state-only : pas de pixels
+  régénérés).
+
 ## Règles de dépendances
 
 1. `packages/` ne dépend JAMAIS de `engines/` ni de `apps/`

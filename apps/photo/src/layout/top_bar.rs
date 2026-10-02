@@ -22,6 +22,7 @@
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
+use crate::i18n::PhotoCatalog;
 use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
 };
@@ -76,6 +77,7 @@ pub fn show_menu_bar(
                     availability,
                     ctx.shared.theme(),
                     ctx.shared.translator(),
+                    PhotoCatalog::new(ctx.shared.translator().language()),
                 )
                 .into_iter()
                 .map(menu_action_to_photo),

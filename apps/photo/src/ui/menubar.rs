@@ -24,10 +24,11 @@
 //! Le style de la barre utilise des coins carrés via `menu_bar_style`,
 //! les sous‑menus gardent le rayon arrondi du thème.
 //! Les libellés génériques viennent du catalogue [`Catalog`](ui_kit::i18n::Catalog),
-//! les chaînes spécifiques à Photo restent des `&str` locaux ;
+//! les chaînes spécifiques à Photo du catalogue [`PhotoCatalog`](crate::i18n::PhotoCatalog) ;
 //! les fenêtres de paramètres (nouveau document, export) sont des
 //! modales détenues par l'app (voir `super::dialogs`).
 
+use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use crate::layout::dock::PhotoDockTab;
 
 use ui_kit::components::menu::{menu_bar_style, menu_item, menu_item_enabled, menu_style};
@@ -97,13 +98,14 @@ pub struct MenuAvailability {
 ///
 /// Les items sont des boutons fantômes ui-kit (fond transparent,
 /// surlignage egui natif au survol) ; le clic ferme le menu ouvert.
-/// Les libellés génériques viennent du catalogue, les chaînes
-/// spécifiques à Photo restent des `&str` locaux.
+/// Les libellés génériques viennent du catalogue ui-kit, les chaînes
+/// spécifiques à Photo du catalogue [`PhotoCatalog`].
 pub fn draw_menu_bar(
     ui: &mut egui::Ui,
     availability: MenuAvailability,
     theme: &CygnusTheme,
     catalog: Catalog,
+    texts: PhotoCatalog,
 ) -> Vec<PhotoMenuAction> {
     let mut actions = Vec::new();
     egui::Frame::NONE
@@ -145,7 +147,7 @@ pub fn draw_menu_bar(
                         if menu_item_enabled(
                             ui,
                             theme,
-                            "Fermer le document",
+                            texts.get(PhotoTextKey::CloseDocument),
                             availability.has_document,
                         ) {
                             actions.push(PhotoMenuAction::CloseDocument);
@@ -178,18 +180,18 @@ pub fn draw_menu_bar(
                         if menu_item_enabled(
                             ui,
                             theme,
-                            "Nouveau calque vide",
+                            texts.get(PhotoTextKey::NewEmptyLayer),
                             availability.has_document,
                         ) {
                             actions.push(PhotoMenuAction::AddEmptyLayer);
                         }
-                        if menu_item(ui, theme, "Calque depuis une image") {
+                        if menu_item(ui, theme, texts.get(PhotoTextKey::LayerFromImage)) {
                             actions.push(PhotoMenuAction::OpenImage);
                         }
                         if menu_item_enabled(
                             ui,
                             theme,
-                            "Dupliquer le calque",
+                            texts.get(PhotoTextKey::DuplicateLayer),
                             availability.has_selection,
                         ) {
                             actions.push(PhotoMenuAction::DuplicateLayer);
@@ -197,7 +199,7 @@ pub fn draw_menu_bar(
                         if menu_item_enabled(
                             ui,
                             theme,
-                            "Ajouter un masque",
+                            texts.get(PhotoTextKey::AddMask),
                             availability.has_selection,
                         ) {
                             actions.push(PhotoMenuAction::AddMask);
@@ -205,7 +207,7 @@ pub fn draw_menu_bar(
                         if menu_item_enabled(
                             ui,
                             theme,
-                            "Supprimer le calque",
+                            texts.get(PhotoTextKey::DeleteLayer),
                             availability.has_selection,
                         ) {
                             actions.push(PhotoMenuAction::DeleteLayer);
@@ -221,14 +223,16 @@ pub fn draw_menu_bar(
                         ) {
                             actions.push(PhotoMenuAction::ToggleGrid);
                         }
+                        // Coche via le catalogue (rendu identique à avant).
+                        let crop_label = format!(
+                            "[{}] {}",
+                            if availability.preview_clip { "x" } else { " " },
+                            texts.get(PhotoTextKey::CropPreviewToDocument)
+                        );
                         if menu_item_enabled(
                             ui,
                             theme,
-                            if availability.preview_clip {
-                                "[x] Rogner l'apercu au document"
-                            } else {
-                                "[ ] Rogner l'apercu au document"
-                            },
+                            crop_label.as_str(),
                             availability.has_document,
                         ) {
                             actions.push(PhotoMenuAction::TogglePreviewClip);
@@ -249,7 +253,12 @@ pub fn draw_menu_bar(
                         ) {
                             actions.push(PhotoMenuAction::ZoomOut);
                         }
-                        if menu_item_enabled(ui, theme, "Zoom 100 %", availability.has_document) {
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::Zoom100),
+                            availability.has_document,
+                        ) {
                             actions.push(PhotoMenuAction::ZoomReset);
                         }
                     });
@@ -267,13 +276,13 @@ pub fn draw_menu_bar(
                             }
                         }
                         ui.separator();
-                        if menu_item(ui, theme, "Réinitialiser la disposition") {
+                        if menu_item(ui, theme, texts.get(PhotoTextKey::ResetLayout)) {
                             actions.push(PhotoMenuAction::ResetDockLayout);
                         }
                     });
                     ui.menu_button(catalog.get(TextKey::Help), |ui| {
                         menu_style(theme).apply(ui.style_mut());
-                        if menu_item(ui, theme, "À propos") {
+                        if menu_item(ui, theme, texts.get(PhotoTextKey::About)) {
                             actions.push(PhotoMenuAction::ShowHelp);
                         }
                     });
@@ -295,9 +304,11 @@ mod tests {
         let theme = CygnusTheme::dark();
         for language in [Language::En, Language::Fr] {
             let catalog = Catalog::new(language);
+            let texts = PhotoCatalog::new(language);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let actions = draw_menu_bar(ui, MenuAvailability::default(), &theme, catalog);
+                    let actions =
+                        draw_menu_bar(ui, MenuAvailability::default(), &theme, catalog, texts);
                     assert!(actions.is_empty(), "aucun clic sans interaction");
                 });
             })

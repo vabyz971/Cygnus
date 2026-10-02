@@ -1,0 +1,160 @@
+// Cygnus — Suite créative professionnelle open source
+// Copyright (C) 2026 vabyz971
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! Textes propres à l'app Photo (barre de menus…).
+//!
+//! Même principe que [`ui_kit::i18n`] : clés stables
+//! ([`PhotoTextKey`]) + tables fr/en (`&'static str`, zéro
+//! allocation) via [`PhotoCatalog`]. Les libellés génériques
+//! (Fichier, Annuler…) restent dans ui-kit ; ici vivent UNIQUEMENT
+//! les chaînes métier de Photo. ui-kit ne reçoit aucun texte métier.
+
+use ui_kit::i18n::Language;
+
+/// Clé de texte stable propre à Photo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PhotoTextKey {
+    /// Fermer le document actif.
+    CloseDocument,
+    /// Nouveau calque vide.
+    NewEmptyLayer,
+    /// Calque depuis une image.
+    LayerFromImage,
+    /// Dupliquer le calque.
+    DuplicateLayer,
+    /// Ajouter un masque.
+    AddMask,
+    /// Supprimer le calque.
+    DeleteLayer,
+    /// Rogner l'aperçu au document (coche `[x]`/`[ ]` ajoutée par l'appelant).
+    CropPreviewToDocument,
+    /// Zoom 100 %.
+    Zoom100,
+    /// Réinitialiser la disposition des docks.
+    ResetLayout,
+    /// À propos.
+    About,
+}
+
+/// Catalogue photo lié à une langue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhotoCatalog {
+    lang: Language,
+}
+
+impl PhotoCatalog {
+    /// Catalogue pour la langue `lang`.
+    pub fn new(lang: Language) -> Self {
+        Self { lang }
+    }
+
+    /// Traduit `key` dans la langue du catalogue.
+    pub fn get(self, key: PhotoTextKey) -> &'static str {
+        match self.lang {
+            Language::En => translate_en(key),
+            Language::Fr => translate_fr(key),
+        }
+    }
+}
+
+/// Table française (rendu historique, inchangé).
+fn translate_fr(key: PhotoTextKey) -> &'static str {
+    match key {
+        PhotoTextKey::CloseDocument => "Fermer le document",
+        PhotoTextKey::NewEmptyLayer => "Nouveau calque vide",
+        PhotoTextKey::LayerFromImage => "Calque depuis une image",
+        PhotoTextKey::DuplicateLayer => "Dupliquer le calque",
+        PhotoTextKey::AddMask => "Ajouter un masque",
+        PhotoTextKey::DeleteLayer => "Supprimer le calque",
+        PhotoTextKey::CropPreviewToDocument => "Rogner l'apercu au document",
+        PhotoTextKey::Zoom100 => "Zoom 100 %",
+        PhotoTextKey::ResetLayout => "Réinitialiser la disposition",
+        PhotoTextKey::About => "À propos",
+    }
+}
+
+/// Table anglaise.
+fn translate_en(key: PhotoTextKey) -> &'static str {
+    match key {
+        PhotoTextKey::CloseDocument => "Close document",
+        PhotoTextKey::NewEmptyLayer => "New empty layer",
+        PhotoTextKey::LayerFromImage => "Layer from image",
+        PhotoTextKey::DuplicateLayer => "Duplicate layer",
+        PhotoTextKey::AddMask => "Add mask",
+        PhotoTextKey::DeleteLayer => "Delete layer",
+        PhotoTextKey::CropPreviewToDocument => "Crop preview to document",
+        PhotoTextKey::Zoom100 => "Zoom 100%",
+        PhotoTextKey::ResetLayout => "Reset layout",
+        PhotoTextKey::About => "About",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le français garde le rendu historique au caractère près
+    /// (y compris `apercu` sans accent et l'espace de `100 %`).
+    #[test]
+    fn french_matches_legacy_menu_strings() {
+        let texts = PhotoCatalog::new(Language::Fr);
+        assert_eq!(texts.get(PhotoTextKey::CloseDocument), "Fermer le document");
+        assert_eq!(
+            texts.get(PhotoTextKey::NewEmptyLayer),
+            "Nouveau calque vide"
+        );
+        assert_eq!(
+            texts.get(PhotoTextKey::LayerFromImage),
+            "Calque depuis une image"
+        );
+        assert_eq!(
+            texts.get(PhotoTextKey::DuplicateLayer),
+            "Dupliquer le calque"
+        );
+        assert_eq!(texts.get(PhotoTextKey::AddMask), "Ajouter un masque");
+        assert_eq!(texts.get(PhotoTextKey::DeleteLayer), "Supprimer le calque");
+        assert_eq!(
+            texts.get(PhotoTextKey::CropPreviewToDocument),
+            "Rogner l'apercu au document"
+        );
+        assert_eq!(texts.get(PhotoTextKey::Zoom100), "Zoom 100 %");
+        assert_eq!(
+            texts.get(PhotoTextKey::ResetLayout),
+            "Réinitialiser la disposition"
+        );
+        assert_eq!(texts.get(PhotoTextKey::About), "À propos");
+    }
+
+    #[test]
+    fn english_translates_every_key() {
+        let texts = PhotoCatalog::new(Language::En);
+        for key in [
+            PhotoTextKey::CloseDocument,
+            PhotoTextKey::NewEmptyLayer,
+            PhotoTextKey::LayerFromImage,
+            PhotoTextKey::DuplicateLayer,
+            PhotoTextKey::AddMask,
+            PhotoTextKey::DeleteLayer,
+            PhotoTextKey::CropPreviewToDocument,
+            PhotoTextKey::Zoom100,
+            PhotoTextKey::ResetLayout,
+            PhotoTextKey::About,
+        ] {
+            assert!(!texts.get(key).is_empty(), "clé non traduite : {key:?}");
+        }
+        assert_eq!(texts.get(PhotoTextKey::CloseDocument), "Close document");
+    }
+}
