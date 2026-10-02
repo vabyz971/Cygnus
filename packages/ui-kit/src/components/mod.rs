@@ -26,19 +26,20 @@ pub mod checkbox;
 pub mod icon_button;
 pub mod input;
 pub mod menu;
+pub mod reorderable_list;
 pub mod select;
 pub mod slider;
 pub mod tabs;
 pub mod toggle;
 
-pub use crate::widgets::reorderable_list::{
-    HierarchicalDrop, ReorderableList, compute_target_index, draw_drop_indicator, item_background,
-};
 pub use button::{Button, ButtonSize, ButtonVariant, menu_row};
 pub use checkbox::Checkbox;
 pub use icon_button::IconButton;
 pub use input::{NumberInput, TextInput};
 pub use menu::menu_style;
+pub use reorderable_list::{
+    HierarchicalDrop, ReorderableList, compute_target_index, draw_drop_indicator, item_background,
+};
 pub use select::{Select, sanitize_selected};
 pub use slider::Slider;
 pub use tabs::Tabs;

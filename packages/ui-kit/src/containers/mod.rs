@@ -17,18 +17,23 @@
 //! Conteneurs agnostiques : organisation sans connaissance métier.
 //!
 //! [`Section`] (titre nu), [`Card`] (surface), [`Stack`] (pile),
-//! [`Panel`] (bloc titré) et [`Split`] (deux volets
-//! redimensionnables). La disposition globale reste propre à chaque
-//! app ; l'état persistant des régions vit dans [`crate::layout`].
+//! [`Panel`] (bloc titré), [`Split`] (deux volets redimensionnables),
+//! [`Collapsible`] (section repliable) et [`Toolbar`] (barreau
+//! d'outils). La disposition globale reste propre à chaque app ;
+//! l'état persistant des régions vit dans [`crate::layout`].
 
 pub mod card;
+pub mod collapsible;
 pub mod panel;
 pub mod section;
 pub mod split;
 pub mod stack;
+pub mod toolbar;
 
 pub use card::Card;
+pub use collapsible::Collapsible;
 pub use panel::Panel;
 pub use section::Section;
 pub use split::Split;
 pub use stack::Stack;
+pub use toolbar::Toolbar;

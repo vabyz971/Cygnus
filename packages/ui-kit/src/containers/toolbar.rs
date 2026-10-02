@@ -24,10 +24,10 @@
 ///
 /// # Exemple
 /// ```rust,no_run
-/// # use ui_kit::panels::CygnusToolbar;
+/// # use ui_kit::containers::Toolbar;
 /// # use ui_kit::icons::{Icon, icon_button};
 /// # egui::__run_test_ui(|ui| {
-/// CygnusToolbar::new("photo_toolbar").show(ui, |ui| {
+/// Toolbar::new("photo_toolbar").show(ui, |ui| {
 ///     ui.horizontal(|ui| {
 ///         icon_button(ui, Icon::Undo, Some("Annuler"));
 ///         icon_button(ui, Icon::Redo, Some("Retablir"));
@@ -36,11 +36,11 @@
 /// # });
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct CygnusToolbar {
+pub struct Toolbar {
     id: &'static str,
 }
 
-impl CygnusToolbar {
+impl Toolbar {
     /// Crée une barre d'outils (identifiant globalement unique).
     pub fn new(id: &'static str) -> Self {
         Self { id }
@@ -69,7 +69,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::setup_fonts(&ctx);
         ctx.run_ui(egui::RawInput::default(), |ui| {
-            CygnusToolbar::new("test_toolbar").show(ui, |ui| {
+            Toolbar::new("test_toolbar").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for icon in ALL_ICONS.iter().take(10) {
                         let _ = icon_button(ui, *icon, None);

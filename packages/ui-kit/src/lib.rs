@@ -26,22 +26,19 @@
 //! 3. **`icons`** — enum d'icônes stable + registre (aucune lib
 //!    externe exposée aux apps).
 //! 4. **`components`** — boutons, cases, interrupteurs, curseurs,
-//!    inputs, listes, onglets (variants par enums, style par thème).
+//!    inputs, listes, onglets, liste réordonnable (variants par enums,
+//!    style par thème ; `sanitize_selected` unique dans `select`).
 //! 5. **`containers`** — conteneurs agnostiques (`Section`, `Card`,
-//!    `Stack`, `Panel`, `Split`).
+//!    `Stack`, `Panel`, `Split` + `SplitState`, `Collapsible`,
+//!    `Toolbar`).
 //! 6. **`layout`** — état du workspace (`PanelId`, `WorkspaceState`,
 //!    persistence JSON via `preferences`).
 //! 7. **`i18n`** — clés de traduction stables + catalogue.
-//! 8. **`widgets`** — reliquat : `CygnusIcon` (seul contact avec
-//!    `egui_material_icons`). `ReorderableList` est réexporté depuis
-//!    `components` (voir [`crate::components::ReorderableList`]).
-//! 9. **`panels`** — conteneurs historiques (panneau titré, split,
-//!    onglets, repliable, toolbar).
-//! 9. **`viewport`** — état zoom/pan + caméra agnostique
-//!    (`Camera`, `PanZoom`), grille, overlays + affichage texture.
-//! 10. **`dialogs`** — modales, sélecteurs de fichiers, progression.
-//! 11. **`utils`** — état de drag & drop générique (index).
-//! 12. **`context`** — dépendances communes (`UiContext` : egui,
+//! 8. **`viewport`** — état zoom/pan (`ViewportState`), grille,
+//!    overlays + affichage texture.
+//! 9. **`dialogs`** — modales, sélecteurs de fichiers, progression.
+//! 10. **`utils`** — état de drag & drop générique (index).
+//! 11. **`context`** — dépendances communes (`UiContext` : egui,
 //!     thème, icônes, traduction — ni moteurs ni documents).
 //!
 //! INTERDIT ici : toute référence aux types métier des apps et aux
@@ -56,9 +53,7 @@ pub mod dialogs;
 pub mod i18n;
 pub mod icons;
 pub mod layout;
-pub mod panels;
 pub mod primitives;
 pub mod theme;
 pub mod utils;
 pub mod viewport;
-pub mod widgets;

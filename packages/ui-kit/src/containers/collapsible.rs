@@ -27,20 +27,20 @@ use crate::theme::typography::heading_text;
 ///
 /// # Exemple
 /// ```rust
-/// # use ui_kit::panels::CygnusCollapsible;
+/// # use ui_kit::containers::Collapsible;
 /// # egui::__run_test_ui(|ui| {
 /// let mut open = true;
-/// CygnusCollapsible::new("Avance").show(ui, &mut open, |ui| {
+/// Collapsible::new("Avance").show(ui, &mut open, |ui| {
 ///     ui.label("options avancees");
 /// });
 /// # });
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct CygnusCollapsible<'a> {
+pub struct Collapsible<'a> {
     title: &'a str,
 }
 
-impl<'a> CygnusCollapsible<'a> {
+impl<'a> Collapsible<'a> {
     /// Crée une section repliable avec le titre donné.
     pub fn new(title: &'a str) -> Self {
         Self { title }
@@ -125,7 +125,7 @@ mod tests {
         let mut open = false;
         let mut body_shown = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {
-            CygnusCollapsible::new("Section").show(ui, &mut open, |_ui| {
+            Collapsible::new("Section").show(ui, &mut open, |_ui| {
                 body_shown = true;
             });
         })
@@ -137,7 +137,7 @@ mod tests {
         open = true;
         body_shown = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {
-            CygnusCollapsible::new("Section").show(ui, &mut open, |_ui| {
+            Collapsible::new("Section").show(ui, &mut open, |_ui| {
                 body_shown = true;
             });
         })

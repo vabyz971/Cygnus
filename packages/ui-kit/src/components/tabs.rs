@@ -93,4 +93,38 @@ mod tests {
         })
         .drop_without_applying_deltas();
     }
+
+    #[test]
+    fn tabs_show_sanitized_content() {
+        // Porté depuis l'ancien `panels::CygnusTabs` (supprimé, inutilisé
+        // par les apps) : un index hors limites est ramené dans la plage.
+        use crate::components::sanitize_selected;
+        let theme = CygnusTheme::dark();
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut selected = 99;
+                let _ = Tabs::new(&["A", "B", "C"]).show(ui, &theme, &mut selected);
+                assert_eq!(selected, 2);
+                assert_eq!(sanitize_selected(selected, 3), 2);
+            });
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn tabs_empty_renders_without_panic() {
+        // Porté depuis l'ancien `panels::CygnusTabs` : liste vide sans panic.
+        let theme = CygnusTheme::dark();
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut selected = 0;
+                let empty: &[&str] = &[];
+                let _ = Tabs::new(empty).show(ui, &theme, &mut selected);
+                assert_eq!(selected, 0);
+            });
+        })
+        .drop_without_applying_deltas();
+    }
 }
