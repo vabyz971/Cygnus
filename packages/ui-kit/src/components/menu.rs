@@ -126,7 +126,7 @@ mod tests {
         let theme = CygnusTheme::dark();
         let mut style = egui::Style::default();
         menu_style(&theme).apply(&mut style);
-        assert_eq!(style.spacing.interact_size.y, theme.sizes.button_md);
+        assert_eq!(style.spacing.interact_size.y, theme.sizes.button_sm);
         assert_eq!(style.spacing.item_spacing.y, 0.0);
         assert_eq!(
             style.visuals.widgets.hovered.corner_radius,
