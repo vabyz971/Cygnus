@@ -17,12 +17,12 @@
 //! Registre d'icônes : point d'accès unique des apps aux glyphes.
 //!
 //! Le registre ne connaît aucune bibliothèque d'icônes : il délègue
-//! à [`CygnusIcon`](crate::widgets::icon::CygnusIcon), seul contact
-//! du workspace avec `egui_material_icons`. Changer de lib un jour =
-//! modifier un seul fichier.
+//! au module interne [`super::glyph`], seul contact du workspace avec
+//! `egui_material_icons::icons`. Changer de lib un jour = modifier un
+//! seul fichier.
 
+use super::glyph::CygnusIcon;
 use super::icon::Icon;
-use crate::widgets::icon::CygnusIcon;
 
 /// Fournisseur de glyphes pour les apps (zéro dépendance externe).
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,7 +51,7 @@ impl IconRegistry {
 
     /// Résolution [`Icon`] → [`CygnusIcon`] (exhaustive : toute
     /// variante ajoutée à `Icon` casse ici jusqu'à son mapping).
-    fn resolve(icon: Icon) -> CygnusIcon {
+    pub(crate) fn resolve(icon: Icon) -> CygnusIcon {
         match icon {
             Icon::Save => CygnusIcon::Save,
             Icon::Open => CygnusIcon::FolderOpen,
@@ -104,6 +104,84 @@ impl IconRegistry {
     }
 }
 
+/// Liste exhaustive des icônes publiques, utilisée par les tests et les
+/// galeries (47 variantes de [`Icon`] ; `Open` et `Folder` partagent le
+/// même glyphe mais restent deux usages distincts).
+pub const ALL_ICONS: &[Icon] = &[
+    Icon::Add,
+    Icon::Remove,
+    Icon::Visibility,
+    Icon::VisibilityOff,
+    Icon::Layers,
+    Icon::LayerAdd,
+    Icon::Brush,
+    Icon::Eraser,
+    Icon::Hand,
+    Icon::MoveTool,
+    Icon::ZoomIn,
+    Icon::ZoomOut,
+    Icon::Undo,
+    Icon::Redo,
+    Icon::Save,
+    Icon::Open,
+    Icon::Export,
+    Icon::Settings,
+    Icon::Close,
+    Icon::DragHandle,
+    Icon::Folder,
+    Icon::ImageIcon,
+    Icon::Mask,
+    Icon::Text,
+    Icon::Shape,
+    Icon::Cut,
+    Icon::Split,
+    Icon::Trim,
+    Icon::Film,
+    Icon::Play,
+    Icon::Pause,
+    Icon::Stop,
+    Icon::Record,
+    Icon::MusicNote,
+    Icon::Piano,
+    Icon::Mic,
+    Icon::Duplicate,
+    Icon::Filter,
+    Icon::Delete,
+    Icon::Eyedropper,
+    Icon::Search,
+    Icon::Check,
+    Icon::Warning,
+    Icon::Error,
+    Icon::Info,
+    Icon::ExpandMore,
+    Icon::ExpandLess,
+];
+
+/// Bouton icône standard Cygnus : sans frame, fond au hover, tooltip optionnel.
+///
+/// Utilisé PARTOUT (toolbar, panels, layers) pour garantir l'uniformité
+/// entre les 3 apps.
+///
+/// # Exemple
+/// ```rust,no_run
+/// # use ui_kit::icons::{Icon, icon_button};
+/// # egui::__run_test_ui(|ui| {
+/// let response = icon_button(ui, Icon::Save, Some("Enregistrer"));
+/// if response.clicked() {
+///     // … déclencher la sauvegarde via un channel moteur …
+/// }
+/// # });
+/// ```
+pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: Option<&str>) -> egui::Response {
+    let registry = IconRegistry::new();
+    let response = ui.add(egui::Button::new(registry.sized(icon, 18.0)).frame(false));
+    if let Some(tip) = tooltip {
+        response.clone().on_hover_text(tip)
+    } else {
+        response
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +223,56 @@ mod tests {
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.label(registry.sized(Icon::Save, 18.0));
+            });
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn all_icons_have_glyph() {
+        for icon in ALL_ICONS {
+            let glyph = IconRegistry::resolve(*icon);
+            assert!(!glyph.codepoint().is_empty(), "glyphe vide pour {icon:?}");
+        }
+    }
+
+    #[test]
+    fn all_icons_list_is_exhaustive() {
+        // 47 variantes déclarées dans `Icon` : le test casse si une
+        // variante est ajoutée sans être enregistrée dans ALL_ICONS.
+        // (`Open` et `Folder` partagent le glyphe dossier mais comptent
+        // comme deux usages distincts, d'où 47 contre 46 côté glyphe.)
+        assert_eq!(ALL_ICONS.len(), 47);
+    }
+
+    #[test]
+    fn icons_render_without_panic() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+        let registry = IconRegistry::new();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                for icon in ALL_ICONS {
+                    ui.label(registry.text(*icon));
+                }
+            });
+        });
+        assert!(
+            !output.shapes.is_empty(),
+            "aucune primitive de rendu produite"
+        );
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn icon_button_renders_without_panic() {
+        let ctx = egui::Context::default();
+        setup_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                for icon in ALL_ICONS {
+                    let _ = icon_button(ui, *icon, Some("tip"));
+                }
             });
         })
         .drop_without_applying_deltas();

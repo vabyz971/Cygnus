@@ -413,11 +413,11 @@ mod tests {
     fn no_emoji_in_output() {
         // Tout caractère non ASCII dessiné doit appartenir aux
         // codepoints de la police d'icônes : aucun emoji ni glyphe
-        // unicode ne peut fuiter hors de CygnusIcon.
-        use crate::widgets::icon::{ALL_ICONS, icon_button};
+        // unicode ne peut fuiter hors du module interne `icons::glyph`.
+        use crate::icons::{ALL_ICONS, IconRegistry, icon_button};
         let allowed: HashSet<char> = ALL_ICONS
             .iter()
-            .flat_map(|icon| icon.codepoint().chars())
+            .flat_map(|icon| IconRegistry::resolve(*icon).codepoint().chars())
             .collect();
         assert!(!allowed.is_empty());
 

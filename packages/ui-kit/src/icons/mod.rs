@@ -17,12 +17,13 @@
 //! Icônes du design system : enum stable + registre.
 //!
 //! Les apps utilisent [`Icon`] et [`IconRegistry`], jamais une
-//! bibliothèque d'icônes directement. La résolution passe par
-//! [`CygnusIcon`](crate::widgets::icon::CygnusIcon), seul contact du
-//! workspace avec `egui_material_icons`.
+//! bibliothèque d'icônes directement. La résolution passe par le module
+//! interne [`glyph`], seul contact du workspace avec
+//! `egui_material_icons::icons`.
 
+pub(crate) mod glyph;
 pub mod icon;
 pub mod registry;
 
 pub use icon::Icon;
-pub use registry::IconRegistry;
+pub use registry::{ALL_ICONS, IconRegistry, icon_button};

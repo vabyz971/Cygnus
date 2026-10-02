@@ -17,7 +17,7 @@
 //! Barre d'outils standard Cygnus.
 //!
 //! Bandeau haut non redimensionnable avec ligne de séparation. Les apps
-//! y placent des [`icon_button`](crate::widgets::icon::icon_button)
+//! y placent des [`icon_button`](crate::icons::icon_button)
 //! et des groupes séparés par `ui.separator()` — jamais de style en dur.
 
 /// Barre d'outils standard Cygnus.
@@ -25,12 +25,12 @@
 /// # Exemple
 /// ```rust,no_run
 /// # use ui_kit::panels::CygnusToolbar;
-/// # use ui_kit::widgets::icon::{CygnusIcon, icon_button};
+/// # use ui_kit::icons::{Icon, icon_button};
 /// # egui::__run_test_ui(|ui| {
 /// CygnusToolbar::new("photo_toolbar").show(ui, |ui| {
 ///     ui.horizontal(|ui| {
-///         icon_button(ui, CygnusIcon::Undo, Some("Annuler"));
-///         icon_button(ui, CygnusIcon::Redo, Some("Retablir"));
+///         icon_button(ui, Icon::Undo, Some("Annuler"));
+///         icon_button(ui, Icon::Redo, Some("Retablir"));
 ///     });
 /// });
 /// # });
@@ -62,7 +62,7 @@ impl CygnusToolbar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::widgets::icon::{ALL_ICONS, icon_button};
+    use crate::icons::{ALL_ICONS, icon_button};
 
     #[test]
     fn toolbar_with_ten_icons_renders_without_panic() {

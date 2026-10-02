@@ -19,9 +19,9 @@
 //! [`Icon`] est un enum stable et indépendant du domaine : les apps
 //! Photo, Video et Audio l'utilisent sans jamais importer une
 //! bibliothèque d'icônes. La résolution vers le dessin réel passe par
-//! [`IconRegistry`], qui délègue à
-//! [`CygnusIcon`](crate::widgets::icon::CygnusIcon) — SEUL contact du
-//! workspace avec `egui_material_icons`.
+//! [`IconRegistry`](super::registry::IconRegistry), qui délègue au
+//! module interne [`glyph`](super::glyph) — SEUL contact du workspace
+//! avec `egui_material_icons::icons`.
 
 /// Icône sémantique (usage métier, pas un dessin précis).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
