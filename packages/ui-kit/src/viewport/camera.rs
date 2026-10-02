@@ -19,6 +19,13 @@
 //! Logique pure, sans type métier (ni document, ni calque, ni forme).
 //! Convention : `écran = (monde - centre) * zoom + taille_vue / 2`.
 //! Le zoom/pan s'appliquent au draw (modèle « state-only »).
+//!
+//! La source canonique de l'état zoom/pan est
+//! [`ViewportState`](super::viewport_state::ViewportState) ; cette
+//! caméra n'en est qu'une projection pour la grille et les overlays
+//! (voir [`Camera::from_viewport`]).
+
+use super::viewport_state::ViewportState;
 
 /// Caméra 2D (centre monde + zoom).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -35,6 +42,18 @@ impl Camera {
         Self {
             center: egui::Vec2::ZERO,
             zoom: 1.0,
+        }
+    }
+
+    /// Projette un [`ViewportState`] (canonique) en caméra pour une
+    /// taille de vue donnée. Les deux modèles vérifient
+    /// `écran = monde * zoom + offset` : le centre vaut donc
+    /// `(taille_vue / 2 - offset) / zoom`.
+    pub fn from_viewport(state: ViewportState, viewport_size: egui::Vec2) -> Self {
+        let zoom = state.zoom().max(f32::EPSILON);
+        Self {
+            center: (viewport_size * 0.5 - state.offset()) / zoom,
+            zoom: state.zoom(),
         }
     }
 
@@ -115,6 +134,7 @@ impl Default for Camera {
 
 #[cfg(test)]
 mod tests {
+    use super::super::viewport_state::ViewportState;
     use super::*;
 
     #[test]
@@ -166,5 +186,26 @@ mod tests {
             0.0,
         );
         assert_eq!(camera, Camera::new());
+    }
+
+    #[test]
+    fn from_viewport_matches_state_projection() {
+        // La caméra dérivée projette comme l'état canonique.
+        let mut state = ViewportState::default();
+        state.pan_by(egui::vec2(30.0, -12.0));
+        state.zoom_by(2.0, None);
+        let size = egui::vec2(800.0, 600.0);
+        let camera = Camera::from_viewport(state, size);
+        assert_eq!(camera.zoom(), state.zoom());
+        for world in [
+            egui::pos2(0.0, 0.0),
+            egui::pos2(123.0, -45.0),
+            egui::pos2(-300.0, 200.0),
+        ] {
+            let expected = state.world_to_screen(world.to_vec2());
+            let actual = camera.world_to_screen(world, size);
+            assert!((actual.x - expected.x).abs() < 1e-3);
+            assert!((actual.y - expected.y).abs() < 1e-3);
+        }
     }
 }
