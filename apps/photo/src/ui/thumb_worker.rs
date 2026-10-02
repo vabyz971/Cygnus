@@ -49,14 +49,14 @@
 //!   validité existante (`appearance_version`), le calcul réutilise
 //!   `Renderer::appearance_frame`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 
 use image::DynamicImage;
 use uuid::Uuid;
 
-use photo_engine::{FilterLayer, LayerMask, RgbaBuf};
+use photo_engine::{FilterLayer, LayerMask, RgbaBuf, ThumbnailKey};
 
 /// Demande de miniature : tout le nécessaire pour dériver image + miniature,
 /// cloné depuis le calque vivant (léger : `Arc` + params, jamais de pixels
@@ -73,6 +73,8 @@ pub struct ThumbJob {
     pub filters: Vec<FilterLayer>,
     /// Masques (couvertures partagées).
     pub masks: Vec<LayerMask>,
+    /// Clé de cache unique (source + filtres + masques).
+    pub key: ThumbnailKey,
 }
 
 /// Miniature calculée + coûts mesurés côté calcul.
@@ -92,6 +94,8 @@ pub struct ThumbDone {
     pub render_us: u128,
     /// Temps resample seul (µs).
     pub thumb_us: u128,
+    /// `true` si le résultat vient du cache (Phase 6G.4).
+    pub from_cache: bool,
 }
 
 impl std::fmt::Debug for ThumbDone {
@@ -102,6 +106,7 @@ impl std::fmt::Debug for ThumbDone {
             .field("thumb_dims", &(self.thumb.width, self.thumb.height))
             .field("render_us", &self.render_us)
             .field("thumb_us", &self.thumb_us)
+            .field("from_cache", &self.from_cache)
             .finish_non_exhaustive()
     }
 }
@@ -119,6 +124,13 @@ pub struct ThumbStats {
     pub discarded: u64,
     /// Temps de calcul cumulé des résultats appliqués (µs).
     pub thumb_us: u128,
+    /// Hits cache (résultat servi depuis le cache sans calcul).
+    pub cache_hits: u64,
+    /// Misses cache (calcul nécessaire).
+    pub cache_misses: u64,
+    /// Temps de recalcul évité par les hits (µs).
+    #[allow(dead_code)]
+    pub cache_us_saved: u128,
 }
 
 /// Calcule (image, miniature) depuis les pièces clonées — MÊME fonction que
@@ -160,6 +172,8 @@ pub struct ThumbWorker {
     // `None` en mode inline. Non joint à la destruction (même pattern que le
     // worker moteur : le thread sort seul quand l'émetteur est lâché).
     _handle: Option<JoinHandle<()>>,
+    /// Cache miniature : clé (source + filtres + masques) → miniature.
+    cache: HashMap<ThumbnailKey, RgbaBuf>,
 }
 
 impl ThumbWorker {
@@ -171,6 +185,7 @@ impl ThumbWorker {
             tx: None,
             rx: None,
             _handle: None,
+            cache: HashMap::new(),
         }
     }
 
@@ -187,6 +202,7 @@ impl ThumbWorker {
             tx: Some(job_tx),
             rx: Some(done_rx),
             _handle: handle,
+            cache: HashMap::new(),
         }
     }
 
@@ -218,7 +234,40 @@ impl ThumbWorker {
             image,
             render_us,
             thumb_us,
+            from_cache: false,
         })
+    }
+
+    /// Calcule ou récupère du cache (Phase 6G.4) — inline uniquement.
+    /// Si la clé est en cache : renvoie la miniature stockée (HIT).
+    /// Sinon : calcule, stocke en cache, renvoie (MISS).
+    #[must_use]
+    pub fn compute_cached(&mut self, job: &ThumbJob) -> Option<ThumbDone> {
+        if let Some(thumb) = self.cache.get(&job.key) {
+            // HIT : on re-construit le ThumbDone minimal (sans recalcul).
+            Some(ThumbDone {
+                layer: job.layer,
+                version: job.version,
+                thumb: thumb.clone(),
+                image: job.source.clone(),
+                render_us: 0,
+                thumb_us: 0,
+                from_cache: true,
+            })
+        } else {
+            // MISS : calcul complet + stockage.
+            let (image, thumb, render_us, thumb_us) = compute_thumb(job)?;
+            self.cache.insert(job.key.clone(), thumb.clone());
+            Some(ThumbDone {
+                layer: job.layer,
+                version: job.version,
+                thumb,
+                image,
+                render_us,
+                thumb_us,
+                from_cache: false,
+            })
+        }
     }
 
     /// Draine les résultats disponibles (jamais bloquant).
@@ -279,19 +328,22 @@ mod tests {
 
     fn solid_job(value: u8, version: u64) -> ThumbJob {
         use image::{ImageBuffer, Rgba};
+        let source = Arc::new(DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            64,
+            64,
+            Rgba([value, value, value, 255]),
+        )));
+        let layer = photo_engine::PixelLayer::new("test", source.clone());
+        let key = ThumbnailKey::for_layer(&layer);
         ThumbJob {
             layer: Uuid::new_v4(),
             version,
-            source: Arc::new(DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
-                64,
-                64,
-                Rgba([value, value, value, 255]),
-            ))),
+            source,
             filters: Vec::new(),
             masks: Vec::new(),
+            key,
         }
     }
-
     #[test]
     fn calcul_egale_chemin_cadre() {
         // Même fonction, mêmes entrées : le job produit EXACTEMENT ce que le

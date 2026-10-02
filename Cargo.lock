@@ -4076,6 +4076,7 @@ dependencies = [
 name = "ui-kit"
 version = "0.5.0"
 dependencies = [
+ "eframe",
  "egui",
  "egui_material_icons",
  "rfd",
