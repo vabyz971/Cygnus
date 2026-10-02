@@ -21,15 +21,19 @@
 //! - [`model`] : [`Preferences`] sérialisable (JSON dans le dossier config),
 //!   sections Général / Rendu / Raccourcis ;
 //! - [`hardware`] : rapport CPU / RAM / GPU via wgpu (adaptateurs réels) ;
-//! - [`keybindings`] : actions typées, parsing « Ctrl+Shift+S », résolution
-//!   d'événements clavier vers actions.
+//! - [`keybindings`] : parsing « Ctrl+Shift+S » et résolution
+//!   générique d'événements clavier vers identifiants d'action
+//!   (les enums d'actions vivent côté apps, ex. `PhotoShortcut`).
 
 pub mod hardware;
 pub mod keybindings;
 pub mod model;
 
 pub use hardware::{CpuInfo, GpuInfo, HardwareReport, RamInfo};
-pub use keybindings::{KeyCombo, KeybindingResolver, PhotoAction, key_to_string};
+pub use keybindings::parse_combo;
+pub use keybindings::{
+    AppKey, AppModifiers, KeyCombo, KeybindingResolver, NamedKey, key_to_string,
+};
 pub use model::{
     GeneralPreferences, KeybindingPreferences, Preferences, PreferencesError, RenderApi,
     RenderPreferences, RenderQuality, Theme,

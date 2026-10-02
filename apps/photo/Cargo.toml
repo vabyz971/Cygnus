@@ -17,5 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 ui-kit = { path = "../../packages/ui-kit" }
 photo-engine = { path = "../../engines/photo-engine" }
+preferences = { path = "../../packages/preferences" }
 uuid.workspace = true
 image.workspace = true

@@ -2933,6 +2933,7 @@ dependencies = [
  "egui_tiles",
  "image",
  "photo-engine",
+ "preferences",
  "serde",
  "serde_json",
  "ui-kit",

@@ -28,6 +28,7 @@ mod app;
 mod commands;
 mod layout;
 mod persistence;
+mod shortcuts;
 mod state;
 mod ui;
 

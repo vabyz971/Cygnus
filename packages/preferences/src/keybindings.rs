@@ -14,166 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Résolveur de raccourcis clavier : actions typées de l'app photo,
-//! parsing des combinaisons (« Ctrl+Shift+S ») et conversion d'un
-//! événement clavier en action.
+//! Résolveur générique de raccourcis clavier : parsing des
+//! combinaisons (« Ctrl+Shift+S ») et conversion d'un événement
+//! clavier en identifiant d'action (`String`).
+//!
+//! Le package ne connaît AUCUNE action métier : les apps définissent
+//! leur propre enum (ex. `PhotoShortcut` côté photo, avec `id()` /
+//! `from_id()`) et convertissent l'identifiant retourné par
+//! [`KeybindingResolver::resolve`]. La compatibilité du JSON de
+//! préférences repose sur ces ids (`"undo"`, …).
 //!
 //! Types clavier PROPRES (aucune dépendance UI) : l'app convertit
 //! `egui::Key`/`egui::Modifiers` vers [`AppKey`]/[`AppModifiers`].
 
 use std::collections::HashMap;
-
-/// Toutes les actions raccourcissables de l'app photo.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PhotoAction {
-    // Outils
-    ToolBrush,
-    ToolEraser,
-    ToolEyedropper,
-    ToolMove,
-    ToolHand,
-    ToolZoom,
-    // Édition
-    Undo,
-    Redo,
-    DeleteLayer,
-    // Fichier
-    NewProject,
-    Open,
-    Save,
-    SaveAs,
-    Export,
-    // Affichage
-    ZoomIn,
-    ZoomOut,
-    ZoomFit,
-    Zoom100,
-    ToggleLayersPanel,
-    ToggleToolsPanel,
-    // Calques
-    NewLayer,
-    DuplicateLayer,
-    // Application
-    OpenPreferences,
-}
-
-impl PhotoAction {
-    /// Toutes les actions, ordre d'affichage stable dans la fenêtre.
-    pub const ALL: [PhotoAction; 23] = [
-        PhotoAction::ToolBrush,
-        PhotoAction::ToolEraser,
-        PhotoAction::ToolEyedropper,
-        PhotoAction::ToolMove,
-        PhotoAction::ToolHand,
-        PhotoAction::ToolZoom,
-        PhotoAction::Undo,
-        PhotoAction::Redo,
-        PhotoAction::DeleteLayer,
-        PhotoAction::NewProject,
-        PhotoAction::Open,
-        PhotoAction::Save,
-        PhotoAction::SaveAs,
-        PhotoAction::Export,
-        PhotoAction::ZoomIn,
-        PhotoAction::ZoomOut,
-        PhotoAction::ZoomFit,
-        PhotoAction::Zoom100,
-        PhotoAction::ToggleLayersPanel,
-        PhotoAction::ToggleToolsPanel,
-        PhotoAction::NewLayer,
-        PhotoAction::DuplicateLayer,
-        PhotoAction::OpenPreferences,
-    ];
-
-    /// Identifiant sérialisé (clé de la table de bindings).
-    #[must_use]
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::ToolBrush => "tool_brush",
-            Self::ToolEraser => "tool_eraser",
-            Self::ToolEyedropper => "tool_eyedropper",
-            Self::ToolMove => "tool_move",
-            Self::ToolHand => "tool_hand",
-            Self::ToolZoom => "tool_zoom",
-            Self::Undo => "undo",
-            Self::Redo => "redo",
-            Self::DeleteLayer => "delete_layer",
-            Self::NewProject => "new_project",
-            Self::Open => "open",
-            Self::Save => "save",
-            Self::SaveAs => "save_as",
-            Self::Export => "export",
-            Self::ZoomIn => "zoom_in",
-            Self::ZoomOut => "zoom_out",
-            Self::ZoomFit => "zoom_fit",
-            Self::Zoom100 => "zoom_100",
-            Self::ToggleLayersPanel => "toggle_layers_panel",
-            Self::ToggleToolsPanel => "toggle_tools_panel",
-            Self::NewLayer => "new_layer",
-            Self::DuplicateLayer => "duplicate_layer",
-            Self::OpenPreferences => "open_preferences",
-        }
-    }
-
-    /// Libellé affiché à l'utilisateur.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::ToolBrush => "Outil Pinceau",
-            Self::ToolEraser => "Outil Gomme",
-            Self::ToolEyedropper => "Pipette",
-            Self::ToolMove => "Déplacement",
-            Self::ToolHand => "Main",
-            Self::ToolZoom => "Zoom",
-            Self::Undo => "Annuler",
-            Self::Redo => "Rétablir",
-            Self::DeleteLayer => "Supprimer le calque",
-            Self::NewProject => "Nouveau projet",
-            Self::Open => "Ouvrir",
-            Self::Save => "Enregistrer",
-            Self::SaveAs => "Enregistrer sous",
-            Self::Export => "Exporter l'image",
-            Self::ZoomIn => "Zoom avant",
-            Self::ZoomOut => "Zoom arrière",
-            Self::ZoomFit => "Ajuster à l'écran",
-            Self::Zoom100 => "Zoom 100 %",
-            Self::ToggleLayersPanel => "Panneau Calques",
-            Self::ToggleToolsPanel => "Barre d'outils",
-            Self::NewLayer => "Nouveau calque",
-            Self::DuplicateLayer => "Dupliquer le calque",
-            Self::OpenPreferences => "Préférences",
-        }
-    }
-
-    /// Catégorie pour le groupement visuel.
-    #[must_use]
-    pub fn category(self) -> &'static str {
-        match self {
-            Self::ToolBrush
-            | Self::ToolEraser
-            | Self::ToolEyedropper
-            | Self::ToolMove
-            | Self::ToolHand
-            | Self::ToolZoom => "Outils",
-            Self::Undo | Self::Redo | Self::DeleteLayer => "Édition",
-            Self::NewProject | Self::Open | Self::Save | Self::SaveAs | Self::Export => "Fichier",
-            Self::ZoomIn
-            | Self::ZoomOut
-            | Self::ZoomFit
-            | Self::Zoom100
-            | Self::ToggleLayersPanel
-            | Self::ToggleToolsPanel => "Affichage",
-            Self::NewLayer | Self::DuplicateLayer => "Calques",
-            Self::OpenPreferences => "Application",
-        }
-    }
-
-    /// Retrouve l'action depuis son identifiant sérialisé.
-    #[must_use]
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|a| a.id() == id)
-    }
-}
 
 /// Combinaison de touches normalisée (« Ctrl+Shift+S »).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -302,37 +156,40 @@ impl AppModifiers {
     };
 }
 
-/// Résolveur : table combo → action, construite depuis les préférences.
+/// Résolveur générique : table combo → identifiant d'action,
+/// construite depuis les préférences. L'app convertit l'identifiant
+/// en son propre type d'action (ex. `PhotoShortcut::from_id`).
 #[derive(Debug, Default)]
 pub struct KeybindingResolver {
-    lookup: HashMap<KeyCombo, PhotoAction>,
+    lookup: HashMap<KeyCombo, String>,
 }
 
 impl KeybindingResolver {
-    /// Construit le résolveur depuis la table id→combinaison.
+    /// Construit le résolveur depuis la table id→combinaison. Toute
+    /// entrée parsable est conservée (même un id inconnu : ce package
+    /// ne connaît pas les actions des apps).
     #[must_use]
     pub fn from_bindings(bindings: &HashMap<String, String>) -> Self {
         let mut resolver = Self::default();
         for (action_id, combo_str) in bindings {
-            if let Some(action) = PhotoAction::from_id(action_id)
-                && let Some(combo) = parse_combo(combo_str)
-            {
-                resolver.lookup.insert(combo, action);
+            if let Some(combo) = parse_combo(combo_str) {
+                resolver.lookup.insert(combo, action_id.clone());
             }
         }
         resolver
     }
 
-    /// Action correspondant à cet événement clavier, s'il y en a une.
+    /// Identifiant d'action correspondant à cet événement clavier, s'il
+    /// y en a un.
     #[must_use]
-    pub fn resolve(&self, key: &AppKey, modifiers: AppModifiers) -> Option<PhotoAction> {
+    pub fn resolve(&self, key: &AppKey, modifiers: AppModifiers) -> Option<String> {
         let combo = KeyCombo {
             key: key_to_string(key)?,
             ctrl: modifiers.ctrl || modifiers.command,
             shift: modifiers.shift,
             alt: modifiers.alt,
         };
-        self.lookup.get(&combo).copied()
+        self.lookup.get(&combo).cloned()
     }
 
     /// Nombre de combinaisons actives (diagnostic).
@@ -422,19 +279,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn meta_coherence_sur_toutes_les_actions() {
-        for action in PhotoAction::ALL {
-            assert_eq!(
-                PhotoAction::from_id(action.id()),
-                Some(action),
-                "from_id(id()) doit être l'identité"
-            );
-            assert!(!action.label().is_empty());
-            assert!(!action.category().is_empty());
-        }
-    }
-
-    #[test]
     fn parsing_tolerant_a_la_casse_et_aux_alias() {
         let c = parse_combo("ctrl+shift+s").expect("parse");
         assert!(c.ctrl && c.shift && !c.alt);
@@ -459,50 +303,32 @@ mod tests {
     }
 
     #[test]
-    fn resolve_trouve_les_raccourcis_par_defaut() {
-        let defaults = crate::model::KeybindingPreferences::with_defaults();
-        let resolver = KeybindingResolver::from_bindings(&defaults.bindings);
+    fn resolve_retourne_l_identifiant_sans_connaitre_l_action() {
+        // Le résolveur est générique : il mappe vers des ids opaques,
+        // y compris inconnus de ce package.
+        let mut bindings = HashMap::new();
+        bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
+        bindings.insert("action_future_inconnue".to_string(), "F7".to_string());
+        bindings.insert("invalide".to_string(), "Ctrl+".to_string());
+        let resolver = KeybindingResolver::from_bindings(&bindings);
+        assert_eq!(resolver.len(), 2);
 
-        // Ctrl+Z → Undo
         let z = AppKey::Character("z".into());
         assert_eq!(
             resolver.resolve(&z, AppModifiers::CTRL),
-            Some(PhotoAction::Undo)
+            Some("undo".to_string())
         );
-
-        // 'b' sans modificateur → ToolBrush
-        let b = AppKey::Character("b".into());
+        // 'z' SANS Ctrl ne résout pas.
+        assert_eq!(resolver.resolve(&z, AppModifiers::EMPTY), None);
+        // Id inconnu conservé tel quel.
         assert_eq!(
-            resolver.resolve(&b, AppModifiers::EMPTY),
-            Some(PhotoAction::ToolBrush)
+            resolver.resolve(&AppKey::Named(NamedKey::F7), AppModifiers::EMPTY),
+            Some("action_future_inconnue".to_string())
         );
-
-        // Ctrl seul ne déclenche rien
+        // Modificateur seul ne déclenche rien.
         assert_eq!(
             resolver.resolve(&AppKey::Named(NamedKey::Control), AppModifiers::CTRL),
             None
-        );
-
-        // F7 → panneau calques
-        assert_eq!(
-            resolver.resolve(&AppKey::Named(NamedKey::F7), AppModifiers::EMPTY),
-            Some(PhotoAction::ToggleLayersPanel)
-        );
-    }
-
-    #[test]
-    fn resolution_sensible_aux_modificateurs() {
-        let defaults = crate::model::KeybindingPreferences::with_defaults();
-        let resolver = KeybindingResolver::from_bindings(&defaults.bindings);
-        // 's' SANS Ctrl ne doit PAS déclencher Enregistrer
-        let s = AppKey::Character("s".into());
-        assert_ne!(
-            resolver.resolve(&s, AppModifiers::EMPTY),
-            Some(PhotoAction::Save)
-        );
-        assert_eq!(
-            resolver.resolve(&s, AppModifiers::CTRL),
-            Some(PhotoAction::Save)
         );
     }
 }
