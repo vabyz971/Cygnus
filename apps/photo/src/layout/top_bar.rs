@@ -32,6 +32,9 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
     match action {
         PhotoMenuAction::NewDocument => PhotoAction::OpenNewDocumentDialog,
         PhotoMenuAction::OpenImage => PhotoAction::OpenImageDialog,
+        PhotoMenuAction::OpenProject => PhotoAction::OpenProjectDialog,
+        PhotoMenuAction::SaveProject => PhotoAction::SaveProject,
+        PhotoMenuAction::SaveProjectAs => PhotoAction::SaveProjectAsDialog,
         PhotoMenuAction::Export => PhotoAction::OpenExportDialog,
         PhotoMenuAction::Quit => PhotoAction::Quit,
         PhotoMenuAction::Undo => PhotoAction::Undo,
@@ -135,6 +138,18 @@ mod tests {
         assert_eq!(
             menu_action_to_photo(PhotoMenuAction::NewDocument),
             PhotoAction::OpenNewDocumentDialog
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::OpenProject),
+            PhotoAction::OpenProjectDialog
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::SaveProject),
+            PhotoAction::SaveProject
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::SaveProjectAs),
+            PhotoAction::SaveProjectAsDialog
         );
         assert_eq!(
             menu_action_to_photo(PhotoMenuAction::ShowDockTab(

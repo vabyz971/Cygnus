@@ -24,6 +24,8 @@ pub mod file_picker;
 pub mod modal;
 pub mod progress_dialog;
 
-pub use file_picker::{pick_image_to_open, pick_image_to_save};
+pub use file_picker::{
+    pick_image_to_open, pick_image_to_save, pick_project_to_open, pick_project_to_save,
+};
 pub use modal::{CygnusModal, ModalAction};
 pub use progress_dialog::CygnusProgressDialog;

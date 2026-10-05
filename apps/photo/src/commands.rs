@@ -55,6 +55,13 @@ pub enum PhotoAction {
     CreateDocument { width: u32, height: u32 },
     /// Ouvrir le file picker d'image.
     OpenImageDialog,
+    /// Ouvrir le file picker de projet `.cygp` (O001).
+    OpenProjectDialog,
+    /// Enregistrer le projet actif (chemin connu) ou basculer vers
+    /// « Enregistrer sous » (O001).
+    SaveProject,
+    /// Ouvrir le file picker « Enregistrer sous » `.cygp` (O001).
+    SaveProjectAsDialog,
     /// Ouvrir la fenêtre « Exportation ».
     OpenExportDialog,
     /// Exporter le document actif (dossier créé si besoin par l'app).

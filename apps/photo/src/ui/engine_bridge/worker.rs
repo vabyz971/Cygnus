@@ -372,10 +372,14 @@ impl EngineWorker {
         let mut out = Vec::new();
         let mut max_invalidation = RenderInvalidation::Unchanged;
         let mut changed = false;
+        // Accusés/erreurs collectés à part : ils sont émis APRÈS la
+        // réponse d'état pour avoir le dernier mot côté UI (un
+        // `LayersChanged` efface le statut ; l'accusé doit survivre).
+        let mut immediates = Vec::new();
         let t_mutation = std::time::Instant::now();
         for command in folded {
             let mutation = self.mutate(command);
-            out.extend(mutation.immediates);
+            immediates.extend(mutation.immediates);
             max_invalidation = max_invalidation.max(mutation.invalidation);
             changed |= mutation.changed;
         }
@@ -386,17 +390,22 @@ impl EngineWorker {
             // Resynchronisation sans rendu (que des no-ops).
             out.push(self.respond(RenderInvalidation::Unchanged));
         }
+        out.extend(immediates);
         // Miniatures secondaires terminées pendant le lot (Phase 6G.3 §4A) :
         // re-poll (résultats arrivés PENDANT le composite) puis poussées
         // APRES la réponse principale pour ne jamais retarder le canvas
         // (`drain_thumb_extras` saute celles déjà embarquées).
         // Emprunt disjoint : `out` est local, `self` est emprunté après.
         self.poll_thumb_results();
-        let embedded: &[PhotoLayerInfo] = match out.last() {
-            Some(PhotoEngineResponse::LayersChanged { layers, .. })
-            | Some(PhotoEngineResponse::StateChanged { layers, .. }) => layers,
-            _ => &[],
-        };
+        let embedded: &[PhotoLayerInfo] = out
+            .iter()
+            .rev()
+            .find_map(|response| match response {
+                PhotoEngineResponse::LayersChanged { layers, .. }
+                | PhotoEngineResponse::StateChanged { layers, .. } => Some(layers.as_slice()),
+                _ => None,
+            })
+            .unwrap_or(&[]);
         let extras = self.drain_thumb_extras(embedded);
         out.extend(extras);
         let total_us = t_total.elapsed().as_micros();
@@ -803,6 +812,35 @@ impl EngineWorker {
                         message: String::from("Rien a exporter (document vide)"),
                     },
                 })
+            }
+            PhotoEngineCommand::SaveProject { path } => {
+                Mutation::immediate(match photo_engine::project::save(&path, &self.document) {
+                    Ok(()) => PhotoEngineResponse::ProjectSaved { path },
+                    Err(error) => PhotoEngineResponse::EngineError {
+                        message: format!("Enregistrement impossible : {error}"),
+                    },
+                })
+            }
+            PhotoEngineCommand::LoadProject { path } => {
+                match photo_engine::project::load(&path) {
+                    Ok(loaded) => {
+                        // Remplacement total : nouvelle session d'édition.
+                        // Ni snapshot pré-mutation (l'ancien document
+                        // disparaît), ni caches (ids de calques changés :
+                        // miniatures et tuiles de l'ancien doc invalides).
+                        self.document = loaded.document;
+                        self.undo.clear();
+                        self.redo.clear();
+                        self.coalesced_opacity_layer = None;
+                        self.thumb_store.clear();
+                        self.thumb_pending.clear();
+                        self.thumb_fresh.clear();
+                        Mutation::changed(invalidation)
+                    }
+                    Err(error) => Mutation::immediate(PhotoEngineResponse::EngineError {
+                        message: format!("Ouverture impossible : {error}"),
+                    }),
+                }
             }
             PhotoEngineCommand::RenameLayer { layer, name } => {
                 let name = name.trim().to_owned();
@@ -1507,6 +1545,7 @@ mod tests {
             PhotoEngineResponse::LayersChanged { preview, .. } => preview.expect("apercu"),
             PhotoEngineResponse::EngineError { message } => panic!("{message}"),
             PhotoEngineResponse::ExportDone { .. } => panic!("export inattendu"),
+            PhotoEngineResponse::ProjectSaved { .. } => panic!("sauvegarde inattendue"),
             PhotoEngineResponse::StateChanged { .. } => panic!("rendu attendu"),
             PhotoEngineResponse::ThumbnailUpdated { .. } => {
                 panic!("pas de miniature seule sur apply solo")
@@ -1733,15 +1772,17 @@ mod tests {
                 opacity: 60.0,
             },
         ]);
-        // ExportDone immédiat + un seul état final (opacités repliées).
+        // État d'abord, accusé ensuite (les accusés ont le dernier
+        // mot : un `LayersChanged` efface le statut), un seul rendu
+        // pour tout le lot (opacités repliées).
         assert_eq!(responses.len(), 2);
         assert!(matches!(
             responses[0],
-            PhotoEngineResponse::ExportDone { .. }
+            PhotoEngineResponse::LayersChanged { .. }
         ));
         assert!(matches!(
             responses[1],
-            PhotoEngineResponse::LayersChanged { .. }
+            PhotoEngineResponse::ExportDone { .. }
         ));
         assert_eq!(worker.metrics.renders, 1);
         assert_eq!(worker.document.find(id).expect("present").opacity(), 60.0);
@@ -2628,6 +2669,62 @@ mod single_pass_tests {
                 assert_eq!(revision, RenderRevision(2));
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_then_load_project_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("cygnus-sp-projet-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let path = dir.join("projet.cygp");
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let before = match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged { layers, .. } => layers,
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        };
+        let renders = worker.metrics.renders;
+        let response = worker.apply(PhotoEngineCommand::SaveProject { path: path.clone() });
+        assert!(
+            matches!(response, PhotoEngineResponse::ProjectSaved { .. }),
+            "accusé de sauvegarde"
+        );
+        assert!(path.is_file(), "fichier écrit");
+        assert_eq!(worker.metrics.renders, renders, "sauvegarde sans rendu");
+
+        // Worker vierge : le chargement restaure l'arbre complet.
+        let mut fresh = EngineWorker::new(Document::new(8, 8));
+        let loaded = match fresh.apply(PhotoEngineCommand::LoadProject { path }) {
+            PhotoEngineResponse::LayersChanged {
+                layers, can_undo, ..
+            } => {
+                assert!(!can_undo, "historique vierge après chargement");
+                layers
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        };
+        assert_eq!(loaded.len(), before.len(), "même nombre de calques");
+        for (restaure, origine) in loaded.iter().zip(before.iter()) {
+            assert_eq!(restaure.name, origine.name);
+            assert_eq!(restaure.opacity, origine.opacity);
+            assert_eq!(restaure.visible, origine.visible);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_project_unknown_version_is_clean_error() {
+        let dir = std::env::temp_dir().join(format!("cygnus-sp-projet-v1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let path = dir.join("vieux.cygp");
+        std::fs::write(&path, r#"{"version":1,"width":4,"height":4,"root":[]}"#)
+            .expect("fixture v1");
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        match worker.apply(PhotoEngineCommand::LoadProject { path }) {
+            PhotoEngineResponse::EngineError { message } => {
+                assert!(message.contains("non supportée"), "{message}");
+            }
+            other => panic!("EngineError attendue, obtenue : {other:?}"),
         }
         std::fs::remove_dir_all(&dir).ok();
     }

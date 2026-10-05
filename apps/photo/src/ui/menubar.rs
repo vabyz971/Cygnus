@@ -42,6 +42,13 @@ pub enum PhotoMenuAction {
     NewDocument,
     /// Ouvrir une image (file picker non bloquant).
     OpenImage,
+    /// Ouvrir un projet `.cygp` (nouvel onglet, file picker non bloquant).
+    OpenProject,
+    /// Enregistrer le projet (chemin connu) ou basculer vers
+    /// « Enregistrer sous ».
+    SaveProject,
+    /// Enregistrer le projet sous un nouveau chemin `.cygp`.
+    SaveProjectAs,
     /// Exporter (ouvre la fenêtre de paramètres d'export).
     Export,
     /// Quitter l'application.
@@ -134,6 +141,25 @@ pub fn draw_menu_bar(
                         }
                         if menu_item(ui, theme, catalog.get(TextKey::Open)) {
                             actions.push(PhotoMenuAction::OpenImage);
+                        }
+                        if menu_item(ui, theme, texts.get(PhotoTextKey::OpenProject)) {
+                            actions.push(PhotoMenuAction::OpenProject);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            catalog.get(TextKey::Save),
+                            availability.has_document,
+                        ) {
+                            actions.push(PhotoMenuAction::SaveProject);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::SaveAs),
+                            availability.has_document,
+                        ) {
+                            actions.push(PhotoMenuAction::SaveProjectAs);
                         }
                         if menu_item_enabled(
                             ui,

@@ -83,6 +83,11 @@ pub enum PhotoEngineResponse {
         /// Chemin du fichier écrit.
         path: PathBuf,
     },
+    /// Projet `.cygp` enregistré (O001 : Save/Save As).
+    ProjectSaved {
+        /// Chemin du fichier écrit.
+        path: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------

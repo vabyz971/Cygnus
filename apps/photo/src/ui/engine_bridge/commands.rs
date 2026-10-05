@@ -136,6 +136,22 @@ pub enum PhotoEngineCommand {
     },
     /// Resynchronisation sans mutation (snapshot initial au boot).
     Refresh,
+    /// Enregistrer le document dans un `.cygp` (O001 : Save/Save As).
+    /// Le chemin est déjà résolu par l'app (état local) ; le worker
+    /// ne fait que sérialiser via `photo_engine::project::save`.
+    SaveProject {
+        /// Chemin de destination (extension `.cygp` gérée par le picker).
+        path: PathBuf,
+    },
+    /// Charger un `.cygp` en remplacement du document vivant (O001 :
+    /// Open). Historique et caches vidés : nouvelle session d'édition.
+    /// Le titre/chemin UI sont posés par l'app au dispatch (état
+    /// local) ; le worker ne renvoie que le composite (`LayersChanged`)
+    /// ou `EngineError` (version étrangère, fichier corrompu).
+    LoadProject {
+        /// Chemin du projet à charger.
+        path: PathBuf,
+    },
     /// Rogner l'aperçu aux dimensions du document (menu Affichage).
     /// `false` (défaut) = plan infini : le contenu hors document reste
     /// visible autour du cadre.
@@ -171,6 +187,8 @@ impl PhotoEngineCommand {
             Self::MoveMask { .. } => "move_mask",
             Self::RemoveFilter { .. } => "remove_filter",
             Self::Export { .. } => "export",
+            Self::SaveProject { .. } => "save_project",
+            Self::LoadProject { .. } => "load_project",
             Self::Refresh => "refresh",
             Self::SetPreviewClip { .. } => "set_preview_clip",
         }
@@ -222,6 +240,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderInvalidation::Composite,
         ),
         PhotoEngineCommand::OpenImage { .. }
+        | PhotoEngineCommand::LoadProject { .. }
         | PhotoEngineCommand::AddEmptyLayer
         | PhotoEngineCommand::DuplicateLayer(_)
         | PhotoEngineCommand::DeleteLayer(_)
@@ -242,7 +261,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::StateOnly,
         ),
-        PhotoEngineCommand::Export { .. } => {
+        PhotoEngineCommand::Export { .. } | PhotoEngineCommand::SaveProject { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)
         }
     }

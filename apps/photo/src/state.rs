@@ -217,6 +217,10 @@ pub struct OpenDocument {
     pub id: Uuid,
     /// Titre de l'onglet dock.
     pub title: String,
+    /// Chemin du projet `.cygp` associé (O001 : Save direct si
+    /// présent, Save As sinon ; posé au dispatch, jamais lu par le
+    /// worker — état UI pur).
+    pub project_path: Option<PathBuf>,
     /// État UI du document.
     pub ui: PhotoUiState,
     /// Commandes vers le worker.
@@ -269,6 +273,10 @@ pub struct PhotoRuntimeState {
     pub filter_types: Vec<(String, String)>,
     /// File picker d'ouverture en cours (non bloquant).
     pub open_picker: Option<Receiver<Option<PathBuf>>>,
+    /// File picker d'ouverture de projet `.cygp` (O001, non bloquant).
+    pub project_open_picker: Option<Receiver<Option<PathBuf>>>,
+    /// File picker « Enregistrer sous » `.cygp` (O001, non bloquant).
+    pub project_save_picker: Option<Receiver<Option<PathBuf>>>,
     /// Compteur « Sans titre ».
     pub untitled_counter: usize,
 }
@@ -283,6 +291,8 @@ impl PhotoRuntimeState {
         Self {
             filter_types,
             open_picker: None,
+            project_open_picker: None,
+            project_save_picker: None,
             untitled_counter: 0,
         }
     }
@@ -467,6 +477,10 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.status = format!("Exporte : {}", path.display());
             ui.needs_repaint = true;
         }
+        PhotoEngineResponse::ProjectSaved { path } => {
+            ui.status = format!("Enregistre : {}", path.display());
+            ui.needs_repaint = true;
+        }
         PhotoEngineResponse::ThumbnailUpdated { layer, thumb } => {
             // Phase 6G.3 §4A : miniature secondaire, arrivée après le canvas.
             // Garde STRICTE `>` (seconde barrière après la garde worker) :
@@ -576,6 +590,20 @@ mod tests {
             },
         );
         assert!(ui.status.contains("test.png"));
+    }
+
+    #[test]
+    fn project_saved_sets_status() {
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::ProjectSaved {
+                path: PathBuf::from("/tmp/projet.cygp"),
+            },
+        );
+        assert!(ui.status.contains("projet.cygp"));
     }
 
     fn preview_at_revision(revision: RenderRevision) -> PhotoEngineResponse {

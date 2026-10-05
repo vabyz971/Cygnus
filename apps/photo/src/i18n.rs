@@ -29,6 +29,10 @@ use ui_kit::i18n::Language;
 pub enum PhotoTextKey {
     /// Fermer le document actif.
     CloseDocument,
+    /// Ouvrir un projet `.cygp` (nouvel onglet).
+    OpenProject,
+    /// Enregistrer sous (projet `.cygp`).
+    SaveAs,
     /// Nouveau calque vide.
     NewEmptyLayer,
     /// Calque depuis une image.
@@ -74,6 +78,8 @@ impl PhotoCatalog {
 fn translate_fr(key: PhotoTextKey) -> &'static str {
     match key {
         PhotoTextKey::CloseDocument => "Fermer le document",
+        PhotoTextKey::OpenProject => "Ouvrir un projet",
+        PhotoTextKey::SaveAs => "Enregistrer sous",
         PhotoTextKey::NewEmptyLayer => "Nouveau calque vide",
         PhotoTextKey::LayerFromImage => "Calque depuis une image",
         PhotoTextKey::DuplicateLayer => "Dupliquer le calque",
@@ -90,6 +96,8 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
 fn translate_en(key: PhotoTextKey) -> &'static str {
     match key {
         PhotoTextKey::CloseDocument => "Close document",
+        PhotoTextKey::OpenProject => "Open project",
+        PhotoTextKey::SaveAs => "Save as",
         PhotoTextKey::NewEmptyLayer => "New empty layer",
         PhotoTextKey::LayerFromImage => "Layer from image",
         PhotoTextKey::DuplicateLayer => "Duplicate layer",
@@ -112,6 +120,8 @@ mod tests {
     fn french_matches_legacy_menu_strings() {
         let texts = PhotoCatalog::new(Language::Fr);
         assert_eq!(texts.get(PhotoTextKey::CloseDocument), "Fermer le document");
+        assert_eq!(texts.get(PhotoTextKey::OpenProject), "Ouvrir un projet");
+        assert_eq!(texts.get(PhotoTextKey::SaveAs), "Enregistrer sous");
         assert_eq!(
             texts.get(PhotoTextKey::NewEmptyLayer),
             "Nouveau calque vide"
@@ -143,6 +153,8 @@ mod tests {
         let texts = PhotoCatalog::new(Language::En);
         for key in [
             PhotoTextKey::CloseDocument,
+            PhotoTextKey::OpenProject,
+            PhotoTextKey::SaveAs,
             PhotoTextKey::NewEmptyLayer,
             PhotoTextKey::LayerFromImage,
             PhotoTextKey::DuplicateLayer,

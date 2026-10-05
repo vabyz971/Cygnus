@@ -54,6 +54,33 @@ pub fn pick_image_to_save() -> Receiver<Option<PathBuf>> {
     rx
 }
 
+/// Ouvre un dialogue d'ouverture de projet (`.cygp`, hérités
+/// `.csophoto`/`.csphoto` acceptés en lecture).
+/// Retourne le `Receiver` à poller (`Ok(path)` si choisi).
+pub fn pick_project_to_open() -> Receiver<Option<PathBuf>> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let picked = rfd::FileDialog::new()
+            .add_filter("Projet Cygnus", &["cygp", "csophoto", "csphoto"])
+            .pick_file();
+        let _ = tx.send(picked);
+    });
+    rx
+}
+
+/// Ouvre un dialogue « Enregistrer sous » de projet (`.cygp`).
+/// Retourne le `Receiver` à poller (`Ok(path)` si choisi).
+pub fn pick_project_to_save() -> Receiver<Option<PathBuf>> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let picked = rfd::FileDialog::new()
+            .add_filter("Projet Cygnus", &["cygp"])
+            .save_file();
+        let _ = tx.send(picked);
+    });
+    rx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +95,10 @@ mod tests {
         // Disconnected (échec rapide hors GUI) — jamais de blocage.
         let _ = rx.try_recv();
         let rx = pick_image_to_save();
+        let _ = rx.try_recv();
+        let rx = pick_project_to_open();
+        let _ = rx.try_recv();
+        let rx = pick_project_to_save();
         let _ = rx.try_recv();
     }
 }

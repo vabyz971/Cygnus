@@ -30,8 +30,9 @@ use crate::state::{
 };
 use crate::ui::{PhotoEngineCommand, spawn_photo_engine_worker};
 use photo_engine::Document;
+use std::path::Path;
 use std::sync::mpsc::channel;
-use ui_kit::dialogs::pick_image_to_open;
+use ui_kit::dialogs::{pick_image_to_open, pick_project_to_open, pick_project_to_save};
 use ui_kit::layout::PanelId;
 
 /// App Photo : documents à onglets + coquille + runtime + file d'actions.
@@ -116,6 +117,7 @@ impl PhotoApp {
         self.docs.push(OpenDocument {
             id,
             title,
+            project_path: None,
             ui,
             tx,
             rx,
@@ -182,6 +184,26 @@ impl PhotoApp {
             PhotoAction::CreateDocument { width, height } => self.open_sized_tab(width, height),
             PhotoAction::OpenImageDialog | PhotoAction::AddImageLayer => {
                 self.runtime.open_picker = Some(pick_image_to_open());
+            }
+            PhotoAction::OpenProjectDialog => {
+                self.runtime.project_open_picker = Some(pick_project_to_open());
+            }
+            PhotoAction::SaveProjectAsDialog => {
+                self.runtime.project_save_picker = Some(pick_project_to_save());
+            }
+            PhotoAction::SaveProject => {
+                if let Some(path) = self
+                    .active_doc_opt()
+                    .and_then(|doc| doc.project_path.clone())
+                {
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.ui.status = format!("Enregistrement : {}", path.display());
+                    }
+                    self.send_active(PhotoEngineCommand::SaveProject { path });
+                } else {
+                    // Jamais enregistré : bascule vers « Enregistrer sous ».
+                    self.runtime.project_save_picker = Some(pick_project_to_save());
+                }
             }
             PhotoAction::OpenExportDialog => self.shell.export_dialog.open(),
             PhotoAction::ExportDocument { path, quality } => {
@@ -374,6 +396,53 @@ impl PhotoApp {
                 }
             }
         }
+        // Ouverture de projet `.cygp` → TOUJOURS un nouvel onglet (jamais
+        // fusionné dans le document actif : un projet remplace tout).
+        if let Some(rx) = self.runtime.project_open_picker.take() {
+            match rx.try_recv() {
+                Ok(Some(path)) => {
+                    let title = project_title(&path);
+                    self.spawn_document(title, Document::new(1, 1));
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.project_path = Some(path.clone());
+                        doc.ui.status = format!("Chargement : {}", path.display());
+                        let _ = doc.tx.send(PhotoEngineCommand::LoadProject { path });
+                    }
+                }
+                Ok(None) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.runtime.project_open_picker = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                    }
+                }
+            }
+        }
+        // « Enregistrer sous » → document actif (chemin + titre posés au
+        // dispatch, état UI pur ; le worker ne fait que sérialiser).
+        if let Some(rx) = self.runtime.project_save_picker.take() {
+            match rx.try_recv() {
+                Ok(Some(path)) => {
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.title = project_title(&path);
+                        doc.project_path = Some(path.clone());
+                        doc.ui.status = format!("Enregistrement : {}", path.display());
+                        let _ = doc.tx.send(PhotoEngineCommand::SaveProject { path });
+                    }
+                }
+                Ok(None) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.runtime.project_save_picker = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if let Some(doc) = self.active_doc_mut_opt() {
+                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                    }
+                }
+            }
+        }
     }
 
     /// Un frame complet : poll, workspace, drainage des actions.
@@ -397,6 +466,15 @@ impl Default for PhotoApp {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Titre d'onglet depuis un chemin de projet : nom sans extension
+/// (« rendu.cygp » → « rendu »), repli « Sans titre » si illisible.
+fn project_title(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| String::from("Sans titre"))
 }
 
 /// Retire le document `id` de `docs` et recale `active` (zéro
@@ -499,6 +577,100 @@ mod tests {
         let layers = &app.active_doc_opt().expect("doc actif").ui.layers;
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].name, "Calque 1");
+    }
+
+    #[test]
+    fn save_project_writes_cygp_and_confirms_status() {
+        use std::time::{Duration, Instant};
+
+        let dir = std::env::temp_dir().join(format!("cyg-app-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let path = dir.join("travail.cygp");
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        app.active_doc_mut_opt().expect("doc").project_path = Some(path.clone());
+        app.handle_action(&ctx, PhotoAction::SaveProject);
+        // Boucle egui réelle : poll non bloquant jusqu'à l'accusé worker
+        // (« Enregistre : », pas le statut optimiste « Enregistrement »).
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if app
+                .active_doc_opt()
+                .expect("doc")
+                .ui
+                .status
+                .contains("Enregistre :")
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "accusé de sauvegarde attendu"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(path.is_file(), "fichier projet écrit");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn open_project_picker_spawns_tab_and_loads_layers() {
+        use std::sync::mpsc::channel;
+        use std::time::{Duration, Instant};
+
+        let dir = std::env::temp_dir().join(format!("cyg-app-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let path = dir.join("maquette.cygp");
+        // Projet témoin : un document 16×16 enregistré via son worker.
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        app.active_doc_mut_opt().expect("doc").project_path = Some(path.clone());
+        app.handle_action(&ctx, PhotoAction::SaveProject);
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if path.is_file() {
+                // Draine l'accusé avant d'ouvrir (ordre déterministe).
+                std::thread::sleep(Duration::from_millis(50));
+                app.poll(&ctx);
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Simule le file picker (canal prêt, sans rfd) : nouvel onglet.
+        let (tx, rx) = channel();
+        tx.send(Some(path.clone())).expect("envoi picker");
+        app.runtime.project_open_picker = Some(rx);
+        app.poll(&ctx);
+        assert_eq!(app.docs.len(), 2, "projet ouvert dans un nouvel onglet");
+        assert_eq!(
+            app.active_doc_opt().expect("doc").title,
+            "maquette",
+            "titre = nom du fichier"
+        );
+        assert_eq!(
+            app.active_doc_opt().expect("doc").project_path.as_deref(),
+            Some(path.as_path())
+        );
+        // Le chargement worker remplace le document 1×1 par l'arbre sauvé.
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            let layers = &app.active_doc_opt().expect("doc").ui.layers;
+            if layers.iter().any(|layer| layer.name == "Calque 1") {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "calques du projet attendus"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
