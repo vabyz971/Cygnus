@@ -12,6 +12,7 @@
 | D004 | 2026-10-05 | Personas + StudioLink-like plutôt que parité Photoshop | `PhotoEditMode::{Pixel,Vector,Layout}` déjà en place, moteurs dormants à brancher | actée |
 | D005 | 2026-10-05 | Pas d'IA générative / plugins `.8bf` avant v1.0 | focus retouche + vector + layout d'abord | actée |
 | D006 | 2026-10-05 | Accusés/erreurs worker émis APRÈS l'état dans `apply_batch` | un `LayersChanged` efface le statut ; l'accusé (save/export, erreur) doit survivre | actée |
+| D007 | 2026-10-05 | Raccourcis suspendus pendant saisie texte (`egui_wants_keyboard_input`) | taper `b` en renommant ne doit pas changer d'outil ; pas de double undo avec les champs | actée |
 
 ## Modèle pour une nouvelle décision
 

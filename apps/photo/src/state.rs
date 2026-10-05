@@ -271,6 +271,8 @@ impl Default for PhotoShellState {
 pub struct PhotoRuntimeState {
     /// Catalogue des filtres (registre moteur, statique).
     pub filter_types: Vec<(String, String)>,
+    /// Résolveur de raccourcis (bindings par défaut, O002).
+    pub keys: preferences::KeybindingResolver,
     /// File picker d'ouverture en cours (non bloquant).
     pub open_picker: Option<Receiver<Option<PathBuf>>>,
     /// File picker d'ouverture de projet `.cygp` (O001, non bloquant).
@@ -290,6 +292,9 @@ impl PhotoRuntimeState {
             .collect();
         Self {
             filter_types,
+            keys: preferences::KeybindingResolver::from_bindings(
+                &preferences::KeybindingPreferences::with_defaults().bindings,
+            ),
             open_picker: None,
             project_open_picker: None,
             project_save_picker: None,

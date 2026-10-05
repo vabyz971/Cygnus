@@ -235,13 +235,13 @@ pub fn parse_combo(s: &str) -> Option<KeyCombo> {
 }
 
 /// Convertit une touche logique en sa représentation texte normalisée
-/// (identique à celle utilisée par [`parse_combo`]).
+/// (identique à celle utilisée par [`parse_combo`] : MAJUSCULES).
 /// Les modificateurs seuls retournent `None` (jamais d'action).
 #[must_use]
 pub fn key_to_string(key: &AppKey) -> Option<String> {
     match key {
         AppKey::Character(c) => Some(c.to_uppercase()),
-        AppKey::Named(named) => named_to_string(*named),
+        AppKey::Named(named) => named_to_string(*named).map(|s| s.to_uppercase()),
     }
 }
 
@@ -329,6 +329,30 @@ mod tests {
         assert_eq!(
             resolver.resolve(&AppKey::Named(NamedKey::Control), AppModifiers::CTRL),
             None
+        );
+    }
+
+    /// Les touches nommées en casse mixte (`Tab`, `Delete`, `Space`)
+    /// résolvent comme leurs bindings (`TAB`, `DELETE`, `SPACE`) :
+    /// `parse_combo` et `key_to_string` partagent la même norme.
+    #[test]
+    fn named_keys_resolvent_malgre_la_casse_mixte() {
+        let mut bindings = HashMap::new();
+        bindings.insert("panneau".to_string(), "Tab".to_string());
+        bindings.insert("supprimer".to_string(), "Delete".to_string());
+        bindings.insert("espace".to_string(), "Space".to_string());
+        let resolver = KeybindingResolver::from_bindings(&bindings);
+        assert_eq!(
+            resolver.resolve(&AppKey::Named(NamedKey::Tab), AppModifiers::EMPTY),
+            Some("panneau".to_string())
+        );
+        assert_eq!(
+            resolver.resolve(&AppKey::Named(NamedKey::Delete), AppModifiers::EMPTY),
+            Some("supprimer".to_string())
+        );
+        assert_eq!(
+            resolver.resolve(&AppKey::Named(NamedKey::Space), AppModifiers::EMPTY),
+            Some("espace".to_string())
         );
     }
 }

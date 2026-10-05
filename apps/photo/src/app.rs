@@ -450,6 +450,10 @@ impl PhotoApp {
         self.poll(ctx);
         let photo_ctx = PhotoUiContext::for_frame(ctx);
         PhotoWorkspace::show(ui, self, &photo_ctx);
+        // Clavier (O002) : même flux que menus et panels — file unique.
+        for action in crate::shortcuts::poll_shortcut_actions(ctx, &self.runtime.keys) {
+            self.queue.push(action);
+        }
         for action in self.queue.drain() {
             self.handle_action(ctx, action);
         }
