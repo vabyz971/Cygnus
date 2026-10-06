@@ -179,6 +179,7 @@ fn history_label(op: &str) -> String {
         "set_opacity" => "Opacité",
         "set_blend_mode" => "Fusion",
         "paint_stroke" => "Coup de pinceau",
+        "paint_mask" => "Peindre le masque",
         "move_layer" => "Déplacer",
         "open_image" => "Ouvrir une image",
         "add_empty_layer" => "Nouveau calque",
@@ -824,6 +825,9 @@ impl EngineWorker {
                 if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
                     return Mutation::unchanged();
                 }
+                // Lissage du geste (1 point/frame) : coins adoucis avant
+                // rastérisation (même bbox conservatrice pour le dirty).
+                let points = photo_engine::paint::resample_stroke(&points, radius.max(2.0));
                 let is_pixel = matches!(
                     self.document.find(layer),
                     Some(photo_engine::LayerNode::Pixel(_))
@@ -910,6 +914,39 @@ impl EngineWorker {
                 .map(|footprint| DirtyMark::Region(footprint.pad(spread)))
                 .unwrap_or(DirtyMark::Global);
                 Mutation::changed(invalidation).with_dirty(dirty)
+            }
+            PhotoEngineCommand::PaintMask {
+                owner,
+                mask,
+                points,
+                eraser,
+                radius,
+                opacity,
+            } => {
+                // Mêmes garde-fous + lissage que `PaintStroke`.
+                if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
+                    return Mutation::unchanged();
+                }
+                let known = self
+                    .document
+                    .masks_of(owner)
+                    .is_some_and(|masks| masks.iter().any(|m| m.id == mask));
+                if !known {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                let points = photo_engine::paint::resample_stroke(&points, radius.max(2.0));
+                if self
+                    .document
+                    .paint_mask(owner, mask, &points, radius, opacity, !eraser)
+                    .is_err()
+                {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                // Marquage global (repli sûr : le dirty précis suit
+                // l'empreinte du calque, le masque partage son espace).
+                Mutation::changed(invalidation)
             }
             PhotoEngineCommand::OpenImage { path } => match image::open(&path) {
                 Ok(image) => {
@@ -3246,6 +3283,66 @@ mod single_pass_tests {
             worker.apply(PhotoEngineCommand::ToggleFilter {
                 layer: id,
                 filter: uuid::Uuid::new_v4()
+            }),
+            PhotoEngineResponse::StateChanged { .. }
+        ));
+    }
+
+    #[test]
+    fn paint_mask_noircit_libelle_et_annule() {
+        use photo_engine::LayerMask;
+        let mut doc = Document::new(8, 8);
+        let mut pixels = photo_engine::PixelLayer::new(
+            "fond",
+            std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+        );
+        let masque = LayerMask::full(4, 4);
+        let mid = masque.id;
+        pixels.masks.push(masque);
+        let id = pixels.id;
+        doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
+        let mut worker = EngineWorker::new(doc);
+        // Gomme sur masque blanc : creuse (canal R).
+        match worker.apply(PhotoEngineCommand::PaintMask {
+            owner: id,
+            mask: mid,
+            points: vec![(1.0, 1.0), (2.0, 2.0)],
+            eraser: true,
+            radius: 1.5,
+            opacity: 1.0,
+        }) {
+            PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
+                assert_eq!(undo_labels, vec!["Peindre le masque"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        let valeur = worker
+            .test_document()
+            .pixel_layer(id)
+            .expect("calque")
+            .masks[0]
+            .image
+            .get_pixel(1, 1)[0];
+        assert!(valeur < 128, "masque creusé : {valeur}");
+        // Undo : blanc restauré.
+        worker.apply(PhotoEngineCommand::Undo);
+        let valeur = worker
+            .test_document()
+            .pixel_layer(id)
+            .expect("calque")
+            .masks[0]
+            .image
+            .get_pixel(1, 1)[0];
+        assert_eq!(valeur, 255);
+        // Masque inconnu : no-op.
+        assert!(matches!(
+            worker.apply(PhotoEngineCommand::PaintMask {
+                owner: id,
+                mask: uuid::Uuid::new_v4(),
+                points: vec![(1.0, 1.0)],
+                eraser: true,
+                radius: 1.5,
+                opacity: 1.0,
             }),
             PhotoEngineResponse::StateChanged { .. }
         ));

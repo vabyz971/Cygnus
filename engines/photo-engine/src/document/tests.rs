@@ -793,6 +793,52 @@ fn bascule_actif_desactive_filtre_et_masque() {
     assert!(!doc.set_mask_enabled(Uuid::new_v4(), mid, true));
 }
 
+#[test]
+fn peinture_masque_noircit_ou_blanchit_le_canal_r() {
+    let mut doc = Document::new(8, 8);
+    let mut pixels = PixelLayer::new(
+        "fond",
+        Arc::new(DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            4,
+            4,
+            Rgba([10, 20, 30, 255]),
+        ))),
+    );
+    // Masque blanc (tout visible) : la gomme (noir) creuse.
+    let masque = LayerMask::full(4, 4);
+    let mid = masque.id;
+    pixels.masks.push(masque);
+    let id = pixels.id;
+    doc.push_layer(LayerNode::Pixel(pixels));
+    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.0, false)
+        .expect("peinture noire");
+    let valeur = doc.pixel_layer(id).expect("calque").masks[0]
+        .image
+        .get_pixel(1, 1)[0];
+    assert!(valeur < 128, "noirci : {valeur}");
+    // Le pinceau (blanc) révèle à nouveau.
+    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.0, true)
+        .expect("peinture blanche");
+    let valeur = doc.pixel_layer(id).expect("calque").masks[0]
+        .image
+        .get_pixel(1, 1)[0];
+    assert!(valeur > 200, "reblanchi : {valeur}");
+    // Garde-fous : vide, rayon invalide, inconnus.
+    assert!(doc.paint_mask(id, mid, &[], 1.5, 1.0, true).is_err());
+    assert!(
+        doc.paint_mask(id, mid, &[(1.0, 1.0)], 0.0, 1.0, true)
+            .is_err()
+    );
+    assert!(
+        doc.paint_mask(id, Uuid::new_v4(), &[(1.0, 1.0)], 1.5, 1.0, true)
+            .is_err()
+    );
+    assert!(
+        doc.paint_mask(Uuid::new_v4(), mid, &[(1.0, 1.0)], 1.5, 1.0, true)
+            .is_err()
+    );
+}
+
 // --- Masques (§8) ---
 
 fn masked_node(

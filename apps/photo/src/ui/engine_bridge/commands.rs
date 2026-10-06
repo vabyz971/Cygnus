@@ -107,6 +107,23 @@ pub enum PhotoEngineCommand {
         /// Décalage vertical en pixels document.
         dy: f32,
     },
+    /// Peindre dans un masque (pinceau = blanc/révèle, gomme =
+    /// noir/masque — convention Affinity, couleur du pinceau
+    /// ignorée). Points en pixels image, comme `PaintStroke`.
+    PaintMask {
+        /// Porteur (calque ou sous-calque de filtre).
+        owner: Uuid,
+        /// Masque visé.
+        mask: Uuid,
+        /// Polyligne du trait (pixels image).
+        points: Vec<(f32, f32)>,
+        /// Vrai = gomme (noir), faux = pinceau (blanc).
+        eraser: bool,
+        /// Rayon en pixels image.
+        radius: f32,
+        /// Opacité du trait 0..=1.
+        opacity: f32,
+    },
     /// Ouvrir une image comme nouveau calque (décodage lourd, déjà
     /// sur le thread worker donc non bloquant pour l'UI).
     OpenImage {
@@ -215,6 +232,7 @@ impl PhotoEngineCommand {
             Self::RedoSteps { .. } => "redo_steps",
             Self::PaintStroke { .. } => "paint_stroke",
             Self::MoveLayer { .. } => "move_layer",
+            Self::PaintMask { .. } => "paint_mask",
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
             Self::DuplicateLayer(_) => "duplicate_layer",
@@ -284,6 +302,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         ),
         PhotoEngineCommand::PaintStroke { layer, .. } => (
             RenderEvent::NodeInvalidated(*layer),
+            RenderInvalidation::Composite,
+        ),
+        PhotoEngineCommand::PaintMask { owner, .. } => (
+            RenderEvent::NodeInvalidated(*owner),
             RenderInvalidation::Composite,
         ),
         PhotoEngineCommand::OpenImage { .. }

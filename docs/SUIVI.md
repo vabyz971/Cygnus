@@ -26,3 +26,4 @@
 | 2026-10-05 | O004 | Fait : `Document::rotate` (centre conservé) + `FlipHorizontal/Vertical`, `RotateClockwise/Counterclockwise`, `CropToDocument` (intersection, no-op si contenu, refus si transformé/hors cadre), menu Calque, libellés historique. Crop interactif (rect souris) = futur objectif. |
 | 2026-10-06 | — | Fix curseur : `menu_item_enabled` en Small comme `menu_item` (surlignages uniformes) + test. |
 | 2026-10-06 | — | Tree calques (D008), toggle on/off filtres/masques worker+moteur, inspecteur sans doublons (D009), sous-menu Transformations (menubar + clic droit canvas + clic droit ligne), sweep i18n ~90 clés (D010). |
+| 2026-10-06 | — | Fix historique : clic = la rangée devient tête (off-by-one), rangée État initial, scroll rempli (`auto_shrink` off). Fix chevron pièces jointes (`load_with_default_open`). Peinture masques (`paint_mask` moteur + `PaintMask` worker, blanc/noir). Lissage traits (`resample_stroke` Chaikin au commit). |

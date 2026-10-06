@@ -378,14 +378,40 @@ impl PhotoApp {
                 }
             }
             PhotoAction::CommitStroke(paint) => {
-                self.send_active(PhotoEngineCommand::PaintStroke {
-                    layer: paint.layer,
-                    points: paint.points,
-                    eraser: paint.eraser,
-                    radius: paint.radius,
-                    color: paint.color,
-                    opacity: paint.opacity,
+                // Masque focalisé du calque sélectionné : le trait
+                // part dans le masque (blanc/noir), sinon dans la
+                // source du calque (comportement historique).
+                let mask_target = self.active_doc_opt().and_then(|doc| {
+                    let focus = doc.ui.focused_attachment?;
+                    if Some(focus.owner) != doc.ui.selected {
+                        return None;
+                    }
+                    doc.ui
+                        .layers
+                        .iter()
+                        .find(|layer| layer.id == focus.owner)
+                        .filter(|layer| layer.masks.iter().any(|m| m.id == focus.id))
+                        .map(|_| focus.id)
                 });
+                if let Some(mask) = mask_target {
+                    self.send_active(PhotoEngineCommand::PaintMask {
+                        owner: paint.layer,
+                        mask,
+                        points: paint.points,
+                        eraser: paint.eraser,
+                        radius: paint.radius,
+                        opacity: paint.opacity,
+                    });
+                } else {
+                    self.send_active(PhotoEngineCommand::PaintStroke {
+                        layer: paint.layer,
+                        points: paint.points,
+                        eraser: paint.eraser,
+                        radius: paint.radius,
+                        color: paint.color,
+                        opacity: paint.opacity,
+                    });
+                }
             }
             PhotoAction::MoveLayer { layer, dx, dy } => {
                 self.send_active(PhotoEngineCommand::MoveLayer { layer, dx, dy });
@@ -800,6 +826,77 @@ mod tests {
                 break;
             }
             assert!(start.elapsed() < Duration::from_secs(30), "flip attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn commit_stroke_on_focused_mask_paints_mask() {
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        // Attend le calque, sélectionne, ajoute un masque blanc.
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if !app.active_doc_opt().expect("doc").ui.layers.is_empty() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let id = app.active_doc_opt().expect("doc").ui.layers[0].id;
+        app.handle_action(&ctx, PhotoAction::SelectLayer(id));
+        app.handle_action(&ctx, PhotoAction::AddMaskToSelected);
+        let start = Instant::now();
+        let mid = loop {
+            app.poll(&ctx);
+            if let Some(mask) = app
+                .active_doc_opt()
+                .expect("doc")
+                .ui
+                .layers
+                .iter()
+                .find(|layer| layer.id == id)
+                .and_then(|layer| layer.masks.first())
+            {
+                break mask.id;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "masque attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Focus masque + trait gomme : doit partir en PaintMask.
+        app.handle_action(&ctx, PhotoAction::FocusAttachment { owner: id, id: mid });
+        app.handle_action(
+            &ctx,
+            PhotoAction::CommitStroke(crate::ui::PaintRequest {
+                layer: id,
+                points: vec![(4.0, 4.0), (8.0, 8.0)],
+                eraser: true,
+                radius: 3.0,
+                color: [255, 0, 0],
+                opacity: 1.0,
+            }),
+        );
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if app
+                .active_doc_opt()
+                .expect("doc")
+                .ui
+                .history_undo
+                .iter()
+                .any(|label| label == "Peindre le masque")
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "peinture masque attendue"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }

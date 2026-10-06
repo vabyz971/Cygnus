@@ -114,12 +114,13 @@ pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
         .unwrap_or(true)
 }
 
-/// Bascule l'état ci-dessus (sans effet si déjà dans l'état voulu).
+/// Bascule l'état ci-dessus (stocké même au premier clic : `load`
+/// seul rend `None` sans état persisté, ce qui figerait le chevron).
 pub fn set_attachments_open(ui: &egui::Ui, owner: Uuid, open: bool) {
     let id = ui.make_persistent_id(("photo_attachments_open", owner));
-    if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
-        && state.is_open() != open
-    {
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    if state.is_open() != open {
         state.toggle(ui);
         state.store(ui.ctx());
     }
@@ -582,6 +583,42 @@ mod tests {
         let state = LayerRenameState::default();
         assert_eq!(state.editing, None);
         assert!(state.buffer.is_empty());
+    }
+
+    #[test]
+    fn attachments_collapse_roundtrip() {
+        use uuid::Uuid;
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let owner = Uuid::new_v4();
+        // Ouvert par défaut, même sans état stocké.
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert!(attachments_open(ui, owner));
+            });
+        })
+        .drop_without_applying_deltas();
+        // Premier clic : bascule vraiment (régression : `load` seul
+        // rendait `None` et figeait le chevron).
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                set_attachments_open(ui, owner, false);
+            });
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert!(!attachments_open(ui, owner));
+                set_attachments_open(ui, owner, true);
+            });
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert!(attachments_open(ui, owner));
+            });
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]

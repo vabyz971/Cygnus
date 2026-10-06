@@ -185,6 +185,53 @@ pub(crate) fn stamp_polyline(
     }
 }
 
+/// Rééchantillonne une polyligne de geste (1 point/frame) en courbe
+/// lisse : subdivision des segments au-delà de `max_gap`, puis une
+/// passe de Chaikin (coupe des coins, extrémités préservées).
+///
+/// Sans ça, un trait rapide (points épars) se rend en segments
+/// droits entre échantillons — d'autant plus visible que le trait
+/// est long et le fps bas. Les gestes lents (points denses) sont
+/// quasi inchangés (coins déjà fins). Le résultat reste dans
+/// l'enveloppe convexe des entrées (bbox conservatrice valide).
+#[must_use]
+pub fn resample_stroke(points: &[(f32, f32)], max_gap: f32) -> Vec<(f32, f32)> {
+    if points.len() < 2 {
+        return points.to_vec();
+    }
+    let max_gap = max_gap.max(1.0);
+    // Subdivision : aucun segment ne dépasse `max_gap`.
+    let mut dense: Vec<(f32, f32)> = Vec::with_capacity(points.len() * 2);
+    dense.push(points[0]);
+    for window in points.windows(2) {
+        let (ax, ay) = window[0];
+        let (bx, by) = window[1];
+        let dist = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+        if dist.is_finite() && dist > max_gap {
+            let n = (dist / max_gap).ceil() as usize;
+            for i in 1..n {
+                let t = i as f32 / n as f32;
+                dense.push((ax + (bx - ax) * t, ay + (by - ay) * t));
+            }
+        }
+        dense.push((bx, by));
+    }
+    if dense.len() < 3 {
+        return dense;
+    }
+    // Chaikin : Q = 3/4·P + 1/4·suivant, R = 1/4·P + 3/4·suivant.
+    let mut smooth: Vec<(f32, f32)> = Vec::with_capacity(dense.len() * 2);
+    smooth.push(dense[0]);
+    for window in dense.windows(2) {
+        let (ax, ay) = window[0];
+        let (bx, by) = window[1];
+        smooth.push((ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25));
+        smooth.push((ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75));
+    }
+    smooth.push(*dense.last().expect("non vide"));
+    smooth
+}
+
 /// Composite un masque de couverture sur un tampon RGBA (mêmes formules que
 /// le chemin historique : source-over à opacité uniforme, destination-out
 /// en gomme). `rgba` est indexé en absolu (`stride` = largeur du tampon) ;
@@ -418,6 +465,30 @@ fn commit_stroke_locked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resample_conserve_points_denses_et_adoucit_les_angles() {
+        // Geste lent : quasi inchangé (mêmes extrémités, pas d'explosion).
+        let dense = vec![(0.0, 0.0), (1.0, 0.5), (2.0, 1.0), (3.0, 1.5)];
+        let out = resample_stroke(&dense, 4.0);
+        assert_eq!(out.first(), Some(&(0.0, 0.0)));
+        assert_eq!(out.last(), Some(&(3.0, 1.5)));
+        assert!(out.len() < dense.len() * 4);
+        // Angle droit épars : le coin est coupé (plus aucun point
+        // exactement sur le sommet, remplacé par Q/R de Chaikin).
+        let angle = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)];
+        let out = resample_stroke(&angle, 4.0);
+        assert!(out.len() > angle.len(), "subdivision + Chaikin");
+        assert_eq!(out.first(), Some(&(0.0, 0.0)));
+        assert_eq!(out.last(), Some(&(10.0, 10.0)));
+        assert!(
+            !out.iter().any(|&(x, y)| x == 10.0 && y == 0.0),
+            "sommet (10,0) adouci : {out:?}"
+        );
+        // Cas limites : vide, point unique, segment dégénéré.
+        assert!(resample_stroke(&[], 4.0).is_empty());
+        assert_eq!(resample_stroke(&[(1.0, 2.0)], 4.0), vec![(1.0, 2.0)]);
+    }
 
     #[test]
     fn trait_opaque_sur_fond_transparent() {

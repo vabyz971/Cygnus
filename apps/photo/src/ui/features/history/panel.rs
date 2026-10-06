@@ -59,8 +59,19 @@ impl HistoryPanel {
             return Vec::new();
         }
         egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut actions = Vec::new();
+                // État d'ouverture : tout annuler (inaccessible
+                // autrement : les rangées undo ne remontent qu'à
+                // leur propre tête).
+                if !undo.is_empty()
+                    && ui
+                        .selectable_label(false, texts.get(PhotoTextKey::HistoryInitial))
+                        .clicked()
+                {
+                    actions.push(HistoryPanelAction::Back(undo.len() as u32));
+                }
                 for (index, label) in undo.iter().enumerate() {
                     let row = format!("{}. {label}", index + 1);
                     if index + 1 == undo.len() {
@@ -88,11 +99,12 @@ impl HistoryPanel {
 }
 
 /// Pas en arrière pour un clic sur la rangée undo `clicked`
-/// (0 = plus ancien) parmi `undo_len` : `undo_len - clicked`
-/// (cliquer le plus ancien = tout annuler).
+/// (0 = plus ancien) parmi `undo_len` : la rangée cliquée devient la
+/// tête (tout ce qui suit est annulé), soit `undo_len - 1 - clicked.
+/// Cliquer le plus ancien = tout annuler.
 #[must_use]
 pub fn back_steps_for_undo_click(undo_len: usize, clicked: usize) -> u32 {
-    undo_len.saturating_sub(clicked).max(1) as u32
+    undo_len.saturating_sub(clicked.saturating_add(1)).max(1) as u32
 }
 
 /// Pas en avant pour un clic sur la rangée redo `from_top` (0 =
@@ -107,14 +119,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clic_undo_recule_jusqu_a_l_etat_vise() {
-        // 3 pas [A, B, C] : clic B (index 1) = annuler C + B.
-        assert_eq!(back_steps_for_undo_click(3, 1), 2);
-        // Clic A (le plus ancien) = tout annuler.
-        assert_eq!(back_steps_for_undo_click(3, 0), 3);
-        // Clic C (le plus récent) = un seul pas (== Undo).
+    fn clic_undo_rend_la_rangee_cliquee_tete() {
+        // 3 pas [A, B, C] : clic B (index 1) = annuler C seul, B en tête.
+        assert_eq!(back_steps_for_undo_click(3, 1), 1);
+        // Clic A (le plus ancien) = annuler B + C, A en tête.
+        assert_eq!(back_steps_for_undo_click(3, 0), 2);
+        // Tête non cliquable en UI ; garde-fou : jamais zéro.
         assert_eq!(back_steps_for_undo_click(3, 2), 1);
-        // Garde-fous : jamais zéro.
         assert_eq!(back_steps_for_undo_click(1, 5), 1);
     }
 

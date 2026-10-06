@@ -460,6 +460,57 @@ impl Document {
         Ok(())
     }
 
+    /// Peint dans un masque (blanc = révèle si `whiten`, noir =
+    /// masque sinon), en espace source du calque (même espace que les
+    /// points du worker, comme la peinture pixels).
+    ///
+    /// Le pinceau réutilise `paint_stroke_rgba` en mode `Paint`
+    /// (jamais `Erase` : la gomme sur masque = noir, pas du
+    /// destination-out). Couverture = canal R (cf. `mask_coverage`).
+    ///
+    /// # Errors
+    /// Retourne une erreur si le porteur ou le masque est introuvable.
+    pub fn paint_mask(
+        &mut self,
+        owner_id: Uuid,
+        mask_id: Uuid,
+        points: &[(f32, f32)],
+        radius: f32,
+        opacity: f32,
+        whiten: bool,
+    ) -> Result<(), String> {
+        if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
+            return Err("trait vide".into());
+        }
+        let Some(masks) = self.masks_of_mut(owner_id) else {
+            return Err("porteur introuvable".into());
+        };
+        let Some(mask) = masks.iter_mut().find(|m| m.id == mask_id) else {
+            return Err("masque introuvable".into());
+        };
+        let (w, h) = (mask.image.width(), mask.image.height());
+        let mut buffer = mask.image.as_raw().to_vec();
+        let v = if whiten { 255 } else { 0 };
+        let brush = crate::paint::BrushParams {
+            radius,
+            color: [v, v, v],
+            opacity: opacity.clamp(0.0, 1.0),
+            mode: crate::paint::StrokeMode::Paint,
+        };
+        crate::paint::paint_stroke_rgba(&mut buffer, w, h, points, &brush);
+        let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
+            return Err("rastérisation impossible".into());
+        };
+        mask.image = Arc::new(image);
+        mask.touch();
+        if self.find(owner_id).is_some() {
+            self.touch_pixel(owner_id);
+        } else if let Some(parent) = self.find_filter_parent(owner_id) {
+            self.touch_pixel(parent);
+        }
+        Ok(())
+    }
+
     /// Rogne le calque au rect (coordonnées CALQUE, pixels). Destructif :
     /// le contenu reste en place dans le monde (le transform compense
     /// l'origine du crop). Erreur descriptive si le rect est invalide.

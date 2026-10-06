@@ -221,6 +221,8 @@ pub enum PhotoTextKey {
     ResetLayout,
     /// Panneau Historique vide.
     HistoryEmpty,
+    /// Rangée de l'état d'ouverture (tout annuler).
+    HistoryInitial,
     /// À propos.
     About,
 }
@@ -248,6 +250,7 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::OpenProject,
     PhotoTextKey::SaveAs,
     PhotoTextKey::HistoryEmpty,
+    PhotoTextKey::HistoryInitial,
     PhotoTextKey::FlipHorizontal,
     PhotoTextKey::FlipVertical,
     PhotoTextKey::RotateClockwise,
@@ -456,6 +459,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::Zoom100 => "Zoom 100 %",
         PhotoTextKey::ResetLayout => "Réinitialiser la disposition",
         PhotoTextKey::HistoryEmpty => "Aucune modification",
+        PhotoTextKey::HistoryInitial => "État initial",
         PhotoTextKey::About => "À propos",
     }
 }
@@ -564,6 +568,7 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::Zoom100 => "Zoom 100%",
         PhotoTextKey::ResetLayout => "Reset layout",
         PhotoTextKey::HistoryEmpty => "No changes yet",
+        PhotoTextKey::HistoryInitial => "Initial state",
         PhotoTextKey::About => "About",
     }
 }
