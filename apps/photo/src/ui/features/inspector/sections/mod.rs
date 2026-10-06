@@ -16,10 +16,14 @@
 
 //! Sections de l'inspecteur (une par domaine du calque).
 //!
-//! Aujourd'hui : `appearance` (visibilité, opacité). Les futures
-//! sections (`transform`, `blend`, `effects`) suivront le même
-//! contrat : `(ui, ctx, layer) -> Vec<InspectorAction>`.
+//! Aujourd'hui : `attachment` (pièce jointe focalisée depuis
+//! l'arbre des calques : nom, type, on/off). Les futures sections
+//! (`transform`, `blend`, `effects`) suivront le même contrat :
+//! `(ui, ctx, …) -> Vec<InspectorAction>`.
+//!
+//! Visibilité / opacité / fusion vivent dans le panneau Calques
+//! (en-tête de sélection) : jamais dupliquées ici.
 
-pub mod appearance;
+pub mod attachment;
 
-pub use appearance::draw_appearance_section;
+pub use attachment::draw_attachment_section;

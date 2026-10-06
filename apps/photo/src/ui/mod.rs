@@ -53,8 +53,8 @@ pub use features::{
     history::{HistoryPanel, history_panel_action_to_photo},
     inspector::{InspectorPanel, inspector_action_to_photo},
     layers::{
-        LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo, PhotoLayerThumb,
-        layer_panel_action_to_photo,
+        AttachmentRef, LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo,
+        PhotoLayerThumb, layer_panel_action_to_photo,
     },
 };
 pub use ink_overlay::{

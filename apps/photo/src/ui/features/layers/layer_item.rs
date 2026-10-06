@@ -25,8 +25,10 @@
 //! [`LayerItemAction`], convertie en [`PhotoAction`](crate::commands::PhotoAction)
 //! puis routée par `PhotoApp` (état local ou worker).
 
-use super::types::{LayerThumbView, PhotoLayerInfo};
+use super::types::{LayerTexts, LayerThumbView, PhotoLayerInfo, PhotoSubLayerInfo};
+use crate::i18n::PhotoTextKey;
 use ui_kit::components::{IconButton, menu_row, menu_style};
+use ui_kit::i18n::TextKey;
 use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
@@ -49,6 +51,28 @@ pub struct LayerRenameState {
 pub enum LayerItemAction {
     /// Sélectionner ce calque.
     Select(Uuid),
+    /// Sélectionner une pièce jointe (filtre ou masque) : le porteur
+    /// devient la sélection principale (tree, O003+).
+    SelectAttachment {
+        /// Calque porteur.
+        owner: Uuid,
+        /// Filtre ou masque visé.
+        id: Uuid,
+    },
+    /// Activer/désactiver un filtre live (œil de la ligne).
+    ToggleFilter {
+        /// Calque porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+    },
+    /// Activer/désactiver un masque (œil de la ligne).
+    ToggleMask {
+        /// Porteur.
+        owner: Uuid,
+        /// Masque visé.
+        mask: Uuid,
+    },
     /// Valider le renommage (nom déjà rogné, non vide).
     RenameCommit { layer: Uuid, name: String },
     /// Basculer la visibilité.
@@ -57,6 +81,17 @@ pub enum LayerItemAction {
     DeleteLayer(Uuid),
     /// Dupliquer ce calque.
     DuplicateLayer(Uuid),
+    /// Miroir horizontal (menu contextuel : agit sur la sélection,
+    /// posée par le clic droit).
+    FlipHorizontalSelected,
+    /// Miroir vertical (idem).
+    FlipVerticalSelected,
+    /// Rotation 90° horaire (idem).
+    RotateClockwiseSelected,
+    /// Rotation 90° antihoraire (idem).
+    RotateCounterclockwiseSelected,
+    /// Rogner au document (idem).
+    CropSelectedToDocument,
     /// Replier / déplier un groupe (état moteur, sans re-rendu).
     ToggleCollapsed(Uuid),
     /// Déplacer un filtre dans sa pile.
@@ -67,6 +102,27 @@ pub enum LayerItemAction {
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Supprimer un masque.
     RemoveMask { owner: Uuid, mask: Uuid },
+}
+
+/// État replié/déplié des pièces jointes d'un calque (tree) :
+/// mémoire egui, ouvert par défaut. Lu par la liste (filtrage des
+/// lignes) et basculé par le chevron de la ligne du porteur.
+pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
+    let id = ui.make_persistent_id(("photo_attachments_open", owner));
+    egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
+        .map(|state| state.is_open())
+        .unwrap_or(true)
+}
+
+/// Bascule l'état ci-dessus (sans effet si déjà dans l'état voulu).
+pub fn set_attachments_open(ui: &egui::Ui, owner: Uuid, open: bool) {
+    let id = ui.make_persistent_id(("photo_attachments_open", owner));
+    if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
+        && state.is_open() != open
+    {
+        state.toggle(ui);
+        state.store(ui.ctx());
+    }
 }
 
 /// Dessine le contenu HUD d'une ligne de calque.
@@ -84,7 +140,10 @@ pub fn draw_photo_layer_item(
     rename: &mut LayerRenameState,
     thumb: Option<LayerThumbView>,
     depth: usize,
+    t: LayerTexts,
 ) -> Vec<LayerItemAction> {
+    let texts = t.texts;
+    let catalog = t.catalog;
     let theme = ui.cygnus_theme();
     let mut actions = Vec::new();
 
@@ -105,22 +164,50 @@ pub fn draw_photo_layer_item(
     egui::Popup::context_menu(&row_resp)
         .style(menu_style(&theme))
         .show(|ui| {
-            if menu_row(ui, &theme, "Renommer") {
+            if menu_row(ui, &theme, catalog.get(TextKey::Rename)) {
                 rename.editing = Some(layer.id);
                 rename.buffer.clone_from(&layer.name);
                 ui.close();
             }
-            if menu_row(ui, &theme, "Dupliquer") {
+            if menu_row(ui, &theme, catalog.get(TextKey::Duplicate)) {
                 actions.push(LayerItemAction::DuplicateLayer(layer.id));
                 ui.close();
             }
+            // Transformations du calque (sélection déjà posée par le
+            // clic droit) : sous-menu façon barre de menus.
+            ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
+                if menu_row(ui, &theme, texts.get(PhotoTextKey::FlipHorizontal)) {
+                    actions.push(LayerItemAction::FlipHorizontalSelected);
+                    ui.close();
+                }
+                if menu_row(ui, &theme, texts.get(PhotoTextKey::FlipVertical)) {
+                    actions.push(LayerItemAction::FlipVerticalSelected);
+                    ui.close();
+                }
+                if menu_row(ui, &theme, texts.get(PhotoTextKey::RotateClockwise)) {
+                    actions.push(LayerItemAction::RotateClockwiseSelected);
+                    ui.close();
+                }
+                if menu_row(ui, &theme, texts.get(PhotoTextKey::RotateCounterclockwise)) {
+                    actions.push(LayerItemAction::RotateCounterclockwiseSelected);
+                    ui.close();
+                }
+                if menu_row(ui, &theme, texts.get(PhotoTextKey::CropToDocument)) {
+                    actions.push(LayerItemAction::CropSelectedToDocument);
+                    ui.close();
+                }
+            });
             ui.separator();
-            let visibility_label = if layer.visible { "Masquer" } else { "Afficher" };
+            let visibility_label = if layer.visible {
+                catalog.get(TextKey::Hide)
+            } else {
+                catalog.get(TextKey::Show)
+            };
             if menu_row(ui, &theme, visibility_label) {
                 actions.push(LayerItemAction::ToggleVisibility(layer.id));
                 ui.close();
             }
-            if menu_row(ui, &theme, "Supprimer") {
+            if menu_row(ui, &theme, catalog.get(TextKey::Delete)) {
                 actions.push(LayerItemAction::DeleteLayer(layer.id));
                 ui.close();
             }
@@ -149,14 +236,37 @@ pub fn draw_photo_layer_item(
             };
             if IconButton::new(chevron)
                 .tooltip(if layer.collapsed {
-                    "Déplier"
+                    texts.get(PhotoTextKey::ExpandGroup)
                 } else {
-                    "Replier"
+                    texts.get(PhotoTextKey::CollapseGroup)
                 })
                 .show(ui, &theme)
                 .clicked()
             {
                 actions.push(LayerItemAction::ToggleCollapsed(layer.id));
+            }
+        } else {
+            ui.add_space(theme.sizes.icon_button);
+        }
+        // Chevron des pièces jointes (tree façon egui demo) : repli /
+        // dépli des lignes filtres + masques sous leur porteur.
+        if layer.has_filters || layer.has_masks {
+            let open = attachments_open(ui, layer.id);
+            let chevron = if open {
+                Icon::ExpandLess
+            } else {
+                Icon::ExpandMore
+            };
+            if IconButton::new(chevron)
+                .tooltip(if open {
+                    texts.get(PhotoTextKey::CollapseAttachments)
+                } else {
+                    texts.get(PhotoTextKey::ExpandAttachments)
+                })
+                .show(ui, &theme)
+                .clicked()
+            {
+                set_attachments_open(ui, layer.id, !open);
             }
         } else {
             ui.add_space(theme.sizes.icon_button);
@@ -167,7 +277,7 @@ pub fn draw_photo_layer_item(
             Icon::VisibilityOff
         };
         if IconButton::new(vis_icon)
-            .tooltip("Afficher / masquer")
+            .tooltip(texts.get(PhotoTextKey::ShowHideLayer))
             .show(ui, &theme)
             .clicked()
         {
@@ -229,7 +339,7 @@ pub fn draw_photo_layer_item(
         // Bouton de suppression en bout de rangée.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if IconButton::new(Icon::Delete)
-                .tooltip("Supprimer ce calque")
+                .tooltip(texts.get(PhotoTextKey::DeleteLayer))
                 .show(ui, &theme)
                 .clicked()
             {
@@ -240,26 +350,77 @@ pub fn draw_photo_layer_item(
     actions
 }
 
-/// Ligne enfant d'une pièce jointe (filtre live ou masque) : même
-/// statut visuel qu'un calque (icône centrée, nom, actions), indentée
-/// sous son porteur. Retourne les actions (routées au worker par
-/// l'app). Les pièces jointes ne sont ni sélectionnables ni
-/// renommables, et ne participent pas au drag & drop entre calques
-/// (leur ordre se règle aux boutons monter/descendre).
+/// Ligne enfant d'une pièce jointe (filtre live ou masque) : nœud
+/// d'arbre sélectionnable (clic = focus pour modification, voir
+/// [`LayerItemAction::SelectAttachment`]), œil on/off, indentée sous
+/// son porteur. Retourne les actions (routées au worker par l'app).
+/// Ni renommable ni déplaçable par DnD (ordre aux boutons
+/// monter/descendre, comme avant).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_attachment_row(
     ui: &mut egui::Ui,
     owner: Uuid,
-    sub_id: Uuid,
-    name: &str,
-    is_filter: bool,
+    sub: &PhotoSubLayerInfo,
+    selected: bool,
     depth: usize,
+    t: LayerTexts,
 ) -> Vec<LayerItemAction> {
     let theme = ui.cygnus_theme();
+    let texts = t.texts;
     let mut actions = Vec::new();
+    let sub_id = sub.id;
+    let is_filter = sub.is_filter;
+    let enabled = sub.enabled;
+    let name = sub.name.as_str();
+    // Clic = focus (sélection secondaire, porteur sélectionné aussi).
+    let row_rect = ui.available_rect_before_wrap();
+    let row_id = ui.make_persistent_id(("photo_attachment_row", owner, sub_id));
+    let row_resp = ui.interact(row_rect, row_id, egui::Sense::click());
+    if row_resp.clicked() {
+        actions.push(LayerItemAction::SelectAttachment { owner, id: sub_id });
+    }
+    // Fond de sélection sur toute la largeur de la ligne.
+    if selected || row_resp.hovered() {
+        let bg = if selected {
+            theme.colors.item_selected
+        } else {
+            theme.colors.item_hover
+        };
+        ui.painter().rect_filled(row_rect, theme.radius.sm, bg);
+    }
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.add_space(depth as f32 * theme.spacing.lg);
         // Colonne du chevron (vide ici : alignée sur les calques).
         ui.add_space(theme.sizes.icon_button);
+        // Colonne du chevron pièces jointes (vide : alignée).
+        ui.add_space(theme.sizes.icon_button);
+        // Œil on/off (bascule sans perdre réglages ni pixels).
+        let vis_icon = if enabled {
+            Icon::Visibility
+        } else {
+            Icon::VisibilityOff
+        };
+        if IconButton::new(vis_icon)
+            .tooltip(if is_filter {
+                texts.get(PhotoTextKey::ToggleFilterEnabled)
+            } else {
+                texts.get(PhotoTextKey::ToggleMaskEnabled)
+            })
+            .show(ui, &theme)
+            .clicked()
+        {
+            if is_filter {
+                actions.push(LayerItemAction::ToggleFilter {
+                    layer: owner,
+                    filter: sub_id,
+                });
+            } else {
+                actions.push(LayerItemAction::ToggleMask {
+                    owner,
+                    mask: sub_id,
+                });
+            }
+        }
         if is_filter {
             ui.label(
                 egui::RichText::new("FX")
@@ -284,15 +445,15 @@ pub fn draw_attachment_row(
         );
         let (up_tip, down_tip, del_tip) = if is_filter {
             (
-                "Monter le filtre",
-                "Descendre le filtre",
-                "Supprimer le filtre",
+                texts.get(PhotoTextKey::MoveFilterUp),
+                texts.get(PhotoTextKey::MoveFilterDown),
+                texts.get(PhotoTextKey::DeleteFilter),
             )
         } else {
             (
-                "Monter le masque",
-                "Descendre le masque",
-                "Supprimer le masque",
+                texts.get(PhotoTextKey::MoveMaskUp),
+                texts.get(PhotoTextKey::MoveMaskDown),
+                texts.get(PhotoTextKey::DeleteMask),
             )
         };
         // Monte/descend : pas de flèches au registre d'icônes —
@@ -370,11 +531,15 @@ mod tests {
     fn item_renders_without_panic() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let texts = super::super::types::LayerTexts {
+            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
+            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+        };
         let layer = fixture_layer();
         let mut rename = LayerRenameState::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None, 0);
+                let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None, 0, texts);
                 assert!(actions.is_empty(), "aucun clic sans interaction");
                 // Tous les types, masqué / visible.
                 for kind in [
@@ -385,7 +550,7 @@ mod tests {
                     let mut probing = layer.clone();
                     probing.kind = kind;
                     probing.visible = false;
-                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename, None, 1);
+                    let _ = draw_photo_layer_item(ui, &probing, false, &mut rename, None, 1, texts);
                 }
             });
         })
@@ -396,12 +561,16 @@ mod tests {
     fn item_without_interaction_reports_nothing() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let texts = super::super::types::LayerTexts {
+            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
+            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+        };
         let layer = fixture_layer();
         let mut rename = LayerRenameState::default();
         let mut reported = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                reported = draw_photo_layer_item(ui, &layer, false, &mut rename, None, 0);
+                reported = draw_photo_layer_item(ui, &layer, false, &mut rename, None, 0, texts);
             });
         })
         .drop_without_applying_deltas();
@@ -420,14 +589,42 @@ mod tests {
         use uuid::Uuid;
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let texts = super::super::types::LayerTexts {
+            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
+            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+        };
         let owner = Uuid::new_v4();
         let filter = Uuid::new_v4();
         let mask = Uuid::new_v4();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let fx = draw_attachment_row(ui, owner, filter, "luminosite", true, 1);
+                let fx = draw_attachment_row(
+                    ui,
+                    owner,
+                    &PhotoSubLayerInfo {
+                        id: filter,
+                        name: String::from("luminosite"),
+                        is_filter: true,
+                        enabled: true,
+                    },
+                    false,
+                    1,
+                    texts,
+                );
                 assert!(fx.is_empty(), "aucun clic sans interaction");
-                let mk = draw_attachment_row(ui, owner, mask, "masque 1", false, 1);
+                let mk = draw_attachment_row(
+                    ui,
+                    owner,
+                    &PhotoSubLayerInfo {
+                        id: mask,
+                        name: String::from("masque 1"),
+                        is_filter: false,
+                        enabled: false,
+                    },
+                    false,
+                    1,
+                    texts,
+                );
                 assert!(mk.is_empty(), "aucun clic sans interaction");
             });
         })

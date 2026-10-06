@@ -26,7 +26,10 @@
 
 use super::layer_item::{LayerItemAction, LayerRenameState};
 use super::layer_list::draw_layer_list;
-use super::types::{FlatRowKind, LayerDrop, LayerThumbView, PhotoLayerInfo, find_layer_in};
+use super::types::{
+    FlatRowKind, LayerDrop, LayerTexts, LayerThumbView, LayerTreeSelection, PhotoLayerInfo,
+    find_layer_in,
+};
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
 use std::collections::HashMap;
@@ -57,6 +60,28 @@ pub enum LayerPanelAction {
     Delete,
     /// Sélectionner un calque (clic sur sa rangée).
     Select(Uuid),
+    /// Focaliser une pièce jointe (clic sur sa rangée d'arbre) :
+    /// le porteur devient la sélection principale.
+    SelectAttachment {
+        /// Calque porteur.
+        owner: Uuid,
+        /// Filtre ou masque visé.
+        id: Uuid,
+    },
+    /// Activer/désactiver un filtre (œil de sa rangée).
+    ToggleFilter {
+        /// Calque porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+    },
+    /// Activer/désactiver un masque (œil de sa rangée).
+    ToggleMask {
+        /// Porteur.
+        owner: Uuid,
+        /// Masque visé.
+        mask: Uuid,
+    },
     /// Valider le renommage d'un calque.
     RenameCommit { layer: Uuid, name: String },
     /// Réordonner par drag & drop hiérarchique : `dragged` avant ou
@@ -84,6 +109,16 @@ pub enum LayerPanelAction {
     DeleteLayer(Uuid),
     /// Dupliquer un calque (menu contextuel de la rangée).
     DuplicateLayer(Uuid),
+    /// Miroir horizontal (sous-menu Transformations de la rangée).
+    FlipHorizontalSelected,
+    /// Miroir vertical (idem).
+    FlipVerticalSelected,
+    /// Rotation 90° horaire (idem).
+    RotateClockwiseSelected,
+    /// Rotation 90° antihoraire (idem).
+    RotateCounterclockwiseSelected,
+    /// Rogner au document (idem).
+    CropSelectedToDocument,
     /// Déplacer un filtre dans sa pile.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans sa pile.
@@ -109,20 +144,12 @@ impl LayersPanel {
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
         layers: &[PhotoLayerInfo],
-        selected: Option<Uuid>,
+        sel: LayerTreeSelection,
         rename: &mut LayerRenameState,
         drag_state: &mut ReorderDragState,
         thumbs: &HashMap<Uuid, LayerThumbView>,
     ) -> Vec<LayerPanelAction> {
-        draw_layers_panel(
-            ui,
-            ctx.shared.theme(),
-            layers,
-            selected,
-            rename,
-            drag_state,
-            thumbs,
-        )
+        draw_layers_panel(ui, ctx, layers, sel, rename, drag_state, thumbs)
     }
 }
 
@@ -133,22 +160,24 @@ impl LayersPanel {
 fn draw_selection_header(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
+    t: LayerTexts,
     layers: &[PhotoLayerInfo],
     selected: Option<Uuid>,
 ) -> Vec<LayerPanelAction> {
+    let texts = t.texts;
     let mut actions = Vec::new();
     let target = selected
         .and_then(|id| layers.iter().find(|item| item.id == id))
         .or_else(|| layers.first());
     let Some(layer) = target else {
-        Text::caption(theme, "Aucun calque").show(ui);
+        Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
         ui.separator();
         return actions;
     };
     // Sans sélection, le premier changement adopte le calque du dessus.
     let adopt = selected.is_none();
     let mut visible = layer.visible;
-    Toggle::new("Visible").show(ui, theme, &mut visible);
+    Toggle::new(texts.get(crate::i18n::PhotoTextKey::VisibleLabel)).show(ui, theme, &mut visible);
     if visible != layer.visible {
         if adopt {
             actions.push(LayerPanelAction::Select(layer.id));
@@ -157,7 +186,11 @@ fn draw_selection_header(
     }
     // Unités moteur 0..=100 (comme l'inspecteur).
     let mut opacity = layer.opacity;
-    Slider::new("Opacité", 0.0..=100.0).show(ui, theme, &mut opacity);
+    Slider::new(
+        texts.get(crate::i18n::PhotoTextKey::OpacityLabel),
+        0.0..=100.0,
+    )
+    .show(ui, theme, &mut opacity);
     if opacity != layer.opacity {
         if adopt {
             actions.push(LayerPanelAction::Select(layer.id));
@@ -172,7 +205,11 @@ fn draw_selection_header(
         .iter()
         .position(|mode| *mode == layer.blend_mode)
         .unwrap_or(0);
-    Select::new("Fusion", &options).show(ui, theme, &mut choice);
+    Select::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel), &options).show(
+        ui,
+        theme,
+        &mut choice,
+    );
     if let Some(mode) = BlendMode::ALL.get(choice)
         && *mode != layer.blend_mode
     {
@@ -225,15 +262,22 @@ fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanel
 /// En-tête + liste bornée (réserve la barre de boutons) + barre bas.
 fn draw_layers_panel(
     ui: &mut egui::Ui,
-    theme: &CygnusTheme,
+    ctx: &PhotoUiContext,
     layers: &[PhotoLayerInfo],
-    selected: Option<Uuid>,
+    sel: LayerTreeSelection,
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
     thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> Vec<LayerPanelAction> {
+    let theme = ctx.shared.theme();
+    let translator = ctx.shared.translator();
+    let t = LayerTexts {
+        catalog: translator,
+        texts: crate::i18n::PhotoCatalog::new(translator.language()),
+    };
+    let texts = t.texts;
     let mut actions = Vec::new();
-    actions.extend(draw_selection_header(ui, theme, layers, selected));
+    actions.extend(draw_selection_header(ui, theme, t, layers, sel.selected));
     // Liste bornée : réserve l'en-tête et la barre de boutons.
     let bar_height = theme.sizes.bar_height;
     let list_height = (ui.available_height() - bar_height).max(80.0);
@@ -249,13 +293,22 @@ fn draw_layers_panel(
                 {
                     rename.editing = None;
                 }
-                draw_layer_list(ui, layers, selected, rename, drag_state, thumbs)
+                draw_layer_list(ui, layers, sel, t, rename, drag_state, thumbs)
             },
         )
         .inner;
     for item_action in item_actions {
         match item_action {
             LayerItemAction::Select(id) => actions.push(LayerPanelAction::Select(id)),
+            LayerItemAction::SelectAttachment { owner, id } => {
+                actions.push(LayerPanelAction::SelectAttachment { owner, id });
+            }
+            LayerItemAction::ToggleFilter { layer, filter } => {
+                actions.push(LayerPanelAction::ToggleFilter { layer, filter });
+            }
+            LayerItemAction::ToggleMask { owner, mask } => {
+                actions.push(LayerPanelAction::ToggleMask { owner, mask });
+            }
             LayerItemAction::RenameCommit { layer, name } => {
                 actions.push(LayerPanelAction::RenameCommit { layer, name });
             }
@@ -265,6 +318,21 @@ fn draw_layers_panel(
             LayerItemAction::DeleteLayer(id) => actions.push(LayerPanelAction::DeleteLayer(id)),
             LayerItemAction::DuplicateLayer(id) => {
                 actions.push(LayerPanelAction::DuplicateLayer(id));
+            }
+            LayerItemAction::FlipHorizontalSelected => {
+                actions.push(LayerPanelAction::FlipHorizontalSelected);
+            }
+            LayerItemAction::FlipVerticalSelected => {
+                actions.push(LayerPanelAction::FlipVerticalSelected);
+            }
+            LayerItemAction::RotateClockwiseSelected => {
+                actions.push(LayerPanelAction::RotateClockwiseSelected);
+            }
+            LayerItemAction::RotateCounterclockwiseSelected => {
+                actions.push(LayerPanelAction::RotateCounterclockwiseSelected);
+            }
+            LayerItemAction::CropSelectedToDocument => {
+                actions.push(LayerPanelAction::CropSelectedToDocument);
             }
             LayerItemAction::ToggleCollapsed(id) => {
                 actions.push(LayerPanelAction::ToggleCollapsed(id));
@@ -292,29 +360,29 @@ fn draw_layers_panel(
     // masque, filtre, supprimer.
     ui.horizontal(|ui| {
         if IconButton::new(Icon::ImageIcon)
-            .tooltip("Ajouter une image")
+            .tooltip(texts.get(crate::i18n::PhotoTextKey::LayerFromImage))
             .show(ui, theme)
             .clicked()
         {
             actions.push(LayerPanelAction::AddImage);
         }
         if IconButton::new(Icon::Add)
-            .tooltip("Nouveau calque vide")
+            .tooltip(texts.get(crate::i18n::PhotoTextKey::NewEmptyLayer))
             .show(ui, theme)
             .clicked()
         {
             actions.push(LayerPanelAction::AddEmpty);
         }
-        ui.add_enabled_ui(selected.is_some(), |ui| {
+        ui.add_enabled_ui(sel.selected.is_some(), |ui| {
             if IconButton::new(Icon::Duplicate)
-                .tooltip("Dupliquer le calque")
+                .tooltip(texts.get(crate::i18n::PhotoTextKey::DuplicateLayer))
                 .show(ui, theme)
                 .clicked()
             {
                 actions.push(LayerPanelAction::Duplicate);
             }
             if IconButton::new(Icon::Mask)
-                .tooltip("Ajouter un masque")
+                .tooltip(texts.get(crate::i18n::PhotoTextKey::AddMask))
                 .show(ui, theme)
                 .clicked()
             {
@@ -322,15 +390,15 @@ fn draw_layers_panel(
             }
         });
         if IconButton::new(Icon::Settings)
-            .tooltip("Liste des filtres")
+            .tooltip(texts.get(crate::i18n::PhotoTextKey::FilterList))
             .show(ui, theme)
             .clicked()
         {
             actions.push(LayerPanelAction::OpenFilterMenu);
         }
-        ui.add_enabled_ui(selected.is_some(), |ui| {
+        ui.add_enabled_ui(sel.selected.is_some(), |ui| {
             if IconButton::new(Icon::Delete)
-                .tooltip("Supprimer le calque")
+                .tooltip(texts.get(crate::i18n::PhotoTextKey::DeleteLayer))
                 .show(ui, theme)
                 .clicked()
             {
@@ -372,7 +440,7 @@ mod tests {
                     ui,
                     &photo_ctx,
                     &layers,
-                    None,
+                    LayerTreeSelection::default(),
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
@@ -400,7 +468,10 @@ mod tests {
                     ui,
                     &photo_ctx,
                     &layers,
-                    selected,
+                    LayerTreeSelection {
+                        selected,
+                        focused: None,
+                    },
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
@@ -427,7 +498,7 @@ mod tests {
                     ui,
                     &photo_ctx,
                     &[],
-                    None,
+                    LayerTreeSelection::default(),
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),

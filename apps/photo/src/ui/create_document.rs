@@ -17,11 +17,11 @@
 //! Dialogue de création de document : onglets, grille de présets
 //! visuels (cartes cliquables) et paramètres du préset sélectionné.
 
+use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use ui_kit::components::Tabs;
 use ui_kit::components::{Button, ButtonVariant};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
 use ui_kit::theme::CygnusTheme;
-use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::{body_size, body_text, heading_text};
 
 /// Résolution d'impression pour les unités physiques (in, cm, pica).
@@ -34,8 +34,8 @@ pub const DOC_UNITS: &[&str] = &["px", "in", "cm", "pica"];
 
 /// Préset de nouveau document (dimensions en pixels).
 struct Preset {
-    /// Nom affiché sur la carte.
-    name: &'static str,
+    /// Clé du nom affiché sur la carte.
+    name: PhotoTextKey,
     /// Largeur en pixels.
     px_w: f64,
     /// Hauteur en pixels.
@@ -47,25 +47,25 @@ struct Preset {
 /// Présets du mode Impression (affichés en centimètres).
 const IMPRESSION_PRESETS: &[Preset] = &[
     Preset {
-        name: "A4 Portrait",
+        name: PhotoTextKey::PresetA4Portrait,
         px_w: 2480.0,
         px_h: 3508.0,
         unit: 2,
     },
     Preset {
-        name: "A4 Paysage",
+        name: PhotoTextKey::PresetA4Landscape,
         px_w: 3508.0,
         px_h: 2480.0,
         unit: 2,
     },
     Preset {
-        name: "Lettre Portrait",
+        name: PhotoTextKey::PresetLetterPortrait,
         px_w: 2550.0,
         px_h: 3300.0,
         unit: 2,
     },
     Preset {
-        name: "Lettre Paysage",
+        name: PhotoTextKey::PresetLetterLandscape,
         px_w: 3300.0,
         px_h: 2550.0,
         unit: 2,
@@ -75,25 +75,25 @@ const IMPRESSION_PRESETS: &[Preset] = &[
 /// Présets du mode Numérique (affichés en pixels).
 const NUMERIQUE_PRESETS: &[Preset] = &[
     Preset {
-        name: "4K UHD",
+        name: PhotoTextKey::Preset4kUhd,
         px_w: 3840.0,
         px_h: 2160.0,
         unit: 0,
     },
     Preset {
-        name: "8K UHD",
+        name: PhotoTextKey::Preset8kUhd,
         px_w: 7680.0,
         px_h: 4320.0,
         unit: 0,
     },
     Preset {
-        name: "16:9 Full HD",
+        name: PhotoTextKey::Preset16by9FullHd,
         px_w: 1920.0,
         px_h: 1080.0,
         unit: 0,
     },
     Preset {
-        name: "Carré",
+        name: PhotoTextKey::PresetSquare,
         px_w: 1080.0,
         px_h: 1080.0,
         unit: 0,
@@ -263,6 +263,7 @@ fn draw_preset_card(
     theme: &CygnusTheme,
     preset: &Preset,
     selected: bool,
+    texts: PhotoCatalog,
 ) -> bool {
     let size = egui::vec2(theme.sizes.preset_card, theme.sizes.preset_card);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -307,7 +308,7 @@ fn draw_preset_card(
     painter.text(
         pos,
         egui::Align2::CENTER_TOP,
-        preset.name,
+        texts.get(preset.name),
         egui::FontId::proportional(body_size(theme)),
         name_color,
     );
@@ -315,7 +316,9 @@ fn draw_preset_card(
     // Infobulle avec les dimensions réelles en pixels.
     resp.clone().on_hover_text(format!(
         "{} — {} × {} px",
-        preset.name, preset.px_w, preset.px_h
+        texts.get(preset.name),
+        preset.px_w,
+        preset.px_h
     ));
     resp.clicked()
 }
@@ -326,6 +329,7 @@ fn draw_preset_grid(
     theme: &CygnusTheme,
     tab: usize,
     preset: &mut Option<usize>,
+    texts: PhotoCatalog,
 ) -> Option<usize> {
     let presets = active_presets(tab);
     let mut clicked = None;
@@ -334,7 +338,7 @@ fn draw_preset_grid(
         .spacing(egui::vec2(theme.spacing.sm, theme.spacing.sm))
         .show(ui, |ui| {
             for (index, item) in presets.iter().enumerate() {
-                if draw_preset_card(ui, theme, item, *preset == Some(index)) {
+                if draw_preset_card(ui, theme, item, *preset == Some(index), texts) {
                     clicked = Some(index);
                 }
                 if (index + 1) % 2 == 0 {
@@ -350,127 +354,151 @@ fn draw_preset_grid(
 /// gauche, paramètres du préset à droite).
 /// Retourne le choix validé (création ou ouverture d'image).
 pub fn draw_create_document_dialog(
-    ctx: &egui::Context,
+    ui_ctx: &crate::commands::PhotoUiContext,
     state: &mut CreateDocumentDialogState,
 ) -> Option<NewDocumentChoice> {
     if !state.open {
         return None;
     }
-    let theme = ctx.cygnus_theme();
+    let ctx = ui_ctx.shared.ctx();
+    let theme = *ui_ctx.shared.theme();
+    let translator = ui_ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
     let mut confirm: Option<NewDocumentChoice> = None;
     let mut open = true;
     let mut open_image = false;
 
-    let action = CygnusModal::new("Créer un document", "Créer", "Annuler")
-        .size(egui::vec2(470.0, 440.0))
-        .show(ctx, &mut open, |ui| {
-            // Onglets pleine largeur (au-dessus des colonnes).
-            let mut tab = state.tab;
-            Tabs::new(&["Impression", "Numérique"]).show(ui, &theme, &mut tab);
-            state.tab = tab;
-            // L'index mémorisé appartient à l'autre onglet : invalide
-            // hors plage (les deux listes ont 4 entrées aujourd'hui,
-            // robuste si ça change).
-            if state.preset.is_some_and(|i| i >= active_presets(tab).len()) {
-                state.preset = None;
-            }
-            ui.add_space(theme.spacing.sm);
+    let action = CygnusModal::new(
+        texts.get(crate::i18n::PhotoTextKey::CreateDocumentTitle),
+        translator.get(ui_kit::i18n::TextKey::Create),
+        translator.get(ui_kit::i18n::TextKey::Cancel),
+    )
+    .size(egui::vec2(470.0, 440.0))
+    .show(ctx, &mut open, |ui| {
+        // Onglets pleine largeur (au-dessus des colonnes).
+        let mut tab = state.tab;
+        let tabs = [
+            texts.get(crate::i18n::PhotoTextKey::PrintTab),
+            texts.get(crate::i18n::PhotoTextKey::DigitalTab),
+        ];
+        Tabs::new(&tabs).show(ui, &theme, &mut tab);
+        state.tab = tab;
+        // L'index mémorisé appartient à l'autre onglet : invalide
+        // hors plage (les deux listes ont 4 entrées aujourd'hui,
+        // robuste si ça change).
+        if state.preset.is_some_and(|i| i >= active_presets(tab).len()) {
+            state.preset = None;
+        }
+        ui.add_space(theme.spacing.sm);
 
-            // Deux colonnes verticales alignées à gauche.
-            ui.horizontal_top(|ui| {
-                // Colonne 1 : grille 2×2 de présets + ouverture d'image.
-                ui.vertical(|ui| {
-                    if let Some(index) = draw_preset_grid(ui, &theme, tab, &mut state.preset) {
-                        let preset = &active_presets(tab)[index];
-                        state.apply_preset(index, preset.px_w, preset.px_h, preset.unit);
-                    }
-                    ui.add_space(theme.spacing.sm);
-                    if Button::new("Ouvrir une image…")
-                        .variant(ButtonVariant::Secondary)
+        // Deux colonnes verticales alignées à gauche.
+        ui.horizontal_top(|ui| {
+            // Colonne 1 : grille 2×2 de présets + ouverture d'image.
+            ui.vertical(|ui| {
+                if let Some(index) = draw_preset_grid(ui, &theme, tab, &mut state.preset, texts) {
+                    let preset = &active_presets(tab)[index];
+                    state.apply_preset(index, preset.px_w, preset.px_h, preset.unit);
+                }
+                ui.add_space(theme.spacing.sm);
+                if Button::new(texts.get(crate::i18n::PhotoTextKey::OpenImageFile))
+                    .variant(ButtonVariant::Secondary)
+                    .show(ui, &theme)
+                    .clicked()
+                {
+                    open_image = true;
+                }
+            });
+
+            ui.add_space(theme.spacing.lg);
+
+            // Colonne 2 : paramètres du préset sélectionné (vertical).
+            ui.vertical(|ui| {
+                let presets = active_presets(state.tab);
+
+                ui.label(heading_text(
+                    &theme,
+                    translator.get(ui_kit::i18n::TextKey::Settings),
+                ));
+                ui.add_space(theme.spacing.xs);
+                if let Some(selected) = state.preset.and_then(|index| presets.get(index)) {
+                    ui.label(body_text(&theme, texts.get(selected.name)).strong());
+                }
+                ui.label(body_text(
+                    &theme,
+                    &format!(
+                        "{} × {} px",
+                        to_px(state.width, state.unit),
+                        to_px(state.height, state.unit)
+                    ),
+                ));
+                ui.separator();
+
+                // Changement d'unité = reconversion (taille
+                // pixels préservée).
+                let mut unit = state.unit;
+                ui_kit::components::Select::new(
+                    texts.get(crate::i18n::PhotoTextKey::UnitLabel),
+                    DOC_UNITS,
+                )
+                .stacked()
+                .show(ui, &theme, &mut unit);
+                if unit != state.unit {
+                    state.set_unit(unit);
+                }
+
+                // Saisie manuelle = format personnalisé.
+                let max = from_px(DOC_MAX_DIMENSION, state.unit);
+                let mut width = state.width;
+                ui_kit::components::NumberInput::new(
+                    texts.get(crate::i18n::PhotoTextKey::WidthLabel),
+                )
+                .range(0.01..=max)
+                .stacked()
+                .show(ui, &theme, &mut width);
+                let mut height = state.height;
+                ui_kit::components::NumberInput::new(
+                    texts.get(crate::i18n::PhotoTextKey::HeightLabel),
+                )
+                .range(0.01..=max)
+                .stacked()
+                .show(ui, &theme, &mut height);
+                if width != state.width || height != state.height {
+                    state.set_custom_size(width, height);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label(body_text(
+                        &theme,
+                        texts.get(crate::i18n::PhotoTextKey::OrientationLabel),
+                    ));
+                    let portrait = state.orientation == DocOrientation::Portrait;
+                    if Button::new(texts.get(crate::i18n::PhotoTextKey::PortraitLabel))
+                        .variant(if portrait {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
                         .show(ui, &theme)
                         .clicked()
                     {
-                        open_image = true;
+                        state.set_orientation(DocOrientation::Portrait);
                     }
-                });
-
-                ui.add_space(theme.spacing.lg);
-
-                // Colonne 2 : paramètres du préset sélectionné (vertical).
-                ui.vertical(|ui| {
-                    let presets = active_presets(state.tab);
-
-                    ui.label(heading_text(&theme, "Paramètres"));
-                    ui.add_space(theme.spacing.xs);
-                    if let Some(selected) = state.preset.and_then(|index| presets.get(index)) {
-                        ui.label(body_text(&theme, selected.name).strong());
+                    let paysage = state.orientation == DocOrientation::Paysage;
+                    if Button::new(texts.get(crate::i18n::PhotoTextKey::LandscapeLabel))
+                        .variant(if paysage {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .show(ui, &theme)
+                        .clicked()
+                    {
+                        state.set_orientation(DocOrientation::Paysage);
                     }
-                    ui.label(body_text(
-                        &theme,
-                        &format!(
-                            "{} × {} px",
-                            to_px(state.width, state.unit),
-                            to_px(state.height, state.unit)
-                        ),
-                    ));
-                    ui.separator();
-
-                    // Changement d'unité = reconversion (taille
-                    // pixels préservée).
-                    let mut unit = state.unit;
-                    ui_kit::components::Select::new("Unité", DOC_UNITS)
-                        .stacked()
-                        .show(ui, &theme, &mut unit);
-                    if unit != state.unit {
-                        state.set_unit(unit);
-                    }
-
-                    // Saisie manuelle = format personnalisé.
-                    let max = from_px(DOC_MAX_DIMENSION, state.unit);
-                    let mut width = state.width;
-                    ui_kit::components::NumberInput::new("Largeur")
-                        .range(0.01..=max)
-                        .stacked()
-                        .show(ui, &theme, &mut width);
-                    let mut height = state.height;
-                    ui_kit::components::NumberInput::new("Hauteur")
-                        .range(0.01..=max)
-                        .stacked()
-                        .show(ui, &theme, &mut height);
-                    if width != state.width || height != state.height {
-                        state.set_custom_size(width, height);
-                    }
-
-                    ui.horizontal(|ui| {
-                        ui.label(body_text(&theme, "Orientation"));
-                        let portrait = state.orientation == DocOrientation::Portrait;
-                        if Button::new("Portrait")
-                            .variant(if portrait {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Secondary
-                            })
-                            .show(ui, &theme)
-                            .clicked()
-                        {
-                            state.set_orientation(DocOrientation::Portrait);
-                        }
-                        let paysage = state.orientation == DocOrientation::Paysage;
-                        if Button::new("Paysage")
-                            .variant(if paysage {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Secondary
-                            })
-                            .show(ui, &theme)
-                            .clicked()
-                        {
-                            state.set_orientation(DocOrientation::Paysage);
-                        }
-                    });
                 });
             });
         });
+    });
     state.open = open && !open_image;
     if open_image {
         confirm = Some(NewDocumentChoice::OpenImage);
@@ -514,13 +542,19 @@ mod tests {
         for t in [0.0, 1.0] {
             ctx.run_ui(test_input(screen, t), |ui| {
                 let c = ui.ctx().clone();
-                let _ = draw_create_document_dialog(&c, &mut state);
+                let _ = draw_create_document_dialog(
+                    &crate::commands::PhotoUiContext::for_frame(&c),
+                    &mut state,
+                );
             })
             .drop_without_applying_deltas();
         }
         let out = ctx.run_ui(test_input(screen, 1.0), |ui| {
             let c = ui.ctx().clone();
-            let _ = draw_create_document_dialog(&c, &mut state);
+            let _ = draw_create_document_dialog(
+                &crate::commands::PhotoUiContext::for_frame(&c),
+                &mut state,
+            );
         });
         let mut creer_pos = None;
         fn find_text(shape: &egui::Shape, wanted: &str, out: &mut Option<egui::Pos2>) {
@@ -553,7 +587,10 @@ mod tests {
             });
             ctx.run_ui(raw, |ui| {
                 let c = ui.ctx().clone();
-                retour = draw_create_document_dialog(&c, &mut state);
+                retour = draw_create_document_dialog(
+                    &crate::commands::PhotoUiContext::for_frame(&c),
+                    &mut state,
+                );
             })
             .drop_without_applying_deltas();
         }
@@ -578,13 +615,19 @@ mod tests {
         for t in [0.0, 1.0] {
             ctx.run_ui(test_input(screen, t), |ui| {
                 let c = ui.ctx().clone();
-                let _ = draw_create_document_dialog(&c, &mut state);
+                let _ = draw_create_document_dialog(
+                    &crate::commands::PhotoUiContext::for_frame(&c),
+                    &mut state,
+                );
             })
             .drop_without_applying_deltas();
         }
         let out = ctx.run_ui(test_input(screen, 1.0), |ui| {
             let c = ui.ctx().clone();
-            let _ = draw_create_document_dialog(&c, &mut state);
+            let _ = draw_create_document_dialog(
+                &crate::commands::PhotoUiContext::for_frame(&c),
+                &mut state,
+            );
         });
         let mut image_pos = None;
         fn find_text(shape: &egui::Shape, wanted: &str, out: &mut Option<egui::Pos2>) {
@@ -616,7 +659,10 @@ mod tests {
             });
             ctx.run_ui(raw, |ui| {
                 let c = ui.ctx().clone();
-                retour = draw_create_document_dialog(&c, &mut state);
+                retour = draw_create_document_dialog(
+                    &crate::commands::PhotoUiContext::for_frame(&c),
+                    &mut state,
+                );
             })
             .drop_without_applying_deltas();
         }
@@ -638,7 +684,10 @@ mod tests {
         let screen = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0));
         ctx.run_ui(test_input(screen, 0.0), |ui| {
             let c = ui.ctx().clone();
-            let _ = draw_create_document_dialog(&c, &mut state);
+            let _ = draw_create_document_dialog(
+                &crate::commands::PhotoUiContext::for_frame(&c),
+                &mut state,
+            );
         })
         .drop_without_applying_deltas();
         let win = ctx
@@ -673,7 +722,10 @@ mod tests {
         assert_eq!(state.unit, 0);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             let ctx = ui.ctx().clone();
-            let _ = draw_create_document_dialog(&ctx, &mut state);
+            let _ = draw_create_document_dialog(
+                &crate::commands::PhotoUiContext::for_frame(&ctx),
+                &mut state,
+            );
         })
         .drop_without_applying_deltas();
     }
@@ -693,10 +745,10 @@ mod tests {
     #[test]
     fn preset_cards_reflect_canvas_ratio() {
         let imp = active_presets(0);
-        assert_eq!(imp[0].name, "A4 Portrait");
+        assert_eq!(imp[0].name, PhotoTextKey::PresetA4Portrait);
         assert!(imp[0].px_h > imp[0].px_w);
         let num = active_presets(1);
-        assert_eq!(num[3].name, "Carré");
+        assert_eq!(num[3].name, PhotoTextKey::PresetSquare);
         assert_eq!(num[3].px_w, num[3].px_h);
     }
 

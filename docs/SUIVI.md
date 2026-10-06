@@ -24,3 +24,5 @@
 | 2026-10-05 | O002 | Fait : dispatch clavier → `PhotoAction` via résolveur (21/23 mappés, `ZoomFit`/`OpenPreferences` sans cible documentée), D007 (suspendu en saisie), fix casse `key_to_string` côté `preferences`. |
 | 2026-10-05 | O003 | Fait : pas libellés FR côté worker (`HistoryStep`), `UndoSteps`/`RedoSteps` (un seul rendu), onglet Historique en onglet des Calques, `ensure_history_tabbed` pour JSON antérieurs. |
 | 2026-10-05 | O004 | Fait : `Document::rotate` (centre conservé) + `FlipHorizontal/Vertical`, `RotateClockwise/Counterclockwise`, `CropToDocument` (intersection, no-op si contenu, refus si transformé/hors cadre), menu Calque, libellés historique. Crop interactif (rect souris) = futur objectif. |
+| 2026-10-06 | — | Fix curseur : `menu_item_enabled` en Small comme `menu_item` (surlignages uniformes) + test. |
+| 2026-10-06 | — | Tree calques (D008), toggle on/off filtres/masques worker+moteur, inspecteur sans doublons (D009), sous-menu Transformations (menubar + clic droit canvas + clic droit ligne), sweep i18n ~90 clés (D010). |

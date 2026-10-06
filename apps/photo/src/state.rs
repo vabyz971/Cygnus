@@ -125,6 +125,9 @@ pub struct PhotoUiState {
     pub layers: Vec<PhotoLayerInfo>,
     /// Calque sélectionné (état UI pur).
     pub selected: Option<Uuid>,
+    /// Pièce jointe focalisée (filtre/masque, sélection secondaire :
+    /// le porteur reste la sélection principale).
+    pub focused_attachment: Option<crate::ui::AttachmentRef>,
     /// Outil canvas actif.
     pub tool: PhotoCanvasTool,
     /// Mode d'édition (Vector / Pixel / Layout, 2e rangée haute).
@@ -410,6 +413,12 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             {
                 ui.selected = None;
             }
+            // Focus orphelin (porteur disparu) : abandonné aussi.
+            if ui.focused_attachment.is_some_and(|focus| {
+                crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
+            }) {
+                ui.focused_attachment = None;
+            }
             let t_thumbs = std::time::Instant::now();
             sync_thumbs(ctx, ui);
             presentation.thumb_sync_us = t_thumbs.elapsed().as_micros();
@@ -481,6 +490,12 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                 .is_some_and(|id| !ui.layers.iter().any(|layer| layer.id == id))
             {
                 ui.selected = None;
+            }
+            // Focus orphelin (porteur disparu) : abandonné aussi.
+            if ui.focused_attachment.is_some_and(|focus| {
+                crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
+            }) {
+                ui.focused_attachment = None;
             }
             let t_thumbs = std::time::Instant::now();
             sync_thumbs(ctx, ui);

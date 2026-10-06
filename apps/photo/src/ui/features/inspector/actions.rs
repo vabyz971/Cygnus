@@ -22,9 +22,19 @@ use crate::commands::PhotoAction;
 /// Convertit une action de l'inspecteur en action app.
 pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
     match action {
-        InspectorAction::ToggleVisibility(id) => PhotoAction::ToggleLayerVisibility(id),
-        InspectorAction::SetOpacity { layer, opacity } => {
-            PhotoAction::SetOpacity { layer, opacity }
+        InspectorAction::ToggleAttachment {
+            owner,
+            id,
+            is_filter,
+        } => {
+            if is_filter {
+                PhotoAction::ToggleFilter {
+                    layer: owner,
+                    filter: id,
+                }
+            } else {
+                PhotoAction::ToggleMask { owner, mask: id }
+            }
         }
     }
 }
@@ -36,20 +46,26 @@ mod tests {
 
     #[test]
     fn every_inspector_action_converts() {
+        let owner = Uuid::new_v4();
         let id = Uuid::new_v4();
         assert_eq!(
-            inspector_action_to_photo(InspectorAction::ToggleVisibility(id)),
-            PhotoAction::ToggleLayerVisibility(id)
+            inspector_action_to_photo(InspectorAction::ToggleAttachment {
+                owner,
+                id,
+                is_filter: true
+            }),
+            PhotoAction::ToggleFilter {
+                layer: owner,
+                filter: id
+            }
         );
         assert_eq!(
-            inspector_action_to_photo(InspectorAction::SetOpacity {
-                layer: id,
-                opacity: 42.0
+            inspector_action_to_photo(InspectorAction::ToggleAttachment {
+                owner,
+                id,
+                is_filter: false
             }),
-            PhotoAction::SetOpacity {
-                layer: id,
-                opacity: 42.0
-            }
+            PhotoAction::ToggleMask { owner, mask: id }
         );
     }
 }

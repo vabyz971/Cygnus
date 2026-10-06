@@ -238,17 +238,22 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         // Emprunts disjoints explicites : `ctx` est copié (référence
         // partagée `Copy`) avant l'emprunt mutable des documents.
         let ctx: &PhotoUiContext = self.ctx;
+        let translator = ctx.shared.translator();
+        let texts = crate::i18n::PhotoCatalog::new(translator.language());
         match *pane {
             PhotoDockTab::Tools => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get_mut(index) else {
-                    ui.label("Aucun document");
+                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
+                let translator = ctx.shared.translator();
+                let texts = crate::i18n::PhotoCatalog::new(translator.language());
                 self.actions.extend(left_sidebar::draw_tools_content(
                     ui,
                     doc,
                     ctx.shared.theme(),
+                    texts,
                 ));
             }
             PhotoDockTab::Canvas(id) => {
@@ -265,7 +270,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::Inspector => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get(index) else {
-                    ui.label("Aucun document");
+                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
@@ -276,7 +281,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::Layers => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get_mut(index) else {
-                    ui.label("Aucun document");
+                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
@@ -287,7 +292,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::History => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get(index) else {
-                    ui.label("Aucun document");
+                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {

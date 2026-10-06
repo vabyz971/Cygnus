@@ -41,6 +41,18 @@ pub enum TextKey {
     Redo,
     /// Supprimer.
     Delete,
+    /// Renommer.
+    Rename,
+    /// Afficher.
+    Show,
+    /// Masquer.
+    Hide,
+    /// Ajouter.
+    Add,
+    /// Créer.
+    Create,
+    /// Valider.
+    Validate,
     /// Dupliquer.
     Duplicate,
     /// Nouveau document.

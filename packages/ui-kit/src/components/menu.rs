@@ -92,6 +92,10 @@ pub fn menu_item(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
 }
 
 /// Item de menu désactivable (remplace `add_enabled_ui` + bouton brut).
+///
+/// Même hauteur que [`menu_item`] (`Small`, calibrée sur
+/// `interact_size` du style de menu) : mélanger les tailles dans un
+/// même popup peint des surlignages débordants (carrés glitchés).
 pub fn menu_item_enabled(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
@@ -103,7 +107,7 @@ pub fn menu_item_enabled(
     use crate::components::ButtonVariant;
     let clicked = Button::new(label)
         .variant(ButtonVariant::Ghost)
-        .size(ButtonSize::Medium)
+        .size(ButtonSize::Small)
         .enabled(enabled)
         .show(ui, theme)
         .clicked();
@@ -148,5 +152,40 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(!clicked, "aucun clic sans interaction");
+    }
+
+    /// Les deux variantes d'item réservent la même hauteur : mélangées
+    /// dans un popup, aucun surlignage ne déborde (carrés glitchés).
+    #[test]
+    fn menu_items_share_row_height() {
+        let theme = CygnusTheme::dark();
+        let ctx = egui::Context::default();
+        let mut heights = Vec::new();
+        fn measure(ui: &mut egui::Ui, heights: &mut Vec<f32>, draw: impl FnOnce(&mut egui::Ui)) {
+            let before = ui.min_rect().max.y;
+            draw(ui);
+            heights.push(ui.min_rect().max.y - before);
+        }
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                measure(ui, &mut heights, |ui| {
+                    menu_item(ui, &theme, "Toujours");
+                });
+                measure(ui, &mut heights, |ui| {
+                    menu_item_enabled(ui, &theme, "Conditionnel", true);
+                });
+                measure(ui, &mut heights, |ui| {
+                    menu_item_enabled(ui, &theme, "Grisé", false);
+                });
+            });
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(heights.len(), 3);
+        assert!(
+            heights
+                .windows(2)
+                .all(|w| (w[0] - w[1]).abs() < f32::EPSILON),
+            "rangées uniformes : {heights:?}"
+        );
     }
 }

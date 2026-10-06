@@ -108,6 +108,8 @@ pub fn show_mode_bar(
     egui::Panel::top("photo_modebar")
         .resizable(false)
         .show(ui, |ui| {
+            let translator = ctx.shared.translator();
+            let texts = PhotoCatalog::new(translator.language());
             let chosen = draw_photo_modebar(
                 ui,
                 &mut doc.ui.edit_mode,
@@ -115,6 +117,7 @@ pub fn show_mode_bar(
                 &mut doc.ui.brush,
                 &mut doc.ui.show_grid,
                 ctx.shared.theme(),
+                texts,
             );
             // Outil incompatible avec le nouveau mode : rebascule.
             if let Some(mode) = chosen

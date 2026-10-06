@@ -32,9 +32,9 @@ use ui_kit::dialogs::{CygnusModal, ModalAction};
 pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     actions.extend(draw_filter_modal(ui, app, ctx));
-    actions.extend(draw_new_document_overlay(ui, app));
-    actions.extend(draw_export_overlay(ui, app));
-    draw_help_dialog(ui.ctx(), &mut app.shell.help_open);
+    actions.extend(draw_new_document_overlay(ui, app, ctx));
+    actions.extend(draw_export_overlay(ui, app, ctx));
+    draw_help_dialog(ctx, &mut app.shell.help_open);
     actions
 }
 
@@ -58,13 +58,20 @@ fn draw_filter_modal(
     let mut choice = app.shell.filter_modal.choice;
     let ctx_clone = ui.ctx().clone();
     let theme = ctx.shared.theme();
-    let action = CygnusModal::new("Ajouter un filtre", "Ajouter", "Annuler").show(
-        &ctx_clone,
-        &mut open,
-        |ui| {
-            Select::new("Filtre", &names).show(ui, theme, &mut choice);
-        },
-    );
+    let translator = ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let action = CygnusModal::new(
+        texts.get(crate::i18n::PhotoTextKey::AddFilterTitle),
+        translator.get(ui_kit::i18n::TextKey::Add),
+        translator.get(ui_kit::i18n::TextKey::Cancel),
+    )
+    .show(&ctx_clone, &mut open, |ui| {
+        Select::new(texts.get(crate::i18n::PhotoTextKey::FilterLabel), &names).show(
+            ui,
+            theme,
+            &mut choice,
+        );
+    });
     app.shell.filter_modal.open = open;
     app.shell.filter_modal.choice = choice;
     if action == Some(ModalAction::Confirm)
@@ -83,10 +90,13 @@ fn draw_filter_modal(
 
 /// Fenêtre « Créer un document » : validation = nouvel onglet,
 /// ouverture d'image = dialogue fichier.
-fn draw_new_document_overlay(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<PhotoAction> {
+fn draw_new_document_overlay(
+    _ui: &mut egui::Ui,
+    app: &mut PhotoApp,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    let ctx = ui.ctx().clone();
-    match draw_create_document_dialog(&ctx, &mut app.shell.new_doc_dialog) {
+    match draw_create_document_dialog(ctx, &mut app.shell.new_doc_dialog) {
         Some(NewDocumentChoice::Create(width, height)) => {
             actions.push(PhotoAction::CreateDocument { width, height });
         }
@@ -99,10 +109,13 @@ fn draw_new_document_overlay(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<Photo
 }
 
 /// Fenêtre « Exportation » : validation = export du document actif.
-fn draw_export_overlay(ui: &mut egui::Ui, app: &mut PhotoApp) -> Vec<PhotoAction> {
+fn draw_export_overlay(
+    _ui: &mut egui::Ui,
+    app: &mut PhotoApp,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    let ctx = ui.ctx().clone();
-    if let Some(request) = draw_export_dialog(&ctx, &mut app.shell.export_dialog) {
+    if let Some(request) = draw_export_dialog(ctx, &mut app.shell.export_dialog) {
         actions.push(PhotoAction::ExportDocument {
             path: request.path,
             quality: request.quality,

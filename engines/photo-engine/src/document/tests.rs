@@ -757,6 +757,42 @@ fn rotation_echange_les_dimensions_et_garde_le_centre() {
     assert!(doc.rotate(Uuid::new_v4(), true).is_err());
 }
 
+#[test]
+fn bascule_actif_desactive_filtre_et_masque() {
+    let mut doc = Document::new(4, 4);
+    let mut pixels = PixelLayer::new(
+        "fond",
+        Arc::new(DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            2,
+            2,
+            Rgba([10, 20, 30, 255]),
+        ))),
+    );
+    let filtre = FilterLayer::neutral("brightness_contrast", Default::default());
+    let fid = filtre.id;
+    pixels.filter_layers.push(filtre);
+    let mut masque = LayerMask::full(2, 2);
+    let mid = masque.id;
+    masque.enabled = false;
+    pixels.masks.push(masque);
+    let id = pixels.id;
+    doc.push_layer(LayerNode::Pixel(pixels));
+    // Filtre : actif → inactif → actif.
+    assert!(doc.set_filter_enabled(id, fid, false));
+    assert!(!doc.pixel_layer(id).expect("calque").filter_layers[0].enabled);
+    assert!(doc.set_filter_enabled(id, fid, true));
+    assert!(doc.pixel_layer(id).expect("calque").filter_layers[0].enabled);
+    // Idempotent : même valeur = vrai sans toucher.
+    assert!(doc.set_filter_enabled(id, fid, true));
+    // Masque : inactif → actif.
+    assert!(doc.set_mask_enabled(id, mid, true));
+    assert!(doc.pixel_layer(id).expect("calque").masks[0].enabled);
+    // Inconnus : faux propre.
+    assert!(!doc.set_filter_enabled(id, Uuid::new_v4(), true));
+    assert!(!doc.set_mask_enabled(id, Uuid::new_v4(), true));
+    assert!(!doc.set_mask_enabled(Uuid::new_v4(), mid, true));
+}
+
 // --- Masques (§8) ---
 
 fn masked_node(

@@ -83,5 +83,11 @@ mod tests {
         assert_eq!(catalog.get(TextKey::Save), "Enregistrer");
         assert_eq!(catalog.get(TextKey::Layers), "Calques");
         assert_eq!(catalog.get(TextKey::Quit), "Quitter");
+        assert_eq!(catalog.get(TextKey::Rename), "Renommer");
+        assert_eq!(catalog.get(TextKey::Show), "Afficher");
+        assert_eq!(catalog.get(TextKey::Hide), "Masquer");
+        assert_eq!(catalog.get(TextKey::Add), "Ajouter");
+        assert_eq!(catalog.get(TextKey::Create), "Créer");
+        assert_eq!(catalog.get(TextKey::Validate), "Valider");
     }
 }

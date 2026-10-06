@@ -31,6 +31,7 @@ pub fn draw_tools_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
     theme: &CygnusTheme,
+    texts: crate::i18n::PhotoCatalog,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     if let Some(tool) = draw_tool_rail(
@@ -39,6 +40,7 @@ pub fn draw_tools_content(
         &mut doc.ui.brush.color,
         doc.ui.edit_mode,
         theme,
+        texts,
     ) {
         actions.push(PhotoAction::SetTool(tool));
     }

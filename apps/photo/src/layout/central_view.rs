@@ -27,6 +27,7 @@
 //! curseur du pinceau par-dessus.
 
 use crate::commands::{PhotoAction, PhotoUiContext};
+use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use crate::state::{OpenDocument, sample_preview_color};
 use crate::ui::{
     CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasTool, clear_ink, draw_brush_cursor,
@@ -155,6 +156,7 @@ pub fn draw_canvas_content(
     if let Some(response) = &outcome.response {
         let theme = ctx.shared.theme();
         let catalog = ctx.shared.translator();
+        let texts = PhotoCatalog::new(catalog.language());
         egui::Popup::context_menu(response)
             .style(menu_style(theme))
             .show(|ui| {
@@ -166,7 +168,7 @@ pub fn draw_canvas_content(
                     actions.push(PhotoAction::ZoomOut);
                     ui.close();
                 }
-                if menu_row(ui, theme, "Zoom 100 %") {
+                if menu_row(ui, theme, texts.get(PhotoTextKey::Zoom100)) {
                     actions.push(PhotoAction::ZoomReset);
                     ui.close();
                 }
@@ -174,6 +176,32 @@ pub fn draw_canvas_content(
                 if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::Grid)) {
                     actions.push(PhotoAction::ToggleGrid);
                     ui.close();
+                }
+                // Calque sélectionné : sous-menu Transformations.
+                if doc.ui.selected.is_some() {
+                    ui.separator();
+                    ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
+                        if menu_row(ui, theme, texts.get(PhotoTextKey::FlipHorizontal)) {
+                            actions.push(PhotoAction::FlipHorizontalSelected);
+                            ui.close();
+                        }
+                        if menu_row(ui, theme, texts.get(PhotoTextKey::FlipVertical)) {
+                            actions.push(PhotoAction::FlipVerticalSelected);
+                            ui.close();
+                        }
+                        if menu_row(ui, theme, texts.get(PhotoTextKey::RotateClockwise)) {
+                            actions.push(PhotoAction::RotateClockwiseSelected);
+                            ui.close();
+                        }
+                        if menu_row(ui, theme, texts.get(PhotoTextKey::RotateCounterclockwise)) {
+                            actions.push(PhotoAction::RotateCounterclockwiseSelected);
+                            ui.close();
+                        }
+                        if menu_row(ui, theme, texts.get(PhotoTextKey::CropToDocument)) {
+                            actions.push(PhotoAction::CropSelectedToDocument);
+                            ui.close();
+                        }
+                    });
                 }
             });
     }

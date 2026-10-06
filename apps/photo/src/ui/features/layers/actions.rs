@@ -33,6 +33,13 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::AddMask => PhotoAction::AddMaskToSelected,
         LayerPanelAction::Delete => PhotoAction::DeleteSelectedLayer,
         LayerPanelAction::Select(id) => PhotoAction::SelectLayer(id),
+        LayerPanelAction::SelectAttachment { owner, id } => {
+            PhotoAction::FocusAttachment { owner, id }
+        }
+        LayerPanelAction::ToggleFilter { layer, filter } => {
+            PhotoAction::ToggleFilter { layer, filter }
+        }
+        LayerPanelAction::ToggleMask { owner, mask } => PhotoAction::ToggleMask { owner, mask },
         LayerPanelAction::RenameCommit { layer, name } => PhotoAction::RenameLayer { layer, name },
         LayerPanelAction::ReorderNodes {
             dragged,
@@ -50,6 +57,13 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::ToggleVisibility(id) => PhotoAction::ToggleLayerVisibility(id),
         LayerPanelAction::DeleteLayer(id) => PhotoAction::DeleteLayer(id),
         LayerPanelAction::DuplicateLayer(id) => PhotoAction::DuplicateLayer(id),
+        LayerPanelAction::FlipHorizontalSelected => PhotoAction::FlipHorizontalSelected,
+        LayerPanelAction::FlipVerticalSelected => PhotoAction::FlipVerticalSelected,
+        LayerPanelAction::RotateClockwiseSelected => PhotoAction::RotateClockwiseSelected,
+        LayerPanelAction::RotateCounterclockwiseSelected => {
+            PhotoAction::RotateCounterclockwiseSelected
+        }
+        LayerPanelAction::CropSelectedToDocument => PhotoAction::CropSelectedToDocument,
         LayerPanelAction::MoveFilter { layer, filter, up } => {
             PhotoAction::MoveFilter { layer, filter, up }
         }
@@ -114,6 +128,38 @@ mod tests {
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::DuplicateLayer(id)),
             PhotoAction::DuplicateLayer(id)
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::SelectAttachment { owner: id, id }),
+            PhotoAction::FocusAttachment { owner: id, id }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::ToggleFilter {
+                layer: id,
+                filter: id
+            }),
+            PhotoAction::ToggleFilter {
+                layer: id,
+                filter: id
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::ToggleMask {
+                owner: id,
+                mask: id
+            }),
+            PhotoAction::ToggleMask {
+                owner: id,
+                mask: id
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::FlipHorizontalSelected),
+            PhotoAction::FlipHorizontalSelected
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::CropSelectedToDocument),
+            PhotoAction::CropSelectedToDocument
         );
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::SetOpacity {

@@ -64,14 +64,15 @@ impl PhotoCanvasTool {
     }
 
     /// Aide contextuelle affichée dans la barre de statut (façon Affinity).
-    pub fn hint(self) -> &'static str {
+    pub fn hint(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
+        use crate::i18n::PhotoTextKey;
         match self {
-            Self::Move => "Glisser : deplacer le calque — molette : zoom",
-            Self::Pan => "Glisser : deplacer la vue — molette : zoom",
-            Self::Zoom => "Clic : zoom avant — clic droit : zoom arriere",
-            Self::Brush => "Glisser : peindre — relacher : commettre le trait",
-            Self::Eraser => "Glisser : effacer — relacher : commettre",
-            Self::Eyedropper => "Cliquer : echantillonner la couleur",
+            Self::Move => texts.get(PhotoTextKey::MoveHintText),
+            Self::Pan => texts.get(PhotoTextKey::PanHintText),
+            Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
+            Self::Brush => texts.get(PhotoTextKey::BrushHintText),
+            Self::Eraser => texts.get(PhotoTextKey::EraserHintText),
+            Self::Eyedropper => texts.get(PhotoTextKey::EyedropperHintText),
         }
     }
 }

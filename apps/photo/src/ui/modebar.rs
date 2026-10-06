@@ -93,6 +93,7 @@ pub fn draw_photo_modebar(
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
     theme: &CygnusTheme,
+    texts: crate::i18n::PhotoCatalog,
 ) -> Option<PhotoEditMode> {
     let mut chosen = None;
     // Rangée 1 : grands boutons de mode
@@ -118,7 +119,7 @@ pub fn draw_photo_modebar(
     ui.separator();
     // Rangée 2 : nom et paramètres de l'outil sélectionné.
     ui.horizontal(|ui| {
-        draw_tool_options(ui, tool, brush, show_grid, theme);
+        draw_tool_options(ui, tool, brush, show_grid, theme, texts);
     });
     chosen
 }
@@ -155,6 +156,7 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let theme = ui_kit::theme::CygnusTheme::dark();
+        let texts = crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr);
         let mut mode = PhotoEditMode::Pixel;
         let mut brush = PhotoBrushSettings::default();
         let mut show_grid = false;
@@ -167,6 +169,7 @@ mod tests {
                     &mut brush,
                     &mut show_grid,
                     &theme,
+                    texts,
                 );
                 assert_eq!(chosen, None);
             });

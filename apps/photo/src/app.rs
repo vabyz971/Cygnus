@@ -282,7 +282,20 @@ impl PhotoApp {
             PhotoAction::SelectLayer(id) => {
                 if let Some(doc) = self.active_doc_mut_opt() {
                     doc.ui.selected = Some(id);
+                    doc.ui.focused_attachment = None;
                 }
+            }
+            PhotoAction::FocusAttachment { owner, id } => {
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.selected = Some(owner);
+                    doc.ui.focused_attachment = Some(crate::ui::AttachmentRef { owner, id });
+                }
+            }
+            PhotoAction::ToggleFilter { layer, filter } => {
+                self.send_active(PhotoEngineCommand::ToggleFilter { layer, filter });
+            }
+            PhotoAction::ToggleMask { owner, mask } => {
+                self.send_active(PhotoEngineCommand::ToggleMask { owner, mask });
             }
             PhotoAction::RenameLayer { layer, name } => {
                 self.send_active(PhotoEngineCommand::RenameLayer { layer, name });

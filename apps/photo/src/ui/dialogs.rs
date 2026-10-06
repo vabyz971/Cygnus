@@ -19,7 +19,6 @@
 use std::path::PathBuf;
 use ui_kit::components::{Select, Slider, TextInput};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::body_text;
 
 /// Formats d'export proposés.
@@ -87,41 +86,65 @@ impl ExportDialogState {
 /// Dessine la fenêtre « Exportation ». Retourne la requête validée
 /// (bouton de validation de la modale).
 pub fn draw_export_dialog(
-    ctx: &egui::Context,
+    ui_ctx: &crate::commands::PhotoUiContext,
     state: &mut ExportDialogState,
 ) -> Option<ExportRequest> {
     if !state.open {
         return None;
     }
-    let theme = ctx.cygnus_theme();
+    let ctx = ui_ctx.shared.ctx();
+    let theme = *ui_ctx.shared.theme();
+    let translator = ui_ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
     let mut confirm: Option<ExportRequest> = None;
     let mut open = true;
-    let action = CygnusModal::new("Exportation", "Valider", "Annuler").show(ctx, &mut open, |ui| {
+    let action = CygnusModal::new(
+        texts.get(crate::i18n::PhotoTextKey::ExportTitle),
+        translator.get(ui_kit::i18n::TextKey::Validate),
+        translator.get(ui_kit::i18n::TextKey::Cancel),
+    )
+    .show(ctx, &mut open, |ui| {
         ui.horizontal(|ui| {
-            ui.label(body_text(&theme, "Dossier"));
-            TextInput::new().placeholder("Dossier d'exportation").show(
-                ui,
+            ui.label(body_text(
                 &theme,
-                &mut state.folder,
-            );
+                texts.get(crate::i18n::PhotoTextKey::FolderLabel),
+            ));
+            TextInput::new()
+                .placeholder(texts.get(crate::i18n::PhotoTextKey::FolderPlaceholder))
+                .show(ui, &theme, &mut state.folder);
         });
         ui.horizontal(|ui| {
-            ui.label(body_text(&theme, "Nom"));
+            ui.label(body_text(
+                &theme,
+                texts.get(crate::i18n::PhotoTextKey::NameLabel),
+            ));
             TextInput::new()
-                .placeholder("Nom du fichier")
+                .placeholder(texts.get(crate::i18n::PhotoTextKey::FileNamePlaceholder))
                 .show(ui, &theme, &mut state.filename);
         });
         let formats: Vec<&str> = EXPORT_FORMATS.to_vec();
-        Select::new("Format", &formats).show(ui, &theme, &mut state.format);
+        Select::new(texts.get(crate::i18n::PhotoTextKey::FormatLabel), &formats).show(
+            ui,
+            &theme,
+            &mut state.format,
+        );
         if EXPORT_FORMATS.get(state.format).copied().unwrap_or("PNG") != "PNG"
             && EXPORT_FORMATS.get(state.format).copied().unwrap_or("PNG") != "GIF"
         {
-            Slider::new("Qualite", 1.0..=100.0).show(ui, &theme, &mut state.quality);
+            Slider::new(
+                texts.get(crate::i18n::PhotoTextKey::QualityLabel),
+                1.0..=100.0,
+            )
+            .show(ui, &theme, &mut state.quality);
         }
         let request = state.request();
         ui.label(body_text(
             &theme,
-            &format!("Destination : {}", request.path.display()),
+            &format!(
+                "{} {}",
+                texts.get(crate::i18n::PhotoTextKey::DestinationLabel),
+                request.path.display()
+            ),
         ));
     });
     state.open = open;
@@ -132,35 +155,33 @@ pub fn draw_export_dialog(
 }
 
 /// Dessine la fenêtre d'aide (outils, calques, raccourcis).
-pub fn draw_help_dialog(ctx: &egui::Context, open: &mut bool) {
+pub fn draw_help_dialog(ui_ctx: &crate::commands::PhotoUiContext, open: &mut bool) {
     if !*open {
         return;
     }
-    let theme = ctx.cygnus_theme();
+    let ctx = ui_ctx.shared.ctx();
+    let theme = *ui_ctx.shared.theme();
+    let translator = ui_ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
     let mut stays_open = true;
-    CygnusModal::new("Aide de Photo", "Fermer", "Fermer").show(ctx, &mut stays_open, |ui| {
+    CygnusModal::new(
+        texts.get(crate::i18n::PhotoTextKey::HelpTitle),
+        translator.get(ui_kit::i18n::TextKey::Close),
+        translator.get(ui_kit::i18n::TextKey::Close),
+    )
+    .show(ctx, &mut stays_open, |ui| {
         ui.label(body_text(
             &theme,
-            "Outils : deplacement, main, loupe, pinceau, gomme, pipette.",
+            texts.get(crate::i18n::PhotoTextKey::HelpToolsText),
         ));
         ui.label(body_text(
             &theme,
-            "Calques : clic = selection, double-clic sur le nom = renommer,",
+            texts.get(crate::i18n::PhotoTextKey::HelpLayersText),
         ));
         ui.label(body_text(
             &theme,
-            "glisser-deposer = reordonner. Bas du panneau : image, vide,",
+            texts.get(crate::i18n::PhotoTextKey::HelpFileText),
         ));
-        ui.label(body_text(&theme, "dupliquer, masque, filtres, supprimer."));
-        ui.label(body_text(
-            &theme,
-            "Fichier > Nouveau document : format, dimensions (px, in, cm,",
-        ));
-        ui.label(body_text(
-            &theme,
-            "pica), orientation portrait/paysage. Exportation : dossier,",
-        ));
-        ui.label(body_text(&theme, "format PNG/JPEG/JPG/GIF, validation."));
     });
     *open = stays_open;
 }

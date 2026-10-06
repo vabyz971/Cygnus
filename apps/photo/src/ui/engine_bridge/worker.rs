@@ -196,6 +196,8 @@ fn history_label(op: &str) -> String {
         "rotate_clockwise" => "Rotation horaire",
         "rotate_counterclockwise" => "Rotation antihoraire",
         "crop_to_document" => "Rogner au document",
+        "toggle_filter" => "Basculer le filtre",
+        "toggle_mask" => "Basculer le masque",
         _ => "Édition",
     })
 }
@@ -1129,6 +1131,34 @@ impl EngineWorker {
                     .find(owner)
                     .map_or(DirtyMark::Global, mark_for_node);
                 Mutation::changed(invalidation).with_dirty(dirty)
+            }
+            PhotoEngineCommand::ToggleFilter { layer, filter } => {
+                let Some(current) = self.document.find_filter_layer(filter).map(|f| f.enabled)
+                else {
+                    return Mutation::unchanged();
+                };
+                self.push_history(None);
+                if !self.document.set_filter_enabled(layer, filter, !current) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::ToggleMask { owner, mask } => {
+                let Some(current) = self
+                    .document
+                    .masks_of(owner)
+                    .and_then(|masks| masks.iter().find(|m| m.id == mask))
+                    .map(|m| m.enabled)
+                else {
+                    return Mutation::unchanged();
+                };
+                self.push_history(None);
+                if !self.document.set_mask_enabled(owner, mask, !current) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
             }
             PhotoEngineCommand::MoveFilter { layer, filter, up } => {
                 // `move_filter` mute : valider d'abord via une lecture
@@ -3161,6 +3191,64 @@ mod single_pass_tests {
             },
         );
         assert_eq!(crop_plan(&doc, id), CropPlan::Transformed);
+    }
+
+    #[test]
+    fn toggle_bascule_filtre_et_masque_avec_historique() {
+        use photo_engine::FilterLayer;
+        use std::collections::HashMap;
+        let mut doc = Document::new(8, 8);
+        let mut pixels = photo_engine::PixelLayer::new(
+            "fond",
+            std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+        );
+        let filtre = FilterLayer::neutral("brightness_contrast", HashMap::new());
+        let fid = filtre.id;
+        pixels.filter_layers.push(filtre);
+        let masque = photo_engine::LayerMask::full(4, 4);
+        let mid = masque.id;
+        pixels.masks.push(masque);
+        let id = pixels.id;
+        doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
+        let mut worker = EngineWorker::new(doc);
+        // Filtre actif → inactif.
+        match worker.apply(PhotoEngineCommand::ToggleFilter {
+            layer: id,
+            filter: fid,
+        }) {
+            PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
+                assert_eq!(undo_labels, vec!["Basculer le filtre"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        let info = worker.test_document().pixel_layer(id).expect("calque");
+        assert!(!info.filter_layers[0].enabled);
+        // Masque actif → inactif.
+        worker.apply(PhotoEngineCommand::ToggleMask {
+            owner: id,
+            mask: mid,
+        });
+        assert!(
+            !worker
+                .test_document()
+                .pixel_layer(id)
+                .expect("calque")
+                .masks[0]
+                .enabled
+        );
+        // Undo ×2 : les deux sont réactivés.
+        worker.apply(PhotoEngineCommand::UndoSteps { steps: 2 });
+        let info = worker.test_document().pixel_layer(id).expect("calque");
+        assert!(info.filter_layers[0].enabled);
+        assert!(info.masks[0].enabled);
+        // Inconnu : no-op.
+        assert!(matches!(
+            worker.apply(PhotoEngineCommand::ToggleFilter {
+                layer: id,
+                filter: uuid::Uuid::new_v4()
+            }),
+            PhotoEngineResponse::StateChanged { .. }
+        ));
     }
 
     #[test]

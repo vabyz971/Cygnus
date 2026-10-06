@@ -232,46 +232,51 @@ pub fn draw_menu_bar(
                         ) {
                             actions.push(PhotoMenuAction::DuplicateLayer);
                         }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::FlipHorizontal),
-                            availability.has_selection,
-                        ) {
-                            actions.push(PhotoMenuAction::FlipHorizontal);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::FlipVertical),
-                            availability.has_selection,
-                        ) {
-                            actions.push(PhotoMenuAction::FlipVertical);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::RotateClockwise),
-                            availability.has_selection,
-                        ) {
-                            actions.push(PhotoMenuAction::RotateClockwise);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::RotateCounterclockwise),
-                            availability.has_selection,
-                        ) {
-                            actions.push(PhotoMenuAction::RotateCounterclockwise);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::CropToDocument),
-                            availability.has_selection,
-                        ) {
-                            actions.push(PhotoMenuAction::CropToDocument);
-                        }
+                        // Sous-menu Transformations (miroir, rotation,
+                        // crop) : même style, fermeture gérée par items.
+                        ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
+                            menu_style(theme).apply(ui.style_mut());
+                            if menu_item_enabled(
+                                ui,
+                                theme,
+                                texts.get(PhotoTextKey::FlipHorizontal),
+                                availability.has_selection,
+                            ) {
+                                actions.push(PhotoMenuAction::FlipHorizontal);
+                            }
+                            if menu_item_enabled(
+                                ui,
+                                theme,
+                                texts.get(PhotoTextKey::FlipVertical),
+                                availability.has_selection,
+                            ) {
+                                actions.push(PhotoMenuAction::FlipVertical);
+                            }
+                            if menu_item_enabled(
+                                ui,
+                                theme,
+                                texts.get(PhotoTextKey::RotateClockwise),
+                                availability.has_selection,
+                            ) {
+                                actions.push(PhotoMenuAction::RotateClockwise);
+                            }
+                            if menu_item_enabled(
+                                ui,
+                                theme,
+                                texts.get(PhotoTextKey::RotateCounterclockwise),
+                                availability.has_selection,
+                            ) {
+                                actions.push(PhotoMenuAction::RotateCounterclockwise);
+                            }
+                            if menu_item_enabled(
+                                ui,
+                                theme,
+                                texts.get(PhotoTextKey::CropToDocument),
+                                availability.has_selection,
+                            ) {
+                                actions.push(PhotoMenuAction::CropToDocument);
+                            }
+                        });
                         if menu_item_enabled(
                             ui,
                             theme,

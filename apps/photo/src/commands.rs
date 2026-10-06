@@ -106,6 +106,27 @@ pub enum PhotoAction {
     AddFilter { layer: Uuid, filter_type: String },
     /// Sélectionner un calque (état UI local).
     SelectLayer(Uuid),
+    /// Focaliser une pièce jointe (état UI local, porteur sélectionné aussi).
+    FocusAttachment {
+        /// Calque porteur.
+        owner: Uuid,
+        /// Filtre ou masque visé.
+        id: Uuid,
+    },
+    /// Activer/désactiver un filtre (worker).
+    ToggleFilter {
+        /// Calque porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+    },
+    /// Activer/désactiver un masque (worker).
+    ToggleMask {
+        /// Porteur.
+        owner: Uuid,
+        /// Masque visé.
+        mask: Uuid,
+    },
     /// Renommer un calque (worker).
     RenameLayer { layer: Uuid, name: String },
     /// Réordonner par ids (drag & drop hiérarchique, worker) :

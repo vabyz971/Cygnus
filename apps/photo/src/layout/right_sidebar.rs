@@ -43,7 +43,7 @@ pub fn draw_inspector_content(
         .ui
         .selected
         .and_then(|id| doc.ui.layers.iter().find(|layer| layer.id == id));
-    InspectorPanel::show(ui, ctx, selected)
+    InspectorPanel::show(ui, ctx, selected, doc.ui.focused_attachment)
         .into_iter()
         .map(inspector_action_to_photo)
         .collect()
@@ -65,11 +65,15 @@ pub fn draw_layers_content(
         doc.ui.rename.editing = None;
     }
     let thumbs = doc.ui.thumb_views();
+    let sel = crate::ui::features::layers::LayerTreeSelection {
+        selected: doc.ui.selected,
+        focused: doc.ui.focused_attachment,
+    };
     LayersPanel::show(
         ui,
         ctx,
         &doc.ui.layers,
-        doc.ui.selected,
+        sel,
         &mut doc.ui.rename,
         &mut doc.ui.drag_state,
         &thumbs,

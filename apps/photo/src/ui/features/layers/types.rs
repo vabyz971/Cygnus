@@ -56,12 +56,12 @@ impl PhotoLayerKind {
         }
     }
 
-    /// Libellé du type (français, ASCII).
-    pub fn icon_label(self) -> &'static str {
+    /// Libellé du type (via le catalogue photo).
+    pub fn icon_label(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
         match self {
-            Self::Pixel => "Pixels",
-            Self::Group => "Groupe",
-            Self::Adjustment => "Reglage",
+            Self::Pixel => texts.get(crate::i18n::PhotoTextKey::LayerKindPixel),
+            Self::Group => texts.get(crate::i18n::PhotoTextKey::LayerKindGroup),
+            Self::Adjustment => texts.get(crate::i18n::PhotoTextKey::LayerKindAdjustment),
         }
     }
 
@@ -84,6 +84,38 @@ pub struct PhotoSubLayerInfo {
     pub name: String,
     /// Vrai = filtre live, faux = masque.
     pub is_filter: bool,
+    /// Effet actif (œil de la ligne).
+    pub enabled: bool,
+}
+
+/// Désignation d'une pièce jointe focalisée (sélection secondaire
+/// du panneau Calques : le porteur reste la sélection principale).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttachmentRef {
+    /// Calque porteur.
+    pub owner: Uuid,
+    /// Filtre ou masque visé.
+    pub id: Uuid,
+}
+
+/// Sélection de l'arbre des calques : calque principal + pièce
+/// jointe focalisée (regroupées pour limiter l'arité des draws).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LayerTreeSelection {
+    /// Calque sélectionné.
+    pub selected: Option<Uuid>,
+    /// Pièce jointe focalisée.
+    pub focused: Option<AttachmentRef>,
+}
+
+/// Catalogues de traduction du panneau Calques (générique ui-kit +
+/// spécifique photo), construits une fois par frame.
+#[derive(Debug, Clone, Copy)]
+pub struct LayerTexts {
+    /// Libellés génériques (Renommer, Supprimer…).
+    pub catalog: ui_kit::i18n::Catalog,
+    /// Chaînes métier de Photo.
+    pub texts: crate::i18n::PhotoCatalog,
 }
 
 /// Miniature d'un calque pour le panneau (buffer pur, converti en
@@ -186,6 +218,7 @@ impl PhotoLayerInfo {
                         id: f.id,
                         name: f.name.clone(),
                         is_filter: true,
+                        enabled: f.enabled,
                     })
                     .collect(),
                 pixels
@@ -195,6 +228,7 @@ impl PhotoLayerInfo {
                         id: m.id,
                         name: m.name.clone(),
                         is_filter: false,
+                        enabled: m.enabled,
                     })
                     .collect(),
             ),
@@ -207,6 +241,7 @@ impl PhotoLayerInfo {
                         id: m.id,
                         name: m.name.clone(),
                         is_filter: false,
+                        enabled: m.enabled,
                     })
                     .collect(),
             ),

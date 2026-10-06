@@ -18,12 +18,15 @@
 //!
 //! Position-indépendant (le workspace décide du placement, titre
 //! porté par l'onglet dock). En-tête (nom, type, compteurs) +
-//! sections. `None` = état vide explicite. Aucun envoi worker :
-//! tout remonte en [`InspectorAction`].
+//! section pièce jointe focalisée. `None` = état vide explicite.
+//! Visibilité / opacité / fusion vivent dans le panneau Calques
+//! (en-tête de sélection) : jamais dupliquées ici. Aucun envoi
+//! worker : tout remonte en [`InspectorAction`].
 
-use super::sections::draw_appearance_section;
+use super::sections::draw_attachment_section;
 use crate::commands::PhotoUiContext;
 use crate::ui::PhotoLayerInfo;
+use crate::ui::features::layers::types::{AttachmentRef, find_attachment_in};
 use ui_kit::primitives::Text;
 use uuid::Uuid;
 
@@ -31,10 +34,15 @@ use uuid::Uuid;
 /// [`super::actions`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InspectorAction {
-    /// Basculer la visibilité.
-    ToggleVisibility(Uuid),
-    /// Régler l'opacité (unités moteur 0..=100).
-    SetOpacity { layer: Uuid, opacity: f32 },
+    /// Activer/désactiver la pièce jointe focalisée.
+    ToggleAttachment {
+        /// Calque porteur.
+        owner: Uuid,
+        /// Filtre ou masque visé.
+        id: Uuid,
+        /// Vrai = filtre live, faux = masque.
+        is_filter: bool,
+    },
 }
 
 /// Panneau Inspecteur (contenu direct, sans chrome : le titre est
@@ -47,24 +55,38 @@ impl InspectorPanel {
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
         selected: Option<&PhotoLayerInfo>,
+        focused: Option<AttachmentRef>,
     ) -> Vec<InspectorAction> {
         let theme = ctx.shared.theme();
+        let texts = crate::i18n::PhotoCatalog::new(ctx.shared.translator().language());
         let Some(layer) = selected else {
-            Text::body(theme, "Aucun calque selectionne").show(ui);
+            Text::body(theme, texts.get(crate::i18n::PhotoTextKey::NoLayerSelected)).show(ui);
             return Vec::new();
         };
         Text::heading(theme, &layer.name).show(ui);
         Text::body(
             theme,
             &format!(
-                "{} · Filtres : {} · Masques : {}",
-                layer.kind.icon_label(),
+                "{} · {} : {} · {} : {}",
+                layer.kind.icon_label(texts),
+                texts.get(crate::i18n::PhotoTextKey::FiltersLabel),
                 layer.filters.len(),
+                texts.get(crate::i18n::PhotoTextKey::MasksLabel),
                 layer.masks.len()
             ),
         )
         .show(ui);
-        draw_appearance_section(ui, ctx, layer)
+        let mut actions = Vec::new();
+        // Section pièce jointe : focus valide (porteur = sélection,
+        // id existant) ou rien (focus orphelin ignoré).
+        if let Some(focus) = focused
+            && focus.owner == layer.id
+            && let Some((sub, _)) =
+                find_attachment_in(std::slice::from_ref(layer), focus.owner, focus.id)
+        {
+            actions.extend(draw_attachment_section(ui, ctx, focus, sub));
+        }
+        actions
     }
 }
 
@@ -93,8 +115,8 @@ mod tests {
         let mut without_selection = Vec::new();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                with_selection = InspectorPanel::show(ui, &photo_ctx, Some(&layer));
-                without_selection = InspectorPanel::show(ui, &photo_ctx, None);
+                with_selection = InspectorPanel::show(ui, &photo_ctx, Some(&layer), None);
+                without_selection = InspectorPanel::show(ui, &photo_ctx, None, None);
             });
         })
         .drop_without_applying_deltas();

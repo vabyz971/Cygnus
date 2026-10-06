@@ -29,20 +29,25 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Barre basse (aucune action émise).
 pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
     let theme = ctx.shared.theme();
+    let translator = ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
     egui::Panel::bottom("photo_status")
         .resizable(false)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 match app.active_doc_opt() {
                     Some(doc) => {
-                        ui.label(body_text(theme, doc.ui.tool.hint()));
+                        ui.label(body_text(theme, doc.ui.tool.hint(texts)));
                         if !doc.ui.status.is_empty() {
                             ui.separator();
                             ui.label(body_text(theme, &doc.ui.status));
                         }
                     }
                     None => {
-                        ui.label(body_text(theme, "Aucun document ouvert"));
+                        ui.label(body_text(
+                            theme,
+                            texts.get(crate::i18n::PhotoTextKey::NoDocumentOpen),
+                        ));
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

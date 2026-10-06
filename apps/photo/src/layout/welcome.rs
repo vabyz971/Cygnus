@@ -27,24 +27,29 @@ use ui_kit::theme::typography::{body_text, heading_text};
 pub fn show(ui: &mut egui::Ui, ctx: &crate::commands::PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     let theme = ctx.shared.theme();
+    let translator = ctx.shared.translator();
+    let texts = crate::i18n::PhotoCatalog::new(translator.language());
     ui.vertical_centered(|ui| {
         ui.add_space(theme.spacing.xl * 3.0);
-        ui.label(heading_text(theme, "Aucun document ouvert"));
+        ui.label(heading_text(
+            theme,
+            texts.get(crate::i18n::PhotoTextKey::NoDocumentOpen),
+        ));
         ui.add_space(theme.spacing.sm);
         ui.label(body_text(
             theme,
-            "Créez un document ou ouvrez une image pour commencer.",
+            texts.get(crate::i18n::PhotoTextKey::WelcomeBody),
         ));
         ui.add_space(theme.spacing.lg);
         ui.horizontal(|ui| {
-            if Button::new("Nouveau document")
+            if Button::new(translator.get(ui_kit::i18n::TextKey::NewDocument))
                 .variant(ButtonVariant::Primary)
                 .show(ui, theme)
                 .clicked()
             {
                 actions.push(PhotoAction::OpenNewDocumentDialog);
             }
-            if Button::new("Ouvrir une image…")
+            if Button::new(texts.get(crate::i18n::PhotoTextKey::OpenImageFile))
                 .variant(ButtonVariant::Secondary)
                 .show(ui, theme)
                 .clicked()

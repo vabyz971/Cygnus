@@ -25,11 +25,11 @@
 //! par [`super::panel`] (jamais d'envoi worker ici).
 
 use super::layer_item::{
-    LayerItemAction, LayerRenameState, draw_attachment_row, draw_photo_layer_item,
+    LayerItemAction, LayerRenameState, attachments_open, draw_attachment_row, draw_photo_layer_item,
 };
 use super::types::{
-    FlatRow, FlatRowKind, LayerDrop, LayerThumbView, PhotoLayerInfo, find_attachment_in,
-    find_layer_in, flat_row_name, flatten_layers,
+    FlatRow, FlatRowKind, LayerDrop, LayerTexts, LayerThumbView, LayerTreeSelection,
+    PhotoLayerInfo, find_attachment_in, find_layer_in, flat_row_name, flatten_layers,
 };
 use std::collections::HashMap;
 use ui_kit::components::{HierarchicalDrop, ReorderableList};
@@ -100,18 +100,30 @@ fn resolve_drop(rows: &[FlatRow], drop: HierarchicalDrop) -> Option<LayerDrop> {
 
 /// Dessine la liste hiérarchique réordonnable.
 ///
-/// Retourne les actions des lignes et, le cas échéant, le drop
-/// hiérarchique résolu en lignes (jamais d'envoi worker ici).
+/// Les pièces jointes d'un porteur replié (chevron de sa ligne)
+/// sont masquées ; les indices de drop sont résolus sur ces mêmes
+/// lignes visibles (jamais de décalage). Retourne les actions des
+/// lignes et, le cas échéant, le drop hiérarchique résolu en lignes
+/// (jamais d'envoi worker ici).
 pub fn draw_layer_list(
     ui: &mut egui::Ui,
     layers: &[PhotoLayerInfo],
-    selected: Option<Uuid>,
+    sel: LayerTreeSelection,
+    t: LayerTexts,
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
     thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> (Vec<LayerItemAction>, Option<LayerDrop>) {
     let mut actions = Vec::new();
-    let rows = flatten_layers(layers);
+    let rows: Vec<FlatRow> = flatten_layers(layers)
+        .into_iter()
+        .filter(|row| match row.kind {
+            FlatRowKind::Layer => true,
+            FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
+                attachments_open(ui, owner)
+            }
+        })
+        .collect();
     let theme = ui.cygnus_theme();
     let drop = ReorderableList::new(&rows, theme.sizes.layer_row, drag_state).show_variable(
         ui,
@@ -126,18 +138,26 @@ pub fn draw_layer_list(
                     actions.extend(draw_photo_layer_item(
                         ui,
                         layer,
-                        Some(layer.id) == selected,
+                        Some(layer.id) == sel.selected,
                         rename,
                         thumbs.get(&layer.id).copied(),
                         row.depth,
+                        t,
                     ));
                 }
             }
             FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
-                let is_filter = matches!(row.kind, FlatRowKind::Filter { .. });
                 if let Some((sub, _)) = find_attachment_in(layers, owner, row.id) {
+                    let focused_here = sel
+                        .focused
+                        .is_some_and(|focus| focus.owner == owner && focus.id == row.id);
                     actions.extend(draw_attachment_row(
-                        ui, owner, sub.id, &sub.name, is_filter, row.depth,
+                        ui,
+                        owner,
+                        sub,
+                        focused_here,
+                        row.depth,
+                        t,
                     ));
                 }
             }
@@ -167,6 +187,10 @@ mod tests {
     fn list_renders_without_panic_and_reports_nothing() {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let texts = super::super::types::LayerTexts {
+            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
+            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+        };
         let layers = fixture_layers();
         let mut drag_state = ReorderDragState::default();
         let mut rename = LayerRenameState::default();
@@ -176,7 +200,8 @@ mod tests {
                 reported = draw_layer_list(
                     ui,
                     &layers,
-                    None,
+                    LayerTreeSelection::default(),
+                    texts,
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
@@ -228,6 +253,10 @@ mod tests {
         use photo_engine::GroupLayer;
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
+        let texts = super::super::types::LayerTexts {
+            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
+            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+        };
         let mut doc = Document::new(8, 8);
         let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
         doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", image.clone())));
@@ -244,7 +273,8 @@ mod tests {
                 reported = draw_layer_list(
                     ui,
                     &layers,
-                    None,
+                    LayerTreeSelection::default(),
+                    texts,
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),

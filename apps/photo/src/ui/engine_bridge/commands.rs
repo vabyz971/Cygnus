@@ -144,6 +144,20 @@ pub enum PhotoEngineCommand {
     AddMask { layer: Uuid },
     /// Supprimer un masque de son porteur.
     RemoveMask { owner: Uuid, mask: Uuid },
+    /// Activer/désactiver un filtre live (bascule, sans perdre ses réglages).
+    ToggleFilter {
+        /// Calque pixels porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+    },
+    /// Activer/désactiver un masque (bascule, sans perdre ses pixels).
+    ToggleMask {
+        /// Porteur (calque ou sous-calque de filtre).
+        owner: Uuid,
+        /// Masque visé.
+        mask: Uuid,
+    },
     /// Déplacer un filtre dans la pile de son calque (`up` = vers le haut affiché).
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
     /// Déplacer un masque dans la pile de son porteur.
@@ -215,6 +229,8 @@ impl PhotoEngineCommand {
             Self::AddMask { .. } => "add_mask",
             Self::RemoveMask { .. } => "remove_mask",
             Self::MoveFilter { .. } => "move_filter",
+            Self::ToggleFilter { .. } => "toggle_filter",
+            Self::ToggleMask { .. } => "toggle_mask",
             Self::MoveMask { .. } => "move_mask",
             Self::RemoveFilter { .. } => "remove_filter",
             Self::Export { .. } => "export",
@@ -281,6 +297,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::DuplicateLayer(_)
         | PhotoEngineCommand::DeleteLayer(_)
         | PhotoEngineCommand::AddFilter { .. }
+        | PhotoEngineCommand::ToggleFilter { .. }
+        | PhotoEngineCommand::ToggleMask { .. }
         | PhotoEngineCommand::MoveFilter { .. }
         | PhotoEngineCommand::RemoveFilter { .. }
         | PhotoEngineCommand::AddMask { .. }

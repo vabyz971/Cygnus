@@ -605,6 +605,32 @@ impl Document {
         true
     }
 
+    /// Active/désactive un masque sans perdre ses pixels.
+    ///
+    /// Le porteur peut être un nœud ou un sous-calque de filtre
+    /// (comme [`Self::masks_of_mut`]) : le touch suit le calque
+    /// pixels racine pour invalider l'apparence.
+    pub fn set_mask_enabled(&mut self, owner_id: Uuid, mask_id: Uuid, enabled: bool) -> bool {
+        let Some(masks) = self.masks_of_mut(owner_id) else {
+            return false;
+        };
+        let Some(mask) = masks.iter_mut().find(|m| m.id == mask_id) else {
+            return false;
+        };
+        if mask.enabled == enabled {
+            return true;
+        }
+        mask.enabled = enabled;
+        mask.touch();
+        // Invalide l'apparence du calque pixels racine.
+        if self.find(owner_id).is_some() {
+            self.touch_pixel(owner_id);
+        } else if let Some(parent) = self.find_filter_parent(owner_id) {
+            self.touch_pixel(parent);
+        }
+        true
+    }
+
     /// Déplace un sous-calque de filtre dans la chaîne de son parent
     /// (ordre = ordre d'application, façon Affinity).
     pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool {

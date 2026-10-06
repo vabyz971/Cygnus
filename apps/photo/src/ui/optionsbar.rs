@@ -21,6 +21,7 @@
 //! Rien si l'outil n'a pas de réglages — la barre reste vide.
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
+use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use ui_kit::components::{Slider, Toggle};
 use ui_kit::theme::CygnusTheme;
 use ui_kit::theme::typography::body_text;
@@ -33,25 +34,31 @@ pub fn draw_tool_options(
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
     theme: &CygnusTheme,
+    texts: PhotoCatalog,
 ) {
     match tool {
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser => {
             let title = if tool == PhotoCanvasTool::Brush {
-                "Pinceau"
+                texts.get(PhotoTextKey::BrushHint)
             } else {
-                "Gomme"
+                texts.get(PhotoTextKey::EraserHint)
             };
             ui.horizontal(|ui| {
                 ui.label(body_text(theme, title));
                 ui.separator();
                 let mut size = brush.radius * 2.0;
-                Slider::new("Taille", 1.0..=200.0).show(ui, theme, &mut size);
+                Slider::new(texts.get(PhotoTextKey::SizeLabel), 1.0..=200.0)
+                    .show(ui, theme, &mut size);
                 brush.radius = (size / 2.0).clamp(0.5, 100.0);
                 let mut opacity = brush.opacity;
-                Slider::new("Opacite", 0.0..=1.0).show(ui, theme, &mut opacity);
+                Slider::new(texts.get(PhotoTextKey::OpacityLabel), 0.0..=1.0).show(
+                    ui,
+                    theme,
+                    &mut opacity,
+                );
                 brush.opacity = opacity.clamp(0.0, 1.0);
                 if tool == PhotoCanvasTool::Brush {
-                    ui.label(body_text(theme, "Couleur"));
+                    ui.label(body_text(theme, texts.get(PhotoTextKey::ColorLabel)));
                     let mut color = brush.color;
                     egui::color_picker::color_edit_button_srgb(ui, &mut color);
                     brush.color = color;
@@ -60,34 +67,28 @@ pub fn draw_tool_options(
         }
         PhotoCanvasTool::Move => {
             ui.horizontal(|ui| {
-                ui.label(body_text(theme, "Deplacement"));
+                ui.label(body_text(theme, texts.get(PhotoTextKey::MoveTitle)));
                 ui.separator();
-                Toggle::new("Grille").show(ui, theme, show_grid);
+                Toggle::new(texts.get(PhotoTextKey::GridLabel)).show(ui, theme, show_grid);
             });
         }
         PhotoCanvasTool::Pan => {
             ui.horizontal(|ui| {
-                ui.label(body_text(
-                    theme,
-                    "Main : glisser pour deplacer la vue, molette pour zoomer",
-                ));
+                ui.label(body_text(theme, texts.get(PhotoTextKey::PanHintText)));
             });
         }
         PhotoCanvasTool::Zoom => {
             ui.horizontal(|ui| {
-                ui.label(body_text(
-                    theme,
-                    "Loupe : clic = zoom avant, clic droit = zoom arriere",
-                ));
+                ui.label(body_text(theme, texts.get(PhotoTextKey::ZoomHintText)));
             });
         }
         PhotoCanvasTool::Eyedropper => {
             ui.horizontal(|ui| {
-                ui.label(body_text(theme, "Pipette"));
+                ui.label(body_text(theme, texts.get(PhotoTextKey::EyedropperHint)));
                 ui.separator();
                 ui.label(body_text(
                     theme,
-                    "Cliquer sur le canvas pour echantillonner la couleur",
+                    texts.get(PhotoTextKey::EyedropperHintText),
                 ));
             });
         }
@@ -113,9 +114,10 @@ mod tests {
             let mut brush = PhotoBrushSettings::default();
             let mut show_grid = false;
             let theme = ui_kit::theme::CygnusTheme::dark();
+            let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    draw_tool_options(ui, tool, &mut brush, &mut show_grid, &theme);
+                    draw_tool_options(ui, tool, &mut brush, &mut show_grid, &theme, texts);
                 });
             })
             .drop_without_applying_deltas();

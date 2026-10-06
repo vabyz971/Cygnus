@@ -23,18 +23,19 @@
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
+use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::CygnusTheme;
 
 /// Icône + aide contextuelle d'un outil du rail.
-fn tool_icon(tool: PhotoCanvasTool) -> (Icon, &'static str) {
+fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str) {
     match tool {
-        PhotoCanvasTool::Move => (Icon::MoveTool, "Deplacer / selectionner"),
-        PhotoCanvasTool::Pan => (Icon::Hand, "Main (deplacer la vue)"),
-        PhotoCanvasTool::Zoom => (Icon::Search, "Loupe"),
-        PhotoCanvasTool::Brush => (Icon::Brush, "Pinceau"),
-        PhotoCanvasTool::Eraser => (Icon::Eraser, "Gomme"),
-        PhotoCanvasTool::Eyedropper => (Icon::Eyedropper, "Pipette"),
+        PhotoCanvasTool::Move => (Icon::MoveTool, texts.get(PhotoTextKey::MoveHint)),
+        PhotoCanvasTool::Pan => (Icon::Hand, texts.get(PhotoTextKey::PanHint)),
+        PhotoCanvasTool::Zoom => (Icon::Search, texts.get(PhotoTextKey::ZoomHint)),
+        PhotoCanvasTool::Brush => (Icon::Brush, texts.get(PhotoTextKey::BrushHint)),
+        PhotoCanvasTool::Eraser => (Icon::Eraser, texts.get(PhotoTextKey::EraserHint)),
+        PhotoCanvasTool::Eyedropper => (Icon::Eyedropper, texts.get(PhotoTextKey::EyedropperHint)),
     }
 }
 
@@ -51,12 +52,13 @@ pub fn draw_tool_rail(
     brush_color: &mut [u8; 3],
     mode: PhotoEditMode,
     theme: &CygnusTheme,
+    texts: PhotoCatalog,
 ) -> Option<PhotoCanvasTool> {
     let mut chosen = None;
     ui.vertical_centered(|ui| {
         for (index, tool) in mode.tools().iter().enumerate() {
             let tool = *tool;
-            let (icon, tip) = tool_icon(tool);
+            let (icon, tip) = tool_icon(tool, texts);
             let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
             let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
             // Fondu d'apparition (egui natif) vers survol/sélection.
@@ -104,12 +106,20 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let theme = CygnusTheme::dark();
+        let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
         let mut tool = PhotoCanvasTool::Move;
         let mut color = [255u8, 255, 255];
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(
-                    draw_tool_rail(ui, &mut tool, &mut color, PhotoEditMode::Pixel, &theme),
+                    draw_tool_rail(
+                        ui,
+                        &mut tool,
+                        &mut color,
+                        PhotoEditMode::Pixel,
+                        &theme,
+                        texts
+                    ),
                     None
                 );
             });
@@ -123,6 +133,7 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let theme = CygnusTheme::dark();
+        let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
         for mode in [
             PhotoEditMode::Vector,
             PhotoEditMode::Pixel,
@@ -132,7 +143,7 @@ mod tests {
             let mut color = [255u8, 255, 255];
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let _ = draw_tool_rail(ui, &mut tool, &mut color, mode, &theme);
+                    let _ = draw_tool_rail(ui, &mut tool, &mut color, mode, &theme, texts);
                 });
             })
             .drop_without_applying_deltas();
