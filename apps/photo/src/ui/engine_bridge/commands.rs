@@ -117,6 +117,18 @@ pub enum PhotoEngineCommand {
     AddEmptyLayer,
     /// Dupliquer un calque (nouveaux ids, inséré au-dessus).
     DuplicateLayer(Uuid),
+    /// Miroir horizontal du calque pixels (O004, destructif + historique).
+    FlipHorizontal(Uuid),
+    /// Miroir vertical du calque pixels (O004).
+    FlipVertical(Uuid),
+    /// Rotation 90° horaire, centre conservé (O004).
+    RotateClockwise(Uuid),
+    /// Rotation 90° antihoraire (O004).
+    RotateCounterclockwise(Uuid),
+    /// Rogner le calque pixels à l'intersection avec le document
+    /// (O004) : sans recouvrement = erreur propre, déjà contenu =
+    /// no-op (sans entrée d'historique).
+    CropToDocument(Uuid),
     /// Supprimer un calque (refusé s'il est le dernier).
     DeleteLayer(Uuid),
     /// Ajouter un filtre live à un calque pixels (`type_id` du registre).
@@ -192,6 +204,11 @@ impl PhotoEngineCommand {
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
             Self::DuplicateLayer(_) => "duplicate_layer",
+            Self::FlipHorizontal(_) => "flip_horizontal",
+            Self::FlipVertical(_) => "flip_vertical",
+            Self::RotateClockwise(_) => "rotate_clockwise",
+            Self::RotateCounterclockwise(_) => "rotate_counterclockwise",
+            Self::CropToDocument(_) => "crop_to_document",
             Self::DeleteLayer(_) => "delete_layer",
             Self::AddFilter { .. } => "add_filter",
             Self::RenameLayer { .. } => "rename_layer",
@@ -255,6 +272,11 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         ),
         PhotoEngineCommand::OpenImage { .. }
         | PhotoEngineCommand::LoadProject { .. }
+        | PhotoEngineCommand::FlipHorizontal(_)
+        | PhotoEngineCommand::FlipVertical(_)
+        | PhotoEngineCommand::RotateClockwise(_)
+        | PhotoEngineCommand::RotateCounterclockwise(_)
+        | PhotoEngineCommand::CropToDocument(_)
         | PhotoEngineCommand::AddEmptyLayer
         | PhotoEngineCommand::DuplicateLayer(_)
         | PhotoEngineCommand::DeleteLayer(_)

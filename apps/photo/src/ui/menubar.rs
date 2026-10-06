@@ -61,6 +61,16 @@ pub enum PhotoMenuAction {
     AddEmptyLayer,
     /// Dupliquer le calque sélectionné.
     DuplicateLayer,
+    /// Miroir horizontal du calque sélectionné (O004).
+    FlipHorizontal,
+    /// Miroir vertical du calque sélectionné (O004).
+    FlipVertical,
+    /// Rotation 90° horaire (O004).
+    RotateClockwise,
+    /// Rotation 90° antihoraire (O004).
+    RotateCounterclockwise,
+    /// Rogner le calque sélectionné au document (O004).
+    CropToDocument,
     /// Ajouter un masque au calque sélectionné.
     AddMask,
     /// Supprimer le calque sélectionné.
@@ -221,6 +231,46 @@ pub fn draw_menu_bar(
                             availability.has_selection,
                         ) {
                             actions.push(PhotoMenuAction::DuplicateLayer);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::FlipHorizontal),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::FlipHorizontal);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::FlipVertical),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::FlipVertical);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::RotateClockwise),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::RotateClockwise);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::RotateCounterclockwise),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::RotateCounterclockwise);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::CropToDocument),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::CropToDocument);
                         }
                         if menu_item_enabled(
                             ui,

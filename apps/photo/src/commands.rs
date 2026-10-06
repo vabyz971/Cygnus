@@ -82,6 +82,16 @@ pub enum PhotoAction {
     AddImageLayer,
     /// Dupliquer le calque sélectionné (worker, sans effet si aucun).
     DuplicateSelectedLayer,
+    /// Miroir horizontal du calque sélectionné (O004, worker).
+    FlipHorizontalSelected,
+    /// Miroir vertical du calque sélectionné (O004, worker).
+    FlipVerticalSelected,
+    /// Rotation 90° horaire du calque sélectionné (O004, worker).
+    RotateClockwiseSelected,
+    /// Rotation 90° antihoraire du calque sélectionné (O004, worker).
+    RotateCounterclockwiseSelected,
+    /// Rogner le calque sélectionné au document (O004, worker).
+    CropSelectedToDocument,
     /// Supprimer le calque sélectionné (worker, sans effet si aucun).
     DeleteSelectedLayer,
     /// Supprimer le calque `layer` (worker, depuis sa rangée).

@@ -41,6 +41,11 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
         PhotoMenuAction::Redo => PhotoAction::Redo,
         PhotoMenuAction::AddEmptyLayer => PhotoAction::AddEmptyLayer,
         PhotoMenuAction::DuplicateLayer => PhotoAction::DuplicateSelectedLayer,
+        PhotoMenuAction::FlipHorizontal => PhotoAction::FlipHorizontalSelected,
+        PhotoMenuAction::FlipVertical => PhotoAction::FlipVerticalSelected,
+        PhotoMenuAction::RotateClockwise => PhotoAction::RotateClockwiseSelected,
+        PhotoMenuAction::RotateCounterclockwise => PhotoAction::RotateCounterclockwiseSelected,
+        PhotoMenuAction::CropToDocument => PhotoAction::CropSelectedToDocument,
         PhotoMenuAction::AddMask => PhotoAction::AddMaskToSelected,
         PhotoMenuAction::DeleteLayer => PhotoAction::DeleteSelectedLayer,
         PhotoMenuAction::ToggleGrid => PhotoAction::ToggleGrid,
@@ -134,6 +139,18 @@ mod tests {
         assert_eq!(
             menu_action_to_photo(PhotoMenuAction::DeleteLayer),
             PhotoAction::DeleteSelectedLayer
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::FlipHorizontal),
+            PhotoAction::FlipHorizontalSelected
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::RotateClockwise),
+            PhotoAction::RotateClockwiseSelected
+        );
+        assert_eq!(
+            menu_action_to_photo(PhotoMenuAction::CropToDocument),
+            PhotoAction::CropSelectedToDocument
         );
         assert_eq!(
             menu_action_to_photo(PhotoMenuAction::NewDocument),

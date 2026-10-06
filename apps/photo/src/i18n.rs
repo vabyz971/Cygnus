@@ -39,6 +39,16 @@ pub enum PhotoTextKey {
     LayerFromImage,
     /// Dupliquer le calque.
     DuplicateLayer,
+    /// Miroir horizontal (O004).
+    FlipHorizontal,
+    /// Miroir vertical (O004).
+    FlipVertical,
+    /// Rotation 90° horaire (O004).
+    RotateClockwise,
+    /// Rotation 90° antihoraire (O004).
+    RotateCounterclockwise,
+    /// Rogner le calque au document (O004).
+    CropToDocument,
     /// Ajouter un masque.
     AddMask,
     /// Supprimer le calque.
@@ -85,6 +95,11 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NewEmptyLayer => "Nouveau calque vide",
         PhotoTextKey::LayerFromImage => "Calque depuis une image",
         PhotoTextKey::DuplicateLayer => "Dupliquer le calque",
+        PhotoTextKey::FlipHorizontal => "Miroir horizontal",
+        PhotoTextKey::FlipVertical => "Miroir vertical",
+        PhotoTextKey::RotateClockwise => "Rotation 90° horaire",
+        PhotoTextKey::RotateCounterclockwise => "Rotation 90° antihoraire",
+        PhotoTextKey::CropToDocument => "Rogner au document",
         PhotoTextKey::AddMask => "Ajouter un masque",
         PhotoTextKey::DeleteLayer => "Supprimer le calque",
         PhotoTextKey::CropPreviewToDocument => "Rogner l'apercu au document",
@@ -104,6 +119,11 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NewEmptyLayer => "New empty layer",
         PhotoTextKey::LayerFromImage => "Layer from image",
         PhotoTextKey::DuplicateLayer => "Duplicate layer",
+        PhotoTextKey::FlipHorizontal => "Flip horizontal",
+        PhotoTextKey::FlipVertical => "Flip vertical",
+        PhotoTextKey::RotateClockwise => "Rotate 90° clockwise",
+        PhotoTextKey::RotateCounterclockwise => "Rotate 90° counterclockwise",
+        PhotoTextKey::CropToDocument => "Crop to document",
         PhotoTextKey::AddMask => "Add mask",
         PhotoTextKey::DeleteLayer => "Delete layer",
         PhotoTextKey::CropPreviewToDocument => "Crop preview to document",
@@ -138,6 +158,20 @@ mod tests {
             texts.get(PhotoTextKey::DuplicateLayer),
             "Dupliquer le calque"
         );
+        assert_eq!(texts.get(PhotoTextKey::FlipHorizontal), "Miroir horizontal");
+        assert_eq!(texts.get(PhotoTextKey::FlipVertical), "Miroir vertical");
+        assert_eq!(
+            texts.get(PhotoTextKey::RotateClockwise),
+            "Rotation 90° horaire"
+        );
+        assert_eq!(
+            texts.get(PhotoTextKey::RotateCounterclockwise),
+            "Rotation 90° antihoraire"
+        );
+        assert_eq!(
+            texts.get(PhotoTextKey::CropToDocument),
+            "Rogner au document"
+        );
         assert_eq!(texts.get(PhotoTextKey::AddMask), "Ajouter un masque");
         assert_eq!(texts.get(PhotoTextKey::DeleteLayer), "Supprimer le calque");
         assert_eq!(
@@ -163,6 +197,11 @@ mod tests {
             PhotoTextKey::NewEmptyLayer,
             PhotoTextKey::LayerFromImage,
             PhotoTextKey::DuplicateLayer,
+            PhotoTextKey::FlipHorizontal,
+            PhotoTextKey::FlipVertical,
+            PhotoTextKey::RotateClockwise,
+            PhotoTextKey::RotateCounterclockwise,
+            PhotoTextKey::CropToDocument,
             PhotoTextKey::AddMask,
             PhotoTextKey::DeleteLayer,
             PhotoTextKey::CropPreviewToDocument,

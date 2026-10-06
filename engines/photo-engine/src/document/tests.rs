@@ -718,6 +718,45 @@ fn flip_est_destructif_et_symetrique() {
     assert_eq!([p1[0], p1[1], p1[2]], avant_gauche);
 }
 
+#[test]
+fn rotation_echange_les_dimensions_et_garde_le_centre() {
+    let mut doc = Document::new(8, 8);
+    // 3×1 : rouge | vert | bleu.
+    let mut b = ImageBuffer::from_pixel(3, 1, Rgba([0, 0, 0, 255]));
+    b.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+    b.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+    b.put_pixel(2, 0, Rgba([0, 0, 255, 255]));
+    let l = PixelLayer::new("tourne", Arc::new(DynamicImage::ImageRgba8(b)));
+    let id = l.id;
+    doc.push_layer(LayerNode::Pixel(l));
+    doc.rotate(id, true).expect("rotation horaire");
+    let l = doc.pixel_layer(id).expect("calque");
+    // Dimensions échangées.
+    assert_eq!(l.dimensions(), (1, 3));
+    // Horaire : (x, 0) → (0, x) — l'ordre rouge/vert/bleu se lit de haut en bas.
+    let img = l.source_image.to_rgba8();
+    let haut = img.get_pixel(0, 0);
+    assert_eq!([haut[0], haut[1], haut[2]], [255, 0, 0]);
+    let milieu = img.get_pixel(0, 1);
+    assert_eq!([milieu[0], milieu[1], milieu[2]], [0, 255, 0]);
+    let bas = img.get_pixel(0, 2);
+    assert_eq!([bas[0], bas[1], bas[2]], [0, 0, 255]);
+    // Centre conservé : (0 + 3)/2 = (nouveau 0 + 1)/2 = 1.5.
+    assert_eq!((l.transform.offset_x, l.transform.offset_y), (1.0, -1.0));
+    // Antihoraire : retour exact à l'origine.
+    doc.rotate(id, false).expect("rotation antihoraire");
+    let l = doc.pixel_layer(id).expect("calque");
+    assert_eq!(l.dimensions(), (3, 1));
+    let img = l.source_image.to_rgba8();
+    let gauche = img.get_pixel(0, 0);
+    assert_eq!([gauche[0], gauche[1], gauche[2]], [255, 0, 0]);
+    let droite = img.get_pixel(2, 0);
+    assert_eq!([droite[0], droite[1], droite[2]], [0, 0, 255]);
+    assert_eq!((l.transform.offset_x, l.transform.offset_y), (0.0, 0.0));
+    // Calque inconnu : erreur propre, jamais de panique.
+    assert!(doc.rotate(Uuid::new_v4(), true).is_err());
+}
+
 // --- Masques (§8) ---
 
 fn masked_node(

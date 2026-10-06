@@ -111,6 +111,63 @@ pub(crate) struct HistoryStep {
     label: String,
 }
 
+/// Plan de « rogner au document » (O004) : intersection de
+/// l'empreinte du calque (offset + dimensions) avec le document,
+/// reconvertie en espace calque pour [`Document::crop`](photo_engine::Document::crop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CropPlan {
+    /// Pas un calque pixels : no-op silencieux (comme `AddFilter`).
+    NotPixel,
+    /// Rotation/échelle/inclinaison : l'intersection monde serait
+    /// fausse — refusé avec un message clair.
+    Transformed,
+    /// Aucun recouvrement : erreur propre, sans entrée d'historique.
+    Outside,
+    /// Déjà contenu : no-op (évite un historique et un rendu vides,
+    /// et tout décalage destructif).
+    Noop,
+    /// Rect à rogner (espace calque, bornes garanties).
+    Rect { x: i32, y: i32, w: u32, h: u32 },
+}
+
+/// Calcule le plan de crop, pur et testable (aucun effet de bord).
+fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
+    let Some(layer) = document.pixel_layer(id) else {
+        return CropPlan::NotPixel;
+    };
+    let (w, h) = layer.dimensions();
+    let Some(transform) = document.transform_of(id) else {
+        return CropPlan::NotPixel;
+    };
+    if transform.rotation_deg != 0.0
+        || transform.scale_x != 1.0
+        || transform.scale_y != 1.0
+        || transform.skew_x != 0.0
+        || transform.skew_y != 0.0
+    {
+        return CropPlan::Transformed;
+    }
+    let (doc_w, doc_h) = (document.width as f32, document.height as f32);
+    let left = transform.offset_x.max(0.0);
+    let top = transform.offset_y.max(0.0);
+    let right = (transform.offset_x + w as f32).min(doc_w);
+    let bottom = (transform.offset_y + h as f32).min(doc_h);
+    if right <= left || bottom <= top {
+        return CropPlan::Outside;
+    }
+    // Vers l'espace calque (offsets potentiellement fractionnaires :
+    // arrondi au pixel).
+    let x = (left - transform.offset_x).round() as i32;
+    let y = (top - transform.offset_y).round() as i32;
+    let cw = (right - left).round() as u32;
+    let ch = (bottom - top).round() as u32;
+    if x == 0 && y == 0 && cw == w && ch == h {
+        CropPlan::Noop
+    } else {
+        CropPlan::Rect { x, y, w: cw, h: ch }
+    }
+}
+
 /// Libellé français d'un pas d'historique depuis le nom d'opération
 /// (`op_name`). Repli « Édition » si inconnu (jamais vide en UI).
 fn history_label(op: &str) -> String {
@@ -134,6 +191,11 @@ fn history_label(op: &str) -> String {
         "move_filter" => "Déplacer le filtre",
         "move_mask" => "Déplacer le masque",
         "remove_filter" => "Supprimer le filtre",
+        "flip_horizontal" => "Miroir horizontal",
+        "flip_vertical" => "Miroir vertical",
+        "rotate_clockwise" => "Rotation horaire",
+        "rotate_counterclockwise" => "Rotation antihoraire",
+        "crop_to_document" => "Rogner au document",
         _ => "Édition",
     })
 }
@@ -189,6 +251,30 @@ impl EngineWorker {
         });
         self.redo.clear();
         self.coalesced_opacity_layer = coalesce_layer;
+    }
+
+    /// Édition destructive d'un calque pixels (miroir, rotation) :
+    /// garde-fous (pixels uniquement, sinon no-op silencieux comme
+    /// `AddFilter`), snapshot PRÉ-mutation, application, erreur propre
+    /// avec retrait du snapshot (motif `ReorderNodes`).
+    fn mutate_pixels(
+        &mut self,
+        id: Uuid,
+        invalidation: RenderInvalidation,
+        apply: impl FnOnce(&mut Document) -> Result<(), String>,
+    ) -> Mutation {
+        if !matches!(
+            self.document.find(id),
+            Some(photo_engine::LayerNode::Pixel(_))
+        ) {
+            return Mutation::unchanged();
+        }
+        self.push_history(None);
+        if let Err(error) = apply(&mut self.document) {
+            self.undo.pop();
+            return Mutation::immediate(PhotoEngineResponse::EngineError { message: error });
+        }
+        Mutation::changed(invalidation)
     }
 
     /// Un pas en arrière : restaure le snapshot, le pas annulé (avec
@@ -869,6 +955,46 @@ impl EngineWorker {
                 self.document.remove(id);
                 Mutation::changed(invalidation)
             }
+            PhotoEngineCommand::FlipHorizontal(id) => self.mutate_pixels(id, invalidation, |doc| {
+                doc.flip(id, true)
+                    .map_err(|error| format!("Miroir impossible : {error}"))
+            }),
+            PhotoEngineCommand::FlipVertical(id) => self.mutate_pixels(id, invalidation, |doc| {
+                doc.flip(id, false)
+                    .map_err(|error| format!("Miroir impossible : {error}"))
+            }),
+            PhotoEngineCommand::RotateClockwise(id) => {
+                self.mutate_pixels(id, invalidation, |doc| {
+                    doc.rotate(id, true)
+                        .map_err(|error| format!("Rotation impossible : {error}"))
+                })
+            }
+            PhotoEngineCommand::RotateCounterclockwise(id) => {
+                self.mutate_pixels(id, invalidation, |doc| {
+                    doc.rotate(id, false)
+                        .map_err(|error| format!("Rotation impossible : {error}"))
+                })
+            }
+            PhotoEngineCommand::CropToDocument(id) => match crop_plan(&self.document, id) {
+                CropPlan::NotPixel => Mutation::unchanged(),
+                CropPlan::Transformed => Mutation::immediate(PhotoEngineResponse::EngineError {
+                    message: String::from("Rogner impossible : redressez le calque d'abord"),
+                }),
+                CropPlan::Outside => Mutation::immediate(PhotoEngineResponse::EngineError {
+                    message: String::from("Rogner impossible : calque hors document"),
+                }),
+                CropPlan::Noop => Mutation::unchanged(),
+                CropPlan::Rect { x, y, w, h } => {
+                    self.push_history(None);
+                    if let Err(error) = self.document.crop(id, x, y, w, h) {
+                        self.undo.pop();
+                        return Mutation::immediate(PhotoEngineResponse::EngineError {
+                            message: format!("Rogner impossible : {error}"),
+                        });
+                    }
+                    Mutation::changed(invalidation)
+                }
+            },
             PhotoEngineCommand::AddFilter { layer, filter_type } => {
                 let Some(filter) = photo_engine::new_filter_layer(&filter_type) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
@@ -2915,6 +3041,126 @@ mod single_pass_tests {
             worker.apply(PhotoEngineCommand::UndoSteps { steps: 0 }),
             PhotoEngineResponse::StateChanged { .. }
         ));
+    }
+
+    /// Document asymétrique 4×2 : moitié gauche rouge, droite noire
+    /// (miroir/rotation visibles dans l'aperçu).
+    fn asymmetric_doc() -> Document {
+        use image::{DynamicImage, ImageBuffer, Rgba};
+        use std::sync::Arc;
+        let mut buf = ImageBuffer::from_pixel(4, 2, Rgba([0, 0, 0, 255]));
+        buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        buf.put_pixel(0, 1, Rgba([255, 0, 0, 255]));
+        let mut doc = Document::new(4, 2);
+        doc.push_layer(photo_engine::LayerNode::Pixel(
+            photo_engine::PixelLayer::new("asym", Arc::new(DynamicImage::ImageRgba8(buf))),
+        ));
+        doc
+    }
+
+    fn preview_rgba(response: &PhotoEngineResponse) -> Vec<u8> {
+        match response {
+            PhotoEngineResponse::LayersChanged {
+                preview: Some(preview),
+                ..
+            } => preview.rgba.clone(),
+            other => panic!("aperçu attendu, obtenu : {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flip_miroir_change_l_apercu_libelle_et_annule() {
+        let mut worker = EngineWorker::new(asymmetric_doc());
+        let id = worker.test_document().root[0].id();
+        let avant = preview_rgba(&worker.apply(PhotoEngineCommand::Refresh));
+        match worker.apply(PhotoEngineCommand::FlipHorizontal(id)) {
+            PhotoEngineResponse::LayersChanged {
+                preview: Some(apercu),
+                undo_labels,
+                ..
+            } => {
+                assert_ne!(apercu.rgba, avant, "miroir visible");
+                assert_eq!(undo_labels, vec!["Miroir horizontal"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        // Undo : pixels d'origine restaurés à l'octet près.
+        let restaure = preview_rgba(&worker.apply(PhotoEngineCommand::Undo));
+        assert_eq!(restaure, avant);
+    }
+
+    #[test]
+    fn rotate_et_crop_travaillent_et_sont_libelles() {
+        let mut worker = EngineWorker::new(asymmetric_doc());
+        let id = worker.test_document().root[0].id();
+        let avant = preview_rgba(&worker.apply(PhotoEngineCommand::Refresh));
+        match worker.apply(PhotoEngineCommand::RotateClockwise(id)) {
+            PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
+                assert_eq!(undo_labels, vec!["Rotation horaire"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        let tourne = preview_rgba(&worker.apply(PhotoEngineCommand::Refresh));
+        assert_ne!(tourne, avant, "rotation visible");
+        // Groupe : no-op silencieux (comme AddFilter), sans historique.
+        let mut groupe = Document::new(4, 4);
+        groupe.push_layer(photo_engine::LayerNode::Group(
+            photo_engine::GroupLayer::new("g", vec![]),
+        ));
+        let gid = groupe.root[0].id();
+        let mut pivot = EngineWorker::new(groupe);
+        assert!(matches!(
+            pivot.apply(PhotoEngineCommand::FlipHorizontal(gid)),
+            PhotoEngineResponse::StateChanged { .. }
+        ));
+    }
+
+    #[test]
+    fn crop_plan_couvre_tous_les_cas() {
+        use photo_engine::{LayerNode, PixelLayer};
+        use std::sync::Arc;
+        let mut doc = Document::new(10, 10);
+        let img = Arc::new(image::DynamicImage::new_rgba8(6, 6));
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new("carre", img)));
+        let id = doc.root[0].id();
+        // Contenu : no-op (déjà dans le document).
+        assert_eq!(crop_plan(&doc, id), CropPlan::Noop);
+        // Décalé à moitié hors cadre : rect non nul clampé.
+        doc.set_transform_any(
+            id,
+            photo_engine::Transform2D {
+                offset_x: 7.0,
+                ..photo_engine::Transform2D::default()
+            },
+        );
+        assert_eq!(
+            crop_plan(&doc, id),
+            CropPlan::Rect {
+                x: 0,
+                y: 0,
+                w: 3,
+                h: 6
+            }
+        );
+        // Complètement hors cadre : erreur propre.
+        doc.set_transform_any(
+            id,
+            photo_engine::Transform2D {
+                offset_x: 20.0,
+                ..photo_engine::Transform2D::default()
+            },
+        );
+        assert_eq!(crop_plan(&doc, id), CropPlan::Outside);
+        // Rotation : refusé (intersection monde fausse).
+        doc.set_transform_any(
+            id,
+            photo_engine::Transform2D {
+                offset_x: 0.0,
+                rotation_deg: 45.0,
+                ..photo_engine::Transform2D::default()
+            },
+        );
+        assert_eq!(crop_plan(&doc, id), CropPlan::Transformed);
     }
 
     #[test]

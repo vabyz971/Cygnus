@@ -229,6 +229,31 @@ impl PhotoApp {
                     self.send_active(PhotoEngineCommand::DuplicateLayer(id));
                 }
             }
+            PhotoAction::FlipHorizontalSelected => {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
+                    self.send_active(PhotoEngineCommand::FlipHorizontal(id));
+                }
+            }
+            PhotoAction::FlipVerticalSelected => {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
+                    self.send_active(PhotoEngineCommand::FlipVertical(id));
+                }
+            }
+            PhotoAction::RotateClockwiseSelected => {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
+                    self.send_active(PhotoEngineCommand::RotateClockwise(id));
+                }
+            }
+            PhotoAction::RotateCounterclockwiseSelected => {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
+                    self.send_active(PhotoEngineCommand::RotateCounterclockwise(id));
+                }
+            }
+            PhotoAction::CropSelectedToDocument => {
+                if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
+                    self.send_active(PhotoEngineCommand::CropToDocument(id));
+                }
+            }
             PhotoAction::DeleteSelectedLayer => {
                 if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::DeleteLayer(id));
@@ -730,6 +755,38 @@ mod tests {
                 break;
             }
             assert!(start.elapsed() < Duration::from_secs(30), "redo attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn flip_selected_routes_to_worker_with_label() {
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        // Attend le snapshot pour sélectionner le calque initial.
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if !app.active_doc_opt().expect("doc").ui.layers.is_empty() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let id = app.active_doc_opt().expect("doc").ui.layers[0].id;
+        app.handle_action(&ctx, PhotoAction::SelectLayer(id));
+        app.handle_action(&ctx, PhotoAction::FlipHorizontalSelected);
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            let history = &app.active_doc_opt().expect("doc").ui.history_undo;
+            if history.iter().any(|label| label == "Miroir horizontal") {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "flip attendu");
             std::thread::sleep(Duration::from_millis(10));
         }
     }

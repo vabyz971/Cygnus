@@ -411,6 +411,55 @@ impl Document {
         Ok(())
     }
 
+    /// Pivote le calque de 90° (destructif, sens horaire si `clockwise`).
+    ///
+    /// Les dimensions s'échangent : l'offset compense pour garder le
+    /// CENTRE en place dans le monde. Masques (calque + sous-calques)
+    /// pivotés dans le même espace source, comme [`Self::flip`].
+    ///
+    /// # Errors
+    /// Retourne une erreur si le calque n'existe pas.
+    pub fn rotate(&mut self, id: Uuid, clockwise: bool) -> Result<(), String> {
+        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let (old_w, old_h) = layer.dimensions();
+        let rotated = if clockwise {
+            layer.source_image.rotate90()
+        } else {
+            layer.source_image.rotate270()
+        };
+        for mask in &mut layer.masks {
+            let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
+            let rotated_mask = if clockwise {
+                dyn_mask.rotate90()
+            } else {
+                dyn_mask.rotate270()
+            }
+            .to_rgba8();
+            mask.image = Arc::new(rotated_mask);
+            mask.touch();
+        }
+        // Les masques des sous-calques vivent dans le même espace source
+        for f in &mut layer.filter_layers {
+            for mask in &mut f.masks {
+                let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
+                let rotated_mask = if clockwise {
+                    dyn_mask.rotate90()
+                } else {
+                    dyn_mask.rotate270()
+                }
+                .to_rgba8();
+                mask.image = Arc::new(rotated_mask);
+                mask.touch();
+            }
+        }
+        layer.set_source_image(rotated);
+        // Compensation du centre : (w,h) → (h,w).
+        let (new_w, new_h) = layer.dimensions();
+        layer.transform.offset_x += (old_w as f32 - new_w as f32) / 2.0;
+        layer.transform.offset_y += (old_h as f32 - new_h as f32) / 2.0;
+        Ok(())
+    }
+
     /// Rogne le calque au rect (coordonnées CALQUE, pixels). Destructif :
     /// le contenu reste en place dans le monde (le transform compense
     /// l'origine du crop). Erreur descriptive si le rect est invalide.
