@@ -291,11 +291,13 @@ pub fn draw_menu_bar(
                     ui.menu_button(catalog.get(TextKey::Window), |ui| {
                         menu_style(theme).apply(ui.style_mut());
                         // Canevas épinglés (non fermables) : seuls
-                        // outils, inspecteur et calques sont à rouvrir.
+                        // outils, inspecteur, calques et historique
+                        // sont à rouvrir.
                         for tab in [
                             PhotoDockTab::Tools,
                             PhotoDockTab::Inspector,
                             PhotoDockTab::Layers,
+                            PhotoDockTab::History,
                         ] {
                             if menu_item(ui, theme, catalog.get(tab.title_key())) {
                                 actions.push(PhotoMenuAction::ShowDockTab(tab));

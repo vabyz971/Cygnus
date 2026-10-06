@@ -14,12 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Fonctionnalités métier de l'app Photo, organisées par domaine.
+//! Fonctionnalité Historique : panneau position-indépendant.
 //!
-//! Chaque feature est indépendante : panneaux position-indépendants,
-//! actions remontées en [`PhotoAction`](crate::commands::PhotoAction),
-//! style exclusivement ui-kit.
+//! Liste des pas undo (plus ancien → plus récent), état actuel
+//! surligné, pas redo (prochain en tête). Clic sur une rangée =
+//! saut d'état ([`HistoryPanelAction`]), converti en
+//! [`PhotoAction`](crate::commands::PhotoAction) (voir
+//! [`super::actions`]). Style exclusivement ui-kit, aucune couleur
+//! en dur.
 
-pub mod history;
-pub mod inspector;
-pub mod layers;
+pub mod actions;
+pub mod panel;
+
+pub use actions::history_panel_action_to_photo;
+pub use panel::HistoryPanel;

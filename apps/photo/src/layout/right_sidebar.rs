@@ -14,11 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Contenus des onglets dock « Inspecteur » et « Calques ».
+//! Contenus des onglets dock « Inspecteur », « Calques » et
+//! « Historique ».
 //!
 //! ```text
 //! PhotoDockTab::Inspector → InspectorPanel
 //! PhotoDockTab::Layers    → LayersPanel
+//! PhotoDockTab::History   → HistoryPanel
 //! ```
 //!
 //! Position-indépendants : visibilité et placement via le dock
@@ -27,7 +29,8 @@
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use crate::ui::{
-    InspectorPanel, LayersPanel, inspector_action_to_photo, layer_panel_action_to_photo,
+    HistoryPanel, InspectorPanel, LayersPanel, history_panel_action_to_photo,
+    inspector_action_to_photo, layer_panel_action_to_photo,
 };
 
 /// Inspecteur du calque sélectionné (contenu de l'onglet).
@@ -74,4 +77,16 @@ pub fn draw_layers_content(
     .into_iter()
     .map(layer_panel_action_to_photo)
     .collect()
+}
+
+/// Historique des pas undo/redo (contenu de l'onglet).
+pub fn draw_history_content(
+    ui: &mut egui::Ui,
+    doc: &OpenDocument,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
+    HistoryPanel::show(ui, ctx, &doc.ui.history_undo, &doc.ui.history_redo)
+        .into_iter()
+        .map(history_panel_action_to_photo)
+        .collect()
 }

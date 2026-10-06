@@ -72,6 +72,10 @@ pub enum PhotoAction {
     Undo,
     /// Rétablir (worker).
     Redo,
+    /// Sauter `steps` pas en arrière (panneau Historique, O003).
+    HistoryBack(u32),
+    /// Sauter `steps` pas en avant (O003).
+    HistoryForward(u32),
     /// Nouveau calque vide (worker).
     AddEmptyLayer,
     /// Calque depuis une image (file picker).

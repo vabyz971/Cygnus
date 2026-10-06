@@ -49,6 +49,10 @@ pub enum PhotoTextKey {
     Zoom100,
     /// Réinitialiser la disposition des docks.
     ResetLayout,
+    /// Panneau Historique vide.
+    HistoryEmpty,
+    /// Rangée de l'état actuel dans l'historique.
+    HistoryCurrent,
     /// À propos.
     About,
 }
@@ -88,6 +92,8 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CropPreviewToDocument => "Rogner l'apercu au document",
         PhotoTextKey::Zoom100 => "Zoom 100 %",
         PhotoTextKey::ResetLayout => "Réinitialiser la disposition",
+        PhotoTextKey::HistoryEmpty => "Aucune modification",
+        PhotoTextKey::HistoryCurrent => "État actuel",
         PhotoTextKey::About => "À propos",
     }
 }
@@ -106,6 +112,8 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CropPreviewToDocument => "Crop preview to document",
         PhotoTextKey::Zoom100 => "Zoom 100%",
         PhotoTextKey::ResetLayout => "Reset layout",
+        PhotoTextKey::HistoryEmpty => "No changes yet",
+        PhotoTextKey::HistoryCurrent => "Current state",
         PhotoTextKey::About => "About",
     }
 }
@@ -145,6 +153,8 @@ mod tests {
             texts.get(PhotoTextKey::ResetLayout),
             "Réinitialiser la disposition"
         );
+        assert_eq!(texts.get(PhotoTextKey::HistoryEmpty), "Aucune modification");
+        assert_eq!(texts.get(PhotoTextKey::HistoryCurrent), "État actuel");
         assert_eq!(texts.get(PhotoTextKey::About), "À propos");
     }
 
@@ -163,6 +173,8 @@ mod tests {
             PhotoTextKey::CropPreviewToDocument,
             PhotoTextKey::Zoom100,
             PhotoTextKey::ResetLayout,
+            PhotoTextKey::HistoryEmpty,
+            PhotoTextKey::HistoryCurrent,
             PhotoTextKey::About,
         ] {
             assert!(!texts.get(key).is_empty(), "clé non traduite : {key:?}");

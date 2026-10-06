@@ -50,6 +50,7 @@ pub use engine_bridge::{
     PhotoEngineCommand, PhotoEngineResponse, PreviewImage, spawn_photo_engine_worker,
 };
 pub use features::{
+    history::{HistoryPanel, history_panel_action_to_photo},
     inspector::{InspectorPanel, inspector_action_to_photo},
     layers::{
         LayerRenameState, LayerThumbView, LayersPanel, PhotoLayerInfo, PhotoLayerThumb,

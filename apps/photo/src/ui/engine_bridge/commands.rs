@@ -65,6 +65,18 @@ pub enum PhotoEngineCommand {
     Undo,
     /// Rétablir la dernière annulation.
     Redo,
+    /// Annuler jusqu'à `steps` mutations (saut d'état du panneau
+    /// Historique, O003) : applique ce qui existe (au plus la pile),
+    /// un seul rendu.
+    UndoSteps {
+        /// Nombre de pas en arrière demandés.
+        steps: u32,
+    },
+    /// Rétablir jusqu'à `steps` mutations (O003, symétrique).
+    RedoSteps {
+        /// Nombre de pas en avant demandés.
+        steps: u32,
+    },
     /// Commiter un trait de pinceau/gomme sur un calque pixels.
     ///
     /// `points` en pixels image (espace monde du viewport). La
@@ -173,6 +185,8 @@ impl PhotoEngineCommand {
             Self::SetBlendMode { .. } => "set_blend_mode",
             Self::Undo => "undo",
             Self::Redo => "redo",
+            Self::UndoSteps { .. } => "undo_steps",
+            Self::RedoSteps { .. } => "redo_steps",
             Self::PaintStroke { .. } => "paint_stroke",
             Self::MoveLayer { .. } => "move_layer",
             Self::OpenImage { .. } => "open_image",
@@ -252,6 +266,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::MoveMask { .. }
         | PhotoEngineCommand::Undo
         | PhotoEngineCommand::Redo
+        | PhotoEngineCommand::UndoSteps { .. }
+        | PhotoEngineCommand::RedoSteps { .. }
         | PhotoEngineCommand::Refresh
         | PhotoEngineCommand::SetPreviewClip { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)

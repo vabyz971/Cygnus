@@ -43,8 +43,15 @@ use uuid::Uuid;
 /// État du worker : document vivant + historique undo/redo.
 pub struct EngineWorker {
     pub(crate) document: Document,
-    pub(crate) undo: Vec<photo_engine::history::Snapshot>,
-    pub(crate) redo: Vec<photo_engine::history::Snapshot>,
+    /// Piles d'historique : snapshot PRÉ-mutation + libellé français
+    /// de l'opération (panneau Historique, O003). `undo` du plus
+    /// ancien au plus récent, `redo` dans l'ordre d'annulation.
+    pub(crate) undo: Vec<HistoryStep>,
+    pub(crate) redo: Vec<HistoryStep>,
+    /// Nom d'opération (`op_name`) de la commande en cours de
+    /// mutation : consommé par [`Self::push_history`] pour libeller
+    /// le pas (posé par `apply`/`apply_batch`, jamais par les bras).
+    pub(crate) pending_label: Option<&'static str>,
     /// Calque du dernier `SetOpacity` (coalescence des sliders).
     pub(crate) coalesced_opacity_layer: Option<Uuid>,
     /// Aperçu rogné au document (menu Affichage, défaut : plan infini).
@@ -93,6 +100,44 @@ const TILE_CACHE_BUDGET_PX: usize = 8 << 20;
 /// Bornes de l'historique (snapshots partagés, quasi gratuits).
 pub const HISTORY_LIMIT: usize = 100;
 
+/// Un pas d'historique : état à restaurer + libellé affiché dans le
+/// panneau Historique. Le libellé voyage avec le snapshot (undo le
+/// pousse vers redo et inversement : redo réapplique le même intitulé).
+#[derive(Clone)]
+pub(crate) struct HistoryStep {
+    /// État PRÉ-mutation à restaurer.
+    snapshot: photo_engine::history::Snapshot,
+    /// Libellé français de l'opération (`history_label`).
+    label: String,
+}
+
+/// Libellé français d'un pas d'historique depuis le nom d'opération
+/// (`op_name`). Repli « Édition » si inconnu (jamais vide en UI).
+fn history_label(op: &str) -> String {
+    String::from(match op {
+        "toggle_visibility" => "Visibilité",
+        "reorder_nodes" => "Réordonner",
+        "move_into_group" => "Déplacer dans le groupe",
+        "toggle_collapsed" => "Replier / déplier",
+        "set_opacity" => "Opacité",
+        "set_blend_mode" => "Fusion",
+        "paint_stroke" => "Coup de pinceau",
+        "move_layer" => "Déplacer",
+        "open_image" => "Ouvrir une image",
+        "add_empty_layer" => "Nouveau calque",
+        "duplicate_layer" => "Dupliquer",
+        "delete_layer" => "Supprimer",
+        "add_filter" => "Ajouter un filtre",
+        "rename_layer" => "Renommer",
+        "add_mask" => "Ajouter un masque",
+        "remove_mask" => "Supprimer le masque",
+        "move_filter" => "Déplacer le filtre",
+        "move_mask" => "Déplacer le masque",
+        "remove_filter" => "Supprimer le filtre",
+        _ => "Édition",
+    })
+}
+
 impl EngineWorker {
     /// Crée un worker sur un document existant.
     pub fn new(document: Document) -> Self {
@@ -100,6 +145,7 @@ impl EngineWorker {
             document,
             undo: Vec::new(),
             redo: Vec::new(),
+            pending_label: None,
             coalesced_opacity_layer: None,
             clip_to_doc: false,
             revision: RenderRevision::default(),
@@ -126,16 +172,52 @@ impl EngineWorker {
 
     /// Empile l'état pré-mutation (jamais après) et vide le redo.
     /// Les gestes continus (sliders) sont coalescés par calque.
+    /// Le pas est libellé depuis [`Self::pending_label`] (nom
+    /// d'opération posé par `apply`/`apply_batch`) : un geste
+    /// coalescé (sans poussée) jette son libellé avec son doublon.
     fn push_history(&mut self, coalesce_layer: Option<Uuid>) {
+        let label = history_label(self.pending_label.take().unwrap_or("edit"));
         if coalesce_layer.is_some() && coalesce_layer == self.coalesced_opacity_layer {
             return;
         }
         if self.undo.len() >= HISTORY_LIMIT {
             self.undo.remove(0);
         }
-        self.undo.push(self.document.snapshot());
+        self.undo.push(HistoryStep {
+            snapshot: self.document.snapshot(),
+            label,
+        });
         self.redo.clear();
         self.coalesced_opacity_layer = coalesce_layer;
+    }
+
+    /// Un pas en arrière : restaure le snapshot, le pas annulé (avec
+    /// son libellé) part vers redo. Faux si pile vide.
+    fn apply_undo_step(&mut self) -> bool {
+        let Some(step) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(HistoryStep {
+            snapshot: self.document.snapshot(),
+            label: step.label,
+        });
+        self.document.restore_snapshot(step.snapshot);
+        self.coalesced_opacity_layer = None;
+        true
+    }
+
+    /// Un pas en avant, symétrique. Faux si pile vide.
+    fn apply_redo_step(&mut self) -> bool {
+        let Some(step) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(HistoryStep {
+            snapshot: self.document.snapshot(),
+            label: step.label,
+        });
+        self.document.restore_snapshot(step.snapshot);
+        self.coalesced_opacity_layer = None;
+        true
     }
 
     /// Construit la réponse d'une mutation : nouveau composite
@@ -177,6 +259,10 @@ impl EngineWorker {
         let snapshot_us = t_snapshot.elapsed().as_micros();
         let can_undo = !self.undo.is_empty();
         let can_redo = !self.redo.is_empty();
+        // Libellés du panneau Historique (O003) : piles du plus ancien
+        // au plus récent, clonés par réponse (chaînes courtes, ≤100).
+        let undo_labels = self.undo.iter().map(|step| step.label.clone()).collect();
+        let redo_labels = self.redo.iter().map(|step| step.label.clone()).collect();
         if invalidation == RenderInvalidation::Composite {
             let frame = frame.as_ref().expect("cadre construit en mode Composite");
             // Pipeline incrémental 6E : tuiles sales réévaluées, propres
@@ -270,6 +356,8 @@ impl EngineWorker {
                 revision,
                 can_undo,
                 can_redo,
+                undo_labels,
+                redo_labels,
             }
         } else {
             self.metrics.last = Some(OpMetrics {
@@ -317,6 +405,8 @@ impl EngineWorker {
                 revision: self.revision,
                 can_undo,
                 can_redo,
+                undo_labels,
+                redo_labels,
             }
         }
     }
@@ -329,6 +419,7 @@ impl EngineWorker {
     pub fn apply(&mut self, command: PhotoEngineCommand) -> PhotoEngineResponse {
         let t_total = std::time::Instant::now();
         self.metrics.current_op = command.op_name();
+        self.pending_label = Some(command.op_name());
         let t_mutation = std::time::Instant::now();
         let mutation = self.mutate(command);
         let mutation_us = t_mutation.elapsed().as_micros();
@@ -378,6 +469,7 @@ impl EngineWorker {
         let mut immediates = Vec::new();
         let t_mutation = std::time::Instant::now();
         for command in folded {
+            self.pending_label = Some(command.op_name());
             let mutation = self.mutate(command);
             immediates.extend(mutation.immediates);
             max_invalidation = max_invalidation.max(mutation.invalidation);
@@ -595,21 +687,41 @@ impl EngineWorker {
                 Mutation::changed(invalidation).with_dirty(dirty)
             }
             PhotoEngineCommand::Undo => {
-                let Some(snapshot) = self.undo.pop() else {
+                if !self.apply_undo_step() {
                     return Mutation::unchanged();
-                };
-                self.redo.push(self.document.snapshot());
-                self.document.restore_snapshot(snapshot);
-                self.coalesced_opacity_layer = None;
+                }
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Redo => {
-                let Some(snapshot) = self.redo.pop() else {
+                if !self.apply_redo_step() {
                     return Mutation::unchanged();
-                };
-                self.undo.push(self.document.snapshot());
-                self.document.restore_snapshot(snapshot);
-                self.coalesced_opacity_layer = None;
+                }
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::UndoSteps { steps } => {
+                let mut applied = 0u32;
+                for _ in 0..steps {
+                    if !self.apply_undo_step() {
+                        break;
+                    }
+                    applied += 1;
+                }
+                if applied == 0 {
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::RedoSteps { steps } => {
+                let mut applied = 0u32;
+                for _ in 0..steps {
+                    if !self.apply_redo_step() {
+                        break;
+                    }
+                    applied += 1;
+                }
+                if applied == 0 {
+                    return Mutation::unchanged();
+                }
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::PaintStroke {
@@ -2727,6 +2839,82 @@ mod single_pass_tests {
             other => panic!("EngineError attendue, obtenue : {other:?}"),
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn history_labels_follow_operations_in_order() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        let target = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        worker.apply(PhotoEngineCommand::ToggleLayerVisibility(target));
+        let (undo_labels, redo_labels) = match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged {
+                undo_labels,
+                redo_labels,
+                can_undo,
+                ..
+            } => {
+                assert!(can_undo);
+                (undo_labels, redo_labels)
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        };
+        assert_eq!(undo_labels, vec!["Nouveau calque", "Visibilité"]);
+        assert!(redo_labels.is_empty());
+        // Un undo : le libellé voyage vers redo.
+        match worker.apply(PhotoEngineCommand::Undo) {
+            PhotoEngineResponse::LayersChanged {
+                undo_labels,
+                redo_labels,
+                ..
+            } => {
+                assert_eq!(undo_labels, vec!["Nouveau calque"]);
+                assert_eq!(redo_labels, vec!["Visibilité"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_steps_jump_beyond_stack_in_one_render() {
+        let mut worker = EngineWorker::new(three_layer_doc_for_fold());
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        let renders = worker.metrics.renders;
+        // Saut arrière au-delà de la pile : tout annulé, un seul rendu.
+        match worker.apply(PhotoEngineCommand::UndoSteps { steps: 5 }) {
+            PhotoEngineResponse::LayersChanged {
+                undo_labels,
+                redo_labels,
+                can_undo,
+                can_redo,
+                ..
+            } => {
+                assert!(!can_undo);
+                assert!(can_redo);
+                assert!(undo_labels.is_empty());
+                assert_eq!(redo_labels, vec!["Nouveau calque", "Nouveau calque"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        assert_eq!(worker.metrics.renders, renders + 1);
+        // Saut avant de 1 : réapplique le plus ancien.
+        match worker.apply(PhotoEngineCommand::RedoSteps { steps: 1 }) {
+            PhotoEngineResponse::LayersChanged {
+                undo_labels,
+                redo_labels,
+                ..
+            } => {
+                assert_eq!(undo_labels, vec!["Nouveau calque"]);
+                assert_eq!(redo_labels, vec!["Nouveau calque"]);
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        // Saut nul : no-op sans rendu.
+        assert!(matches!(
+            worker.apply(PhotoEngineCommand::UndoSteps { steps: 0 }),
+            PhotoEngineResponse::StateChanged { .. }
+        ));
     }
 
     #[test]

@@ -20,7 +20,7 @@
 //! versionné différemment retombe sur le layout par défaut
 //! ([`load_workspace_or_default`], [`load_dock_or_default`]).
 
-use crate::layout::dock::{PhotoDockTab, default_tree, reconcile_canvases};
+use crate::layout::dock::{PhotoDockTab, default_tree, ensure_history_tabbed, reconcile_canvases};
 use egui_tiles::Tree;
 use ui_kit::layout::{WorkspaceState, load_workspace, save_workspace};
 use uuid::Uuid;
@@ -86,12 +86,14 @@ pub fn load_tree_state(json: &str) -> Result<Tree<PhotoDockTab>, serde_json::Err
 /// Restaure la disposition des tuiles, ou le layout par défaut si le
 /// JSON est absent ou invalide. Les ids de documents changent à
 /// chaque lancement : les canevas restaurés sont réconciliés avec
-/// `ids` (orphelins retirés, manquants ajoutés).
+/// `ids` (orphelins retirés, manquants ajoutés). Les JSON antérieurs
+/// à l'onglet Historique le reçoivent en onglet des Calques.
 pub fn load_tree_or_default(json: Option<&str>, ids: &[Uuid]) -> Tree<PhotoDockTab> {
     let mut state = json
         .and_then(|raw| load_tree_state(raw).ok())
         .unwrap_or_else(|| default_tree(ids.iter().map(|id| PhotoDockTab::Canvas(*id)).collect()));
     reconcile_canvases(&mut state, ids);
+    ensure_history_tabbed(&mut state);
     state
 }
 

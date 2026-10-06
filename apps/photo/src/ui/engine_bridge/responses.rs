@@ -48,6 +48,12 @@ pub enum PhotoEngineResponse {
         can_undo: bool,
         /// Profondeur redo.
         can_redo: bool,
+        /// Libellés des pas annulables, du plus ancien au plus récent
+        /// (panneau Historique, O003).
+        undo_labels: Vec<String>,
+        /// Libellés des pas rétablissables, du plus ancien au plus
+        /// récent (l'UI affiche en tête le dernier = prochain redo).
+        redo_labels: Vec<String>,
     },
     /// État frais SANS nouveau rendu (ex. renommage, no-op) : l'UI
     /// met à jour le panneau et conserve la texture affichée.
@@ -60,6 +66,10 @@ pub enum PhotoEngineResponse {
         can_undo: bool,
         /// Profondeur redo.
         can_redo: bool,
+        /// Libellés des pas annulables (O003, comme `LayersChanged`).
+        undo_labels: Vec<String>,
+        /// Libellés des pas rétablissables (O003).
+        redo_labels: Vec<String>,
     },
     /// Miniature secondaire arrivée APRÈS le canvas (Phase 6G.3) : le
     /// `LayersChanged` précédent portait l'aperçu canvas + des miniatures

@@ -19,7 +19,7 @@
 //! ```text
 //! PhotoWorkspace (top/bottom fixes)
 //!   ↓ CentralPanel (Tree)
-//! PhotoDockTab (Tools / Canvas(id) / Inspector / Layers)
+//! PhotoDockTab (Tools / Canvas(id) / Inspector / Layers+History)
 //!   ↓
 //! Contenus métier (left_sidebar / central_view / right_sidebar)
 //! ```
@@ -65,6 +65,8 @@ pub enum PhotoDockTab {
     Inspector,
     /// Liste des calques.
     Layers,
+    /// Historique des pas undo/redo (onglet avec Calques).
+    History,
 }
 
 impl PhotoDockTab {
@@ -75,6 +77,7 @@ impl PhotoDockTab {
             Self::Canvas(_) => TextKey::Canvas,
             Self::Inspector => TextKey::Inspector,
             Self::Layers => TextKey::Layers,
+            Self::History => TextKey::History,
         }
     }
 }
@@ -93,15 +96,52 @@ impl DockTab for PhotoDockTab {
 }
 
 /// Layout photo par défaut : canevas au centre, outils à gauche,
-/// inspecteur au-dessus des calques à droite (voir
-/// `app-shell::dock::default_tree`).
+/// inspecteur au-dessus des calques à droite, Historique en onglet
+/// avec les calques (voir `app-shell::dock::default_tree`).
 pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
-    app_shell::dock::default_tree(
+    let mut tree = app_shell::dock::default_tree(
         PhotoDockTab::Tools,
         canvases,
         PhotoDockTab::Inspector,
         PhotoDockTab::Layers,
-    )
+    );
+    ensure_history_tabbed(&mut tree);
+    tree
+}
+
+/// Historique en onglet avec les Calques (bas de colonne droite).
+///
+/// Idempotent : sans effet si l'onglet existe déjà (arbres restaurés
+/// d'un JSON antérieur : voir `load_tree_or_default`).
+pub fn ensure_history_tabbed(tree: &mut Tree<PhotoDockTab>) {
+    if app_shell::dock::has_tab(tree, PhotoDockTab::History) {
+        return;
+    }
+    let Some(layers_tile) = tree.tiles.find_pane(&PhotoDockTab::Layers) else {
+        return;
+    };
+    let Some(parent) = tree.tiles.parent_of(layers_tile) else {
+        return;
+    };
+    // Position relevée AVANT toute mutation : en cas de conteneur
+    // inattendu, on ne touche à rien (jamais de tuile orpheline).
+    let position = match tree.tiles.get(parent) {
+        Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) => linear
+            .children
+            .iter()
+            .position(|child| *child == layers_tile),
+        _ => None,
+    };
+    let Some(position) = position else {
+        return;
+    };
+    let history = tree.tiles.insert_pane(PhotoDockTab::History);
+    let tabs = tree.tiles.insert_tab_tile(vec![layers_tile, history]);
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
+        tree.tiles.get_mut(parent)
+    {
+        linear.children[position] = tabs;
+    }
 }
 
 /// Dessine l'arbre dans le panneau central et retourne les actions
@@ -244,6 +284,17 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                 });
                 self.actions.extend(inner);
             }
+            PhotoDockTab::History => {
+                let index = (*self.active).min(self.docs.len().saturating_sub(1));
+                let Some(doc) = self.docs.get(index) else {
+                    ui.label("Aucun document");
+                    return UiResponse::None;
+                };
+                let inner = padded_tile(ui, ctx, |ui| {
+                    right_sidebar::draw_history_content(ui, doc, ctx)
+                });
+                self.actions.extend(inner);
+            }
         }
         UiResponse::None
     }
@@ -292,10 +343,11 @@ mod tests {
     }
 
     /// Panneaux fixes de test.
-    const FIXED_TABS: [PhotoDockTab; 3] = [
+    const FIXED_TABS: [PhotoDockTab; 4] = [
         PhotoDockTab::Tools,
         PhotoDockTab::Inspector,
         PhotoDockTab::Layers,
+        PhotoDockTab::History,
     ];
 
     fn canvas(id: u128) -> PhotoDockTab {
@@ -317,11 +369,27 @@ mod tests {
         let tree = default_tree(vec![canvas(1)]);
         let inspector = find_tile(&tree, PhotoDockTab::Inspector).expect("inspecteur présent");
         let layers = find_tile(&tree, PhotoDockTab::Layers).expect("calques présents");
-        let inspector_parent = tree.tiles.parent_of(inspector).expect("parent inspecteur");
+        let history = find_tile(&tree, PhotoDockTab::History).expect("historique présent");
+        // Calques + Historique en onglets : même tuile parente.
         let layers_parent = tree.tiles.parent_of(layers).expect("parent calques");
-        assert_eq!(inspector_parent, layers_parent, "même colonne droite");
+        let history_parent = tree.tiles.parent_of(history).expect("parent historique");
+        assert_eq!(
+            layers_parent, history_parent,
+            "calques + historique en onglets"
+        );
+        assert!(
+            matches!(
+                tree.tiles.get(layers_parent),
+                Some(egui_tiles::Tile::Container(Container::Tabs(_)))
+            ),
+            "conteneur d'onglets attendu"
+        );
+        // L'onglet partage la colonne droite verticale avec l'inspecteur.
+        let tabs_parent = tree.tiles.parent_of(layers_parent).expect("parent onglets");
+        let inspector_parent = tree.tiles.parent_of(inspector).expect("parent inspecteur");
+        assert_eq!(tabs_parent, inspector_parent, "même colonne droite");
         assert!(matches!(
-            tree.tiles.get(inspector_parent),
+            tree.tiles.get(tabs_parent),
             Some(egui_tiles::Tile::Container(Container::Linear(linear)))
                 if linear.dir == egui_tiles::LinearDir::Vertical
         ));

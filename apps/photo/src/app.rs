@@ -217,6 +217,12 @@ impl PhotoApp {
             PhotoAction::CloseTab => self.close_active_tab(),
             PhotoAction::Undo => self.send_active(PhotoEngineCommand::Undo),
             PhotoAction::Redo => self.send_active(PhotoEngineCommand::Redo),
+            PhotoAction::HistoryBack(steps) => {
+                self.send_active(PhotoEngineCommand::UndoSteps { steps });
+            }
+            PhotoAction::HistoryForward(steps) => {
+                self.send_active(PhotoEngineCommand::RedoSteps { steps });
+            }
             PhotoAction::AddEmptyLayer => self.send_active(PhotoEngineCommand::AddEmptyLayer),
             PhotoAction::DuplicateSelectedLayer => {
                 if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
@@ -675,6 +681,57 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn history_back_jumps_to_initial_state() {
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        app.handle_action(&ctx, PhotoAction::AddEmptyLayer);
+        app.handle_action(&ctx, PhotoAction::AddEmptyLayer);
+        // Attend les 2 pas (boucle egui réelle, poll non bloquant).
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if app.active_doc_opt().expect("doc").ui.history_undo.len() == 2 {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "2 pas d'historique attendus"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Saut arrière au-delà de la pile : retour au calque initial.
+        app.handle_action(&ctx, PhotoAction::HistoryBack(5));
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            let ui = &app.active_doc_opt().expect("doc").ui;
+            if ui.history_undo.is_empty() && ui.history_redo.len() == 2 {
+                assert_eq!(ui.layers.len(), 1, "calque initial restauré");
+                assert_eq!(ui.layers[0].name, "Calque 1");
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "saut attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Puis un pas en avant : le calque ajouté revient.
+        app.handle_action(&ctx, PhotoAction::HistoryForward(1));
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            let ui = &app.active_doc_opt().expect("doc").ui;
+            if ui.history_undo.len() == 1 {
+                assert_eq!(ui.layers.len(), 2);
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "redo attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

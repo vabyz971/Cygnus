@@ -162,6 +162,11 @@ pub struct PhotoUiState {
     pub can_undo: bool,
     /// Redo disponible.
     pub can_redo: bool,
+    /// Libellés des pas annulables, du plus ancien au plus récent
+    /// (panneau Historique, O003).
+    pub history_undo: Vec<String>,
+    /// Libellés des pas rétablissables (O003).
+    pub history_redo: Vec<String>,
     /// Message de statut.
     pub status: String,
     /// Grille du canvas.
@@ -389,10 +394,14 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             revision,
             can_undo,
             can_redo,
+            undo_labels,
+            redo_labels,
         } => {
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
+            ui.history_undo = undo_labels;
+            ui.history_redo = redo_labels;
             // INSTRUMENTATION TEMPORAIRE.
             ui.responses_applied += 1;
             if ui
@@ -455,12 +464,16 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             revision: _,
             can_undo,
             can_redo,
+            undo_labels,
+            redo_labels,
         } => {
             // Snapshot seul : la texture affichée est conservée telle
             // quelle (aucun nouveau rendu produit côté worker).
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
+            ui.history_undo = undo_labels;
+            ui.history_redo = redo_labels;
             // INSTRUMENTATION TEMPORAIRE.
             ui.responses_applied += 1;
             if ui
@@ -630,6 +643,8 @@ mod tests {
             revision,
             can_undo: false,
             can_redo: false,
+            undo_labels: Vec::new(),
+            redo_labels: Vec::new(),
         }
     }
 
@@ -667,10 +682,13 @@ mod tests {
                 revision: RenderRevision(4),
                 can_undo: true,
                 can_redo: false,
+                undo_labels: vec![String::from("Opacité")],
+                redo_labels: Vec::new(),
             },
         );
         // Panneau à jour (undo), texture intacte.
         assert!(ui.can_undo);
+        assert_eq!(ui.history_undo, vec![String::from("Opacité")]);
         assert_eq!(ui.texture_uploads, uploads);
         assert_eq!(ui.texture_cache.texture().expect("texture"), texture);
         assert_eq!(ui.displayed_revision, Some(RenderRevision(4)));
