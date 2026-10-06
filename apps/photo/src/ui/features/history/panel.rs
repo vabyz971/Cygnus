@@ -43,41 +43,47 @@ impl HistoryPanel {
     /// Dessine la liste et retourne les sauts demandés (au plus un
     /// par frame : un seul clic possible).
     ///
-    /// Rangées undo (plus ancien d'abord, numérotées), état actuel
-    /// surligné non cliquable, rangées redo (prochain en tête).
-    /// Pile vide des deux côtés : texte « Aucune modification ».
+    /// Rangées undo (plus ancien d'abord, numérotées) puis rangées
+    /// redo (prochain en tête). La tête (dernier pas appliqué = état
+    /// actuel) porte le fond de sélection, non cliquable : pas de
+    /// rangée « état actuel » séparée. Défilement vertical.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
         undo: &[String],
         redo: &[String],
     ) -> Vec<HistoryPanelAction> {
-        let mut actions = Vec::new();
-        if undo.is_empty() && redo.is_empty() {
-            let texts = PhotoCatalog::new(ctx.shared.translator().language());
-            ui.label(texts.get(PhotoTextKey::HistoryEmpty));
-            return actions;
-        }
-        for (index, label) in undo.iter().enumerate() {
-            let row = format!("{}. {label}", index + 1);
-            if ui.selectable_label(false, row).clicked() {
-                actions.push(HistoryPanelAction::Back(back_steps_for_undo_click(
-                    undo.len(),
-                    index,
-                )));
-            }
-        }
         let texts = PhotoCatalog::new(ctx.shared.translator().language());
-        // État actuel : surligné, volontairement non cliquable.
-        let _ = ui.selectable_label(true, texts.get(PhotoTextKey::HistoryCurrent));
-        for (from_top, label) in redo.iter().rev().enumerate() {
-            if ui.selectable_label(false, label).clicked() {
-                actions.push(HistoryPanelAction::Forward(forward_steps_for_redo_click(
-                    from_top,
-                )));
-            }
+        if undo.is_empty() && redo.is_empty() {
+            ui.label(texts.get(PhotoTextKey::HistoryEmpty));
+            return Vec::new();
         }
-        actions
+        egui::ScrollArea::vertical()
+            .show(ui, |ui| {
+                let mut actions = Vec::new();
+                for (index, label) in undo.iter().enumerate() {
+                    let row = format!("{}. {label}", index + 1);
+                    if index + 1 == undo.len() {
+                        // Tête = état actuel : fond de sélection,
+                        // volontairement non cliquable.
+                        let _ = ui.selectable_label(true, row);
+                    } else if ui.selectable_label(false, row).clicked() {
+                        actions.push(HistoryPanelAction::Back(back_steps_for_undo_click(
+                            undo.len(),
+                            index,
+                        )));
+                    }
+                }
+                for (from_top, label) in redo.iter().rev().enumerate() {
+                    if ui.selectable_label(false, label).clicked() {
+                        actions.push(HistoryPanelAction::Forward(forward_steps_for_redo_click(
+                            from_top,
+                        )));
+                    }
+                }
+                actions
+            })
+            .inner
     }
 }
 
