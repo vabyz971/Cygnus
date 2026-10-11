@@ -154,6 +154,7 @@ impl<'a, T> ReorderableList<'a, T> {
         let drag = self.drag_state;
         let items = self.items;
 
+        let mut stopped = false;
         egui::ScrollArea::vertical().show_rows(ui, item_height, total, |ui, range| {
             for index in range {
                 let Some(item) = items.get(index) else {
@@ -169,33 +170,45 @@ impl<'a, T> ReorderableList<'a, T> {
                 if response.drag_started() {
                     drag.start(index);
                 }
-                if response.dragged()
-                    && let Some(pos) = ui.ctx().pointer_latest_pos()
-                {
-                    drag.current_mouse_pos = pos;
-                    // Cible = ligne sous la souris (moitié haute/basse).
-                    let mut target = drag.dragging_index.unwrap_or(index);
-                    for (row_index, row_top) in &rows {
-                        if pos.y >= *row_top && pos.y < *row_top + item_height {
-                            let row_rect = egui::Rect::from_min_size(
-                                egui::pos2(rect.min.x, *row_top),
-                                egui::vec2(rect.width(), item_height),
-                            );
-                            target = compute_target_index(pos, row_rect, *row_index, item_height);
-                            break;
-                        }
-                    }
-                    drag.target_index = Some(target.min(total));
-                }
                 if response.drag_stopped() {
-                    dropped = drag.end_drag();
+                    stopped = true;
                 }
 
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     draw_item(ui, item, index, is_dragging_this);
                 });
+                // Re-pinne l'avance sur le rect alloué : le scope
+                // avance le curseur selon son CONTENU, écrasant
+                // l'avance de l'`allocate` (dérive de quelques px
+                // par ligne → clics et drops décalés, cf. test).
+                ui.advance_cursor_after_rect(rect);
             }
         });
+
+        // Cible calculée APRES la boucle, sur TOUTES les lignes
+        // visibles (même raison que `show_variable` : pendant la
+        // boucle, les lignes sous l'origine sont invisibles).
+        if drag.is_dragging {
+            if let Some(pos) = ui.ctx().pointer_latest_pos() {
+                drag.current_mouse_pos = pos;
+                // Cible = ligne sous la souris (moitié haute/basse).
+                let mut target = drag.dragging_index.unwrap_or(0);
+                for (row_index, row_top) in &rows {
+                    if pos.y >= *row_top && pos.y < *row_top + item_height {
+                        let row_rect = egui::Rect::from_min_size(
+                            egui::pos2(panel_rect.min.x, *row_top),
+                            egui::vec2(panel_rect.width(), item_height),
+                        );
+                        target = compute_target_index(pos, row_rect, *row_index, item_height);
+                        break;
+                    }
+                }
+                drag.target_index = Some(target.min(total));
+            }
+            if stopped {
+                dropped = drag.end_drag();
+            }
+        }
 
         draw_drop_indicator(
             ui,
@@ -237,6 +250,7 @@ impl<'a, T> ReorderableList<'a, T> {
         let drag = self.drag_state;
         let items = self.items;
 
+        let mut stopped = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (index, item) in items.iter().enumerate() {
                 let height = heights(item).max(1.0);
@@ -255,34 +269,46 @@ impl<'a, T> ReorderableList<'a, T> {
                         drag.drop_position = DropPosition::Before;
                     }
                 }
-                if response.dragged()
-                    && let Some(pos) = ui.ctx().pointer_latest_pos()
-                {
-                    drag.current_mouse_pos = pos;
-                    let mut target = drag.dragging_index.unwrap_or(index);
-                    let mut position = DropPosition::After;
-                    for (row_index, row_rect) in &rows {
-                        if row_rect.contains(pos) {
-                            target = *row_index;
-                            position =
-                                drop_position_in(pos, row_rect, can_nest(&items[*row_index]));
-                            break;
-                        }
-                    }
-                    drag.target_index = Some(target.min(total));
-                    drag.drop_position = position;
-                }
-                if response.drag_stopped()
-                    && let Some((from, to, position)) = drag.end_drag_hierarchical()
-                {
-                    dropped = Some(HierarchicalDrop { from, to, position });
+                if response.drag_stopped() {
+                    stopped = true;
                 }
 
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     draw_item(ui, item, index, is_dragging_this);
                 });
+                // Re-pinne l'avance sur le rect alloué : le scope
+                // avance le curseur selon son CONTENU, écrasant
+                // l'avance de l'`allocate` (dérive de quelques px
+                // par ligne → clics et drops décalés, cf. test).
+                ui.advance_cursor_after_rect(rect);
             }
         });
+
+        // Cible calculée APRES la boucle, sur TOUTES les lignes : la
+        // calculer pendant la boucle ne voit que les lignes déjà
+        // poussées (au-dessus de l'origine) — les dépôts vers le bas
+        // restaient invisibles et le drop ne partait jamais.
+        if drag.is_dragging {
+            if let Some(pos) = ui.ctx().pointer_latest_pos() {
+                drag.current_mouse_pos = pos;
+                let mut target = drag.dragging_index.unwrap_or(0);
+                let mut position = DropPosition::After;
+                for (row_index, row_rect) in &rows {
+                    if row_rect.contains(pos) {
+                        target = *row_index;
+                        position = drop_position_in(pos, row_rect, can_nest(&items[*row_index]));
+                        break;
+                    }
+                }
+                drag.target_index = Some(target.min(total));
+                drag.drop_position = position;
+            }
+            if stopped {
+                if let Some((from, to, position)) = drag.end_drag_hierarchical() {
+                    dropped = Some(HierarchicalDrop { from, to, position });
+                }
+            }
+        }
 
         if drag.is_dragging {
             paint_variable_indicator(ui, drag, &rows, panel_rect);
@@ -349,6 +375,155 @@ mod tests {
             egui::pos2(0.0, index as f32 * height),
             egui::vec2(300.0, height),
         )
+    }
+
+    /// Simule un drag complet (appui → déplacement → relâchement) sur
+    /// `show_variable` et retourne le drop émis à la dernière frame.
+    /// Les positions visées sont lues sur la mise en page réelle
+    /// (frame sans événements), jamais devinées.
+    fn simulate_drag(
+        ctx: &egui::Context,
+        items: &[String],
+        drag: &mut ReorderDragState,
+        from_row: usize,
+        to_point: egui::Pos2,
+    ) -> Option<HierarchicalDrop> {
+        use std::cell::RefCell;
+        let rects = RefCell::new(Vec::new());
+        let mut draw = |ui: &mut egui::Ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                rects.borrow_mut().clear();
+                let _ = ReorderableList::new(items, 40.0, drag).show_variable(
+                    ui,
+                    |_| 40.0,
+                    |_| false,
+                    |_| true,
+                    |ui, _item, _index, _dragging| {
+                        rects.borrow_mut().push(ui.available_rect_before_wrap());
+                        ui.label("ligne");
+                    },
+                );
+            });
+        };
+        // Frame 1 : mise en page, lecture des rects.
+        ctx.run_ui(egui::RawInput::default(), &mut draw)
+            .drop_without_applying_deltas();
+        let from = rects.borrow()[from_row].center();
+        // Frame 2 : appui sur la ligne d'origine.
+        let mut dropped = None;
+        ctx.run_ui(
+            pointer_input(vec![egui::Event::PointerButton {
+                pos: from,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            }]),
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    dropped = ReorderableList::new(items, 40.0, drag).show_variable(
+                        ui,
+                        |_| 40.0,
+                        |_| false,
+                        |_| true,
+                        |ui, _item, _index, _dragging| {
+                            ui.label("ligne");
+                        },
+                    );
+                });
+            },
+        )
+        .drop_without_applying_deltas();
+        assert!(dropped.is_none(), "pas de drop à l'appui");
+        // Frame 3 : déplacement (bouton toujours tenu).
+        ctx.run_ui(
+            pointer_input(vec![egui::Event::PointerMoved(to_point)]),
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    dropped = ReorderableList::new(items, 40.0, drag).show_variable(
+                        ui,
+                        |_| 40.0,
+                        |_| false,
+                        |_| true,
+                        |ui, _item, _index, _dragging| {
+                            ui.label("ligne");
+                        },
+                    );
+                });
+            },
+        )
+        .drop_without_applying_deltas();
+        assert!(dropped.is_none(), "pas de drop avant relâchement");
+        // Frame 4 : relâchement.
+        ctx.run_ui(
+            pointer_input(vec![egui::Event::PointerButton {
+                pos: to_point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }]),
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    dropped = ReorderableList::new(items, 40.0, drag).show_variable(
+                        ui,
+                        |_| 40.0,
+                        |_| false,
+                        |_| true,
+                        |ui, _item, _index, _dragging| {
+                            ui.label("ligne");
+                        },
+                    );
+                });
+            },
+        )
+        .drop_without_applying_deltas();
+        dropped
+    }
+
+    /// `RawInput` ne portant que des événements pointeur.
+    fn pointer_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn drag_complet_emet_drop_avant_ou_apres() {
+        let ctx = egui::Context::default();
+        crate::theme::setup_fonts(&ctx);
+        let items: Vec<String> = (0..3).map(|i| format!("item {i}")).collect();
+        let mut drag = ReorderDragState::default();
+        // Cible : moitié basse de la ligne 2 (dépôt après).
+        let target = {
+            use std::cell::RefCell;
+            let rects = RefCell::new(Vec::new());
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let _ = ReorderableList::new(&items, 40.0, &mut drag).show_variable(
+                        ui,
+                        |_| 40.0,
+                        |_| false,
+                        |_| true,
+                        |ui, _item, _index, _dragging| {
+                            rects.borrow_mut().push(ui.available_rect_before_wrap());
+                            ui.label("ligne");
+                        },
+                    );
+                });
+            })
+            .drop_without_applying_deltas();
+            let rects = rects.borrow();
+            egui::pos2(
+                rects[2].center().x,
+                rects[2].top() + rects[2].height() * 0.75,
+            )
+        };
+        let drop =
+            simulate_drag(&ctx, &items, &mut drag, 0, target).expect("drop attendu au relâchement");
+        assert_eq!(drop.from, 0);
+        assert_eq!(drop.to, 2);
+        assert_eq!(drop.position, DropPosition::After);
+        assert!(!drag.is_dragging, "état réinitialisé");
     }
 
     #[test]
