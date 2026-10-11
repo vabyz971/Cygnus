@@ -1,48 +1,48 @@
 # Roadmap — Cygnus Photo (v0.8 → v1.0+)
 
-> Jalons + définitions de fini (DoD). Le suivi fin vit dans `docs/SUIVI.md`.
-> Avant de coder un jalon : `graft ask "<sujet>" --source`.
+> Milestones + definitions of done (DoD). Fine-grained tracking lives in `docs/SUIVI.md`.
+> Before coding a milestone: `graft ask "<topic>" --source`.
 
-## v0.8 « Utilisable au quotidien »
+## v0.8 "Usable daily"
 
-- [ ] **v0.8.1 Persistance + raccourcis + historique**
-  Périmètre : menus Save/Save As/Open `.cygp` (`apps/photo/src/ui/menubar.rs`,
-  `apps/photo/src/persistence/`), câblage `shortcuts.rs` → `app.rs::handle_action`,
-  panneau Historique minimal (lit `engines/photo-engine/src/history.rs`).
-  DoD : ouvrir → éditer → sauver → rouvrir sans perte.
-- [ ] **v0.8.2 Transform de base** : crop, flip H/V, rotation 90° (`ui/viewport/canvas.rs`, `math-utils`).
-  DoD : chaque transform passe par `push_coalesced` PRÉ-mutation.
-- [ ] **v0.8.3 Réglages** : Niveaux + Courbes + HSL, édition params dans l'inspecteur
+- [ ] **v0.8.1 Persistence + shortcuts + history**
+  Scope: Save/Save As/Open `.cygp` menus (`apps/photo/src/ui/menubar.rs`,
+  `apps/photo/src/persistence/`), `shortcuts.rs` → `app.rs::handle_action` wiring,
+  minimal History panel (reads `engines/photo-engine/src/history.rs`).
+  DoD: open → edit → save → reopen without loss.
+- [ ] **v0.8.2 Basic transforms**: crop, H/V flip, 90° rotation (`ui/viewport/canvas.rs`, `math-utils`).
+  DoD: every transform goes through PRE-mutation `push_coalesced`.
+- [ ] **v0.8.3 Adjustments**: Levels + Curves + HSL, param editing in the inspector
   (`engines/photo-engine/src/nodes/`, `apps/photo/src/ui/features/inspector/`).
-  DoD : presets + ré-édition après save/load.
-- [ ] **v0.8.4 Export v1 + histogramme** : WebP/TIFF (`export.rs`), estimation taille, histogramme sur `preview_buf`.
-  DoD : export Ø régression PNG/JPEG.
+  DoD: presets + re-editing after save/load.
+- [ ] **v0.8.4 Export v1 + histogram**: WebP/TIFF (`export.rs`), size estimate, histogram on `preview_buf`.
+  DoD: export with no PNG/JPEG regression.
 
-## v0.9 « Photo Persona »
+## v0.9 "Photo Persona"
 
-- [ ] Sélections : rectangle/ellipse/lasso + baguette + plume.
-- [ ] Masques peignables : densité/plume/inversion (`paint.rs`, `LayerMask`).
-- [ ] Live Filters + 1er Layer Style (ombre portée/lueur).
-- [ ] Pinceau v2 : dureté/espacement/stabilisation, tampon/clone, pot/dégradé.
-- [ ] Multi-sélection calques + align/distribuer ; 12–15 blend modes.
-  DoD : composite portrait masqué + retouche locale, ré-éditable après reload.
+- [ ] Selections: rectangle/ellipse/lasso + wand + pen.
+- [ ] Paintable masks: density/feather/invert (`paint.rs`, `LayerMask`).
+- [ ] Live Filters + 1st Layer Style (drop shadow/glow).
+- [ ] Brush v2: hardness/spacing/stabilization, stamp/clone, bucket/gradient.
+- [ ] Layer multi-select + align/distribute; 12–15 blend modes.
+  DoD: masked portrait composite + local retouch, re-editable after reload.
 
-## v0.10 « Vector + Texte » (rend les modes utiles)
+## v0.10 "Vector + Text" (makes the modes useful)
 
-- [ ] Brancher `vector-engine` au mode `Vector` : formes, plume, booléens.
-- [ ] Brancher `text-engine` : texte point/paragraphe, panneaux Caractère/Paragraphe.
-- [ ] Masques vectoriels + guides/aimantation.
-  DoD : affiche photo + formes + titre, tout ré-éditable.
+- [ ] Wire `vector-engine` to `Vector` mode: shapes, pen, booleans.
+- [ ] Wire `text-engine`: point/paragraph text, Character/Paragraph panels.
+- [ ] Vector masks + guides/snapping.
+  DoD: photo poster + shapes + title, all re-editable.
 
-## v0.11 « Layout / StudioLink-like » (différenciateur)
+## v0.11 "Layout / StudioLink-like" (differentiator)
 
-- [ ] Brancher `layout-engine` au mode `Layout` : pages, frames, `apply_to_scene`.
-- [ ] Document unifié `.cygp` (incrément `FORMAT_VERSION` + migration).
-- [ ] Slices d'export nommées.
-  DoD : même fichier éditable en Pixel/Vector/Layout sans conversion.
+- [ ] Wire `layout-engine` to `Layout` mode: pages, frames, `apply_to_scene`.
+- [ ] Unified `.cygp` document (`FORMAT_VERSION` bump + migration).
+- [ ] Named export slices.
+  DoD: same file editable in Pixel/Vector/Layout without conversion.
 
-## v1.0 « Pro »
+## v1.0 "Pro"
 
-- [ ] Develop Persona (RAW non-destructif), Liquify, Tone Mapping (HDR), Export Persona (batch).
-- [ ] Couleur pro : soft-proofing, 16-bit.
-- [ ] Macros/Actions (enregistre `PhotoAction` → rejoue).
+- [ ] Develop Persona (non-destructive RAW), Liquify, Tone Mapping (HDR), Export Persona (batch).
+- [ ] Pro color: soft-proofing, 16-bit.
+- [ ] Macros/Actions (record `PhotoAction` → replay).

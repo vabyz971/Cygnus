@@ -1,26 +1,26 @@
-# Décisions (ADR) — Cygnus Photo
+# Decisions (ADR) — Cygnus Photo
 
-> Chaque décision actée ici est **définitive** : on ne la rouvre que via une
-> nouvelle entrée (statut `remplacée par`). Ça évite de revenir dessus.
-> Format : 5 lignes max par décision.
+> Each decision recorded here is **final**: it is only reopened via a
+> new entry (`superseded by` status). This avoids relitigating it.
+> Format: 5 lines max per decision.
 
-| ID | Date | Décision | Contexte | Statut |
+| ID | Date | Decision | Context | Status |
 |----|------|----------|----------|--------|
-| D001 | 2026-10-05 | Live-filters façon Affinity, pas 70 filtres Photoshop | 3 filtres actuels (`brightness_contrast`, `blur`, `color_correct`) déjà non-destructifs | actée |
-| D002 | 2026-10-05 | `.cygp` = JSON versionné + PNG base64, `FORMAT_VERSION` + migration | `engines/photo-engine/src/project.rs` v4 | actée |
-| D003 | 2026-10-05 | Pas de parité PSD byte-exact (Photocraft vise 307/309) | import/export correct suffit, pas de round-trip parfait | actée |
-| D004 | 2026-10-05 | Personas + StudioLink-like plutôt que parité Photoshop | `PhotoEditMode::{Pixel,Vector,Layout}` déjà en place, moteurs dormants à brancher | actée |
-| D005 | 2026-10-05 | Pas d'IA générative / plugins `.8bf` avant v1.0 | focus retouche + vector + layout d'abord | actée |
-| D006 | 2026-10-05 | Accusés/erreurs worker émis APRÈS l'état dans `apply_batch` | un `LayersChanged` efface le statut ; l'accusé (save/export, erreur) doit survivre | actée |
-| D007 | 2026-10-05 | Raccourcis suspendus pendant saisie texte (`egui_wants_keyboard_input`) | taper `b` en renommant ne doit pas changer d'outil ; pas de double undo avec les champs | actée |
-| D008 | 2026-10-06 | Arbre calques : pièces jointes sélectionnables + repliables, pas de DnD pour elles | clic = focus (porteur sélectionné), œil on/off, chevron par porteur ; DnD calques inchangé | actée |
-| D009 | 2026-10-06 | Inspecteur sans doublons (opacité/visibilité/fusion = panneau Calques) | une seule source de réglage ; inspecteur = identité + pièce jointe focalisée | actée |
-| D010 | 2026-10-06 | I18n : verbes génériques → ui-kit `TextKey`, métier → `PhotoTextKey` | statuts transitoires, messages worker/moteur et noms de calques/fichiers exclus (données ou sans plomberie de langue) | actée |
+| D001 | 2026-10-05 | Affinity-style live filters, not 70 Photoshop filters | 3 current filters (`brightness_contrast`, `blur`, `color_correct`) already non-destructive | accepted |
+| D002 | 2026-10-05 | `.cygp` = versioned JSON + base64 PNG, `FORMAT_VERSION` + migration | `engines/photo-engine/src/project.rs` v4 | accepted |
+| D003 | 2026-10-05 | No byte-exact PSD parity (Photocraft targets 307/309) | correct import/export is enough, no perfect round-trip | accepted |
+| D004 | 2026-10-05 | Personas + StudioLink-like over Photoshop parity | `PhotoEditMode::{Pixel,Vector,Layout}` already in place, dormant engines to wire up | accepted |
+| D005 | 2026-10-05 | No generative AI / `.8bf` plugins before v1.0 | retouch + vector + layout focus first | accepted |
+| D006 | 2026-10-05 | Worker acks/errors emitted AFTER state in `apply_batch` | a `LayersChanged` clears the status; the ack (save/export, error) must survive | accepted |
+| D007 | 2026-10-05 | Shortcuts suspended while typing (`egui_wants_keyboard_input`) | typing `b` while renaming must not switch tools; no double undo with fields | accepted |
+| D008 | 2026-10-06 | Layer tree: selectable + collapsible attachments, no DnD for them | click = focus (carrier selected), eye on/off, per-carrier chevron; layer DnD unchanged | accepted |
+| D009 | 2026-10-06 | Duplication-free inspector (opacity/visibility/blend = Layers panel) | single source of settings; inspector = identity + focused attachment | accepted |
+| D010 | 2026-10-06 | I18n: generic verbs → ui-kit `TextKey`, domain → `PhotoTextKey` | transient statuses, worker/engine messages and layer/file names excluded (data or no language plumbing) | accepted |
 
-## Modèle pour une nouvelle décision
+## Template for a new decision
 
 ```md
-| D006 | AAAA-MM-JJ | Titre | 1 phrase de contexte + fichiers concernés | actée |
-- Conséquence : ...
-- Remplace : D00X (le cas échéant).
+| D006 | YYYY-MM-DD | Title | 1 context sentence + affected files | accepted |
+- Consequence: ...
+- Supersedes: D00X (if applicable).
 ```

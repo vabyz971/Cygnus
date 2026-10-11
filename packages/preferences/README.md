@@ -1,17 +1,17 @@
 # preferences
 
-Gestion des préférences persistantes : modèle sérialisé
-(JSON, versionné), détection du matériel, raccourcis
-clavier.
+Persistent preference management: serialized model
+(versioned JSON), hardware detection, keyboard
+shortcuts.
 
-Modules :
-- [`model`] : structure `Prefs` + migration de version
-- [`hardware`] : détection CPU/RAM/GPU (sync, une seule fois)
-- [`keybindings`] : parseur de combinaisons (Ctrl+Shift+S → `Vec<String>`)
+Modules:
+- [`model`]: `Prefs` struct + version migration
+- [`hardware`]: CPU/RAM/GPU detection (sync, once)
+- [`keybindings`]: combo parser (Ctrl+Shift+S → `Vec<String>`)
 
-Le modèle est versionné : toute évolution incompatible
-nécessite d'incrémenter `PREFS_FORMAT_VERSION` dans
-`src/model.rs` et de gérer la rétro-compatibilité.
+The model is versioned: any incompatible change
+requires bumping `PREFS_FORMAT_VERSION` in
+`src/model.rs` and handling backward compatibility.
 
-L'app charge les préférences au démarrage (`PhotoApp::new`)
-et les sauvegarde après chaque mutation.
+The app loads preferences at startup (`PhotoApp::new`)
+and saves them after each mutation.

@@ -1,12 +1,12 @@
 # math-utils
 
-Géométrie : re-exporte [`Transform2D`](src/transform2d.rs)
-et [`Vec2`](src/vec2.rs) de `datatypes` pour simplifier les
-imports des apps.
+Geometry: re-exports [`Transform2D`](src/transform2d.rs)
+and [`Vec2`](src/vec2.rs) from `datatypes` to simplify
+app imports.
 
-Fonctions clés :
-- [`Transform2D`] (matrice 3×3, matrice inverse, etc.)
-- [`Vec2`] (vecteur 2D)
+Key functions:
+- [`Transform2D`] (3×3 matrix, inverse matrix, etc.)
+- [`Vec2`] (2D vector)
 
-Aucune logique : ces types sont définis dans `datatypes`
-et réexportés ici pour éviter de dupliquer les imports.
+No logic: these types are defined in `datatypes`
+and re-exported here to avoid duplicating imports.

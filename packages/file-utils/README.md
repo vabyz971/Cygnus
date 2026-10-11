@@ -1,13 +1,13 @@
 # file-utils
 
-Utilitaires fichiers : erreurs (`FileError`), drag & drop
-(accepte plusieurs fichiers, retour `Vec`), dialogues natifs
-via `rfd` (pas d'egui).
+File utilities: errors (`FileError`), drag & drop
+(accepts multiple files, returns `Vec`), native dialogs
+via `rfd` (no egui).
 
-Fonctions clés :
+Key functions:
 - [`FileError`] (IO, format, etc.)
 - [`load_image`] (PNG/JPEG/etc. → `RgbaBuf`)
 - [`open_file_picker`] / [`save_file_picker`] (rfd)
 
-Les apps importent ces helpers dans `ui/dialogs.rs` et
-dans la logique de chargement/export.
+Apps import these helpers in `ui/dialogs.rs` and
+in load/export logic.

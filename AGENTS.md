@@ -3,70 +3,70 @@ covers: []
 ---
 # AGENTS.md
 
-Suite créative Rust : workspace Cargo, apps **egui 0.36 (eframe) + wgpu 30**, licence GPL-3.0. Docs : `README.md` (architecture, roadmap), `ARCHITECTURE.md` (règles de dépendances).
+Rust creative suite: Cargo workspace, **egui 0.36 (eframe) + wgpu 30** apps, GPL-3.0 license. Docs: `README.md` (architecture, roadmap), `ARCHITECTURE.md` (dependency rules).
 
-## Environnement
-- Édition Rust 2024 → toolchain **1.85+** obligatoire.
-- Linux : entrer dans `nix develop` (ou direnv via `.envrc`) — fournit cargo/clippy/rustfmt + Vulkan/Wayland avec `LD_LIBRARY_PATH` déjà réglé.
-- Sans Nix : installer `pkg-config vulkan-loader libxkbcommon wayland`.
+## Environment
+- Rust 2024 edition → toolchain **1.85+** required.
+- Linux: enter `nix develop` (or direnv via `.envrc`) — provides cargo/clippy/rustfmt + Vulkan/Wayland with `LD_LIBRARY_PATH` already set.
+- Without Nix: install `pkg-config vulkan-loader libxkbcommon wayland`.
 
-## Commandes
-- App principale : `cargo run --release -p photo`. Autres apps (fondations) : `-p video`, `-p audio`.
-- Vérification avant commit : `cargo fmt --all -- --check`, puis `cargo clippy --workspace --all-targets -- -D warnings`, puis `cargo test --workspace`. La CI GitHub (`.github/workflows/ci.yml`) rejoue fmt+clippy+tests sur chaque PR.
-- Tests ciblés : `cargo test -p photo-engine` (compositing, historique, projet). Les tests « golden » de `engines/photo-engine/src/document/tests.rs` vérifient les modes de fusion pixel par pixel — ne pas les affaiblir pour faire passer un refactor.
+## Commands
+- Main app: `cargo run --release -p photo`. Other apps (foundations): `-p video`, `-p audio`.
+- Pre-commit check: `cargo fmt --all -- --check`, then `cargo clippy --workspace --all-targets -- -D warnings`, then `cargo test --workspace`. The GitHub CI (`.github/workflows/ci.yml`) replays fmt+clippy+tests on every PR.
+- Targeted tests: `cargo test -p photo-engine` (compositing, history, project). The "golden" tests in `engines/photo-engine/src/document/tests.rs` verify blend modes pixel by pixel — do not weaken them to make a refactor pass.
 
-## Packages du workspace
-Le nom de crate diffère parfois du dossier — utiliser `-p` avec le nom de crate :
-| Dossier | Crate |
+## Workspace packages
+The crate name sometimes differs from the folder — use `-p` with the crate name:
+| Folder | Crate |
 |---|---|
 | `apps/photo` / `apps/video` / `apps/audio` | `photo` / `video` / `audio` (entrypoint `src/main.rs`) |
-| `core/datatypes` | `datatypes` (nœuds, sockets, Vec2/Rect, BlendMode, RgbaBuf partagés) |
-| `core/scene` | `scene` (Scene Graph sémantique : hiérarchie, monde dérivé, révisions) |
-| `core/ids` | `ids` (`EntityId` stable + `Revision` monotone partagés) |
-| `core/graph` | `graph` (dépendances génériques : propagation dirty, topo — CPU pur) |
-| `core/render-graph` | `render-graph` (opérations dérivées de la scène : build/sync partiel, backend abstrait — sans wgpu ni UI) |
-| `core/tiles` | `tiles` (invalidation spatiale : grille, dirty bitset, cache CPU/GPU, scheduler progressif — CPU pur) |
-| `engines/photo-engine` | `photo-engine` (document, compositing CPU/GPU, historique, projet ; `BlendMode`/`RgbaBuf` réexportés de `datatypes`) |
-| `engines/vector-engine` | `vector-engine` (paths, formes, styles, booléens + trait `VectorBackend` — sans wgpu) |
-| `engines/layout-engine` | `layout-engine` (frames, contraintes, algo + `apply_to_scene` — sans wgpu/egui) |
-| `engines/text-engine` | `text-engine` (modèle → layout → glyph runs ; mesure pour layout) |
-| `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait ; registre nodal legacy conservé) |
-| `engines/audio-engine` | `audio-engine` (timeline + graphe DSP sur `graph`, backend DSP ; hors Scene ; registre legacy conservé) |
-| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, design system egui : theme, components, containers, viewport, dialogs) |
-| `packages/app-shell` | `app-shell` (lib `app_shell`, squelette d'app : `ActionQueue`, dock générique sur `DockTab`) |
-| `packages/math-utils` | `math-utils` (transformation affine `Transform2D` ; Vec2 canonique = datatypes) |
-| `packages/file-utils` | `file-utils` (erreurs fichiers, drag & drop, dialogues) |
-| `packages/preferences` | `preferences` (préférences persistantes, matériel, raccourcis) |
+| `core/datatypes` | `datatypes` (nodes, sockets, Vec2/Rect, shared BlendMode, RgbaBuf) |
+| `core/scene` | `scene` (semantic Scene Graph: hierarchy, derived world, revisions) |
+| `core/ids` | `ids` (stable `EntityId` + shared monotonic `Revision`) |
+| `core/graph` | `graph` (generic dependencies: dirty propagation, topo — pure CPU) |
+| `core/render-graph` | `render-graph` (scene-derived operations: partial build/sync, abstract backend — no wgpu or UI) |
+| `core/tiles` | `tiles` (spatial invalidation: grid, dirty bitset, CPU/GPU cache, progressive scheduler — pure CPU) |
+| `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project; `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
+| `engines/vector-engine` | `vector-engine` (paths, shapes, styles, booleans + `VectorBackend` trait — no wgpu) |
+| `engines/layout-engine` | `layout-engine` (frames, constraints, algorithm + `apply_to_scene` — no wgpu/egui) |
+| `engines/text-engine` | `text-engine` (model → layout → glyph runs; measurement for layout) |
+| `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait; legacy nodal registry kept) |
+| `engines/audio-engine` | `audio-engine` (timeline + DSP graph on `graph`, DSP backend; outside Scene; legacy registry kept) |
+| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, egui design system: theme, components, containers, viewport, dialogs) |
+| `packages/app-shell` | `app-shell` (lib `app_shell`, app skeleton: `ActionQueue`, generic dock on `DockTab`) |
+| `packages/math-utils` | `math-utils` (affine transform `Transform2D`; canonical Vec2 = datatypes) |
+| `packages/file-utils` | `file-utils` (file errors, drag & drop, dialogs) |
+| `packages/preferences` | `preferences` (persistent preferences, hardware, shortcuts) |
 
-Dépendances autorisées : `packages/*` ← `core/*` ← `engines/*` ← `apps/*`. Les packages ne dépendent jamais des engines ni des apps ; pas de dépendances entre apps.
+Allowed dependencies: `packages/*` ← `core/*` ← `engines/*` ← `apps/*`. Packages never depend on engines or apps; no dependencies between apps.
 
-## Règles d'architecture (strictes)
-- Logique métier → `engines/*` et `core/*` ; widgets → `packages/ui-kit` ; apps = interface + orchestration uniquement. Pas de logique de rendu dans les apps.
-- **Les moteurs sont PURS : aucune dépendance UI.** `photo-engine` ne connaît ni egui ni ses types ; le modèle document porte des buffers purs (`RgbaBuf`, `Arc<[u8]>`). L'app envoie des commandes via `mpsc` à un worker qui possède le `Document`, et reçoit snapshots + aperçu composite ; la texture est téléversée côté app (`ViewportTextureCache`). Boucle egui non bloquante (`try_recv` par frame).
-- Frontière moteur→UI : le worker répond `LayersChanged { layers, preview, can_undo, can_redo }` ; l'app convertit l'aperçu en `egui::ColorImage` et nourrit son `TextureHandle` (zéro régénération au zoom/pan — state-only).
-- Modèle de rendu **« state-only »** : un réglage (opacité, position…) ne régénère jamais les pixels/textures ; il s'applique au draw GPU. Préserver ce modèle à tout prix.
-- Rendu : aperçu composite CPU côté worker (plafonné, thread background) ; chemin natif wgpu zéro-copie (`register_native_texture`) prévu côté app.
+## Architecture rules (strict)
+- Business logic → `engines/*` and `core/*`; widgets → `packages/ui-kit`; apps = interface + orchestration only. No rendering logic in apps.
+- **Engines are PURE: no UI dependency.** `photo-engine` knows neither egui nor its types; the document model carries pure buffers (`RgbaBuf`, `Arc<[u8]>`). The app sends commands via `mpsc` to a worker owning the `Document`, and receives snapshots + composite preview; the texture is uploaded app-side (`ViewportTextureCache`). Non-blocking egui loop (`try_recv` per frame).
+- Engine→UI boundary: the worker replies `LayersChanged { layers, preview, can_undo, can_redo }`; the app converts the preview into an `egui::ColorImage` and feeds its `TextureHandle` (zero regeneration on zoom/pan — state-only).
+- **"state-only"** rendering model: a setting (opacity, position…) never regenerates pixels/textures; it applies at GPU draw. Preserve this model at all costs.
+- Rendering: CPU composite preview worker-side (capped, background thread); zero-copy native wgpu path (`register_native_texture`) planned app-side.
 
-## Historique & persistance
-- Undo/redo : snapshots complets du document (`engines/photo-engine/src/history.rs`) quasi gratuits grâce aux `Arc<DynamicImage>` partagés. Les gestes continus (sliders, renommage, drag) passent par `push_coalesced` — toujours pousser le snapshot PRÉ-mutation, jamais après.
-- Format projet `.cygp` (`engines/photo-engine/src/project.rs`) : JSON versionné, calques en PNG+base64. Toute évolution incompatible du modèle → incrémenter `FORMAT_VERSION` et gérer le refus proprement.
+## History & persistence
+- Undo/redo: full document snapshots (`engines/photo-engine/src/history.rs`) almost free thanks to shared `Arc<DynamicImage>`. Continuous gestures (sliders, rename, drag) go through `push_coalesced` — always push the PRE-mutation snapshot, never after.
+- `.cygp` project format (`engines/photo-engine/src/project.rs`): versioned JSON, layers as PNG+base64. Any incompatible model change → bump `FORMAT_VERSION` and handle rejection cleanly.
 
-## Structure de l'app photo
-Découpée par rôle (même schéma pour les futures apps) :
-`main.rs` (boot eframe) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (disposition propre à l'app) · `ui/` (widgets métier : `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`, `engine_bridge.rs`). Ne pas regrossir vers un main.rs monolithique.
+## Photo app structure
+Split by role (same pattern for future apps):
+`main.rs` (eframe boot) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (app-specific layout) · `ui/` (domain widgets: `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`, `engine_bridge.rs`). Do not let it regrow into a monolithic main.rs.
 
-## Architecture de `packages/ui-kit` (en couches, voir lib.rs)
-1. **`theme`** = SEULE source des couleurs/tailles/rayons (tokens `colors`, `spacing`, `radius`, `typography`).
-2. **`components`** = composants génériques (`Button`, `Slider`, `Select`, `Tabs`, inputs, `Toggle`, `IconButton`, `icon_button`/`Icon` — seul contact avec `egui_material_icons` via `icons::glyph` — `ReorderableList`). Un composant n'écrit JAMAIS de couleur/taille en dur : il référence les tokens.
-3. **Conteneurs** (`containers` : `Panel`, `Split` + `SplitState`, `Collapsible`, `Toolbar`, `Section`, `Card`, `Stack`) → 4. **Viewport générique** (affichage texture + zoom/pan, état canonique `ViewportState`) → 5. **`dialogs`** (modale, file picker, progression) → 6. **`utils`** (état drag générique).
-- Les éléments spécifiques à une app restent dans `apps/<app>/src/ui/`. Promotion vers `packages/ui-kit` seulement quand une 2e app en a besoin (et jamais de types métier : ui-kit reste domain-agnostic, vérifié par `scripts/check_uikit_domain_agnostic.sh`).
-- **Interdit de coder une couleur en dur hors `theme/`** — y compris dans les canvas (la sélection utilise `item_selected`, les indicateurs `drop_indicator`). Tailles de texte : passer par `typography`.
+## `packages/ui-kit` architecture (layered, see lib.rs)
+1. **`theme`** = ONLY source of colors/sizes/radii (tokens `colors`, `spacing`, `radius`, `typography`).
+2. **`components`** = generic components (`Button`, `Slider`, `Select`, `Tabs`, inputs, `Toggle`, `IconButton`, `icon_button`/`Icon` — only contact with `egui_material_icons` via `icons::glyph` — `ReorderableList`). A component NEVER hardcodes a color/size: it references the tokens.
+3. **Containers** (`containers`: `Panel`, `Split` + `SplitState`, `Collapsible`, `Toolbar`, `Section`, `Card`, `Stack`) → 4. **Generic viewport** (texture display + zoom/pan, canonical `ViewportState`) → 5. **`dialogs`** (modal, file picker, progress) → 6. **`utils`** (generic drag state).
+- App-specific elements stay in `apps/<app>/src/ui/`. Promote to `packages/ui-kit` only when a 2nd app needs it (and never domain types: ui-kit stays domain-agnostic, verified by `scripts/check_uikit_domain_agnostic.sh`).
+- **No hardcoded colors outside `theme/`** — including canvases (selection uses `item_selected`, indicators `drop_indicator`). Text sizes: go through `typography`.
 
 ## Conventions
-- `unwrap()`/`expect()` interdits hors tests ; pas d'emoji dans le code ni les commits.
-- Commits courts et préfixés par l'app : `photo: fix blend-mode offset jump`.
-- Chaque fichier `.rs` commence par l'en-tête GPL v3 (copier celui de `apps/photo/src/main.rs`).
-- Thème : palette/tokens implémentés dans `packages/ui-kit/src/theme/` ; police Hanken Grotesk et icônes Material chargées depuis `assets/fonts/`.
+- `unwrap()`/`expect()` forbidden outside tests; no emoji in code or commits.
+- Short commits prefixed by the app: `photo: fix blend-mode offset jump`.
+- Each `.rs` file starts with the GPL v3 header (copy the one from `apps/photo/src/main.rs`).
+- Theme: palette/tokens implemented in `packages/ui-kit/src/theme/`; Hanken Grotesk font and Material icons loaded from `assets/fonts/`.
 
 <!-- graft:start -->
 ## Graft — repo context graph

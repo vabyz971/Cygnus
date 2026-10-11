@@ -1,51 +1,51 @@
 # ui-kit
 
-Design system egui pour Cygnus — architecture en couches (bas vers haut) :
+egui design system for Cygnus — layered architecture (bottom to top):
 
-## Couches
+## Layers
 
-1. **`theme`** — SEULE source des couleurs, tailles, rayons, typographie.
-   - Voir `packages/ui-kit/src/theme/` (tokens `colors`, `spacing`,
-     `radius`, `typography`). Jamais de valeurs codées en dur ailleurs.
+1. **`theme`** — ONLY source of colors, sizes, radii, typography.
+   - See `packages/ui-kit/src/theme/` (tokens `colors`, `spacing`,
+     `radius`, `typography`). Never hardcoded values elsewhere.
 
-2. **`primitives`** — briques génériques (`Text`, `Icon`, `divider`,
-   `Surface`), indépendantes du domaine.
+2. **`primitives`** — generic building blocks (`Text`, `Icon`, `divider`,
+   `Surface`), domain-independent.
 
-3. **`icons`** — enum `CygnusIcon` + registre (`IconRegistry`,
-   `ALL_ICONS`). Seule source d'import `egui_material_icons`.
+3. **`icons`** — `CygnusIcon` enum + registry (`IconRegistry`,
+   `ALL_ICONS`). Only `egui_material_icons` import source.
 
-4. **`components`** — composants génériques (`Button`, `Slider`,
+4. **`components`** — generic components (`Button`, `Slider`,
    `Select`, `Tabs`, `input`, `Toggle`, `IconButton`, `reorderable_list`,
-   `menu`). Style uniquement via les tokens du thème.
+   `menu`). Styling only via theme tokens.
 
-5. **`containers`** — conteneurs agnostiques (`Section`, `Card`,
+5. **`containers`** — agnostic containers (`Section`, `Card`,
    `Stack`, `Panel`, `Split` + `SplitState`, `Collapsible`,
-   `Toolbar`). Pas de dépendance UI.
+   `Toolbar`). No UI dependency.
 
-6. **`layout`** — état workspace (`PanelId`, `WorkspaceState`,
-   persistence JSON via `preferences`). Pas de dépendance UI.
+6. **`layout`** — workspace state (`PanelId`, `WorkspaceState`,
+   JSON persistence via `preferences`). No UI dependency.
 
-7. **`i18n`** — clés de traduction stables + catalogue (`Catalog`,
-   `Language`, `TextKey`, `PhotoCatalog`). Zéro allocation au
-   rendu.
+7. **`i18n`** — stable translation keys + catalog (`Catalog`,
+   `Language`, `TextKey`, `PhotoCatalog`). Zero allocation at
+   render time.
 
-8. **`viewport`** — état zoom/pan (`ViewportState`), overlays.
+8. **`viewport`** — zoom/pan state (`ViewportState`), overlays.
 
-9. **`dialogs`** — modales, file picker, progression.
+9. **`dialogs`** — modals, file picker, progress.
 
-10. **`utils`** — état de drag & drop générique.
+10. **`utils`** — generic drag & drop state.
 
-11. **`context`** — dépendances communes (`UiContext` : egui,
-    thème, icônes, traduction). Pas de dépendance moteurs ni apps.
+11. **`context`** — shared dependencies (`UiContext`: egui,
+    theme, icons, translation). No engine or app dependency.
 
-## Règles d'or
+## Golden rules
 
-- Aucun composant n'écrit de couleur/taille/enum en dur : il référence
-  les tokens du thème.
-- `unwrap()` / `expect()` interdits hors tests.
-- Pas d'emoji dans le code ni les commits.
-- Les widgets métier vivent dans `apps/*/src/ui/` — ui-kit reste
-  domain-agnostic (vérifié par `scripts/check_uikit_domain_agnostic.sh`).
+- No component hardcodes a color/size/enum: it references
+  the theme tokens.
+- `unwrap()` / `expect()` forbidden outside tests.
+- No emoji in code or commits.
+- Domain widgets live in `apps/*/src/ui/` — ui-kit stays
+  domain-agnostic (verified by `scripts/check_uikit_domain_agnostic.sh`).
 
 ## Usage
 

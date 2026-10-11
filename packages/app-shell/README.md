@@ -1,12 +1,12 @@
 # app-shell
 
-Squelette d'application générique pour Cygnus : file d'actions
-[`ActionQueue`](src/actions.rs) + logique de docks
+Generic application skeleton for Cygnus: action queue
+[`ActionQueue`](src/actions.rs) + dock logic
 [`DockTab`](src/dock.rs).
 
-Aucune dépendance UI : les apps (photo, video, audio) implémentent
-leur `Behavior` et leur `DockTab` ; `app-shell` ne fait que
-générer, drainer et réconcilier.
+No UI dependency: the apps (photo, video, audio) implement
+their `Behavior` and `DockTab`; `app-shell` only
+generates, drains and reconciles.
 
 ## Usage
 
@@ -20,4 +20,4 @@ queue.push(MyAction::Undo);
 assert_eq!(queue.drain(), vec![MyAction::Undo]);
 ```
 
-Voir `apps/photo/src/commands.rs` pour un exemple complet.
+See `apps/photo/src/commands.rs` for a complete example.

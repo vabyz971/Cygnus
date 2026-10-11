@@ -1,29 +1,29 @@
-# Suivi des objectifs — Cygnus Photo
+# Objective tracking — Cygnus Photo
 
-> **Le fichier anti-retour-en-arrière.** Un objectif `fait` ne se rouvre jamais :
-> on crée un nouvel objectif qui le référence.
-> Règle : `statut ∈ {à faire, en cours, fait, gelé}` — un seul `en cours` à la fois.
-> Vérification : `cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings`
+> **The anti-backsliding file.** A `done` objective never reopens:
+> create a new objective referencing it.
+> Rule: `status ∈ {todo, in progress, done, frozen}` — a single `in progress` at a time.
+> Check: `cargo fmt` + `cargo clippy --workspace --all-targets -- -D warnings`
 > + `cargo test --workspace` + `bash scripts/check_theme_rules.sh`.
 
-| ID | Objectif | Jalon | Statut | Critère de sortie (DoD) | Points graft / code | Vérifié le |
+| ID | Objective | Milestone | Status | Exit criterion (DoD) | Graft points / code | Verified on |
 |----|----------|-------|--------|--------------------------|---------------------|------------|
-| O001 | Menus Save/Save As/Open `.cygp` | v0.8.1 | fait | round-trip sans perte, refus propre si version inconnue | `apps/photo/src/ui/menubar.rs`, `apps/photo/src/persistence/`, `engines/photo-engine/src/project.rs` | 2026-10-05 |
-| O002 | Raccourcis câblés | v0.8.1 | fait | les 23 `PhotoShortcut` déclenchent `handle_action` | `apps/photo/src/shortcuts.rs`, `apps/photo/src/app.rs` | 2026-10-05 |
-| O003 | Panneau Historique minimal | v0.8.1 | fait | liste undo/redo, clic = saut d'état | `apps/photo/src/ui/features/history/`, `apps/photo/src/layout/dock.rs` | 2026-10-05 |
-| O004 | Crop + flip + rotation 90° | v0.8.2 | fait | `push_coalesced` PRÉ-mutation, golden tests OK | `apps/photo/src/ui/engine_bridge/worker.rs`, `engines/photo-engine/src/document/tree.rs` | 2026-10-05 |
-| O005 | Niveaux + Courbes + HSL éditables | v0.8.3 | à faire | presets + ré-édition après reload | `engines/photo-engine/src/nodes/`, `apps/photo/src/ui/features/inspector/` | — |
-| O006 | Export WebP/TIFF + histogramme | v0.8.4 | à faire | Ø régression PNG/JPEG | `engines/photo-engine/src/export.rs` | — |
+| O001 | Save/Save As/Open menus `.cygp` | v0.8.1 | done | lossless round-trip, clean refusal on unknown version | `apps/photo/src/ui/menubar.rs`, `apps/photo/src/persistence/`, `engines/photo-engine/src/project.rs` | 2026-10-05 |
+| O002 | Wired shortcuts | v0.8.1 | done | all 23 `PhotoShortcut` trigger `handle_action` | `apps/photo/src/shortcuts.rs`, `apps/photo/src/app.rs` | 2026-10-05 |
+| O003 | Minimal History panel | v0.8.1 | done | undo/redo list, click = state jump | `apps/photo/src/ui/features/history/`, `apps/photo/src/layout/dock.rs` | 2026-10-05 |
+| O004 | Crop + flip + 90° rotation | v0.8.2 | done | `push_coalesced` PRE-mutation, golden tests OK | `apps/photo/src/ui/engine_bridge/worker.rs`, `engines/photo-engine/src/document/tree.rs` | 2026-10-05 |
+| O005 | Editable Levels + Curves + HSL | v0.8.3 | todo | presets + re-editing after reload | `engines/photo-engine/src/nodes/`, `apps/photo/src/ui/features/inspector/` | — |
+| O006 | WebP/TIFF export + histogram | v0.8.4 | todo | no PNG/JPEG regression | `engines/photo-engine/src/export.rs` | — |
 
-## Journal (ne jamais effacer, ajouter une ligne)
+## Log (never erase, append a line)
 
-| Date | ID | Événement |
+| Date | ID | Event |
 |------|----|-----------|
-| 2026-10-05 | — | Création des squelettes VISION / ROADMAP / DECISIONS / SUIVI. |
-| 2026-10-05 | O001 | Fait : `SaveProject`/`LoadProject` worker + `ProjectSaved`, pickers `.cygp` ui-kit, menus Fichier, `project_path` par doc, D006 (accusés en dernier dans `apply_batch`). |
-| 2026-10-05 | O002 | Fait : dispatch clavier → `PhotoAction` via résolveur (21/23 mappés, `ZoomFit`/`OpenPreferences` sans cible documentée), D007 (suspendu en saisie), fix casse `key_to_string` côté `preferences`. |
-| 2026-10-05 | O003 | Fait : pas libellés FR côté worker (`HistoryStep`), `UndoSteps`/`RedoSteps` (un seul rendu), onglet Historique en onglet des Calques, `ensure_history_tabbed` pour JSON antérieurs. |
-| 2026-10-05 | O004 | Fait : `Document::rotate` (centre conservé) + `FlipHorizontal/Vertical`, `RotateClockwise/Counterclockwise`, `CropToDocument` (intersection, no-op si contenu, refus si transformé/hors cadre), menu Calque, libellés historique. Crop interactif (rect souris) = futur objectif. |
-| 2026-10-06 | — | Fix curseur : `menu_item_enabled` en Small comme `menu_item` (surlignages uniformes) + test. |
-| 2026-10-06 | — | Tree calques (D008), toggle on/off filtres/masques worker+moteur, inspecteur sans doublons (D009), sous-menu Transformations (menubar + clic droit canvas + clic droit ligne), sweep i18n ~90 clés (D010). |
-| 2026-10-06 | — | Fix historique : clic = la rangée devient tête (off-by-one), rangée État initial, scroll rempli (`auto_shrink` off). Fix chevron pièces jointes (`load_with_default_open`). Peinture masques (`paint_mask` moteur + `PaintMask` worker, blanc/noir). Lissage traits (`resample_stroke` Chaikin au commit). |
+| 2026-10-05 | — | Created VISION / ROADMAP / DECISIONS / TRACKING skeletons. |
+| 2026-10-05 | O001 | Done: `SaveProject`/`LoadProject` worker + `ProjectSaved`, `.cygp` pickers ui-kit, File menus, per-doc `project_path`, D006 (acks last in `apply_batch`). |
+| 2026-10-05 | O002 | Done: keyboard dispatch → `PhotoAction` via resolver (21/23 mapped, `ZoomFit`/`OpenPreferences` with no documented target), D007 (suspended while typing), `key_to_string` case fix in `preferences`. |
+| 2026-10-05 | O003 | Done: FR-labeled steps worker-side (`HistoryStep`), `UndoSteps`/`RedoSteps` (single render), History tab docked with Layers, `ensure_history_tabbed` for older JSON. |
+| 2026-10-05 | O004 | Done: `Document::rotate` (center preserved) + `FlipHorizontal/Vertical`, `RotateClockwise/Counterclockwise`, `CropToDocument` (intersection, no-op if content, refused if transformed/out of frame), Layer menu, history labels. Interactive crop (mouse rect) = future objective. |
+| 2026-10-06 | — | Cursor fix: `menu_item_enabled` in Small like `menu_item` (uniform highlights) + test. |
+| 2026-10-06 | — | Layer tree (D008), worker+engine filter/mask on/off toggle, duplication-free inspector (D009), Transformations submenu (menubar + canvas right-click + row right-click), i18n sweep ~90 keys (D010). |
+| 2026-10-06 | — | History fix: click = row becomes head (off-by-one), Initial-state row, filled scroll (`auto_shrink` off). Attachment chevron fix (`load_with_default_open`). Mask painting (`paint_mask` engine + `PaintMask` worker, white/black). Stroke smoothing (`resample_stroke` Chaikin on commit). |

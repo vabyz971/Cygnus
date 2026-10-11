@@ -1,159 +1,159 @@
 ---
 covers: []
 ---
-# Architecture de Cygnus
+# Cygnus architecture
 
-## Vue d'ensemble
+## Overview
 
-Cygnus est une suite créative professionnelle composée de trois applications
-indépendantes (Photo, Vidéo, Audio) qui partagent un socle commun : moteurs métier,
-graphe nodal générique, widgets et bibliothèques utilitaires.
+Cygnus is a professional creative suite made of three independent
+applications (Photo, Video, Audio) sharing a common foundation: business
+engines, a generic node graph, widgets and utility libraries.
 
-## Structure des dossiers
+## Folder structure
 
 ```
-apps/       Applications finales (binaires indépendants)
-engines/    Moteurs métier PURS — zéro dépendance UI
-core/       Socle commun : datatypes
-packages/   Bibliothèques réutilisables : ui-kit, app-shell, math-utils, file-utils
-assets/     Ressources partagées (polices)
+apps/       Final applications (independent binaries)
+engines/    PURE business engines — zero UI dependency
+core/       Shared foundation: datatypes
+packages/   Reusable libraries: ui-kit, app-shell, math-utils, file-utils
+assets/     Shared resources (fonts)
 ```
 
 ### packages/
-Bibliothèques partagées réutilisables entre toutes les applications.
-- `ui-kit` (crate `ui_kit`) : design system egui en couches — `theme`
-  (seule source des couleurs/tailles, tokens dans `theme/`),
-  `components` génériques (dont `icon_button`, `ReorderableList`),
-  `containers`, `viewport` pan/zoom générique, `dialogs`. Strictement
-  domain-agnostic : aucun type métier (vérifié par
+Shared libraries reusable across all applications.
+- `ui-kit` (crate `ui_kit`): layered egui design system — `theme`
+  (only source of colors/sizes, tokens in `theme/`),
+  generic `components` (incl. `icon_button`, `ReorderableList`),
+  `containers`, generic pan/zoom `viewport`, `dialogs`. Strictly
+  domain-agnostic: no business types (verified by
   `scripts/check_uikit_domain_agnostic.sh`).
-- `app-shell` (crate `app_shell`) : squelette d'app générique —
-  `ActionQueue<A>` (file d'actions drainée par frame) et logique de
-  dock `egui_tiles` générique sur le trait `DockTab` (`has_tab`,
+- `app-shell` (crate `app_shell`): generic app skeleton —
+  `ActionQueue<A>` (action queue drained per frame) and generic
+  `egui_tiles` dock logic over the `DockTab` trait (`has_tab`,
   `ensure_tab`, `push/remove_canvas_tab`, `reconcile_canvases`,
-  `default_tree`, `set_linear_shares`). Dépend uniquement de `egui`,
-  `egui_tiles`, `serde`, `uuid` : jamais d'engines ni d'apps, aucun
-  type métier (le `Behavior` — titres, contenus — reste dans chaque
+  `default_tree`, `set_linear_shares`). Depends only on `egui`,
+  `egui_tiles`, `serde`, `uuid`: never on engines or apps, no
+  business types (the `Behavior` — titles, contents — stays in each
   app).
-- `math-utils` : transformation affine 2D canonique (`Transform2D`) ;
-  le `Vec2` canonique reste `datatypes::Vec2`, réexporté.
-- `file-utils` : erreurs fichiers, types drag & drop et dialogues.
+- `math-utils`: canonical 2D affine transform (`Transform2D`);
+  the canonical `Vec2` stays `datatypes::Vec2`, re-exported.
+- `file-utils`: file errors, drag & drop types and dialogs.
 
-Ces packages ne doivent JAMAIS dépendre des engines ni des apps.
+These packages must NEVER depend on engines or apps.
 
 ### engines/
-Moteurs métier spécifiques à chaque domaine, strictement purs :
-aucune connaissance d'egui ou de ses types. Les buffers portés par le modèle
-document restent purs (`RgbaBuf`, `Arc<[u8]>`) ; les apps envoient des
-commandes via `mpsc` à un worker propriétaire du `Document` et reçoivent
-snapshots + aperçu composite (conversion texture côté app).
-- `photo-engine` : document, compositing CPU/GPU, historique, projet `.cygp`
-  (raster uniquement ; `BlendMode`/`RgbaBuf` viennent de `datatypes`).
-- `vector-engine` : paths Bézier, formes, styles, booléens (données) +
-  trait `VectorBackend` (Vello ou autre derrière le trait — sans `wgpu`).
-- `layout-engine` : frames, contraintes, pages, algo ligne/colonne +
-  `apply_to_scene` (le layout calcule, la scène place — sans `wgpu`/`egui`).
-- `text-engine` : modèle → layout → glyph runs (façonnage derrière
-  `FontProvider` ; mesure pour `layout-engine`, jamais de rendu direct).
-- `video-engine` : clips, timeline éditoriale, transitions, trait
-  `FrameDecoder`, compositing décrit (`BlendMode` partagé) — pas de lecteur.
-- `audio-engine` : timeline + graphe DSP sur `graph` (cycles rejetés),
-  trait `DspBackend` — HORS Scene Graph, nœuds métier propres.
+Domain-specific business engines, strictly pure:
+no knowledge of egui or its types. Document-model buffers stay
+pure (`RgbaBuf`, `Arc<[u8]>`); apps send commands via `mpsc` to a
+worker owning the `Document` and receive snapshots + composite
+preview (texture conversion app-side).
+- `photo-engine`: document, CPU/GPU compositing, history, `.cygp`
+  project (raster only; `BlendMode`/`RgbaBuf` come from `datatypes`).
+- `vector-engine`: Bézier paths, shapes, styles, booleans (data) +
+  `VectorBackend` trait (Vello or other behind the trait — no `wgpu`).
+- `layout-engine`: frames, constraints, pages, row/column algorithm +
+  `apply_to_scene` (layout computes, scene places — no `wgpu`/`egui`).
+- `text-engine`: model → layout → glyph runs (shaping behind
+  `FontProvider`; measurement for `layout-engine`, never direct rendering).
+- `video-engine`: clips, editorial timeline, transitions,
+  `FrameDecoder` trait, described compositing (shared `BlendMode`) — no player.
+- `audio-engine`: timeline + DSP graph on `graph` (cycles rejected),
+  `DspBackend` trait — OUTSIDE the Scene Graph, own business nodes.
 
-Ils peuvent dépendre de `core/*` et de `packages/*` (hors UI) ; pas de
-dépendances entre engines (seule exception documentée : `layout-engine`
-en dev-dependency de test vers `text-engine`, jamais au runtime).
+They may depend on `core/*` and `packages/*` (non-UI); no
+dependencies between engines (single documented exception:
+`layout-engine` dev-dependency for tests on `text-engine`, never at runtime).
 
 ### core/
-Socle transverse : `datatypes` (nœuds, sockets, `Vec2`/`Rect`, `BlendMode`,
-`RgbaBuf`), `ids`
-(`EntityId` stable + `Revision` monotone partagés) et `scene`
-(Scene Graph sémantique : hiérarchie, transforms locaux, monde dérivé,
-révisions — sans wgpu ni egui, sans état renderer), `graph` (graphe de
-dépendances générique : nœuds, arêtes, propagation dirty, ordre
-topologique — CPU pur, sans logique de domaine) et `render-graph`
-(opérations dérivées de la scène : `Source → Transform → Effect → Mask →
-Blend → Output`, sync incrémental par portée, trait `Backend` abstrait —
-sans wgpu, ni egui, ni UI) et `tiles` (invalidation spatiale : `TileGrid`
-rect ↔ tuiles, `DirtyTiles` en bitset, `TileCache` CPU/GPU séparés,
-`TileScheduler` progressif visible/proche/grossier d'abord — CPU pur).
+Cross-cutting foundation: `datatypes` (nodes, sockets, `Vec2`/`Rect`,
+`BlendMode`, `RgbaBuf`), `ids`
+(stable `EntityId` + shared monotonic `Revision`) and `scene`
+(semantic Scene Graph: hierarchy, local transforms, derived world,
+revisions — no wgpu or egui, no renderer state), `graph` (generic
+dependency graph: nodes, edges, dirty propagation, topological
+order — pure CPU, no domain logic) and `render-graph`
+(scene-derived operations: `Source → Transform → Effect → Mask →
+Blend → Output`, incremental sync by scope, abstract `Backend` trait —
+no wgpu, egui, or UI) and `tiles` (spatial invalidation: `TileGrid`
+rect ↔ tiles, `DirtyTiles` as bitset, separate CPU/GPU `TileCache`,
+progressive `TileScheduler` visible/nearby/coarse first — pure CPU).
 
 ### apps/
-Applications finales qui combinent packages, core et engines. Découpage par rôle
-(`main.rs` boot eframe, `app.rs` état + channels, `layout.rs` disposition
-propre, `ui/` widgets métier). Chaque app est un binaire indépendant ;
-photo est complète, video/audio sont des bases en attendant leurs moteurs.
+Final applications combining packages, core and engines. Split by role
+(`main.rs` eframe boot, `app.rs` state + channels, `layout.rs`
+app-specific layout, `ui/` domain widgets). Each app is an independent
+binary; photo is complete, video/audio are foundations awaiting their engines.
 
-## Flux de données (vue d'ensemble)
+## Data flow (overview)
 
 ```
 ┌─────────────────────────────┐
-│  App eframe (photo/video/   │
-│  audio) — egui, thread UI   │
+│  eframe App (photo/video/   │
+│  audio) — egui, UI thread   │
 └──────────────┬──────────────┘
-               │ PhotoCommandQueue
-               │ (ActionQueue<A>, drainée frame)
-               ▼
+                │ PhotoCommandQueue
+                │ (ActionQueue<A>, drained per frame)
+                ▼
 ┌─────────────────────────────┐      ┌───────────────────────────┐
 │  PhotoApp / Behavior        │──────│  PhotoUiContext           │
 │  - ActionQueue              │      │  (egui Context, theme,    │
 │  - docs: Vec<Arc<Document>> │      │   icons, Catalog<Fr>)     │
 │  - dock layout              │      └───────────────────────────┘
 └───────┬─────────────────────┘
-        │ PhotoAction
-        │
-        ▼
+         │ PhotoAction
+         │
+         ▼
 ┌─────────────────────────────┐     ┌──────────────────────────────┐
-│  ui/ (widgets métier)       │────▶│  engine_bridge (worker)      │
+│  ui/ (domain widgets)       │────▶│  engine_bridge (worker)      │
 │  - draw_menu_bar → Catalog  │     │  (PhotoEngineCommand)        │
 │  - canvas (state-only draw) │     │  - sync / apply / composite  │
 │  - dock/panels              │     │  - undo-redo, history        │
 │                             │     └──────────────┬───────────────┘
 └─────────────────────────────┘                    │
-                                                   │ mpsc (LayersChanged,
-                                                   │  ProjectSaved, PerfMetrics)
-                                                   ▼
-                                          ┌─────────────────────────────┐
-                                          │ photo-engine                  │
-                                          │  - Document / layers          │
-                                          │  - compositing CPU ou wgpu      │
-                                          │  - RenderGraph                  │
-                                          │  - TileCache (GPU)            │
-                                          └─────────────────────────────┘
+                                                    │ mpsc (LayersChanged,
+                                                    │  ProjectSaved, PerfMetrics)
+                                                    ▼
+                                           ┌─────────────────────────────┐
+                                           │ photo-engine                  │
+                                           │  - Document / layers          │
+                                           │  - CPU or wgpu compositing    │
+                                           │  - RenderGraph                │
+                                           │  - TileCache (GPU)            │
+                                           └─────────────────────────────┘
 ```
 
-- `app-shell` apporte le modèle générique `ActionQueue<A>` + `DockTab`
-  (file + docks), réutilisé par photo / video / audio.
-- Le worker répond par `mpsc` ; l'app lit en non bloquant (`try_recv`)
-  frame par frame et met à jour son état (state-only : pas de pixels
-  régénérés).
+- `app-shell` provides the generic `ActionQueue<A>` + `DockTab`
+  model (queue + docks), reused by photo / video / audio.
+- The worker replies over `mpsc`; the app reads non-blocking
+  (`try_recv`) frame by frame and updates its state (state-only: no
+  regenerated pixels).
 
-## Règles de dépendances
+## Dependency rules
 
-1. `packages/` ne dépend JAMAIS de `engines/` ni de `apps/`
-2. `engines/` peut dépendre de `core/` et des `packages/` non-UI ; `datatypes` ne dépend que de `serde`
-3. `apps/` peuvent dépendre de `core/`, `engines/` et `packages/`
-4. Pas de dépendances circulaires
-5. Pas de dépendances entre apps
+1. `packages/` NEVER depends on `engines/` or `apps/`
+2. `engines/` may depend on `core/` and non-UI `packages/`; `datatypes` depends only on `serde`
+3. `apps/` may depend on `core/`, `engines/` and `packages/`
+4. No circular dependencies
+5. No dependencies between apps
 
-Vérification : `cargo tree -p <crate> --depth 1`.
+Check: `cargo tree -p <crate> --depth 1`.
 
-## Modèle de rendu
+## Rendering model
 
-- **State-only** : un réglage (opacité, position…) ne régénère jamais les pixels ;
-  il s'applique au draw GPU.
-- **Rendu** : aperçu composite CPU calculé côté worker (thread background,
-  taille plafonnée) et téléversé en texture egui côté app ; chemin natif
-  wgpu zéro-copie (`register_native_texture`) prévu.
-- **Frontière moteur→UI** : le worker répond `LayersChanged { layers,
-  preview, can_undo, can_redo }`, pollé en non bloquant (`try_recv`) à
-  chaque frame — point unique de conversion.
+- **State-only**: a setting (opacity, position…) never regenerates pixels;
+  it applies at GPU draw.
+- **Rendering**: CPU composite preview computed worker-side (background
+  thread, capped size) and uploaded as an egui texture app-side; native
+  zero-copy wgpu path (`register_native_texture`) planned.
+- **Engine→UI boundary**: the worker replies `LayersChanged { layers,
+  preview, can_undo, can_redo }`, polled non-blocking (`try_recv`)
+  each frame — single conversion point.
 
-## Compilation
+## Building
 
 ```bash
-cargo build --workspace --release   # tout le workspace
-cargo build -p photo --release      # une seule app
-cargo run -p photo                  # lancer une app
-cargo test -p photo-engine          # tests du moteur photo (golden compositing)
+cargo build --workspace --release   # whole workspace
+cargo build -p photo --release      # a single app
+cargo run -p photo                  # launch an app
+cargo test -p photo-engine          # photo engine tests (golden compositing)
 ```
