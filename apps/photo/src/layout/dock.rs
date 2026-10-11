@@ -154,6 +154,7 @@ pub fn show_tree(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) ->
     let mut behavior = PhotoTreeBehavior {
         docs: &mut app.docs,
         active: &mut app.active,
+        filter_types: &app.runtime.filter_types,
         ctx,
         actions: Vec::new(),
     };
@@ -185,6 +186,9 @@ struct PhotoTreeBehavior<'a> {
     docs: &'a mut Vec<OpenDocument>,
     /// Index du document actif.
     active: &'a mut usize,
+    /// Catalogue des filtres (registre moteur : nom, `type_id`) pour
+    /// le menu contextuel du panneau Calques.
+    filter_types: &'a [(String, String)],
     /// Dépendances d'affichage (thème, traduction).
     ctx: &'a PhotoUiContext,
     /// Actions métier collectées pendant le frame.
@@ -202,8 +206,9 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                     self.ctx.shared.theme().typography.body_size,
                 )
                 .into(),
-            // Titre document : nom + zoom. (Profil couleur et
-            // profondeur 16/32 bits : le moteur est 100 % RGBA 8
+            // Titre document : nom + résolution + zoom (la résolution
+            // vit ici, jamais en overlay sur le canvas). (Profil couleur
+            // et profondeur 16/32 bits : le moteur est 100 % RGBA 8
             // bits sans profil — à ajouter ici quand le `Document`
             // exposera ces métadonnées.)
             PhotoDockTab::Canvas(id) => self
@@ -211,11 +216,14 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                 .iter()
                 .find(|doc| doc.id == id)
                 .map(|doc| {
-                    format!(
-                        "{} | {}%",
-                        doc.title,
-                        (doc.ui.viewport.zoom() * 100.0).round()
-                    )
+                    let zoom = (doc.ui.viewport.zoom() * 100.0).round();
+                    match doc.ui.preview_geom {
+                        Some(geom) => format!(
+                            "{} | {}x{} | {}%",
+                            doc.title, geom.doc_size.x as u32, geom.doc_size.y as u32, zoom
+                        ),
+                        None => format!("{} | {}%", doc.title, zoom),
+                    }
                 })
                 .unwrap_or_else(|| {
                     self.ctx
@@ -285,7 +293,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
-                    right_sidebar::draw_layers_content(ui, doc, ctx)
+                    right_sidebar::draw_layers_content(ui, doc, ctx, self.filter_types)
                 });
                 self.actions.extend(inner);
             }
@@ -450,6 +458,7 @@ mod tests {
         let behavior = PhotoTreeBehavior {
             docs: &mut app.docs,
             active: &mut app.active,
+            filter_types: &[],
             ctx: &photo_ctx,
             actions: Vec::new(),
         };
@@ -489,6 +498,7 @@ mod tests {
             let mut behavior = PhotoTreeBehavior {
                 docs: &mut app.docs,
                 active: &mut app.active,
+                filter_types: &[],
                 ctx: &photo_ctx,
                 actions: Vec::new(),
             };
@@ -505,6 +515,7 @@ mod tests {
             let mut behavior = PhotoTreeBehavior {
                 docs: &mut app.docs,
                 active: &mut app.active,
+                filter_types: &[],
                 ctx: &photo_ctx,
                 actions: Vec::new(),
             };
@@ -533,19 +544,46 @@ mod tests {
             .expect("document présent")
             .title
             .clone();
-        let mut behavior = PhotoTreeBehavior {
-            docs: &mut app.docs,
-            active: &mut app.active,
-            ctx: &photo_ctx,
-            actions: Vec::new(),
-        };
-        let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
-        assert!(
-            title.text().starts_with(expected.as_str()),
-            "titre inattendu : {}",
-            title.text()
-        );
-        assert!(title.text().contains('|'), "zoom absent du titre");
+        // Sans aperçu : nom + zoom (repli avant la première réponse).
+        {
+            let mut behavior = PhotoTreeBehavior {
+                docs: &mut app.docs,
+                active: &mut app.active,
+                filter_types: &[],
+                ctx: &photo_ctx,
+                actions: Vec::new(),
+            };
+            let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
+            assert!(
+                title.text().starts_with(expected.as_str()),
+                "titre inattendu : {}",
+                title.text()
+            );
+            assert!(title.text().contains('|'), "zoom absent du titre");
+        }
+        // Avec aperçu : la résolution rejoint le titre (jamais l'overlay).
+        app.active_doc_mut_opt().expect("doc actif").ui.preview_geom =
+            Some(crate::state::PreviewGeom {
+                thumb_size: egui::vec2(800.0, 600.0),
+                full_size: egui::vec2(800.0, 600.0),
+                origin: egui::Vec2::ZERO,
+                doc_size: egui::vec2(800.0, 600.0),
+            });
+        {
+            let mut behavior = PhotoTreeBehavior {
+                docs: &mut app.docs,
+                active: &mut app.active,
+                filter_types: &[],
+                ctx: &photo_ctx,
+                actions: Vec::new(),
+            };
+            let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
+            assert!(
+                title.text().contains("800x600"),
+                "résolution absente du titre : {}",
+                title.text()
+            );
+        }
     }
 
     #[test]
@@ -556,6 +594,7 @@ mod tests {
         let mut behavior = PhotoTreeBehavior {
             docs: &mut app.docs,
             active: &mut app.active,
+            filter_types: &[],
             ctx: &photo_ctx,
             actions: Vec::new(),
         };

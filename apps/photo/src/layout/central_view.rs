@@ -223,17 +223,14 @@ pub fn draw_canvas_content(
         }
     }
     // Overlays : cadre EXACT du document dans la miniature (stable
-    // quand un calque sort du cadre ou que la miniature réduit),
-    // dimensions en haut à gauche, puis cercle du pinceau/gomme.
-    let (doc_rect, label) = match (geom, outcome.dest_rect) {
-        (Some(g), Some(dest)) => {
-            let rect = g.doc_rect(dest);
-            let dims = format!("{} x {}", g.doc_size.x as u32, g.doc_size.y as u32);
-            (rect, Some(dims))
-        }
-        _ => (outcome.dest_rect, None),
+    // quand un calque sort du cadre ou que la miniature réduit) SANS
+    // libellé — la résolution vit dans le titre de l'onglet canevas.
+    // Puis cercle du pinceau/gomme.
+    let doc_rect = match (geom, outcome.dest_rect) {
+        (Some(g), Some(dest)) => g.doc_rect(dest),
+        _ => outcome.dest_rect,
     };
-    draw_document_bounds(ui.painter(), ctx, doc_rect, label.as_deref());
+    draw_document_bounds(ui.painter(), ctx, doc_rect, None);
     if matches!(
         doc.ui.tool,
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser

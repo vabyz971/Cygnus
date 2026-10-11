@@ -29,7 +29,9 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::AddImage => PhotoAction::AddImageLayer,
         LayerPanelAction::AddEmpty => PhotoAction::AddEmptyLayer,
         LayerPanelAction::Duplicate => PhotoAction::DuplicateSelectedLayer,
-        LayerPanelAction::OpenFilterMenu => PhotoAction::OpenFilterMenu,
+        LayerPanelAction::AddFilter { layer, filter_type } => {
+            PhotoAction::AddFilter { layer, filter_type }
+        }
         LayerPanelAction::AddMask => PhotoAction::AddMaskToSelected,
         LayerPanelAction::Delete => PhotoAction::DeleteSelectedLayer,
         LayerPanelAction::Select(id) => PhotoAction::SelectLayer(id),
@@ -128,6 +130,16 @@ mod tests {
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::DuplicateLayer(id)),
             PhotoAction::DuplicateLayer(id)
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::AddFilter {
+                layer: id,
+                filter_type: String::from("blur")
+            }),
+            PhotoAction::AddFilter {
+                layer: id,
+                filter_type: String::from("blur")
+            }
         );
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::SelectAttachment { owner: id, id }),

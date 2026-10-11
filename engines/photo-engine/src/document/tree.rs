@@ -48,14 +48,16 @@ impl Document {
         }
     }
 
-    /// Document vierge avec un premier calque transparent aux
-    /// dimensions du document (« Créer un document » sans image).
+    /// Document vierge avec un premier calque BLANC opaque aux
+    /// dimensions du document (« Créer un document » sans image,
+    /// façon Affinity : fond blanc, pas de damier transparent).
     pub fn with_blank_layer(width: u32, height: u32) -> Self {
         let mut doc = Self::new(width.max(1), height.max(1));
-        let blank = DynamicImage::new_rgba8(doc.width, doc.height);
+        let white =
+            image::RgbaImage::from_pixel(doc.width, doc.height, image::Rgba([255, 255, 255, 255]));
         doc.push_layer(LayerNode::Pixel(PixelLayer::new(
             "Calque 1",
-            Arc::new(blank),
+            Arc::new(DynamicImage::ImageRgba8(white)),
         )));
         doc
     }

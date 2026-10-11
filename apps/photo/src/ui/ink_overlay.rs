@@ -20,10 +20,16 @@
 //! MÊMES paramètres : une fois en transitoire dans
 //! [`photo_engine::interaction::InteractionOverlay`] (présenté chaque frame
 //! du drag), une fois au commit via `PaintRequest` → worker (chemin
-//! historique inchangé). Ce module garantit que les deux divergent jamais :
-//! [`ink_brush_params`] construit EXACTEMENT les paramètres du worker (cf.
-//! `engine_bridge`, bras `PaintStroke`), et [`ink_overlay_screen_rect`]
-//! place la région overlay à l'écran via la transform snapshotée du calque.
+//! historique inchangé). Les deux passent par le même `resample_stroke`
+//! (subdivision + Chaikin) : le transitoire montre les mêmes courbes que
+//! le commit, seul l'ancrage des jonctions inter-paquets diffère (écart
+//! borné aux disques de jonction, remplacé au `MouseUp` — voir
+//! `transient_proche_du_commit_avec_lissage`). Ce module garantit aussi
+//! que les paramètres sont identiques : [`ink_brush_params`] construit
+//! EXACTEMENT les paramètres du worker (cf. `engine_bridge`, bras
+//! `PaintStroke` — même rayon, même couleur, même opacité, même mode),
+//! et [`ink_overlay_screen_rect`] place la région overlay à l'écran via
+//! la transform snapshotée du calque.
 //!
 //! Aucun envoi worker ici : pendant le drag, l'app ne pousse AUCUNE action
 //! (zéro trafic, miniatures différées au commit). `clear_ink` vide l'état

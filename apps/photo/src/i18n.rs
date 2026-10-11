@@ -81,10 +81,6 @@ pub enum PhotoTextKey {
     NoLayers,
     /// Aucun calque sélectionné (inspecteur).
     NoLayerSelected,
-    /// Libellé « Filtres » (compteur inspecteur).
-    FiltersLabel,
-    /// Libellé « Masques » (compteur inspecteur).
-    MasksLabel,
     /// Libellé « Filtre live » (inspecteur).
     FilterLiveLabel,
     /// Libellé « Masque » (inspecteur).
@@ -93,18 +89,22 @@ pub enum PhotoTextKey {
     FilterActive,
     /// Interrupteur « Masque actif ».
     MaskActive,
-    /// Label « Visible » (en-tête calques).
-    VisibleLabel,
+    /// Curseur « Luminosité » (filtre).
+    FilterParamBrightness,
+    /// Curseur « Contraste » (filtre).
+    FilterParamContrast,
+    /// Curseur « Rayon » (filtre).
+    FilterParamRadius,
+    /// Curseur « Saturation » (filtre).
+    FilterParamSaturation,
+    /// Curseur « Teinte » (filtre).
+    FilterParamHue,
     /// Label « Opacité ».
     OpacityLabel,
     /// Label « Fusion ».
     BlendLabel,
-    /// Label « Filtre » (modale).
-    FilterLabel,
     /// Infobulle « Liste des filtres ».
     FilterList,
-    /// Titre « Ajouter un filtre » (modale).
-    AddFilterTitle,
     /// Bouton « Ouvrir une image… ».
     OpenImageFile,
     /// Titre de l'outil Déplacement.
@@ -273,17 +273,17 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::NoLayers,
     PhotoTextKey::NoLayerSelected,
     PhotoTextKey::FilterLiveLabel,
-    PhotoTextKey::FiltersLabel,
-    PhotoTextKey::MasksLabel,
     PhotoTextKey::MaskLabel,
     PhotoTextKey::FilterActive,
     PhotoTextKey::MaskActive,
-    PhotoTextKey::VisibleLabel,
+    PhotoTextKey::FilterParamBrightness,
+    PhotoTextKey::FilterParamContrast,
+    PhotoTextKey::FilterParamRadius,
+    PhotoTextKey::FilterParamSaturation,
+    PhotoTextKey::FilterParamHue,
     PhotoTextKey::OpacityLabel,
     PhotoTextKey::BlendLabel,
-    PhotoTextKey::FilterLabel,
     PhotoTextKey::FilterList,
-    PhotoTextKey::AddFilterTitle,
     PhotoTextKey::OpenImageFile,
     PhotoTextKey::MoveHint,
     PhotoTextKey::PanHint,
@@ -384,17 +384,17 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NoLayers => "Aucun calque",
         PhotoTextKey::NoLayerSelected => "Aucun calque selectionne",
         PhotoTextKey::FilterLiveLabel => "Filtre live",
-        PhotoTextKey::FiltersLabel => "Filtres",
-        PhotoTextKey::MasksLabel => "Masques",
         PhotoTextKey::MaskLabel => "Masque",
         PhotoTextKey::FilterActive => "Filtre actif",
         PhotoTextKey::MaskActive => "Masque actif",
-        PhotoTextKey::VisibleLabel => "Visible",
+        PhotoTextKey::FilterParamBrightness => "Luminosité",
+        PhotoTextKey::FilterParamContrast => "Contraste",
+        PhotoTextKey::FilterParamRadius => "Rayon",
+        PhotoTextKey::FilterParamSaturation => "Saturation",
+        PhotoTextKey::FilterParamHue => "Teinte",
         PhotoTextKey::OpacityLabel => "Opacité",
         PhotoTextKey::BlendLabel => "Fusion",
-        PhotoTextKey::FilterLabel => "Filtre",
         PhotoTextKey::FilterList => "Liste des filtres",
-        PhotoTextKey::AddFilterTitle => "Ajouter un filtre",
         PhotoTextKey::OpenImageFile => "Ouvrir une image…",
         PhotoTextKey::MoveHint => "Deplacer / selectionner",
         PhotoTextKey::PanHint => "Main (deplacer la vue)",
@@ -495,17 +495,17 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NoLayers => "No layers",
         PhotoTextKey::NoLayerSelected => "No layer selected",
         PhotoTextKey::FilterLiveLabel => "Live filter",
-        PhotoTextKey::FiltersLabel => "Filters",
-        PhotoTextKey::MasksLabel => "Masks",
         PhotoTextKey::MaskLabel => "Mask",
         PhotoTextKey::FilterActive => "Filter enabled",
         PhotoTextKey::MaskActive => "Mask enabled",
-        PhotoTextKey::VisibleLabel => "Visible",
+        PhotoTextKey::FilterParamBrightness => "Brightness",
+        PhotoTextKey::FilterParamContrast => "Contrast",
+        PhotoTextKey::FilterParamRadius => "Radius",
+        PhotoTextKey::FilterParamSaturation => "Saturation",
+        PhotoTextKey::FilterParamHue => "Hue",
         PhotoTextKey::OpacityLabel => "Opacity",
         PhotoTextKey::BlendLabel => "Blend",
-        PhotoTextKey::FilterLabel => "Filter",
         PhotoTextKey::FilterList => "Filter list",
-        PhotoTextKey::AddFilterTitle => "Add a filter",
         PhotoTextKey::OpenImageFile => "Open an image…",
         PhotoTextKey::MoveHint => "Move / select",
         PhotoTextKey::PanHint => "Hand (pan view)",

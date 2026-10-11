@@ -24,6 +24,7 @@
 //! repliés).
 
 use photo_engine::{BlendMode, Document, LayerNode};
+use std::collections::HashMap;
 use ui_kit::icons::Icon;
 use ui_kit::utils::DropPosition;
 use uuid::Uuid;
@@ -76,7 +77,7 @@ impl PhotoLayerKind {
 }
 
 /// Sous-calque affiché (filtre live ou masque) sous son porteur.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PhotoSubLayerInfo {
     /// Identifiant moteur (filtre ou masque).
     pub id: Uuid,
@@ -86,6 +87,14 @@ pub struct PhotoSubLayerInfo {
     pub is_filter: bool,
     /// Effet actif (œil de la ligne).
     pub enabled: bool,
+    /// `type_id` du registre d'effets (filtres uniquement, ex.
+    /// `"brightness_contrast"` ; vide pour les masques) : l'inspecteur
+    /// en déduit les curseurs de réglage.
+    pub filter_type: String,
+    /// Paramètres flottants courants du filtre (curseurs) ; vide pour
+    /// les masques. Seuls les `Float` voyagent (les `Enum`/`Text` du
+    /// registre ne sont pas éditables au curseur).
+    pub params: HashMap<String, f32>,
 }
 
 /// Désignation d'une pièce jointe focalisée (sélection secondaire
@@ -219,6 +228,12 @@ impl PhotoLayerInfo {
                         name: f.name.clone(),
                         is_filter: true,
                         enabled: f.enabled,
+                        filter_type: f.type_id.clone(),
+                        params: f
+                            .params
+                            .iter()
+                            .filter_map(|(key, value)| value.as_float().map(|v| (key.clone(), v)))
+                            .collect(),
                     })
                     .collect(),
                 pixels
@@ -229,6 +244,8 @@ impl PhotoLayerInfo {
                         name: m.name.clone(),
                         is_filter: false,
                         enabled: m.enabled,
+                        filter_type: String::new(),
+                        params: HashMap::new(),
                     })
                     .collect(),
             ),
@@ -242,6 +259,8 @@ impl PhotoLayerInfo {
                         name: m.name.clone(),
                         is_filter: false,
                         enabled: m.enabled,
+                        filter_type: String::new(),
+                        params: HashMap::new(),
                     })
                     .collect(),
             ),
@@ -323,6 +342,20 @@ pub fn find_layer_in(layers: &[PhotoLayerInfo], id: Uuid) -> Option<&PhotoLayerI
             return Some(layer);
         }
         if let Some(found) = find_layer_in(&layer.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Retrouve un calque mutable par id (mise à jour optimiste des
+/// réglages avant confirmation worker).
+pub fn find_layer_in_mut(layers: &mut [PhotoLayerInfo], id: Uuid) -> Option<&mut PhotoLayerInfo> {
+    for layer in layers {
+        if layer.id == id {
+            return Some(layer);
+        }
+        if let Some(found) = find_layer_in_mut(&mut layer.children, id) {
             return Some(found);
         }
     }

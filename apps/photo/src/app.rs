@@ -270,14 +270,31 @@ impl PhotoApp {
                     self.send_active(PhotoEngineCommand::AddMask { layer: id });
                 }
             }
-            PhotoAction::OpenFilterMenu => {
-                self.shell.filter_modal.open = self
-                    .active_doc_opt()
-                    .is_some_and(|doc| doc.ui.selected.is_some());
-                self.shell.filter_modal.choice = 0;
-            }
             PhotoAction::AddFilter { layer, filter_type } => {
                 self.send_active(PhotoEngineCommand::AddFilter { layer, filter_type });
+            }
+            PhotoAction::SetFilterParam {
+                layer,
+                filter,
+                key,
+                value,
+            } => {
+                // Optimiste : le curseur suit le geste sans attendre le
+                // thread background (coalescé côté worker).
+                if let Some(doc) = self.active_doc_mut_opt()
+                    && let Some(info) =
+                        crate::ui::features::layers::find_layer_in_mut(&mut doc.ui.layers, layer)
+                    && let Some(sub) = info.filters.iter_mut().find(|sub| sub.id == filter)
+                {
+                    sub.params.insert(key.clone(), value);
+                    doc.ui.needs_repaint = true;
+                }
+                self.send_active(PhotoEngineCommand::SetFilterParam {
+                    layer,
+                    filter,
+                    key,
+                    value,
+                });
             }
             PhotoAction::SelectLayer(id) => {
                 if let Some(doc) = self.active_doc_mut_opt() {

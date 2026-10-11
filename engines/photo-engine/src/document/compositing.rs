@@ -45,11 +45,18 @@ pub fn needs_fallback_in(nodes: &[LayerNode]) -> bool {
 // Buffers d'affichage
 // ---------------------------------------------------------------------------
 
-/// Buffer d'affichage interactif (downscale au-delà de 2048 px).
+/// Buffer d'affichage interactif (downscale au-delà de 2048 px,
+/// box-filter rapide : indiscernable à l'écran, ~10× plus vite que
+/// Triangle sur les documents d'impression).
 pub fn preview_buf(image: &DynamicImage) -> RgbaBuf {
     const MAX_PREVIEW: u32 = 2048;
     let (w, h) = image.dimensions();
-    if w.max(h) <= MAX_PREVIEW {
+    if let (DynamicImage::ImageRgba8(buf), Some((nw, nh))) =
+        (image, capped_thumbnail_dims(w, h, MAX_PREVIEW))
+    {
+        let out = fast_thumbnail_rgba8(buf, nw, nh);
+        RgbaBuf::from_vec(out.width(), out.height(), out.into_raw())
+    } else if w.max(h) <= MAX_PREVIEW {
         let rgba = image.to_rgba8();
         RgbaBuf::from_vec(rgba.width(), rgba.height(), rgba.into_raw())
     } else {
@@ -63,11 +70,20 @@ pub fn preview_buf(image: &DynamicImage) -> RgbaBuf {
     }
 }
 
-/// Miniature 48×32 pour le panneau Calques.
+/// Miniature 48×32 pour le panneau Calques (box-filter rapide :
+/// indiscernable à cette taille, ~20× plus vite que Triangle sur
+/// les documents d'impression).
 pub fn thumb_buf(img: &DynamicImage) -> RgbaBuf {
-    let t = img.resize(48, 32, ::image::imageops::FilterType::Triangle);
-    let rgba = t.to_rgba8();
-    RgbaBuf::from_vec(rgba.width(), rgba.height(), rgba.into_raw())
+    const NW: u32 = 48;
+    const NH: u32 = 32;
+    if let DynamicImage::ImageRgba8(buf) = img {
+        let out = fast_thumbnail_rgba8(buf, NW, NH);
+        RgbaBuf::from_vec(out.width(), out.height(), out.into_raw())
+    } else {
+        let t = img.resize(NW, NH, ::image::imageops::FilterType::Triangle);
+        let rgba = t.to_rgba8();
+        RgbaBuf::from_vec(rgba.width(), rgba.height(), rgba.into_raw())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1354,5 +1370,36 @@ mod downsample_tests {
                 "damier {nw}x{nh}"
             );
         }
+    }
+
+    #[test]
+    fn thumb_et_preview_buf_dims_et_contenu() {
+        // Miniature : dimensions exactes 48×32 même depuis un ratio
+        // portrait ; contenu uni préservé à ±1 (arrondis du box-filter).
+        let portrait =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(248, 350, Rgba([200, 40, 40, 255])));
+        let thumb = thumb_buf(&portrait);
+        assert_eq!((thumb.width, thumb.height), (48, 32));
+        for px in thumb.data.chunks_exact(4) {
+            for (got, want) in px.iter().zip([200, 40, 40, 255]) {
+                assert!(
+                    (*got as i16 - want as i16).abs() <= 1,
+                    "uni ⇒ miniature quasi unie : {px:?}"
+                );
+            }
+        }
+        // Preview : aspect préservé au plafond 2048, octets identiques
+        // à la référence (même box-filter que le chemin capé).
+        let wide =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(3000, 1000, Rgba([10, 20, 30, 255])));
+        let preview = preview_buf(&wide);
+        assert_eq!((preview.width, preview.height), (2048, 683));
+        let reference = wide.thumbnail(2048, 2048).to_rgba8();
+        assert_eq!(preview.data.as_ref(), reference.as_raw().as_slice());
+        // Sous le plafond : image native, zéro resample.
+        let small =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(100, 80, Rgba([1, 2, 3, 255])));
+        let kept = preview_buf(&small);
+        assert_eq!((kept.width, kept.height), (100, 80));
     }
 }

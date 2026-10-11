@@ -54,6 +54,7 @@ pub fn draw_layers_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
     ctx: &PhotoUiContext,
+    filter_types: &[(String, String)],
 ) -> Vec<PhotoAction> {
     // Annule un renommage orphelin avant affichage.
     if doc
@@ -77,6 +78,7 @@ pub fn draw_layers_content(
         &mut doc.ui.rename,
         &mut doc.ui.drag_state,
         &thumbs,
+        filter_types,
     )
     .into_iter()
     .map(layer_panel_action_to_photo)

@@ -33,5 +33,5 @@ pub use layer_item::LayerRenameState;
 pub use panel::LayersPanel;
 pub use types::{
     AttachmentRef, LayerThumbView, LayerTreeSelection, PhotoLayerInfo, PhotoLayerThumb,
-    find_layer_in, flattened_len, snapshot_layers, snapshot_layers_with,
+    find_layer_in, find_layer_in_mut, flattened_len, snapshot_layers, snapshot_layers_with,
 };

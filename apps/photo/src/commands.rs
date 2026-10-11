@@ -100,10 +100,20 @@ pub enum PhotoAction {
     DuplicateLayer(Uuid),
     /// Ajouter un masque au calque sélectionné (worker, sans effet si aucun).
     AddMaskToSelected,
-    /// Ouvrir la modale d'ajout de filtre.
-    OpenFilterMenu,
     /// Ajouter un filtre live (worker).
     AddFilter { layer: Uuid, filter_type: String },
+    /// Régler un paramètre flottant d'un filtre live (worker, geste
+    /// continu coalescé).
+    SetFilterParam {
+        /// Calque porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+        /// Clé du paramètre (ex. `"brightness"`).
+        key: String,
+        /// Nouvelle valeur.
+        value: f32,
+    },
     /// Sélectionner un calque (état UI local).
     SelectLayer(Uuid),
     /// Focaliser une pièce jointe (état UI local, porteur sélectionné aussi).

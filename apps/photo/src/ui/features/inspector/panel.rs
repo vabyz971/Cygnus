@@ -14,14 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Panneau Inspecteur : propriétés du calque sélectionné.
+//! Panneau Inspecteur : propriétés de la pièce jointe focalisée.
 //!
 //! Position-indépendant (le workspace décide du placement, titre
-//! porté par l'onglet dock). En-tête (nom, type, compteurs) +
-//! section pièce jointe focalisée. `None` = état vide explicite.
-//! Visibilité / opacité / fusion vivent dans le panneau Calques
-//! (en-tête de sélection) : jamais dupliquées ici. Aucun envoi
-//! worker : tout remonte en [`InspectorAction`].
+//! porté par l'onglet dock). La sélection d'un calque SEUL laisse le
+//! panneau vide (aucun duplicata de visibilité/opacité/fusion, qui
+//! vivent dans le panneau Calques) ; seule une pièce jointe
+//! focalisée (filtre live ou masque, clic sur sa rangée d'arbre)
+//! affiche sa section de réglages. `None` = état vide explicite.
+//! Aucun envoi worker : tout remonte en [`InspectorAction`].
 
 use super::sections::draw_attachment_section;
 use crate::commands::PhotoUiContext;
@@ -43,6 +44,17 @@ pub enum InspectorAction {
         /// Vrai = filtre live, faux = masque.
         is_filter: bool,
     },
+    /// Régler un paramètre flottant du filtre focalisé (curseurs).
+    SetFilterParam {
+        /// Calque porteur.
+        owner: Uuid,
+        /// Filtre visé.
+        id: Uuid,
+        /// Clé du paramètre (ex. `"brightness"`).
+        key: String,
+        /// Nouvelle valeur.
+        value: f32,
+    },
 }
 
 /// Panneau Inspecteur (contenu direct, sans chrome : le titre est
@@ -63,30 +75,20 @@ impl InspectorPanel {
             Text::body(theme, texts.get(crate::i18n::PhotoTextKey::NoLayerSelected)).show(ui);
             return Vec::new();
         };
-        Text::heading(theme, &layer.name).show(ui);
-        Text::body(
-            theme,
-            &format!(
-                "{} · {} : {} · {} : {}",
-                layer.kind.icon_label(texts),
-                texts.get(crate::i18n::PhotoTextKey::FiltersLabel),
-                layer.filters.len(),
-                texts.get(crate::i18n::PhotoTextKey::MasksLabel),
-                layer.masks.len()
-            ),
-        )
-        .show(ui);
-        let mut actions = Vec::new();
-        // Section pièce jointe : focus valide (porteur = sélection,
-        // id existant) ou rien (focus orphelin ignoré).
-        if let Some(focus) = focused
-            && focus.owner == layer.id
-            && let Some((sub, _)) =
-                find_attachment_in(std::slice::from_ref(layer), focus.owner, focus.id)
-        {
-            actions.extend(draw_attachment_section(ui, ctx, focus, sub));
+        // Calque seul : panneau vide (les réglages du calque vivent
+        // dans le panneau Calques). Seule une pièce jointe focalisée
+        // (porteur = sélection, id existant) affiche sa section.
+        let Some(focus) = focused else {
+            return Vec::new();
+        };
+        if focus.owner != layer.id {
+            return Vec::new();
         }
-        actions
+        let Some((sub, _)) = find_attachment_in(std::slice::from_ref(layer), focus.owner, focus.id)
+        else {
+            return Vec::new();
+        };
+        draw_attachment_section(ui, ctx, focus, sub)
     }
 }
 

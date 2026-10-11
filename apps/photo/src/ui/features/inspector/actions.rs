@@ -36,6 +36,17 @@ pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
                 PhotoAction::ToggleMask { owner, mask: id }
             }
         }
+        InspectorAction::SetFilterParam {
+            owner,
+            id,
+            key,
+            value,
+        } => PhotoAction::SetFilterParam {
+            layer: owner,
+            filter: id,
+            key,
+            value,
+        },
     }
 }
 
@@ -66,6 +77,20 @@ mod tests {
                 is_filter: false
             }),
             PhotoAction::ToggleMask { owner, mask: id }
+        );
+        assert_eq!(
+            inspector_action_to_photo(InspectorAction::SetFilterParam {
+                owner,
+                id,
+                key: String::from("brightness"),
+                value: 25.0
+            }),
+            PhotoAction::SetFilterParam {
+                layer: owner,
+                filter: id,
+                key: String::from("brightness"),
+                value: 25.0
+            }
         );
     }
 }

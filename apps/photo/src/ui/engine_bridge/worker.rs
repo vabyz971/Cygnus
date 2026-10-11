@@ -198,6 +198,7 @@ fn history_label(op: &str) -> String {
         "rotate_counterclockwise" => "Rotation antihoraire",
         "crop_to_document" => "Rogner au document",
         "toggle_filter" => "Basculer le filtre",
+        "set_filter_param" => "Réglage du filtre",
         "toggle_mask" => "Basculer le masque",
         _ => "Édition",
     })
@@ -1181,6 +1182,41 @@ impl EngineWorker {
                 }
                 Mutation::changed(invalidation)
             }
+            PhotoEngineCommand::SetFilterParam {
+                layer,
+                filter,
+                key,
+                value,
+            } => {
+                // Geste continu (curseurs) : garde-fous puis coalescence
+                // par filtre (un seul snapshot par geste, comme l'opacité
+                // par calque — `push_history(Some)` clef).
+                if !value.is_finite() || key.is_empty() {
+                    return Mutation::unchanged();
+                }
+                let known = matches!(
+                    self.document.find(layer),
+                    Some(photo_engine::LayerNode::Pixel(_))
+                ) && self.document.find_filter_layer(filter).is_some();
+                if !known {
+                    return Mutation::unchanged();
+                }
+                self.push_history(Some(filter));
+                if !self.document.set_filter_param(
+                    layer,
+                    filter,
+                    key.clone(),
+                    datatypes::ParamValue::Float(value),
+                ) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                let dirty = self
+                    .document
+                    .find(layer)
+                    .map_or(DirtyMark::Global, mark_for_node);
+                Mutation::changed(invalidation).with_dirty(dirty)
+            }
             PhotoEngineCommand::ToggleMask { owner, mask } => {
                 let Some(current) = self
                     .document
@@ -1799,6 +1835,71 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn set_filter_param_applies_coalesces_and_undoes() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        let filter = photo_engine::new_filter_layer("brightness_contrast").expect("filtre connu");
+        let fid = worker.document.add_filter(id, filter).expect("ajout");
+        let param = |worker: &EngineWorker| {
+            worker
+                .document
+                .find_filter_layer(fid)
+                .expect("filtre present")
+                .params
+                .get("brightness")
+                .and_then(|v| v.as_float())
+                .expect("param flottant")
+        };
+        assert_eq!(param(&worker), 0.0);
+        // Geste continu : 3 ticks coalescés en UN seul pas d'historique.
+        for value in [10.0, 20.0, 30.0] {
+            let response = worker.apply(PhotoEngineCommand::SetFilterParam {
+                layer: id,
+                filter: fid,
+                key: String::from("brightness"),
+                value,
+            });
+            assert!(
+                matches!(response, PhotoEngineResponse::LayersChanged { .. }),
+                "re-rendu attendu"
+            );
+        }
+        assert_eq!(param(&worker), 30.0);
+        assert_eq!(worker.undo.len(), 1, "geste coalescé");
+        assert_eq!(worker.undo[0].label, "Réglage du filtre");
+        // Garde-fous : NaN, clé vide, ids inconnus = no-op sans snapshot.
+        worker.apply(PhotoEngineCommand::SetFilterParam {
+            layer: id,
+            filter: fid,
+            key: String::from("brightness"),
+            value: f32::NAN,
+        });
+        worker.apply(PhotoEngineCommand::SetFilterParam {
+            layer: id,
+            filter: fid,
+            key: String::new(),
+            value: 5.0,
+        });
+        worker.apply(PhotoEngineCommand::SetFilterParam {
+            layer: Uuid::new_v4(),
+            filter: fid,
+            key: String::from("brightness"),
+            value: 5.0,
+        });
+        worker.apply(PhotoEngineCommand::SetFilterParam {
+            layer: id,
+            filter: Uuid::new_v4(),
+            key: String::from("brightness"),
+            value: 5.0,
+        });
+        assert_eq!(param(&worker), 30.0);
+        assert_eq!(worker.undo.len(), 1);
+        // Undo : retour à la valeur d'avant geste.
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(param(&worker), 0.0);
     }
 
     #[test]

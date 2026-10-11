@@ -168,6 +168,18 @@ pub enum PhotoEngineCommand {
         /// Filtre visé.
         filter: Uuid,
     },
+    /// Régler un paramètre flottant d'un filtre live (curseurs de
+    /// l'inspecteur, geste continu coalescé comme l'opacité).
+    SetFilterParam {
+        /// Calque pixels porteur.
+        layer: Uuid,
+        /// Filtre visé.
+        filter: Uuid,
+        /// Clé du paramètre (ex. `"brightness"`).
+        key: String,
+        /// Nouvelle valeur.
+        value: f32,
+    },
     /// Activer/désactiver un masque (bascule, sans perdre ses pixels).
     ToggleMask {
         /// Porteur (calque ou sous-calque de filtre).
@@ -248,6 +260,7 @@ impl PhotoEngineCommand {
             Self::RemoveMask { .. } => "remove_mask",
             Self::MoveFilter { .. } => "move_filter",
             Self::ToggleFilter { .. } => "toggle_filter",
+            Self::SetFilterParam { .. } => "set_filter_param",
             Self::ToggleMask { .. } => "toggle_mask",
             Self::MoveMask { .. } => "move_mask",
             Self::RemoveFilter { .. } => "remove_filter",
@@ -319,6 +332,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::DuplicateLayer(_)
         | PhotoEngineCommand::DeleteLayer(_)
         | PhotoEngineCommand::AddFilter { .. }
+        | PhotoEngineCommand::SetFilterParam { .. }
         | PhotoEngineCommand::ToggleFilter { .. }
         | PhotoEngineCommand::ToggleMask { .. }
         | PhotoEngineCommand::MoveFilter { .. }
@@ -441,7 +455,8 @@ pub(crate) fn mark_for_node(node: &photo_engine::LayerNode) -> DirtyMark {
 
 /// Replie un lot de commandes en attente (latest-value-wins) AVANT
 /// application : les `SetOpacity` consécutifs sur un même calque ne
-/// gardent que la dernière valeur, les `MoveLayer` consécutifs sont
+/// gardent que la dernière valeur (idem `SetFilterParam` par
+/// calque/filtre/clé), les `MoveLayer` consécutifs sont
 /// sommés (somme nulle = commande supprimée). Les valeurs
 /// intermédiaires ne remplissent donc jamais la file de rendu, et
 /// l'historique ne retient qu'une entrée par geste (coalescence
@@ -458,6 +473,23 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 PhotoEngineCommand::SetOpacity { layer, opacity },
             ) if prev == layer => {
                 *prev_op = *opacity;
+                true
+            }
+            (
+                Some(PhotoEngineCommand::SetFilterParam {
+                    layer: prev_layer,
+                    filter: prev_filter,
+                    key: prev_key,
+                    value: prev_value,
+                }),
+                PhotoEngineCommand::SetFilterParam {
+                    layer,
+                    filter,
+                    key,
+                    value,
+                },
+            ) if prev_layer == layer && prev_filter == filter && prev_key == key => {
+                *prev_value = *value;
                 true
             }
             (

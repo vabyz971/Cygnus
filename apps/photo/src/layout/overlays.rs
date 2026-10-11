@@ -18,73 +18,21 @@
 //!
 //! Les dialogs valident en données pures ; la validation remonte en
 //! [`PhotoAction`](crate::commands::PhotoAction) (création de
-//! document, export, ajout de filtre). L'app route ensuite.
+//! document, export). L'ajout de filtre passe par le menu contextuel
+//! du panneau Calques (jamais de modale). L'app route ensuite.
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::ui::{
     NewDocumentChoice, draw_create_document_dialog, draw_export_dialog, draw_help_dialog,
 };
-use ui_kit::components::Select;
-use ui_kit::dialogs::{CygnusModal, ModalAction};
 
-/// Toutes les modales (filtre, nouveau document, export, aide).
+/// Toutes les modales (nouveau document, export, aide).
 pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    actions.extend(draw_filter_modal(ui, app, ctx));
     actions.extend(draw_new_document_overlay(ui, app, ctx));
     actions.extend(draw_export_overlay(ui, app, ctx));
     draw_help_dialog(ctx, &mut app.shell.help_open);
-    actions
-}
-
-/// Modale d'ajout de filtre (registre moteur statique).
-fn draw_filter_modal(
-    ui: &mut egui::Ui,
-    app: &mut PhotoApp,
-    ctx: &PhotoUiContext,
-) -> Vec<PhotoAction> {
-    let mut actions = Vec::new();
-    if !app.shell.filter_modal.open {
-        return actions;
-    }
-    let names: Vec<&str> = app
-        .runtime
-        .filter_types
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect();
-    let mut open = true;
-    let mut choice = app.shell.filter_modal.choice;
-    let ctx_clone = ui.ctx().clone();
-    let theme = ctx.shared.theme();
-    let translator = ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
-    let action = CygnusModal::new(
-        texts.get(crate::i18n::PhotoTextKey::AddFilterTitle),
-        translator.get(ui_kit::i18n::TextKey::Add),
-        translator.get(ui_kit::i18n::TextKey::Cancel),
-    )
-    .show(&ctx_clone, &mut open, |ui| {
-        Select::new(texts.get(crate::i18n::PhotoTextKey::FilterLabel), &names).show(
-            ui,
-            theme,
-            &mut choice,
-        );
-    });
-    app.shell.filter_modal.open = open;
-    app.shell.filter_modal.choice = choice;
-    if action == Some(ModalAction::Confirm)
-        && let (Some(id), Some((_, type_id))) = (
-            app.active_doc_opt().and_then(|doc| doc.ui.selected),
-            app.runtime.filter_types.get(app.shell.filter_modal.choice),
-        )
-    {
-        actions.push(PhotoAction::AddFilter {
-            layer: id,
-            filter_type: type_id.clone(),
-        });
-    }
     actions
 }
 

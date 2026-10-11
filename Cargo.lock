@@ -2938,6 +2938,7 @@ name = "photo"
 version = "0.7.0"
 dependencies = [
  "app-shell",
+ "datatypes",
  "eframe",
  "egui",
  "egui_animation",

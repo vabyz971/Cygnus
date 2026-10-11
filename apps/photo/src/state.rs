@@ -210,15 +210,6 @@ pub struct PresentationTimings {
     pub preview_apply_us: u128,
 }
 
-/// Modale d'ajout de filtre (sélection dans le registre moteur).
-#[derive(Default)]
-pub struct FilterModalState {
-    /// Modale visible.
-    pub open: bool,
-    /// Index dans la liste des filtres.
-    pub choice: usize,
-}
-
 /// Un document ouvert : worker moteur + état UI.
 pub struct OpenDocument {
     /// Identifiant stable (onglet dock, persistance du layout).
@@ -249,8 +240,6 @@ pub struct PhotoShellState {
     /// manuel ci-dessous (arbre vide, reconstruit par l'app autour
     /// du premier document).
     pub tree: egui_tiles::Tree<PhotoDockTab>,
-    /// Modale d'ajout de filtre.
-    pub filter_modal: FilterModalState,
     /// Fenêtre « Créer un document » (format, dimensions, orientation).
     pub new_doc_dialog: CreateDocumentDialogState,
     /// Fenêtre « Exportation » (dossier, format, validation).
@@ -267,7 +256,6 @@ impl Default for PhotoShellState {
         Self {
             workspace: WorkspaceState::default(),
             tree: egui_tiles::Tree::empty("photo-tree"),
-            filter_modal: FilterModalState::default(),
             new_doc_dialog: CreateDocumentDialogState::default(),
             export_dialog: ExportDialogState::default(),
             help_open: false,
@@ -800,7 +788,6 @@ mod tests {
         use ui_kit::layout::PanelId;
         let shell = PhotoShellState::default();
         assert!(!shell.help_open);
-        assert!(!shell.filter_modal.open);
         assert!(shell.workspace.find(PanelId::Layers).is_some());
         assert!(shell.workspace.find(PanelId::Inspector).is_some());
     }

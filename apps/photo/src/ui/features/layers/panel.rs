@@ -33,7 +33,7 @@ use super::types::{
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
 use std::collections::HashMap;
-use ui_kit::components::{IconButton, Select, Slider, Toggle};
+use ui_kit::components::{IconButton, Select, Slider, menu_row, menu_style};
 use ui_kit::icons::Icon;
 use ui_kit::primitives::Text;
 use ui_kit::theme::CygnusTheme;
@@ -52,8 +52,14 @@ pub enum LayerPanelAction {
     AddEmpty,
     /// Dupliquer la sélection.
     Duplicate,
-    /// Ouvrir le menu d'ajout de filtre.
-    OpenFilterMenu,
+    /// Ajouter un filtre live au calque sélectionné (menu contextuel
+    /// du bouton, catalogue du registre moteur).
+    AddFilter {
+        /// Calque porteur.
+        layer: Uuid,
+        /// `type_id` du registre (ex. `"blur"`).
+        filter_type: String,
+    },
     /// Ajouter un masque au calque sélectionné.
     AddMask,
     /// Supprimer la sélection.
@@ -148,15 +154,25 @@ impl LayersPanel {
         rename: &mut LayerRenameState,
         drag_state: &mut ReorderDragState,
         thumbs: &HashMap<Uuid, LayerThumbView>,
+        filter_types: &[(String, String)],
     ) -> Vec<LayerPanelAction> {
-        draw_layers_panel(ui, ctx, layers, sel, rename, drag_state, thumbs)
+        draw_layers_panel(
+            ui,
+            ctx,
+            layers,
+            sel,
+            rename,
+            drag_state,
+            thumbs,
+            filter_types,
+        )
     }
 }
 
-/// En-tête : visibilité + opacité (slider coalescé côté worker) +
-/// mode de fusion de la sélection. Sans sélection, l'en-tête agit
-/// sur le calque du dessus (le premier changement le sélectionne) :
-/// visibilité et opacité restent toujours réglables.
+/// En-tête façon Affinity : opacité (slider coalescé côté worker) +
+/// mode de fusion de la sélection. Sans sélection, les contrôles sont
+/// désactivés (jamais d'adoption implicite du calque du dessus) ; la
+/// visibilité se règle à l'œil de chaque rangée, jamais ici.
 fn draw_selection_header(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
@@ -166,24 +182,30 @@ fn draw_selection_header(
 ) -> Vec<LayerPanelAction> {
     let texts = t.texts;
     let mut actions = Vec::new();
-    let target = selected
-        .and_then(|id| layers.iter().find(|item| item.id == id))
-        .or_else(|| layers.first());
-    let Some(layer) = target else {
-        Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
+    let Some(layer) = selected.and_then(|id| layers.iter().find(|item| item.id == id)) else {
+        if layers.is_empty() {
+            Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
+        } else {
+            // Contrôles inertes mais visibles (pas de calque visé).
+            ui.add_enabled_ui(false, |ui| {
+                let mut opacity = 100.0;
+                Slider::new(
+                    texts.get(crate::i18n::PhotoTextKey::OpacityLabel),
+                    0.0..=100.0,
+                )
+                .show(ui, theme, &mut opacity);
+                let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
+                let mut choice = 0;
+                Select::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel), &options).show(
+                    ui,
+                    theme,
+                    &mut choice,
+                );
+            });
+        }
         ui.separator();
         return actions;
     };
-    // Sans sélection, le premier changement adopte le calque du dessus.
-    let adopt = selected.is_none();
-    let mut visible = layer.visible;
-    Toggle::new(texts.get(crate::i18n::PhotoTextKey::VisibleLabel)).show(ui, theme, &mut visible);
-    if visible != layer.visible {
-        if adopt {
-            actions.push(LayerPanelAction::Select(layer.id));
-        }
-        actions.push(LayerPanelAction::ToggleVisibility(layer.id));
-    }
     // Unités moteur 0..=100 (comme l'inspecteur).
     let mut opacity = layer.opacity;
     Slider::new(
@@ -192,9 +214,6 @@ fn draw_selection_header(
     )
     .show(ui, theme, &mut opacity);
     if opacity != layer.opacity {
-        if adopt {
-            actions.push(LayerPanelAction::Select(layer.id));
-        }
         actions.push(LayerPanelAction::SetOpacity {
             layer: layer.id,
             opacity,
@@ -213,9 +232,6 @@ fn draw_selection_header(
     if let Some(mode) = BlendMode::ALL.get(choice)
         && *mode != layer.blend_mode
     {
-        if adopt {
-            actions.push(LayerPanelAction::Select(layer.id));
-        }
         actions.push(LayerPanelAction::SetBlendMode {
             layer: layer.id,
             mode: *mode,
@@ -268,6 +284,7 @@ fn draw_layers_panel(
     rename: &mut LayerRenameState,
     drag_state: &mut ReorderDragState,
     thumbs: &HashMap<Uuid, LayerThumbView>,
+    filter_types: &[(String, String)],
 ) -> Vec<LayerPanelAction> {
     let theme = ctx.shared.theme();
     let translator = ctx.shared.translator();
@@ -357,7 +374,7 @@ fn draw_layers_panel(
         actions.push(action);
     }
     // Barre de boutons bas : ajouter image, calque vide, dupliquer,
-    // masque, filtre, supprimer.
+    // masque, filtre (menu contextuel du catalogue), supprimer.
     ui.horizontal(|ui| {
         if IconButton::new(Icon::ImageIcon)
             .tooltip(texts.get(crate::i18n::PhotoTextKey::LayerFromImage))
@@ -388,15 +405,26 @@ fn draw_layers_panel(
             {
                 actions.push(LayerPanelAction::AddMask);
             }
-        });
-        if IconButton::new(Icon::Settings)
-            .tooltip(texts.get(crate::i18n::PhotoTextKey::FilterList))
-            .show(ui, theme)
-            .clicked()
-        {
-            actions.push(LayerPanelAction::OpenFilterMenu);
-        }
-        ui.add_enabled_ui(sel.selected.is_some(), |ui| {
+            // Menu contextuel d'ajout de filtre (façon Affinity : pas
+            // de modale, le catalogue s'ouvre au bouton).
+            let filter_resp = IconButton::new(Icon::Settings)
+                .tooltip(texts.get(crate::i18n::PhotoTextKey::FilterList))
+                .show(ui, theme);
+            egui::Popup::menu(&filter_resp)
+                .style(menu_style(theme))
+                .show(|ui| {
+                    for (name, type_id) in filter_types {
+                        if menu_row(ui, theme, name) {
+                            if let Some(layer) = sel.selected {
+                                actions.push(LayerPanelAction::AddFilter {
+                                    layer,
+                                    filter_type: type_id.clone(),
+                                });
+                            }
+                            ui.close();
+                        }
+                    }
+                });
             if IconButton::new(Icon::Delete)
                 .tooltip(texts.get(crate::i18n::PhotoTextKey::DeleteLayer))
                 .show(ui, theme)
@@ -444,6 +472,7 @@ mod tests {
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
+                    &[],
                 );
             });
         })
@@ -475,6 +504,7 @@ mod tests {
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
+                    &[],
                 );
             });
         })
@@ -502,6 +532,7 @@ mod tests {
                     &mut rename,
                     &mut drag_state,
                     &std::collections::HashMap::new(),
+                    &[],
                 );
             });
         })

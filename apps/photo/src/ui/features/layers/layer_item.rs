@@ -18,7 +18,9 @@
 //!
 //! Ligne en une rangée centrée (`Align::Center`) : chevron
 //! repli/dépli, bouton de visibilité, visualiseur du calque, nom
-//! éditable au double-clic, bouton de suppression en bout. Les
+//! éditable au double-clic (façon Affinity : aucune action
+//! destructive par rangée — suppression via le menu contextuel ou la
+//! barre du bas). Les
 //! filtres live et les masques sont des lignes enfants à part
 //! entière ([`draw_attachment_row`]), indentées sous leur porteur.
 //! AUCUN envoi moteur ici : toute interaction remonte via
@@ -337,16 +339,8 @@ pub fn draw_photo_layer_item(
                 rename.buffer = layer.name.clone();
             }
         }
-        // Bouton de suppression en bout de rangée.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if IconButton::new(Icon::Delete)
-                .tooltip(texts.get(PhotoTextKey::DeleteLayer))
-                .show(ui, &theme)
-                .clicked()
-            {
-                actions.push(LayerItemAction::DeleteLayer(layer.id));
-            }
-        });
+        // Pas de bouton de suppression par rangée (façon Affinity :
+        // suppression via le menu contextuel ou la barre du bas).
     });
     actions
 }
@@ -643,6 +637,11 @@ mod tests {
                         name: String::from("luminosite"),
                         is_filter: true,
                         enabled: true,
+                        filter_type: String::from("brightness_contrast"),
+                        params: std::collections::HashMap::from([
+                            (String::from("brightness"), 0.0),
+                            (String::from("contrast"), 0.0),
+                        ]),
                     },
                     false,
                     1,
@@ -657,6 +656,8 @@ mod tests {
                         name: String::from("masque 1"),
                         is_filter: false,
                         enabled: false,
+                        filter_type: String::new(),
+                        params: std::collections::HashMap::new(),
                     },
                     false,
                     1,
