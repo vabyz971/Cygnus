@@ -778,18 +778,59 @@ pub fn extents_visit(
                     half.0 = half.0.max((qx - doc_cx).abs());
                     half.1 = half.1.max((qy - doc_cy).abs());
                 }
+                // Enfants clippés : même espace, ils étendent la portée.
+                extents_visit(&l.children, doc_cx, doc_cy, resolve, half);
             }
         }
     }
 }
 
+/// Couverture de clipping d'un sous-rendu d'enfants par l'alpha du parent
+/// placé (`top` à l'offset `off_x`/`off_y` dans l'espace du `sub`) :
+/// `Alpha_enfant × Alpha_parent`, canal R (comme les masques de groupe),
+/// A = 255. Hors bornes du parent → 0 (invisible). Balayage parallèle
+/// comme `blend_into`, mêmes arrondis d'offset (entier).
+fn clip_cover_by_parent_alpha(
+    top: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    w: u32,
+    h: u32,
+    off_x: f32,
+    off_y: f32,
+) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    let (tw, th) = (top.width() as i32, top.height() as i32);
+    let ox = off_x.round() as i32;
+    let oy = off_y.round() as i32;
+    let t_raw = top.as_raw();
+    let mut out = ImageBuffer::from_pixel(w.max(1), h.max(1), Rgba([0, 0, 0, 255]));
+    if w == 0 || h == 0 {
+        return out;
+    }
+    out.as_flat_samples_mut()
+        .samples
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i as u32 % w) as i32;
+            let y = (i as u32 / w) as i32;
+            let tx = x - ox;
+            let ty = y - oy;
+            px[0] = if tx >= 0 && tx < tw && ty >= 0 && ty < th {
+                t_raw[(ty as u32 * tw as u32 + tx as u32) as usize * 4 + 3]
+            } else {
+                0
+            };
+        });
+    out
+}
+
 /// Fond récursivement une portée dans l'accumulateur (déjà dimensionné).
 /// Retourne true si au moins un élément a contribué.
 ///
-/// Pixel : transform + blend direct. Groupe : les enfants composent d'abord
-/// dans un buffer transparent, puis le résultat est fondu avec l'opacité et
-/// le mode du groupe. Ajustement : la chaîne s'applique à l'accumulateur,
-/// pondérée par opacité.
+/// Pixel : transform + blend direct (+ enfants clippés par son alpha).
+/// Groupe : les enfants composent d'abord dans un buffer transparent,
+/// les filtres imbriqués s'appliquent, puis le résultat est fondu avec
+/// l'opacité et le mode du groupe. Ajustement : la chaîne s'applique à
+/// l'accumulateur, pondérée par opacité (et restreinte par ses masques).
 pub fn fold_scope(
     nodes: &[LayerNode],
     acc: &mut ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -865,6 +906,29 @@ pub fn fold_scope_stats(
                 stats.layers_blended += 1;
                 stats.pixels_processed += acc_px;
                 contributed = true;
+                // Enfants imbriqués façon Affinity : composés AU-DESSUS du
+                // parent puis restreints à son alpha (masquage de découpage).
+                if !l.children.is_empty() {
+                    let mut sub = ImageBuffer::from_pixel(
+                        acc.width().max(1),
+                        acc.height().max(1),
+                        Rgba([0, 0, 0, 0]),
+                    );
+                    if fold_scope_stats(&l.children, &mut sub, origin_x, origin_y, resolve, stats) {
+                        let cover = clip_cover_by_parent_alpha(
+                            &top,
+                            sub.width(),
+                            sub.height(),
+                            ox + origin_x,
+                            oy + origin_y,
+                        );
+                        let t_clip = std::time::Instant::now();
+                        blend_into(acc, &sub, Some(&cover), 100.0, BlendMode::Normal, 0.0, 0.0);
+                        stats.blend_us += t_clip.elapsed().as_micros();
+                        stats.layers_blended += 1;
+                        stats.pixels_processed += acc_px;
+                    }
+                }
             }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {
@@ -876,6 +940,14 @@ pub fn fold_scope_stats(
                     Rgba([0, 0, 0, 0]),
                 );
                 if fold_scope_stats(&g.children, &mut sub, origin_x, origin_y, resolve, stats) {
+                    // Filtres imbriqués du groupe : appliqués au composite
+                    // des enfants APRÈS composition, AVANT les masques
+                    // (même ordre que les sous-calques d'un calque pixels).
+                    if g.filter_layers.iter().any(|f| f.enabled) {
+                        let src = Arc::new(DynamicImage::ImageRgba8(sub));
+                        let filtered = crate::filters::render_chain(&src, &g.filter_layers);
+                        sub = filtered.to_rgba8();
+                    }
                     let mask_buf = combine_group_masks(&g.masks, &sub);
                     let t_blend = std::time::Instant::now();
                     blend_into(
@@ -898,7 +970,8 @@ pub fn fold_scope_stats(
                     continue;
                 }
                 let t_blend = std::time::Instant::now();
-                let applied = apply_adjustment(acc, &a.filters, a.opacity);
+                let applied =
+                    apply_adjustment(acc, &a.filters, a.opacity, &a.masks, origin_x, origin_y);
                 stats.blend_us += t_blend.elapsed().as_micros();
                 if applied {
                     // Mix pleine surface (original + ajusté + fusion).
@@ -1105,13 +1178,28 @@ pub fn blur_support_px(radius: f32) -> u32 {
 /// GLOBAL conservateur (pleine cadre puis découpe — jamais de pixels faux).
 #[must_use]
 pub fn filter_spatial_scope(filter: &FilterNode) -> SpatialScope {
-    match filter.type_id.as_str() {
+    spatial_scope_of(&filter.type_id, &filter.params)
+}
+
+/// Portée d'un sous-calque de filtre (`FilterLayer`) ACTIF — même
+/// classification que [`filter_spatial_scope`] (mêmes `type_id`/`params`).
+/// Utilisée pour les filtres imbriqués de groupe (fenêtre de dépendance
+/// du compositing régional).
+#[must_use]
+pub fn filter_layer_spatial_scope(filter: &FilterLayer) -> SpatialScope {
+    spatial_scope_of(&filter.type_id, &filter.params)
+}
+
+fn spatial_scope_of(
+    type_id: &str,
+    params: &std::collections::HashMap<String, datatypes::ParamValue>,
+) -> SpatialScope {
+    match type_id {
         "brightness_contrast" | "color_correct" | "mix" | "input_image" | "output" => {
             SpatialScope::Local
         }
         "blur" => {
-            let r = filter
-                .params
+            let r = params
                 .get("radius")
                 .and_then(datatypes::ParamValue::as_float)
                 .unwrap_or(5.0);
@@ -1168,7 +1256,11 @@ pub fn scope_adjustment_window(nodes: &[LayerNode]) -> ScopeWindow {
 fn scope_adjustment_window_into(nodes: &[LayerNode], window: &mut ScopeWindow) {
     for node in nodes {
         match node {
-            LayerNode::Pixel(_) => {}
+            LayerNode::Pixel(l) => {
+                // Les enfants clippés ne sont que des pixels (pas d'effet
+                // global propre) : la récursion suffit.
+                scope_adjustment_window_into(&l.children, window);
+            }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {
                     continue;
@@ -1176,11 +1268,25 @@ fn scope_adjustment_window_into(nodes: &[LayerNode], window: &mut ScopeWindow) {
                 if g.masks.iter().any(|m| m.enabled) {
                     window.global = true;
                 }
+                // Filtres imbriqués du groupe : même fenêtre que les
+                // ajustements (un flou élargit la dépendance du halo).
+                for f in &g.filter_layers {
+                    if !f.enabled {
+                        continue;
+                    }
+                    window.add(filter_layer_spatial_scope(f));
+                }
                 scope_adjustment_window_into(&g.children, window);
             }
             LayerNode::Adjustment(a) => {
                 if !a.visible || a.opacity <= 0.01 {
                     continue;
+                }
+                // Masques d'ajustement : alignés sur l'origine du document
+                // (comme les masques de groupe), donc non invariants par
+                // décalage de fenêtre → repli global.
+                if a.masks.iter().any(|m| m.enabled) {
+                    window.global = true;
                 }
                 for f in &a.filters {
                     if !f.enabled {
@@ -1194,7 +1300,11 @@ fn scope_adjustment_window_into(nodes: &[LayerNode], window: &mut ScopeWindow) {
 }
 
 /// Applique une chaîne d'ajustements à l'accumulateur, pondérée par
-/// l'opacité (mix linéaire original ↔ ajusté). Retourne true si appliqué.
+/// l'opacité (mix linéaire original ↔ ajusté) et restreinte par la
+/// couverture combinée des masques (`masks`, espace document) :
+/// `dst = src·(1−w·c) + adj·(w·c)`. Sans masque actif, `c = 1` partout
+/// (mêmes opérations que le mix historique, bit-identiques).
+/// Retourne true si appliqué.
 ///
 /// L'accumulateur peut être une FENÊTRE (compositing régional) : chaque
 /// effet s'évalue sur les pixels fournis — l'appelant
@@ -1206,11 +1316,25 @@ pub fn apply_adjustment(
     acc: &mut ImageBuffer<Rgba<u8>, Vec<u8>>,
     filters: &[FilterNode],
     opacity: f32,
+    masks: &[LayerMask],
+    origin_x: f32,
+    origin_y: f32,
 ) -> bool {
     let weight = (opacity / 100.0).clamp(0.0, 1.0);
     if weight <= 0.0 || !filters.iter().any(|f| f.enabled) || acc.width() == 0 {
         return false;
     }
+    // Couverture combinée en espace accumulateur (`None` = aucun masque
+    // actif : 1.0 partout, zéro allocation). Mapping buffer → document :
+    // `doc = buffer − origin` (même convention que `blend_into`, offsets
+    // arrondis, transparent hors document).
+    let cover = combined_adjustment_coverage(
+        masks,
+        acc.width(),
+        acc.height(),
+        origin_x.round() as i32,
+        origin_y.round() as i32,
+    );
     let original = acc.clone();
     let adjusted = crate::filters::render_nodes(
         &Arc::new(DynamicImage::ImageRgba8(original.clone())),
@@ -1225,16 +1349,96 @@ pub fn apply_adjustment(
     let raw_acc = acc.as_flat_samples_mut().samples;
     let raw_orig = original.as_raw();
     let raw_adj = adjusted_buf.as_raw();
-    raw_acc
-        .par_chunks_exact_mut(4)
-        .zip(raw_orig.par_chunks_exact(4))
-        .zip(raw_adj.par_chunks_exact(4))
-        .for_each(|((dst, src), adj)| {
-            for c in 0..4 {
-                dst[c] = (src[c] as f32 * (1.0 - weight) + adj[c] as f32 * weight).round() as u8;
-            }
-        });
+    match cover {
+        None => raw_acc
+            .par_chunks_exact_mut(4)
+            .zip(raw_orig.par_chunks_exact(4))
+            .zip(raw_adj.par_chunks_exact(4))
+            .for_each(|((dst, src), adj)| {
+                for c in 0..4 {
+                    dst[c] =
+                        (src[c] as f32 * (1.0 - weight) + adj[c] as f32 * weight).round() as u8;
+                }
+            }),
+        Some(cov) => raw_acc
+            .par_chunks_exact_mut(4)
+            .zip(raw_orig.par_chunks_exact(4))
+            .zip(raw_adj.par_chunks_exact(4))
+            .zip(cov.par_chunks_exact(1))
+            .for_each(|(((dst, src), adj), cov)| {
+                let c = cov[0] as f32 / 255.0;
+                let w = weight * c;
+                for ch in 0..4 {
+                    dst[ch] = (src[ch] as f32 * (1.0 - w) + adj[ch] as f32 * w).round() as u8;
+                }
+            }),
+    }
     true
+}
+
+/// Couverture combinée des masques d'un ajustement, en espace
+/// accumulateur (`None` = aucun masque actif). Multiplicative,
+/// `inverted` respecté, 0 hors document (le masque ne couvre que le
+/// document, comme sa création `LayerMask::full` l'indique).
+fn combined_adjustment_coverage(
+    masks: &[LayerMask],
+    w: u32,
+    h: u32,
+    origin_x: i32,
+    origin_y: i32,
+) -> Option<Vec<u8>> {
+    let mut active = masks.iter().filter(|m| m.enabled);
+    let first = active.next()?;
+    // Zéros : `sample_mask_into` écrit chaque pixel (aucune lecture avant).
+    let mut cov = vec![0u8; w as usize * h as usize];
+    sample_mask_into(&mut cov, first, w, h, origin_x, origin_y);
+    for m in active {
+        sample_mask_multiply(&mut cov, m, w, h, origin_x, origin_y);
+    }
+    Some(cov)
+}
+
+/// Échantillonne un masque (espace document) dans `cov` (espace
+/// accumulateur) : `cov = v` (`inverted` → `255 − v`), 0 hors document.
+/// Balayage parallèle (un pixel = une entrée, comme `blend_into`).
+fn sample_mask_into(cov: &mut [u8], m: &LayerMask, w: u32, h: u32, ox: i32, oy: i32) {
+    debug_assert_eq!(cov.len(), w as usize * h as usize);
+    let (mw, mh) = (m.image.width() as i32, m.image.height() as i32);
+    let inverted = m.inverted;
+    let img = &m.image;
+    cov.par_chunks_exact_mut(1).enumerate().for_each(|(i, px)| {
+        let x = (i as u32 % w) as i32;
+        let y = (i as u32 / w) as i32;
+        let dx = x - ox;
+        let dy = y - oy;
+        px[0] = if dx >= 0 && dx < mw && dy >= 0 && dy < mh {
+            let p = img.get_pixel(dx as u32, dy as u32)[0];
+            if inverted { 255 - p } else { p }
+        } else {
+            0
+        };
+    });
+}
+
+/// Multiplie `cov` par l'échantillon du masque (même mapping).
+fn sample_mask_multiply(cov: &mut [u8], m: &LayerMask, w: u32, h: u32, ox: i32, oy: i32) {
+    debug_assert_eq!(cov.len(), w as usize * h as usize);
+    let (mw, mh) = (m.image.width() as i32, m.image.height() as i32);
+    let inverted = m.inverted;
+    let img = &m.image;
+    cov.par_chunks_exact_mut(1).enumerate().for_each(|(i, px)| {
+        let x = (i as u32 % w) as i32;
+        let y = (i as u32 / w) as i32;
+        let dx = x - ox;
+        let dy = y - oy;
+        let v = if dx >= 0 && dx < mw && dy >= 0 && dy < mh {
+            let p = img.get_pixel(dx as u32, dy as u32)[0];
+            if inverted { 255 - p } else { p }
+        } else {
+            0
+        };
+        px[0] = ((px[0] as u32 * v as u32) / 255) as u8;
+    });
 }
 
 #[cfg(test)]

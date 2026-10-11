@@ -4199,3 +4199,296 @@ fn dirty_tile_rects_via_worker() {
     assert!(!node_footprint(node).is_empty());
     assert_eq!(appearance_spread(&[]), tiles::Padding::ZERO);
 }
+
+// --- Imbrication hiérarchique (nesting façon Affinity) ---
+
+/// Construit un parent avec un enfant clippé : parent rouge 4×4 à (4,4),
+/// enfant bleu 8×8 à (0,0) — l'enfant ne transparaît que sur le parent.
+fn doc_parent_enfant() -> (Document, Uuid, Uuid) {
+    let rouge = solid(4, 4, [200, 40, 40, 255]);
+    let bleu = solid(8, 8, [40, 40, 200, 255]);
+    let mut doc = Document::new(8, 8);
+    let mut parent = PixelLayer::new("parent", arc(&rouge));
+    parent.transform.offset_x = 4.0;
+    parent.transform.offset_y = 4.0;
+    let pid = parent.id;
+    let enfant = PixelLayer::new("enfant", arc(&bleu));
+    let eid = enfant.id;
+    parent.children.push(LayerNode::Pixel(enfant));
+    doc.push_layer(LayerNode::Pixel(parent));
+    (doc, pid, eid)
+}
+
+#[test]
+fn enfant_clippe_restreint_a_l_alpha_du_parent() {
+    let (doc, pid, eid) = doc_parent_enfant();
+    // Helpers hiérarchiques : enfant trouvable, porteur connu.
+    assert_eq!(doc.find(eid).map(LayerNode::name), Some("enfant"));
+    assert!(
+        doc.find(pid)
+            .expect("parent")
+            .children()
+            .iter()
+            .any(|c| c.id() == eid)
+    );
+    let out = doc.composite_preview().expect("composite");
+    // Dans le parent (4..8) : bleu par-dessus le rouge.
+    assert_close(px(&out, 6, 6), [40, 40, 200, 255]);
+    assert_close(px(&out, 4, 4), [40, 40, 200, 255]);
+    // Hors parent : transparent (enfant clippé, pas de fond).
+    assert_eq!(px(&out, 0, 0)[3], 0);
+    assert_eq!(px(&out, 2, 7)[3], 0);
+}
+
+#[test]
+fn enfant_invisible_si_parent_transparent() {
+    // Parent alpha 0 : le clipping éteint aussi l'enfant (composite
+    // entièrement transparent, comme un calque transparent seul).
+    let vide = solid(2, 2, [200, 40, 40, 0]);
+    let bleu = solid(4, 4, [40, 40, 200, 255]);
+    let mut doc = Document::new(4, 4);
+    let mut parent = PixelLayer::new("parent", arc(&vide));
+    parent
+        .children
+        .push(LayerNode::Pixel(PixelLayer::new("enfant", arc(&bleu))));
+    doc.push_layer(LayerNode::Pixel(parent));
+    let out = doc.composite_preview().expect("cadre");
+    assert!(
+        out.to_rgba8().pixels().all(|p| p[3] == 0),
+        "enfant clippé par un parent invisible"
+    );
+}
+
+#[test]
+fn filtre_de_groupe_applique_apres_enfants() {
+    let gris = solid(2, 2, [100, 100, 100, 255]);
+    let mut doc = Document::new(2, 2);
+    let inner = pixel_node(&gris, 100.0, BlendMode::Normal, 0.0, 0.0);
+    let mut groupe = GroupLayer::new("g", vec![inner]);
+    let gid = groupe.id;
+    let mut f = FilterLayer::neutral("brightness_contrast", Default::default());
+    f.params
+        .insert("brightness".into(), ParamValue::Float(40.0));
+    let fid = f.id;
+    groupe.filter_layers.push(f);
+    doc.push_layer(LayerNode::Group(groupe));
+    // 100 + 40*2.55 = 202.
+    let out = doc.composite_preview().expect("composite");
+    assert_close(px(&out, 0, 0), [202, 202, 202, 255]);
+    // Retrait du filtre : valeurs d'origine (généralisation aux groupes).
+    assert!(doc.remove_filter(gid, fid).is_some());
+    let out = doc.composite_preview().expect("composite");
+    assert_close(px(&out, 0, 0), [100, 100, 100, 255]);
+}
+
+#[test]
+fn ops_filtres_groupe_miroir_pixels() {
+    // add/move/toggle/param/duplicate sur les filtres de groupe.
+    let gris = solid(2, 2, [100, 100, 100, 255]);
+    let mut doc = Document::new(2, 2);
+    let gid = {
+        let g = GroupLayer::new(
+            "g",
+            vec![pixel_node(&gris, 100.0, BlendMode::Normal, 0.0, 0.0)],
+        );
+        let id = g.id;
+        doc.push_layer(LayerNode::Group(g));
+        id
+    };
+    let fa = doc
+        .add_filter(
+            gid,
+            FilterLayer::neutral("brightness_contrast", Default::default()),
+        )
+        .expect("add_filter groupe");
+    let fb = doc
+        .add_filter(
+            gid,
+            FilterLayer::neutral("color_correct", Default::default()),
+        )
+        .expect("add_filter groupe");
+    assert!(doc.set_filter_enabled(gid, fa, false));
+    assert!(doc.set_filter_param(gid, fb, "saturation", ParamValue::Float(2.0)));
+    assert!(doc.move_filter(gid, fa, true));
+    let fc = doc.duplicate_filter(gid, fb).expect("duplicate groupe");
+    assert_ne!(fc, fb);
+    assert!(
+        doc.find_filter_layer(fa).is_some(),
+        "trouvé via la recherche"
+    );
+    assert_eq!(doc.find_filter_parent(fa), Some(gid), "porteur = groupe");
+    // Ordre : [b, copie_b, a] après montée de a.
+    let order: Vec<Uuid> = match doc.find(gid).expect("groupe") {
+        LayerNode::Group(g) => g.filter_layers.iter().map(|f| f.id).collect(),
+        _ => panic!("groupe attendu"),
+    };
+    assert_eq!(order, vec![fb, fc, fa]);
+}
+
+#[test]
+fn masque_d_ajustement_restreint_l_effet() {
+    // Doc 2×1 gris 100, brightness +40, masque noir à gauche / blanc à droite.
+    let gris = solid(2, 1, [100, 100, 100, 255]);
+    let mut doc = Document::new(2, 1);
+    doc.push_layer(pixel_node(&gris, 100.0, BlendMode::Normal, 0.0, 0.0));
+    let mut f = FilterNode::new("brightness_contrast");
+    f.params
+        .insert("brightness".into(), ParamValue::Float(40.0));
+    let mut adj = AdjustmentLayer::new("ajust", vec![f]);
+    let mut buf = ImageBuffer::from_pixel(2, 1, Rgba([255, 255, 255, 255]));
+    buf.put_pixel(0, 0, Rgba([0, 0, 0, 255]));
+    let mut m = LayerMask::full(2, 1);
+    m.image = Arc::new(buf);
+    adj.masks.push(m);
+    doc.push_layer(LayerNode::Adjustment(adj));
+    let out = doc.composite_preview().expect("composite");
+    assert_close(px(&out, 0, 0), [100, 100, 100, 255]);
+    assert_close(px(&out, 1, 0), [202, 202, 202, 255]);
+}
+
+#[test]
+fn invalidation_ciblee_touche_seulement_la_branche() {
+    // Deux frères : une mutation sur A fait MISS sur A, HIT sur B.
+    let img = solid(2, 2, [120, 120, 120, 255]);
+    let mut doc = Document::new(2, 2);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("b", arc(&img))));
+    let ida = doc.root[0].id();
+    let idb = doc.root[1].id();
+    let _ = doc.appearance(ida);
+    let _ = doc.appearance(idb);
+    let (_, misses0) = doc.renderer_stats();
+    doc.add_filter(
+        ida,
+        FilterLayer::neutral("brightness_contrast", Default::default()),
+    )
+    .expect("filtre sur A");
+    let _ = doc.appearance(ida);
+    let _ = doc.appearance(idb);
+    let (hits1, misses1) = doc.renderer_stats();
+    assert_eq!(misses1, misses0 + 1, "un seul MISS (branche A)");
+    assert!(hits1 > 0, "le frère B ressert son cache");
+}
+
+#[test]
+fn signature_tuiles_couvre_le_nesting() {
+    use crate::tile_key::tile_content_signature;
+    let img = solid(2, 2, [10, 10, 10, 255]);
+    let mut doc = Document::new(2, 2);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
+    let ida = doc.root[0].id();
+    let base = tile_content_signature(&doc);
+    // Enfant clippé → signature change.
+    doc.add_child(ida, LayerNode::Pixel(PixelLayer::new("e", arc(&img))));
+    let avec_enfant = tile_content_signature(&doc);
+    assert_ne!(avec_enfant, base, "enfant invalide le parent");
+    // Filtre de groupe → signature change.
+    let mut doc2 = Document::new(2, 2);
+    doc2.push_layer(LayerNode::Group(GroupLayer::new(
+        "g",
+        vec![LayerNode::Pixel(PixelLayer::new("a", arc(&img)))],
+    )));
+    let gid = doc2.root[0].id();
+    let base2 = tile_content_signature(&doc2);
+    doc2.add_filter(
+        gid,
+        FilterLayer::neutral("brightness_contrast", Default::default()),
+    );
+    assert_ne!(
+        tile_content_signature(&doc2),
+        base2,
+        "filtre de groupe invalide"
+    );
+    // Masque d'ajustement → signature change.
+    let mut doc3 = Document::new(2, 2);
+    doc3.push_layer(pixel_node(&img, 100.0, BlendMode::Normal, 0.0, 0.0));
+    let mut adj = AdjustmentLayer::new("aj", vec![]);
+    let aid = adj.id;
+    doc3.push_layer(LayerNode::Adjustment(adj));
+    let base3 = tile_content_signature(&doc3);
+    let masks = doc3.masks_of_mut(aid).expect("masques ajustement");
+    masks.push(LayerMask::full(2, 2));
+    assert_ne!(
+        tile_content_signature(&doc3),
+        base3,
+        "masque d'ajustement invalide"
+    );
+    // Sans mutation : signature stable.
+    assert_eq!(tile_content_signature(&doc3), tile_content_signature(&doc3));
+}
+
+#[test]
+fn mark_region_couvre_enfants_et_filtres_de_groupe() {
+    use crate::tiles::node_mark_region;
+    // Enfant décalé hors parent : la région couvre l'enfant.
+    let fond = solid(2, 2, [10, 10, 10, 255]);
+    let mut parent = PixelLayer::new("p", arc(&fond));
+    let mut enfant = PixelLayer::new("e", arc(&fond));
+    enfant.transform.offset_x = 10.0;
+    enfant.transform.offset_y = 10.0;
+    parent.children.push(LayerNode::Pixel(enfant));
+    let node = LayerNode::Pixel(parent);
+    let region = node_mark_region(&node);
+    assert!(region.contains(0, 0), "parent couvert");
+    assert!(region.contains(11, 11), "enfant décalé couvert");
+    // Filtre blur sur groupe : la région déborde du spread.
+    let mut g = GroupLayer::new(
+        "g",
+        vec![LayerNode::Pixel(PixelLayer::new("a", arc(&fond)))],
+    );
+    let mut blur = FilterLayer::neutral("blur", Default::default());
+    blur.params.insert("radius".into(), ParamValue::Float(5.0));
+    g.filter_layers.push(blur);
+    let plain = {
+        let g0 = GroupLayer::new(
+            "g",
+            vec![LayerNode::Pixel(PixelLayer::new("a", arc(&fond)))],
+        );
+        node_mark_region(&LayerNode::Group(g0))
+    };
+    let blurred = node_mark_region(&LayerNode::Group(g));
+    assert!(
+        blurred.area() >= plain.area(),
+        "le halo du flou élargit la région"
+    );
+}
+
+#[test]
+fn helpers_hierarchiques_et_add_child() {
+    let img = solid(1, 1, [1, 1, 1, 255]);
+    let mut doc = Document::new(1, 1);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("p", arc(&img))));
+    doc.push_layer(LayerNode::Group(GroupLayer::new("g", vec![])));
+    doc.push_layer(LayerNode::Adjustment(AdjustmentLayer::new("a", vec![])));
+    let (pid, gid, aid) = (doc.root[0].id(), doc.root[1].id(), doc.root[2].id());
+    // children() : pixels + groupes, jamais ajustements.
+    assert!(doc.find(pid).expect("p").children().is_empty());
+    assert!(doc.find(gid).expect("g").children().is_empty());
+    assert!(doc.find(aid).expect("a").children().is_empty());
+    // filter_layers() : pixels + groupes.
+    assert!(doc.find(pid).expect("p").filter_layers().is_some());
+    assert!(doc.find(gid).expect("g").filter_layers().is_some());
+    assert!(doc.find(aid).expect("a").filter_layers().is_none());
+    // masks() : les trois variantes.
+    assert!(doc.find(aid).expect("a").masks().is_empty());
+    // add_child : pixels + groupes, refus ajustement.
+    let cid = {
+        let c = PixelLayer::new("c", arc(&img));
+        let id = c.id;
+        assert!(doc.add_child(pid, LayerNode::Pixel(c)));
+        id
+    };
+    assert_eq!(doc.find(cid).map(LayerNode::name), Some("c"));
+    let c2 = PixelLayer::new("c2", arc(&img));
+    assert!(doc.add_child(gid, LayerNode::Pixel(c2)));
+    let c3 = PixelLayer::new("c3", arc(&img));
+    assert!(
+        !doc.add_child(aid, LayerNode::Pixel(c3)),
+        "ajustement sans enfants"
+    );
+    assert!(doc.find_mut(aid).expect("a").children_mut().is_none());
+    // Anti-cycle via les enfants de pixels : le parent ne peut pas
+    // rejoindre son propre sous-arbre.
+    assert!(!doc.can_reorder_before(pid, cid));
+    assert!(doc.can_reorder_before(cid, pid));
+}

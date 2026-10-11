@@ -242,6 +242,11 @@ impl LayerMask {
 /// L'image source ne change que lors d'événements explicites (peinture,
 /// import, édition destructive volontaire) ; tout le reste vit dans les
 /// filtres ou la transformation.
+///
+/// Les `children` sont des calques imbriqués façon Affinity : composés
+/// AU-DESSUS du parent puis restreints à son alpha (masquage de
+/// découpage — `Alpha_enfant × Alpha_parent`). Même espace que le
+/// porteur (pas de transform héritée, comme les masques).
 #[derive(Clone, Debug)]
 pub struct PixelLayer {
     pub id: Uuid,
@@ -250,6 +255,9 @@ pub struct PixelLayer {
     /// Sous-calques de filtres non destructifs (façon Affinity — ordre =
     /// ordre d'application, index 0 = premier).
     pub filter_layers: Vec<FilterLayer>,
+    /// Enfants clippés (nesting) : même espace, ordre bas → haut comme
+    /// la racine (index 0 = dessous).
+    pub children: Vec<LayerNode>,
     pub transform: Transform2D,
     /// 0..=100
     pub opacity: f32,
@@ -270,6 +278,7 @@ impl PixelLayer {
             name: name.into(),
             source_image: image,
             filter_layers: Vec::new(),
+            children: Vec::new(),
             transform: Transform2D::default(),
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
@@ -301,11 +310,17 @@ impl PixelLayer {
 /// résultat est fondu dans le parent avec l'opacité/mode DU GROUPE.
 /// Les transforms des enfants restent en coordonnées canvas (pas de
 /// transform héritée — comme Affinity).
+///
+/// Les `filter_layers` sont des filtres imbriqués du groupe : appliqués
+/// au composite des enfants APRÈS composition, AVANT les masques du
+/// groupe (même ordre que les sous-calques d'un calque pixels).
 #[derive(Clone, Debug)]
 pub struct GroupLayer {
     pub id: Uuid,
     pub name: String,
     pub children: Vec<LayerNode>,
+    /// Filtres imbriqués du groupe (ordre d'application, index 0 = premier).
+    pub filter_layers: Vec<FilterLayer>,
     /// État d'affichage du panneau Calques (replié/déplié)
     pub collapsed: bool,
     pub opacity: f32,
@@ -321,6 +336,7 @@ impl GroupLayer {
             id: Uuid::new_v4(),
             name: name.into(),
             children,
+            filter_layers: Vec::new(),
             collapsed: false,
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
@@ -332,6 +348,9 @@ impl GroupLayer {
 
 /// Calque d'ajustement : sa chaîne de filtres s'applique à la COMPOSITE
 /// accumulée en dessous de lui, dans la limite de son groupe.
+///
+/// Les `masks` restreignent la zone d'effet (pondération de la couverture,
+/// comme les masques de calque) — façon Affinity.
 #[derive(Clone, Debug)]
 pub struct AdjustmentLayer {
     pub id: Uuid,
@@ -340,6 +359,8 @@ pub struct AdjustmentLayer {
     /// Pondération de l'ajustement (0 = invisible, 100 = plein)
     pub opacity: f32,
     pub visible: bool,
+    /// Masques de couverture — restreignent la zone d'effet.
+    pub masks: Vec<LayerMask>,
 }
 
 impl AdjustmentLayer {
@@ -350,6 +371,7 @@ impl AdjustmentLayer {
             filters,
             opacity: 100.0,
             visible: true,
+            masks: Vec::new(),
         }
     }
 }
@@ -455,12 +477,13 @@ impl LayerNode {
         }
     }
 
-    /// Tous les masques de couverture d'un calque pixels ou groupe.
+    /// Tous les masques de couverture d'un calque pixels, groupe ou
+    /// ajustement.
     pub fn masks(&self) -> &[LayerMask] {
         match self {
             LayerNode::Pixel(l) => &l.masks,
             LayerNode::Group(g) => &g.masks,
-            LayerNode::Adjustment(_) => &[],
+            LayerNode::Adjustment(a) => &a.masks,
         }
     }
 
@@ -468,6 +491,44 @@ impl LayerNode {
         match self {
             LayerNode::Pixel(l) => Some(&mut l.masks),
             LayerNode::Group(g) => Some(&mut g.masks),
+            LayerNode::Adjustment(a) => Some(&mut a.masks),
+        }
+    }
+
+    /// Enfants de contenu (nesting) : calques pixels (clippés par l'alpha
+    /// du parent) et groupes. Les ajustements n'ont pas d'enfants
+    /// (`&[]` / `None`).
+    pub fn children(&self) -> &[LayerNode] {
+        match self {
+            LayerNode::Pixel(l) => &l.children,
+            LayerNode::Group(g) => &g.children,
+            LayerNode::Adjustment(_) => &[],
+        }
+    }
+
+    pub fn children_mut(&mut self) -> Option<&mut Vec<LayerNode>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&mut l.children),
+            LayerNode::Group(g) => Some(&mut g.children),
+            LayerNode::Adjustment(_) => None,
+        }
+    }
+
+    /// Sous-calques de filtres ([`FilterLayer`]) : calques pixels et
+    /// groupes. Les ajustements portent des [`FilterNode`] simples (voir
+    /// [`Self::filters`]).
+    pub fn filter_layers(&self) -> Option<&Vec<FilterLayer>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&l.filter_layers),
+            LayerNode::Group(g) => Some(&g.filter_layers),
+            LayerNode::Adjustment(_) => None,
+        }
+    }
+
+    pub fn filter_layers_mut(&mut self) -> Option<&mut Vec<FilterLayer>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&mut l.filter_layers),
+            LayerNode::Group(g) => Some(&mut g.filter_layers),
             LayerNode::Adjustment(_) => None,
         }
     }
@@ -499,6 +560,7 @@ impl LayerNode {
 
     /// Réassigne des identifiants frais (duplication) et invalide l'apparence.
     /// Les masques sont inclus : ils sont adressés par id (miniatures UI).
+    /// Récursif sur toute la hiérarchie imbriquée (enfants + filtres).
     pub(crate) fn regenerate_ids(&mut self) {
         match self {
             LayerNode::Pixel(l) => {
@@ -512,10 +574,19 @@ impl LayerNode {
                 for m in &mut l.masks {
                     m.id = Uuid::new_v4();
                 }
+                for c in &mut l.children {
+                    c.regenerate_ids();
+                }
                 l.touch();
             }
             LayerNode::Group(g) => {
                 g.id = Uuid::new_v4();
+                for f in &mut g.filter_layers {
+                    f.id = Uuid::new_v4();
+                    for m in &mut f.masks {
+                        m.id = Uuid::new_v4();
+                    }
+                }
                 for m in &mut g.masks {
                     m.id = Uuid::new_v4();
                 }
@@ -527,6 +598,9 @@ impl LayerNode {
                 a.id = Uuid::new_v4();
                 for f in &mut a.filters {
                     f.id = Uuid::new_v4();
+                }
+                for m in &mut a.masks {
+                    m.id = Uuid::new_v4();
                 }
             }
         }

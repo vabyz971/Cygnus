@@ -241,9 +241,9 @@ impl Document {
         if self.find(dragged).is_none() || self.find(target).is_none() {
             return false;
         }
-        // Empêche de déplacer un groupe dans son propre sous-arbre
-        if let Some(LayerNode::Group(groupe)) = self.find(dragged)
-            && Self::contains_id(&groupe.children, target)
+        // Empêche de déplacer un nœud dans son propre sous-arbre
+        if let Some(dragged_node) = self.find(dragged)
+            && Self::contains_id(dragged_node.children(), target)
         {
             return false;
         }
@@ -279,10 +279,28 @@ impl Document {
         let Some(LayerNode::Group(_groupe)) = self.find(group) else {
             return false;
         };
-        if let Some(LayerNode::Group(dragged_groupe)) = self.find(dragged)
-            && Self::contains_id(&dragged_groupe.children, group)
+        if let Some(dragged_node) = self.find(dragged)
+            && Self::contains_id(dragged_node.children(), group)
         {
             return false;
+        }
+        true
+    }
+
+    /// Imbrique `node` en tête des enfants de `parent` (groupe, ou calque
+    /// pixels comme enfant clippé façon Affinity). Retourne faux si le
+    /// parent n'accepte pas d'enfants (ajustement) ou est inconnu.
+    /// Le parent est touché (invalidation d'apparence) s'il est pixels.
+    pub fn add_child(&mut self, parent: Uuid, node: LayerNode) -> bool {
+        let Some(target) = self.find_mut(parent) else {
+            return false;
+        };
+        let Some(children) = target.children_mut() else {
+            return false;
+        };
+        children.insert(0, node);
+        if let LayerNode::Pixel(l) = target {
+            l.touch();
         }
         true
     }
@@ -319,9 +337,7 @@ impl Document {
             if n.id() == id {
                 return true;
             }
-            if let LayerNode::Group(g) = n
-                && Self::contains_id(&g.children, id)
-            {
+            if Self::contains_id(n.children(), id) {
                 return true;
             }
         }
@@ -565,45 +581,52 @@ impl Document {
 
     // -- Filtres dynamiques ----------------------------------------------------
 
-    /// Ajoute un sous-calque de filtre en fin de chaîne d'un calque pixels.
-    /// Pour un ajustement, le sous-calque est converti en filtre simple
-    /// (les ajustements portent opacité/fusion au niveau du calque).
-    /// Retourne l'id du filtre inséré.
+    /// Ajoute un sous-calque de filtre en fin de chaîne d'un calque pixels
+    /// ou d'un groupe (filtre imbriqué du groupe, appliqué après ses
+    /// enfants). Pour un ajustement, le sous-calque est converti en
+    /// filtre simple (les ajustements portent opacité/fusion au niveau
+    /// du calque). Retourne l'id du filtre inséré.
     pub fn add_filter(&mut self, layer_id: Uuid, filter: FilterLayer) -> Option<Uuid> {
         let fid = filter.id;
         match self.find_mut(layer_id)? {
             LayerNode::Pixel(l) => l.filter_layers.push(filter),
+            LayerNode::Group(g) => g.filter_layers.push(filter),
             LayerNode::Adjustment(a) => a.filters.push(FilterNode {
                 id: filter.id,
                 type_id: filter.type_id,
                 params: filter.params,
                 enabled: filter.enabled,
             }),
-            LayerNode::Group(_) => return None,
         }
         self.touch_pixel(layer_id);
         Some(fid)
     }
 
-    /// Retire un sous-calque de filtre (pixels) ou un filtre d'ajustement.
+    /// Retire un sous-calque de filtre (pixels, groupe) ou un filtre
+    /// d'ajustement.
     pub fn remove_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<FilterLayer> {
         let removed = match self.find_mut(layer_id)? {
             LayerNode::Pixel(l) => {
                 let idx = l.filter_layers.iter().position(|f| f.id == filter_id)?;
                 l.filter_layers.remove(idx)
             }
+            LayerNode::Group(g) => {
+                let idx = g.filter_layers.iter().position(|f| f.id == filter_id)?;
+                g.filter_layers.remove(idx)
+            }
             LayerNode::Adjustment(a) => {
                 let idx = a.filters.iter().position(|f| f.id == filter_id)?;
                 let f = a.filters.remove(idx);
                 FilterLayer::from_node(f)
             }
-            LayerNode::Group(_) => return None,
         };
         self.touch_pixel(layer_id);
         Some(removed)
     }
 
     /// Modifie un paramètre de filtre (geste continu : coalescence côté app).
+    /// Couvre les sous-calques des pixels et des groupes, et les filtres
+    /// simples des ajustements.
     pub fn set_filter_param(
         &mut self,
         layer_id: Uuid,
@@ -618,12 +641,17 @@ impl Document {
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.params),
+            Some(LayerNode::Group(g)) => g
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.params),
             Some(LayerNode::Adjustment(a)) => a
                 .filters
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.params),
-            _ => None,
+            None => None,
         };
         let Some(params) = params else {
             return false;
@@ -633,10 +661,16 @@ impl Document {
         true
     }
 
-    /// Active/désactive un filtre sans perdre ses réglages.
+    /// Active/désactive un filtre sans perdre ses réglages (pixels,
+    /// groupes imbriqués, ajustements).
     pub fn set_filter_enabled(&mut self, layer_id: Uuid, filter_id: Uuid, enabled: bool) -> bool {
         let target = match self.find_mut(layer_id) {
             Some(LayerNode::Pixel(l)) => l
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.enabled),
+            Some(LayerNode::Group(g)) => g
                 .filter_layers
                 .iter_mut()
                 .find(|f| f.id == filter_id)
@@ -646,7 +680,7 @@ impl Document {
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.enabled),
-            _ => None,
+            None => None,
         };
         let Some(slot) = target else {
             return false;
@@ -685,12 +719,15 @@ impl Document {
     }
 
     /// Déplace un sous-calque de filtre dans la chaîne de son parent
-    /// (ordre = ordre d'application, façon Affinity).
+    /// (pixels ou groupe — ordre = ordre d'application, façon Affinity).
     pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool {
-        let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) else {
+        let Some(node) = self.find_mut(layer_id) else {
             return false;
         };
-        let Some(idx) = l.filter_layers.iter().position(|f| f.id == filter_id) else {
+        let Some(filters) = node.filter_layers_mut() else {
+            return false;
+        };
+        let Some(idx) = filters.iter().position(|f| f.id == filter_id) else {
             return false;
         };
         let other = if up {
@@ -701,29 +738,33 @@ impl Document {
         let Some(other) = other else {
             return false;
         };
-        if other >= l.filter_layers.len() {
+        if other >= filters.len() {
             return false;
         }
-        l.filter_layers.swap(idx, other);
-        l.touch();
+        filters.swap(idx, other);
+        if let LayerNode::Pixel(l) = node {
+            l.touch();
+        }
         true
     }
 
-    /// Duplique un sous-calque de filtre (nouvel id) juste au-dessus.
+    /// Duplique un sous-calque de filtre (nouvel id) juste au-dessus
+    /// (pixels ou groupe).
     pub fn duplicate_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<Uuid> {
-        let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) else {
-            return None;
-        };
-        let idx = l.filter_layers.iter().position(|f| f.id == filter_id)?;
-        let mut copy = l.filter_layers[idx].clone();
+        let node = self.find_mut(layer_id)?;
+        let filters = node.filter_layers_mut()?;
+        let idx = filters.iter().position(|f| f.id == filter_id)?;
+        let mut copy = filters[idx].clone();
         copy.id = Uuid::new_v4();
         // Les masques sont adressés par id (cache de miniatures) : ids frais.
         for m in &mut copy.masks {
             m.id = Uuid::new_v4();
         }
         let new_id = copy.id;
-        l.filter_layers.insert(idx + 1, copy);
-        l.touch();
+        filters.insert(idx + 1, copy);
+        if let LayerNode::Pixel(l) = node {
+            l.touch();
+        }
         Some(new_id)
     }
 
@@ -1443,9 +1484,7 @@ fn find_in(nodes: &[LayerNode], id: Uuid) -> Option<&LayerNode> {
         if n.id() == id {
             return Some(n);
         }
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_in(&g.children, id)
-        {
+        if let Some(found) = find_in(n.children(), id) {
             return Some(found);
         }
     }
@@ -1457,8 +1496,8 @@ fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode> {
         if n.id() == id {
             return Some(n);
         }
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_in_mut(&mut g.children, id)
+        if let Some(children) = n.children_mut()
+            && let Some(found) = find_in_mut(children, id)
         {
             return Some(found);
         }
@@ -1470,11 +1509,15 @@ fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode> {
 /// que [`fold_scope`](super::compositing::fold_scope), sans rendre).
 /// Un ajustement seul ne compte pas : sur accumulateur vide il ne
 /// produit rien, comme le composite qui retourne alors `None`.
+/// Un calque pixels contribue aussi par ses enfants clippés.
 fn contributes(nodes: &[LayerNode], resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>) -> bool {
     for node in nodes {
         match node {
             LayerNode::Pixel(l) => {
                 if l.visible && l.opacity > 0.01 && resolve(l.id).is_some() {
+                    return true;
+                }
+                if l.visible && l.opacity > 0.01 && contributes(&l.children, resolve) {
                     return true;
                 }
             }
@@ -1514,8 +1557,8 @@ fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<Lay
         return Some((nodes, idx));
     }
     for n in nodes.iter_mut() {
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_owner_list(&mut g.children, id)
+        if let Some(children) = n.children_mut()
+            && let Some(found) = find_owner_list(children, id)
         {
             return Some(found);
         }
@@ -1527,8 +1570,8 @@ fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<Lay
 fn hide_subtree(node: Option<&mut LayerNode>) {
     let Some(node) = node else { return };
     node.set_visible(false);
-    if let LayerNode::Group(g) = node {
-        for child in &mut g.children {
+    if let Some(children) = node.children_mut() {
+        for child in children.iter_mut() {
             hide_subtree(Some(child));
         }
     }
@@ -1538,9 +1581,11 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
     for n in nodes {
         match n {
             LayerNode::Pixel(l) => {
-                if l.visible && l.opacity > 0.01 {
-                    out.push(l);
+                if !l.visible || l.opacity <= 0.01 {
+                    continue;
                 }
+                out.push(l);
+                collect_pixels(&l.children, out);
             }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {
@@ -1555,15 +1600,14 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
 
 /// Ids de tous les calques pixels, sans filtre de visibilité (le
 /// snapshot a besoin des miniatures même des calques masqués).
+/// Descend dans toute la hiérarchie imbriquée (groupes ET enfants
+/// de pixels).
 fn collect_all_pixel_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                out.push(l.id);
-            }
-            LayerNode::Group(g) => collect_all_pixel_ids(&g.children, out),
-            LayerNode::Adjustment(_) => {}
+        if let LayerNode::Pixel(l) = n {
+            out.push(l.id);
         }
+        collect_all_pixel_ids(n.children(), out);
     }
 }
 
@@ -1572,44 +1616,33 @@ fn collect_masks<'a>(
     out: &mut Vec<(Uuid, &'a crate::document::LayerMask)>,
 ) {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                for m in &l.masks {
-                    out.push((l.id, m));
-                }
-                // Masques des sous-calques de filtres (porteur = id du filtre)
-                for f in &l.filter_layers {
-                    for m in &f.masks {
-                        out.push((f.id, m));
-                    }
-                }
-            }
-            LayerNode::Group(g) => {
-                for m in &g.masks {
-                    out.push((g.id, m));
-                }
-                collect_masks(&g.children, out)
-            }
-            LayerNode::Adjustment(_) => {}
+        // Masques propres du nœud (pixels, groupes ET ajustements).
+        for m in n.masks() {
+            out.push((n.id(), m));
         }
+        // Masques des sous-calques de filtres (porteur = id du filtre).
+        if let Some(filters) = n.filter_layers() {
+            for f in filters {
+                for m in &f.masks {
+                    out.push((f.id, m));
+                }
+            }
+        }
+        collect_masks(n.children(), out)
     }
 }
 
-/// Sous-calque de filtre par son id (pixels racine ou groupes imbriqués).
+/// Sous-calque de filtre par son id (pixels, groupes imbriqués,
+/// racine ou enfants de pixels).
 fn find_filter_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<&FilterLayer> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if let Some(f) = l.filter_layers.iter().find(|f| f.id == filter_id) {
-                    return Some(f);
-                }
-            }
-            LayerNode::Group(g) => {
-                if let Some(found) = find_filter_in(&g.children, filter_id) {
-                    return Some(found);
-                }
-            }
-            LayerNode::Adjustment(_) => {}
+        if let Some(filters) = n.filter_layers()
+            && let Some(f) = filters.iter().find(|f| f.id == filter_id)
+        {
+            return Some(f);
+        }
+        if let Some(found) = find_filter_in(n.children(), filter_id) {
+            return Some(found);
         }
     }
     None
@@ -1622,8 +1655,14 @@ fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut F
                 if let Some(f) = l.filter_layers.iter_mut().find(|f| f.id == filter_id) {
                     return Some(f);
                 }
+                if let Some(found) = find_filter_in_mut(&mut l.children, filter_id) {
+                    return Some(found);
+                }
             }
             LayerNode::Group(g) => {
+                if let Some(filters) = g.filter_layers.iter_mut().find(|f| f.id == filter_id) {
+                    return Some(filters);
+                }
                 if let Some(found) = find_filter_in_mut(&mut g.children, filter_id) {
                     return Some(found);
                 }
@@ -1634,50 +1673,38 @@ fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut F
     None
 }
 
-/// Calque pixels porteur d'un sous-calque de filtre.
+/// Porteur (pixels ou groupe) d'un sous-calque de filtre.
 fn find_filter_parent_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<Uuid> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if l.filter_layers.iter().any(|f| f.id == filter_id) {
-                    return Some(l.id);
-                }
-            }
-            LayerNode::Group(g) => {
-                if let Some(found) = find_filter_parent_in(&g.children, filter_id) {
-                    return Some(found);
-                }
-            }
-            LayerNode::Adjustment(_) => {}
+        if n.filter_layers()
+            .is_some_and(|filters| filters.iter().any(|f| f.id == filter_id))
+        {
+            return Some(n.id());
+        }
+        if let Some(found) = find_filter_parent_in(n.children(), filter_id) {
+            return Some(found);
         }
     }
     None
 }
 
-/// Porteur d'un masque par son id — un nœud (pixel/groupe) dont la liste
-/// `masks` le contient, OU le sous-calque de filtre qui le porte.
+/// Porteur d'un masque par son id — un nœud (pixel/groupe/ajustement)
+/// dont la liste `masks` le contient, OU le sous-calque de filtre qui
+/// le porte.
 fn mask_owner_in(nodes: &[LayerNode], mask_id: Uuid) -> Option<Uuid> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if l.masks.iter().any(|m| m.id == mask_id) {
-                    return Some(l.id);
-                }
-                for f in &l.filter_layers {
-                    if f.masks.iter().any(|m| m.id == mask_id) {
-                        return Some(f.id);
-                    }
+        if n.masks().iter().any(|m| m.id == mask_id) {
+            return Some(n.id());
+        }
+        if let Some(filters) = n.filter_layers() {
+            for f in filters {
+                if f.masks.iter().any(|m| m.id == mask_id) {
+                    return Some(f.id);
                 }
             }
-            LayerNode::Adjustment(_) => {}
-            LayerNode::Group(g) => {
-                if g.masks.iter().any(|m| m.id == mask_id) {
-                    return Some(g.id);
-                }
-                if let Some(found) = mask_owner_in(&g.children, mask_id) {
-                    return Some(found);
-                }
-            }
+        }
+        if let Some(found) = mask_owner_in(n.children(), mask_id) {
+            return Some(found);
         }
     }
     None

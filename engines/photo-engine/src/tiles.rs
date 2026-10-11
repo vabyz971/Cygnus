@@ -393,8 +393,9 @@ pub fn appearance_spread(filters: &[FilterLayer]) -> Padding {
 }
 
 /// Empreinte DOCUMENT SPACE d'un nœud : calque pixels via sa transform
-/// (mêmes coins que le renderer), groupe = union récursive des enfants
-/// (transforms enfants en coordonnées canvas, comme le compositing).
+/// (mêmes coins que le renderer), UNION avec ses enfants clippés (même
+/// espace) ; groupe = union récursive des enfants (transforms enfants
+/// en coordonnées canvas, comme le compositing).
 /// Ajustement : `EMPTY` — un ajustement s'applique à tout l'accumulateur,
 /// l'appelant doit utiliser un repli global (jamais une région vide).
 #[must_use]
@@ -402,11 +403,22 @@ pub fn node_footprint(node: &LayerNode) -> TileRegion {
     match node {
         LayerNode::Pixel(l) => {
             let (w, h) = l.dimensions();
-            layer_footprint_in_document(&l.transform, w, h)
+            let own = layer_footprint_in_document(&l.transform, w, h);
+            own.union(children_footprint(&l.children))
         }
         LayerNode::Group(g) => group_footprint(g),
         LayerNode::Adjustment(_) => TileRegion::EMPTY,
     }
+}
+
+/// Union des empreintes d'une fratrie (récursif, tous porteurs).
+#[must_use]
+fn children_footprint(nodes: &[LayerNode]) -> TileRegion {
+    let mut region = TileRegion::EMPTY;
+    for node in nodes {
+        region = region.union(node_footprint(node));
+    }
+    region
 }
 
 /// Union des empreintes des enfants d'un groupe (récursif).
@@ -419,22 +431,36 @@ pub fn group_footprint(group: &GroupLayer) -> TileRegion {
 
 /// Zone d'invalidation d'un nœud (Phase 6E) : empreinte élargie de la
 /// diffusion EXACTE de sa chaîne d'apparence (`appearance_spread`).
-/// Groupes : union récursive des zones enfants. Ajustement : `EMPTY` —
-/// il s'applique à tout l'accumulateur, l'appelant utilise un repli global.
+/// Pixels : union avec les zones des enfants clippés. Groupes : union
+/// récursive des zones enfants, élargie du spread de leurs filtres
+/// imbriqués. Ajustement : `EMPTY` — il s'applique à tout
+/// l'accumulateur, l'appelant utilise un repli global.
 #[must_use]
 pub fn node_mark_region(node: &LayerNode) -> TileRegion {
     match node {
         LayerNode::Pixel(l) => {
             let (w, h) = l.dimensions();
-            layer_footprint_in_document(&l.transform, w, h).pad(appearance_spread(&l.filter_layers))
+            let own = layer_footprint_in_document(&l.transform, w, h)
+                .pad(appearance_spread(&l.filter_layers));
+            own.union(children_mark_region(&l.children))
         }
         LayerNode::Group(g) => {
             let mut region = TileRegion::EMPTY;
             group_mark_into(&g.children, &mut region);
-            region
+            region.pad(appearance_spread(&g.filter_layers))
         }
         LayerNode::Adjustment(_) => TileRegion::EMPTY,
     }
+}
+
+/// Union des zones d'invalidation d'une fratrie (récursif).
+#[must_use]
+fn children_mark_region(nodes: &[LayerNode]) -> TileRegion {
+    let mut region = TileRegion::EMPTY;
+    for node in nodes {
+        region = region.union(node_mark_region(node));
+    }
+    region
 }
 
 fn group_mark_into(nodes: &[LayerNode], region: &mut TileRegion) {
@@ -453,7 +479,8 @@ fn group_footprint_into(nodes: &[LayerNode], region: &mut TileRegion) {
         match node {
             LayerNode::Pixel(l) => {
                 let (w, h) = l.dimensions();
-                *region = region.union(layer_footprint_in_document(&l.transform, w, h));
+                let own = layer_footprint_in_document(&l.transform, w, h);
+                *region = region.union(own.union(children_footprint(&l.children)));
             }
             LayerNode::Group(g) => group_footprint_into(&g.children, region),
             // Ajustement imbriqué : repli global décidé par l'appelant

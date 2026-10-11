@@ -231,6 +231,12 @@ fn hash_pixel_layer(h: &mut DefaultHasher, l: &PixelLayer) {
     hash_source(h, &l.source_image);
     h.write_u64(filters_signature(&l.filter_layers));
     h.write_u64(crate::renderer::mask_signature(&l.masks));
+    // Enfants clippés : empreinte hiérarchique récursive (toute mutation
+    // imbriquée invalide le parent, sans toucher aux frères).
+    h.write_usize(l.children.len());
+    for child in &l.children {
+        hash_layer_node(h, child);
+    }
 }
 
 fn hash_group_layer(h: &mut DefaultHasher, g: &GroupLayer) {
@@ -239,6 +245,7 @@ fn hash_group_layer(h: &mut DefaultHasher, g: &GroupLayer) {
     h.write_u32(g.opacity.to_bits());
     h.write_u32(g.blend_mode.id());
     h.write_u64(crate::renderer::mask_signature(&g.masks));
+    h.write_u64(filters_signature(&g.filter_layers));
     h.write_usize(g.children.len());
     for child in &g.children {
         hash_layer_node(h, child);
@@ -250,6 +257,7 @@ fn hash_adjustment_layer(h: &mut DefaultHasher, a: &AdjustmentLayer) {
     h.write_u8(u8::from(a.visible));
     h.write_u32(a.opacity.to_bits());
     h.write_u64(adjustment_signature(&a.filters));
+    h.write_u64(crate::renderer::mask_signature(&a.masks));
 }
 
 /// Identité source : adresse de l'`Arc` (partagée par les snapshots, donc
