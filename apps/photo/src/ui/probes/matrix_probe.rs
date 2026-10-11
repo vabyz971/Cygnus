@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Campagne de mesures composite (matrices du rapport photo).
+//! Composite measurement campaign (photo report matrices).
 //!
-//! Reproductibilité : `cargo test --release -p photo --bin photo matrix_
-//! -- --ignored --nocapture`. Tests `#[ignore]` : trop lourds pour la CI
-//! debug (composites 4K), chiffres release uniquement.
+//! Reproducibility: `cargo test --release -p photo --bin photo matrix_
+//! -- --ignored --nocapture`. `#[ignore]` tests: too heavy for debug
+//! CI (4K composites), release numbers only.
 //!
-//! Méthodologie par cellule `(document, opération)` :
-//! - `cold` : worker neuf, première application (caches renderer froids) ;
-//! - `warm` : `Refresh` sur le même worker (mêmes pixels, caches chauds).
-//!   Pour Undo/Redo : une mutation de setup (non mesurée) puis Undo (warm)
-//!   puis Redo (warm). `affected_px` est théorique (bboxes géométriques via
-//!   `Transform2D::doc_corners`) ; `processed`/`blend`/`layers` sont mesurés.
-//!   Une seule répétition par cellule en release (n=1).
+//! Per-cell methodology `(document, operation)`:
+//! - `cold`: fresh worker, first application (cold renderer caches);
+//! - `warm`: `Refresh` on the same worker (same pixels, hot caches).
+//!   For Undo/Redo: one setup mutation (unmeasured) then Undo (warm)
+//!   then Redo (warm). `affected_px` is theoretical (geometric bboxes via
+//!   `Transform2D::doc_corners`); `processed`/`blend`/`layers` are measured.
+//!   A single repetition per cell in release (n=1).
 
 use super::super::engine_bridge::{EngineWorker, OpMetrics, PhotoEngineCommand};
 use image::GenericImageView;
@@ -46,7 +46,7 @@ fn bbox_union(a: BBox, b: BBox) -> BBox {
     (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
 }
 
-/// Bbox d'un calque en pixels document (coins transformés).
+/// Bbox of a layer in document pixels (transformed corners).
 fn layer_bbox(doc: &Document, id: uuid::Uuid) -> BBox {
     let Some(photo_engine::LayerNode::Pixel(pixels)) = doc.find(id) else {
         return (0.0, 0.0, 0.0, 0.0);
@@ -65,8 +65,8 @@ fn layer_bbox(doc: &Document, id: uuid::Uuid) -> BBox {
     (min_x, min_y, max_x, max_y)
 }
 
-/// Bbox de tous les calques en positions d'affichage `0..=top_idx`
-/// (0 = dessus) : union, pour les réordonnancements.
+/// Bbox of every layer at display positions `0..=top_idx`
+/// (0 = top): union, for reorderings.
 fn union_display_range(doc: &Document, top_idx: usize) -> BBox {
     let n = doc.root.len();
     let mut acc: Option<BBox> = None;
@@ -118,22 +118,22 @@ fn doc_full(w: u32, h: u32, n: usize) -> Document {
     doc
 }
 
-/// D1 : 2048², 3 calques pleine surface.
+/// D1: 2048², 3 full-surface layers.
 fn doc_d1() -> Document {
     doc_full(2048, 2048, 3)
 }
 
-/// D2 : 4K, 3 calques pleine surface.
+/// D2: 4K, 3 full-surface layers.
 fn doc_d2() -> Document {
     doc_full(W4K, H4K, 3)
 }
 
-/// D3 : 4K, 10 calques pleine surface.
+/// D3: 4K, 10 full-surface layers.
 fn doc_d3() -> Document {
     doc_full(W4K, H4K, 10)
 }
 
-/// D4 : 4K, 10 calques partiels (960×540 en grille).
+/// D4: 4K, 10 partial layers (960×540 in a grid).
 fn doc_d4() -> Document {
     let mut doc = Document::new(W4K, H4K);
     for i in 0..10 {
@@ -150,7 +150,7 @@ fn doc_d4() -> Document {
     doc
 }
 
-/// D5 : 4K, 3 calques avec offsets (un hors cadre de 500 px).
+/// D5: 4K, 3 layers with offsets (one 500 px out of frame).
 fn doc_d5() -> Document {
     let mut doc = doc_d2();
     let id = doc.root[1].id();
@@ -161,7 +161,7 @@ fn doc_d5() -> Document {
     doc
 }
 
-/// D6 : 4K, 3 calques, un masque plein sur le milieu.
+/// D6: 4K, 3 layers, a full mask on the middle one.
 fn doc_d6() -> Document {
     let mut doc = doc_d2();
     let id = doc.root[1].id();
@@ -171,7 +171,7 @@ fn doc_d6() -> Document {
     doc
 }
 
-/// D7 : 4K, 3 calques, filtre brightness sur le milieu.
+/// D7: 4K, 3 layers, brightness filter on the middle one.
 fn doc_d7() -> Document {
     let mut doc = doc_d2();
     let id = doc.root[1].id();
@@ -181,7 +181,7 @@ fn doc_d7() -> Document {
     doc
 }
 
-/// D8 : 4K, 3 calques, blend modes variés (Normal/Multiply/Screen).
+/// D8: 4K, 3 layers, varied blend modes (Normal/Multiply/Screen).
 fn doc_d8() -> Document {
     use photo_engine::BlendMode;
     let mut doc = doc_d2();
@@ -192,7 +192,7 @@ fn doc_d8() -> Document {
     doc
 }
 
-/// Opération adressée par index d'affichage (0 = dessus).
+/// Operation addressed by display index (0 = top).
 #[derive(Clone, Debug)]
 enum MatrixOp {
     Toggle(usize),
@@ -241,7 +241,7 @@ fn stroke_bbox(points: &[(f32, f32)], radius: f32) -> BBox {
     bbox
 }
 
-/// Id du calque en position d'affichage `display` (0 = dessus).
+/// Id of the layer at display position `display` (0 = top).
 fn display_id(worker: &EngineWorker, display: usize) -> uuid::Uuid {
     let doc = worker.test_document();
     let n = doc.root.len();
@@ -249,7 +249,7 @@ fn display_id(worker: &EngineWorker, display: usize) -> uuid::Uuid {
 }
 
 fn to_command(worker: &EngineWorker, op: &MatrixOp) -> (PhotoEngineCommand, usize, f32) {
-    // Retourne (commande, layers_affected_théoriques, affected_px_théoriques).
+    // Returns (command, theoretical layers_affected, theoretical affected_px).
     let doc = worker.test_document();
     let n = doc.root.len();
     match op.clone() {
@@ -283,8 +283,8 @@ fn to_command(worker: &EngineWorker, op: &MatrixOp) -> (PhotoEngineCommand, usiz
             (cmd, i + 1, bbox_area(bbox_union(before, after)))
         }
         MatrixOp::Reorder(from, to) => {
-            // Équivalent ids du déplacement display : avant la cible en
-            // montée, après en descente.
+            // Id-level equivalent of the display move: before the target going
+            // up, after going down.
             let dragged = display_id(worker, from);
             let target = display_id(worker, to);
             let cmd = PhotoEngineCommand::ReorderNodes {
@@ -293,7 +293,7 @@ fn to_command(worker: &EngineWorker, op: &MatrixOp) -> (PhotoEngineCommand, usiz
                 before: from > to,
             };
             let affected = n - from.min(to);
-            // Région : union des bornes des calques dont l'ordre change.
+            // Region: union of the bounds of layers whose order changes.
             let region = union_display_range(doc, from.max(to));
             (cmd, affected, bbox_area(region))
         }
@@ -360,7 +360,7 @@ fn op_name(op: &MatrixOp) -> &'static str {
     }
 }
 
-/// Contexte d'une ligne de matrice (regroupé pour le lint args).
+/// Matrix-row context (grouped for the args lint).
 struct RowCtx<'a> {
     doc_id: &'a str,
     op: &'a MatrixOp,
@@ -372,7 +372,7 @@ struct RowCtx<'a> {
     state: &'a str,
 }
 
-/// Imprime une ligne de matrice à partir des dernières métriques.
+/// Prints a matrix row from the latest metrics.
 fn print_row(ctx: RowCtx<'_>, m: &OpMetrics) {
     let ratio = if ctx.scope_px > 0 {
         m.pixels_processed as f64 / ctx.scope_px as f64
@@ -401,12 +401,12 @@ fn print_row(ctx: RowCtx<'_>, m: &OpMetrics) {
     );
 }
 
-/// Mesure une cellule : worker neuf (cold) puis Refresh (warm).
-/// Retourne le worker pour chaînage (undo/redo).
+/// Measures one cell: fresh worker (cold) then Refresh (warm).
+/// Returns the worker for chaining (undo/redo).
 fn measure_cell(doc_id: &str, doc: Document, op: MatrixOp) -> EngineWorker {
     let total_layers = doc.root.len();
     let mut worker = EngineWorker::new(doc);
-    // Cold : première application, caches froids.
+    // Cold: first application, cold caches.
     let (cmd, affected, affected_px) = to_command(&worker, &op);
     let layer = format!("{op:?}");
     worker.apply(cmd);
@@ -424,7 +424,7 @@ fn measure_cell(doc_id: &str, doc: Document, op: MatrixOp) -> EngineWorker {
         },
         &m,
     );
-    // Warm : mêmes pixels, caches chauds.
+    // Warm: same pixels, hot caches.
     worker.apply(PhotoEngineCommand::Refresh);
     let m = worker.metrics.last.clone().expect("metriques");
     let warm_scope = scope_area(worker.test_document());
@@ -496,7 +496,7 @@ fn matrix_docs_d5_d8_undo_redo() {
             measure_cell(id, build(), op);
         }
     }
-    // Undo/Redo : setup commun (mutation non mesurée), puis Undo/Redo.
+    // Undo/Redo: shared setup (unmeasured mutation), then Undo/Redo.
     let mut worker = EngineWorker::new(doc_d2());
     let total = worker.test_document().root.len();
     let setup_id = display_id(&worker, 1);
@@ -542,18 +542,18 @@ fn matrix_regional_and_batch() {
     eprintln!(
         "MATRIX|doc|op|layer|total|affected|scope|affected_px|processed|ratio|composite_ms|blend_ms|thumb_ms|total_ms|blended|rebuilds|state|resolves"
     );
-    // Paint : tailles de région croissantes (R1/R2/R3 ≈ 1 %/10 %/100 %).
+    // Paint: growing region sizes (R1/R2/R3 ≈ 1%/10%/100%).
     for size in [PaintSize::Small, PaintSize::Medium, PaintSize::Large] {
         measure_cell("D2", doc_d2(), MatrixOp::Paint(1, size));
     }
-    // Move : deltas croissants (0/50/250/500 px).
+    // Move: growing deltas (0/50/250/500 px).
     for dx in [0.0, 50.0, 250.0, 500.0] {
         if dx == 0.0 {
             continue; // no-op, couvert par ailleurs
         }
         measure_cell("D2", doc_d2(), MatrixOp::Move(1, dx, 0.0));
     }
-    // Batch : 20 ticks coalescés vs 20 unitaires (D2, opacité).
+    // Batch: 20 coalesced ticks vs 20 single ones (D2, opacity).
     let mut worker = EngineWorker::new(doc_d2());
     let id = display_id(&worker, 1);
     let batch: Vec<PhotoEngineCommand> = (1..=20)
@@ -586,8 +586,8 @@ fn matrix_regional_and_batch() {
         },
         &m,
     );
-    // Batch move : 20 pas de 25 px fusionnés (1 seul rendu).
-    // Paint : pas de batch inter-strokes (1 CommitStroke = 1 réponse) → N/A.
+    // Batch move: 20 merged 25-px steps (1 render).
+    // Paint: no inter-stroke batching (1 CommitStroke = 1 response) → N/A.
     let mut worker = EngineWorker::new(doc_d2());
     let id = display_id(&worker, 1);
     let total = worker.test_document().root.len();

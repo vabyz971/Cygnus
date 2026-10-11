@@ -14,72 +14,72 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Frontière d'exécution : le trait [`Backend`] et son backend nul.
+//! Execution boundary: the [`Backend`] trait and its null backend.
 //!
-//! Séparation visée :
+//! Intended separation:
 //!
 //! ```text
-//! RenderGraph ──plan──▶ Backend ──spécialisation──▶ wgpu (plus tard)
+//! RenderGraph ──plan──▶ Backend ──specialization──▶ wgpu (later)
 //! ```
 //!
-//! Le backend reçoit les nœuds en ordre topologique avec leurs entrées
-//! typées et résout lui-même les contenus (scène, pixels, caches). Cette
-//! crate ne transporte ni textures ni handles GPU — seulement des ids.
+//! The backend receives nodes in topological order with their typed
+//! inputs and resolves contents itself (scene, pixels, caches). This
+//! crate carries neither textures nor GPU handles — only ids.
 
 use crate::{RenderEdge, RenderNode, RenderNodeId};
 
-/// Backend d'exécution du Render Graph (CPU aujourd'hui, GPU demain).
+/// Render Graph execution backend (CPU today, GPU tomorrow).
 ///
-/// Contrat : `execute` est appelé avec un plan topologique
-/// ([`crate::RenderGraph::plan`]) ; le backend peut supposer chaque entrée
-/// déjà produite. Aucune méthode n'alloue côté graphe : `inputs` est une
-/// tranche sur les arêtes stockées.
+/// Contract: `execute` is called with a topological plan
+/// ([`crate::RenderGraph::plan`]); the backend may assume each input
+/// already produced. No method allocates graph-side: `inputs` is a
+/// slice over the stored edges.
 pub trait Backend {
-    /// Ouvre une passe d'exécution (cadre, cible — sémantique du backend).
+    /// Opens an execution pass (frame, target — backend semantics).
     fn begin_frame(&mut self) {}
 
-    /// Exécute UN nœud. `inputs` liste `(from, port)` dans un ordre
-    /// quelconque — le backend distingue fond/premier plan par le port.
+    /// Executes ONE node. `inputs` lists `(from, port)` in any
+    /// order — the backend tells background/foreground apart via the port.
     ///
     /// # Errors
     ///
-    /// Retourne un message en cas d'échec d'exécution (le graphe remonte
-    /// l'erreur sans état partiel observable).
+    /// Returns a message on execution failure (the graph propagates
+    /// the error with no observable partial state).
     fn execute_node(&mut self, node: &RenderNode, inputs: &[RenderEdge]) -> Result<(), String>;
 
-    /// Ferme la passe (présentation — sémantique du backend).
+    /// Closes the pass (presentation — backend semantics).
     fn end_frame(&mut self) {}
 }
 
-/// Backend nul : enregistre l'ordre d'exécution, ne produit rien.
+/// Null backend: records the execution order, produces nothing.
 ///
-/// Sert aux tests, aux mesures d'invalidation et de gabarit aux futurs
-/// backends (CPU pixels, puis wgpu).
+/// Used for tests, invalidation measurements and as a template for future
+/// backends (CPU pixels, then wgpu).
 #[derive(Debug, Default)]
 pub struct NullBackend {
     order: Vec<RenderNodeId>,
 }
 
 impl NullBackend {
-    /// Nouveau backend nul.
+    /// New null backend.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nœuds exécutés, dans l'ordre.
+    /// Executed nodes, in order.
     #[must_use]
     pub fn order(&self) -> &[RenderNodeId] {
         &self.order
     }
 
-    /// Nombre de nœuds exécutés.
+    /// Number of executed nodes.
     #[must_use]
     pub fn executed(&self) -> usize {
         self.order.len()
     }
 
-    /// Remet l'enregistrement à zéro (passes successives comparables).
+    /// Resets the recording to zero (successive passes comparable).
     pub fn reset(&mut self) {
         self.order.clear();
     }

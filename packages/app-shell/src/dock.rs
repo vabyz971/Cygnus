@@ -14,46 +14,46 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Logique de dock générique sur `egui_tiles`.
+//! Generic dock logic over `egui_tiles`.
 //!
-//! Les fonctions ci-dessous ne connaissent que le trait [`DockTab`] :
-//! recherche et réaffichage de panneaux, onglets de canevas groupés,
-//! réconciliation avec les documents ouverts, parts des conteneurs
-//! linéaires et layout photo à quatre volets ([`default_tree`], simple
-//! commodité : les apps libres de composer autrement avec les mêmes
-//! primitives). Le `Behavior` (titres, contenus des panneaux) reste
-//! dans chaque app car il est métier.
+//! The functions below only know the [`DockTab`] trait:
+//! finding and re-showing panels, grouped canvas tabs,
+//! reconciliation with open documents, shares of linear
+//! containers and the four-pane photo layout ([`default_tree`], a mere
+//! convenience: apps are free to compose differently with the same
+//! primitives). The `Behavior` (panel titles and contents) stays
+//! in each app because it is domain-specific.
 
 use egui_tiles::{Container, TileId, Tiles, Tree};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-/// Panneau ancrable d'une app (implémenté par ex. par
-/// `PhotoDockTab`). Exige la sérialisation : les layouts persistent
-/// en JSON via les préférences.
+/// Dockable panel of an app (implemented e.g. by
+/// `PhotoDockTab`). Requires serialization: layouts persist
+/// as JSON via preferences.
 pub trait DockTab: Clone + PartialEq + Serialize + DeserializeOwned {
-    /// Document porté par ce panneau, s'il s'agit d'un canevas.
+    /// Document carried by this panel, if it is a canvas.
     fn canvas_id(&self) -> Option<Uuid>;
-    /// Construit le canevas du document `id`.
+    /// Builds the canvas for document `id`.
     fn canvas(id: Uuid) -> Self;
 }
 
-/// Parts de largeur : outils ~1/30 (valeurs photo d'origine, simple
-/// défaut réutilisable).
+/// Width shares: tools ~1/30 (original photo values, a mere
+/// reusable default).
 pub const SHARE_TOOLS: f32 = 1.0;
-/// Parts de largeur : canevas ~22/30.
+/// Width shares: canvas ~22/30.
 pub const SHARE_CANVAS: f32 = 22.0;
-/// Parts de largeur : colonne latérale ~7/30.
+/// Width shares: side column ~7/30.
 pub const SHARE_SIDE: f32 = 7.0;
-/// Parts de hauteur : haut de la colonne latérale (40 %).
+/// Height shares: top of the side column (40 %).
 pub const SHARE_INSPECTOR: f32 = 2.0;
-/// Parts de hauteur : bas de la colonne latérale (60 %).
+/// Height shares: bottom of the side column (60 %).
 pub const SHARE_LAYERS: f32 = 3.0;
 
-/// Layout par défaut : outils à gauche, canevas en onglets au
-/// centre, deux panneaux empilés à droite. `canvases` ne porte que
-/// des canevas (vérifié en debug).
+/// Default layout: tools on the left, tabbed canvases in the
+/// center, two stacked panels on the right. `canvases` carries only
+/// canvases (checked in debug).
 pub fn default_tree<T: DockTab>(
     tools: T,
     canvases: Vec<T>,
@@ -92,8 +92,8 @@ pub fn default_tree<T: DockTab>(
     Tree::new("cygnus-tree", root, tiles)
 }
 
-/// Assigne les parts d'un conteneur linéaire (ignore silencieusement
-/// un conteneur manquant : arbre restauré d'une ancienne version).
+/// Assigns the shares of a linear container (silently ignores
+/// a missing container: tree restored from an older version).
 pub fn set_linear_shares<T>(tiles: &mut Tiles<T>, container: TileId, shares: &[(TileId, f32)]) {
     if let Some(egui_tiles::Tile::Container(Container::Linear(linear))) = tiles.get_mut(container) {
         for (child, share) in shares {
@@ -102,19 +102,19 @@ pub fn set_linear_shares<T>(tiles: &mut Tiles<T>, container: TileId, shares: &[(
     }
 }
 
-/// Vrai si `tab` existe quelque part dans l'arbre.
+/// True if `tab` exists somewhere in the tree.
 pub fn has_tab<T: DockTab>(tree: &Tree<T>, tab: T) -> bool {
     tree.tiles.find_pane(&tab).is_some()
 }
 
-/// Trouve le `TileId` du panneau `tab`, s'il existe.
+/// Finds the `TileId` of panel `tab`, if it exists.
 fn find_tile<T: DockTab>(tree: &Tree<T>, tab: T) -> Option<TileId> {
     tree.tiles.find_pane(&tab)
 }
 
-/// Réaffiche `tab` s'il a été masqué (idempotent), et l'active dans
-/// son onglet. Les panneaux masqués gardent leur place grâce aux
-/// tuiles invisibles d'`egui_tiles`.
+/// Re-shows `tab` if it was hidden (idempotent), and activates it in
+/// its tab strip. Hidden panels keep their place thanks to
+/// `egui_tiles`' invisible tiles.
 pub fn ensure_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
     if let Some(tile) = find_tile(tree, tab) {
         tree.set_visible(tile, true);
@@ -122,7 +122,7 @@ pub fn ensure_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
     }
 }
 
-/// Active `tile` dans son conteneur d'onglets, s'il y en a un.
+/// Activates `tile` in its tab container, if it has one.
 fn activate_tile<T: DockTab>(tree: &mut Tree<T>, tile: TileId) {
     if let Some(parent) = tree.tiles.parent_of(tile)
         && let Some(egui_tiles::Tile::Container(Container::Tabs(tabs))) = tree.tiles.get_mut(parent)
@@ -131,11 +131,11 @@ fn activate_tile<T: DockTab>(tree: &mut Tree<T>, tile: TileId) {
     }
 }
 
-/// Ajoute l'onglet canevas d'un document : dans le conteneur des
-/// autres canevas si possible (onglets côte à côte, nouveau actif),
-/// sinon dans le premier conteneur d'onglets trouvé.
+/// Adds a document's canvas tab: into the container of the
+/// other canvases when possible (side-by-side tabs, new one active),
+/// otherwise into the first tab container found.
 pub fn push_canvas_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
-    // Feuille des canevas existants d'abord…
+    // Existing canvases' leaf first…
     let mut target = tree
         .tiles
         .iter()
@@ -149,8 +149,8 @@ pub fn push_canvas_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
                 Some(egui_tiles::Tile::Container(Container::Tabs(_)))
             )
         });
-    // …sinon le premier conteneur d'onglets (repli : jamais vide en
-    // pratique, le layout garantit le conteneur des canevas).
+    // …otherwise the first tab container (fallback: never empty in
+    // practice, the layout guarantees the canvas container).
     if target.is_none() {
         target = tree.tiles.iter().find_map(|(id, tile)| {
             matches!(tile, egui_tiles::Tile::Container(Container::Tabs(_))).then_some(*id)
@@ -166,19 +166,19 @@ pub fn push_canvas_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
     }
 }
 
-/// Retire l'onglet canevas du document `id` (sans effet s'il est
-/// absent). Utilisé à la fermeture d'un document.
+/// Removes the canvas tab of document `id` (no effect if
+/// absent). Used when closing a document.
 pub fn remove_canvas_tab<T: DockTab>(tree: &mut Tree<T>, id: Uuid) {
     if let Some(tile) = find_tile(tree, T::canvas(id)) {
         tree.remove_recursively(tile);
     }
 }
 
-/// Réconcilie un layout restauré avec les documents réellement
-/// ouverts : les ids changent à chaque lancement, donc les canevas
-/// persistés sont orphelins — on retire ceux sans document et on
-/// ajoute ceux manquants (outils et panneaux latéraux gardent leurs
-/// places et visibilités persistées).
+/// Reconciles a restored layout with the actually
+/// open documents: ids change on every launch, so persisted
+/// canvases are orphaned — remove those without a document and add
+/// the missing ones (tools and side panels keep their
+/// persisted places and visibilities).
 pub fn reconcile_canvases<T: DockTab>(tree: &mut Tree<T>, ids: &[Uuid]) {
     loop {
         let stale = tree
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
 
-    /// Panneau de test : rail, canevas, deux panneaux latéraux.
+    /// Test panel: rail, canvas, two side panels.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     enum TestTab {
         Tools,

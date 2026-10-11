@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Document vectoriel : formes identifiées, ordonnées, stylées.
+//! Vector document: identified, ordered, styled shapes.
 //!
-//! [`VectorScene`] possède les [`Shape`] (table + ordre de peinture) :
-//! le backend les consomme en ordre via [`crate::render_scene`]. Les
-//! composés booléens sont des arbres de formes (évaluation côté backend).
+//! [`VectorScene`] owns the [`Shape`]s (table + paint order):
+//! the backend consumes them in order via [`crate::render_scene`].
+//! Boolean compounds are shape trees (evaluated backend-side).
 
 use std::collections::HashMap;
 
@@ -29,7 +29,7 @@ use math_utils::Transform2D;
 use crate::geometry::Path;
 use crate::{BooleanOp, Fill, Stroke};
 
-/// Identifiant stable d'une [`Shape`].
+/// Stable identifier of a [`Shape`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -37,25 +37,25 @@ use crate::{BooleanOp, Fill, Stroke};
 pub struct ShapeId(EntityId);
 
 impl ShapeId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul (sentinelle, jamais attribué).
+    /// Null identifier (sentinel, never assigned).
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente.
+    /// The underlying entity.
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante.
+    /// Wraps an existing entity.
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -63,7 +63,7 @@ impl ShapeId {
 }
 
 impl Default for ShapeId {
-    /// Identifiant nul — même valeur que [`ShapeId::nil`].
+    /// Null identifier — same value as [`ShapeId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -75,35 +75,35 @@ impl std::fmt::Display for ShapeId {
     }
 }
 
-/// Géométrie d'une forme (le composé booléen est un arbre évalué par le
-/// backend — le modèle en possède la STRUCTURE, pas le résultat).
+/// Geometry of a shape (a boolean compound is a tree evaluated by the
+/// backend — the model owns the STRUCTURE, not the result).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeGeometry {
-    /// Tracé Bézier libre.
+    /// Free Bézier path.
     Path(Path),
     /// Rectangle axis-aligned.
     Rect(Rect),
-    /// Ellipse (centre + rayons).
+    /// Ellipse (center + radii).
     Ellipse {
-        /// Centre.
+        /// Center.
         center: Vec2,
-        /// Rayon horizontal.
+        /// Horizontal radius.
         rx: f32,
-        /// Rayon vertical.
+        /// Vertical radius.
         ry: f32,
     },
-    /// Combinaison booléenne de formes enfants.
+    /// Boolean combination of child shapes.
     Compound {
-        /// Opération.
+        /// Operation.
         op: BooleanOp,
-        /// Opérandes (enfants possédés).
+        /// Operands (owned children).
         shapes: Vec<Shape>,
     },
 }
 
 impl ShapeGeometry {
-    /// Englobant (conservatif pour les composés : union des enfants).
+    /// Bounding box (conservative for compounds: union of children).
     #[must_use]
     pub fn bounds(&self) -> Rect {
         match self {
@@ -126,36 +126,36 @@ impl ShapeGeometry {
     }
 }
 
-/// Forme : géométrie + styles + placement + visibilité.
+/// Shape: geometry + styles + placement + visibility.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Shape {
-    /// Identifiant stable.
+    /// Stable identifier.
     pub id: ShapeId,
-    /// Nom d'affichage.
+    /// Display name.
     pub name: String,
-    /// Géométrie.
+    /// Geometry.
     pub geometry: ShapeGeometry,
-    /// Remplissage (`None` = non rempli).
+    /// Fill (`None` = unfilled).
     pub fill: Option<Fill>,
-    /// Contour (`None` = sans trait).
+    /// Stroke (`None` = no stroke).
     pub stroke: Option<Stroke>,
-    /// Placement (local — le backend compose).
+    /// Placement (local — the backend composes).
     pub transform: Transform2D,
-    /// Interrupteur de visibilité.
+    /// Visibility switch.
     pub visible: bool,
-    /// Opacité 0..=100 (même unité que le reste de la suite).
+    /// Opacity 0..=100 (same unit as the rest of the suite).
     pub opacity: f32,
 }
 
 impl Shape {
-    /// Englobant local (AVANT transform — le backend place).
+    /// Local bounding box (BEFORE transform — the backend places).
     #[must_use]
     pub fn bounds(&self) -> Rect {
         self.geometry.bounds()
     }
 }
 
-/// Document vectoriel : formes ordonnées (index 0 = dessous de pile).
+/// Vector document: ordered shapes (index 0 = bottom of stack).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct VectorScene {
     shapes: HashMap<ShapeId, Shape>,
@@ -163,44 +163,44 @@ pub struct VectorScene {
 }
 
 impl VectorScene {
-    /// Scène vide.
+    /// Empty scene.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de formes.
+    /// Number of shapes.
     #[must_use]
     pub fn len(&self) -> usize {
         self.order.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
 
-    /// Vrai si la forme est suivie.
+    /// True if the shape is tracked.
     #[must_use]
     pub fn contains(&self, id: ShapeId) -> bool {
         self.shapes.contains_key(&id)
     }
 
-    /// Ordre de peinture (dessous → dessus).
+    /// Paint order (bottom → top).
     #[must_use]
     pub fn order(&self) -> &[ShapeId] {
         &self.order
     }
 
-    /// Forme par id.
+    /// Shape by id.
     #[must_use]
     pub fn find(&self, id: ShapeId) -> Option<&Shape> {
         self.shapes.get(&id)
     }
 
-    /// Ajoute une forme au-dessus de la pile (valeurs par défaut :
-    /// visible, opaque, sans style — à poser ensuite).
+    /// Adds a shape on top of the stack (defaults:
+    /// visible, opaque, unstyled — to set afterwards).
     pub fn add_shape(&mut self, name: impl Into<String>, geometry: ShapeGeometry) -> ShapeId {
         let id = ShapeId::new();
         self.shapes.insert(
@@ -220,7 +220,7 @@ impl VectorScene {
         id
     }
 
-    /// Retire une forme (faux si inconnue).
+    /// Removes a shape (false if unknown).
     pub fn remove(&mut self, id: ShapeId) -> bool {
         if self.shapes.remove(&id).is_none() {
             return false;
@@ -229,7 +229,7 @@ impl VectorScene {
         true
     }
 
-    /// Remplace le remplissage (faux si inconnue).
+    /// Replaces the fill (false if unknown).
     pub fn set_fill(&mut self, id: ShapeId, fill: Option<Fill>) -> bool {
         match self.shapes.get_mut(&id) {
             Some(shape) => {
@@ -240,7 +240,7 @@ impl VectorScene {
         }
     }
 
-    /// Remplace le contour (faux si inconnue).
+    /// Replaces the stroke (false if unknown).
     pub fn set_stroke(&mut self, id: ShapeId, stroke: Option<Stroke>) -> bool {
         match self.shapes.get_mut(&id) {
             Some(shape) => {
@@ -251,7 +251,7 @@ impl VectorScene {
         }
     }
 
-    /// Remplace le placement (faux si inconnue).
+    /// Replaces the placement (false if unknown).
     pub fn set_transform(&mut self, id: ShapeId, transform: Transform2D) -> bool {
         match self.shapes.get_mut(&id) {
             Some(shape) => {
@@ -262,7 +262,7 @@ impl VectorScene {
         }
     }
 
-    /// Bascule la visibilité (faux si inconnue).
+    /// Toggles visibility (false if unknown).
     pub fn set_visible(&mut self, id: ShapeId, visible: bool) -> bool {
         match self.shapes.get_mut(&id) {
             Some(shape) => {

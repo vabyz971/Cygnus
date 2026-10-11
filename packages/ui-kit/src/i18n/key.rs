@@ -14,89 +14,88 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Clés de traduction stables du design system.
+//! Stable translation keys of the design system.
 //!
-//! Les composants ne portent aucune chaîne métier : les apps
-//! traduisent via [`Catalog`](super::catalog::Catalog), dont les
-//! tables vivent dans [`super::en`] (anglais) et [`super::fr`]
-//! (français). Les clés sont stables entre versions
-//! (sérialisables, jamais renommées).
+//! Components carry no domain string: apps translate via
+//! [`Catalog`](super::catalog::Catalog), whose tables live in
+//! [`super::en`] (English) and [`super::fr`] (French). Keys are
+//! stable across versions (serializable, never renamed).
 
 use serde::{Deserialize, Serialize};
 
-/// Clé de texte stable (partagée Photo / Video / Audio).
+/// Stable text key (shared Photo / Video / Audio).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TextKey {
-    /// Enregistrer.
+    /// Save.
     Save,
-    /// Ouvrir.
+    /// Open.
     Open,
-    /// Annuler l'action.
+    /// Cancel action.
     Cancel,
-    /// Fermer.
+    /// Close.
     Close,
-    /// Annuler (undo).
+    /// Undo.
     Undo,
-    /// Rétablir (redo).
+    /// Redo.
     Redo,
-    /// Supprimer.
+    /// Delete.
     Delete,
-    /// Renommer.
+    /// Rename.
     Rename,
-    /// Afficher.
+    /// Show.
     Show,
-    /// Masquer.
+    /// Hide.
     Hide,
-    /// Ajouter.
+    /// Add.
     Add,
-    /// Créer.
+    /// Create.
     Create,
-    /// Valider.
+    /// Confirm.
     Validate,
-    /// Dupliquer.
+    /// Duplicate.
     Duplicate,
-    /// Nouveau document.
+    /// New document.
     NewDocument,
-    /// Exporter.
+    /// Export.
     Export,
     /// Layer.
     Layer,
-    /// Calques.
+    /// Layers.
     Layers,
-    /// Paramètres.
+    /// Settings.
     Settings,
-    /// Quitter.
+    /// Quit.
     Quit,
-    /// Copier.
+    /// Copy.
     Copy,
-    /// Coller.
+    /// Paste.
     Paste,
-    /// Outils.
+    /// Tools.
     Tools,
-    /// Inspecteur de propriétés.
+    /// Property inspector.
     Inspector,
-    /// Navigateur.
+    /// Navigator.
     Navigator,
-    /// Historique.
+    /// History.
     History,
-    /// Chronologie.
+    /// Timeline.
     Timeline,
-    /// Menu Fichier.
+    /// File menu.
     File,
-    /// Menu Édition.
+    /// Edit menu.
     Edit,
-    /// Menu Affichage.
+    /// View menu.
     View,
-    /// Menu Aide.
+    /// Help menu.
     Help,
-    /// Zoom avant.
+    /// Zoom in.
     ZoomIn,
-    /// Zoom arrière.
+    /// Zoom out.
     ZoomOut,
-    /// Grille.
+    /// Grid.
     Grid,
-    /// Canevas (zone de dessin).
+    /// Canvas (drawing area).
     Canvas,
-    /// Fenêtre (menu des panneaux ancrables).
+    /// Window (dockable-panel menu).
     Window,
 }

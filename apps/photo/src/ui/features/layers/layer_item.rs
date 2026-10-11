@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! HUD d'un calque photo (ligne du panneau Calques, widget métier).
+//! Photo layer HUD (Layers panel row, domain widget).
 //!
-//! Ligne en une rangée centrée (`Align::Center`) : chevron
-//! repli/dépli, bouton de visibilité, visualiseur du calque, nom
-//! éditable au double-clic (façon Affinity : aucune action
-//! destructive par rangée — suppression via le menu contextuel ou la
-//! barre du bas). Les
-//! filtres live et les masques sont des lignes enfants à part
-//! entière ([`draw_attachment_row`]), indentées sous leur porteur.
-//! AUCUN envoi moteur ici : toute interaction remonte via
-//! [`LayerItemAction`], convertie en [`PhotoAction`](crate::commands::PhotoAction)
-//! puis routée par `PhotoApp` (état local ou worker).
+//! Single centered row (`Align::Center`): collapse/expand
+//! chevron, visibility button, layer viewer, name
+//! editable on double-click (Affinity-style: no destructive
+//! action per row — delete via the context menu or the
+//! bottom bar). Live
+//! filters and masks are full child rows
+//! ([`draw_attachment_row`]), indented under their owner.
+//! NO engine send here: every interaction bubbles via
+//! [`LayerItemAction`], converted to [`PhotoAction`](crate::commands::PhotoAction)
+//! then routed by `PhotoApp` (local state or worker).
 
 use super::types::{LayerTexts, LayerThumbView, PhotoLayerInfo, PhotoSubLayerInfo};
 use crate::i18n::PhotoTextKey;
@@ -35,80 +35,80 @@ use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
-/// État du renommage inline (double-clic sur le nom, détenu par l'app).
+/// Inline rename state (double-click on the name, owned by the app).
 #[derive(Debug, Clone, Default)]
 pub struct LayerRenameState {
-    /// Calque en cours d'édition (`None` = aucun).
+    /// Layer being edited (`None` = none).
     pub editing: Option<Uuid>,
-    /// Tampon du champ de saisie.
+    /// Input field buffer.
     pub buffer: String,
 }
 
-/// Action remontée au layout puis convertie en
+/// Action bubbled to the layout then converted to
 /// [`PhotoAction`](crate::commands::PhotoAction).
 ///
-/// Sélection et renommage touchent l'état UI détenu par l'app ; tout
-/// le reste est routé au worker par `PhotoApp::handle_action`.
+/// Selection and rename touch the app-owned UI state; everything
+/// else is routed to the worker by `PhotoApp::handle_action`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayerItemAction {
-    /// Sélectionner ce calque.
+    /// Select this layer.
     Select(Uuid),
-    /// Sélectionner une pièce jointe (filtre ou masque) : le porteur
-    /// devient la sélection principale (tree, O003+).
+    /// Select an attachment (filter or mask): the owner
+    /// becomes the primary selection (tree, O003+).
     SelectAttachment {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
-        /// Filtre ou masque visé.
+        /// Targeted filter or mask.
         id: Uuid,
     },
-    /// Activer/désactiver un filtre live (œil de la ligne).
+    /// Enable/disable a live filter (row eye).
     ToggleFilter {
-        /// Calque porteur.
+        /// Owning layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
     },
-    /// Activer/désactiver un masque (œil de la ligne).
+    /// Enable/disable a mask (row eye).
     ToggleMask {
-        /// Porteur.
+        /// Owner.
         owner: Uuid,
-        /// Masque visé.
+        /// Targeted mask.
         mask: Uuid,
     },
-    /// Valider le renommage (nom déjà rogné, non vide).
+    /// Confirm the rename (name already trimmed, non-empty).
     RenameCommit { layer: Uuid, name: String },
-    /// Basculer la visibilité.
+    /// Toggle visibility.
     ToggleVisibility(Uuid),
-    /// Supprimer ce calque.
+    /// Delete this layer.
     DeleteLayer(Uuid),
-    /// Dupliquer ce calque.
+    /// Duplicate this layer.
     DuplicateLayer(Uuid),
-    /// Miroir horizontal (menu contextuel : agit sur la sélection,
-    /// posée par le clic droit).
+    /// Horizontal mirror (context menu: acts on the selection,
+    /// set by the right click).
     FlipHorizontalSelected,
-    /// Miroir vertical (idem).
+    /// Vertical mirror (same).
     FlipVerticalSelected,
-    /// Rotation 90° horaire (idem).
+    /// 90° clockwise rotation (same).
     RotateClockwiseSelected,
-    /// Rotation 90° antihoraire (idem).
+    /// 90° counterclockwise rotation (same).
     RotateCounterclockwiseSelected,
-    /// Rogner au document (idem).
+    /// Crop to document (same).
     CropSelectedToDocument,
-    /// Replier / déplier un groupe (état moteur, sans re-rendu).
+    /// Collapse / expand a group (engine state, no re-render).
     ToggleCollapsed(Uuid),
-    /// Déplacer un filtre dans sa pile.
+    /// Move a filter within its stack.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Déplacer un masque dans sa pile.
+    /// Move a mask within its stack.
     MoveMask { owner: Uuid, mask: Uuid, up: bool },
-    /// Supprimer un filtre.
+    /// Delete a filter.
     RemoveFilter { layer: Uuid, filter: Uuid },
-    /// Supprimer un masque.
+    /// Delete a mask.
     RemoveMask { owner: Uuid, mask: Uuid },
 }
 
-/// État replié/déplié des pièces jointes d'un calque (tree) :
-/// mémoire egui, ouvert par défaut. Lu par la liste (filtrage des
-/// lignes) et basculé par le chevron de la ligne du porteur.
+/// Collapsed/expanded state of a layer's attachments (tree):
+/// egui memory, open by default. Read by the list (row filtering)
+/// and toggled by the owner row's chevron.
 pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
     let id = ui.make_persistent_id(("photo_attachments_open", owner));
     egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
@@ -116,8 +116,8 @@ pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
         .unwrap_or(true)
 }
 
-/// Bascule l'état ci-dessus (stocké même au premier clic : `load`
-/// seul rend `None` sans état persisté, ce qui figerait le chevron).
+/// Toggles the state above (stored even on first click: `load`
+/// alone yields `None` with no persisted state, which would freeze the chevron).
 pub fn set_attachments_open(ui: &egui::Ui, owner: Uuid, open: bool) {
     let id = ui.make_persistent_id(("photo_attachments_open", owner));
     let mut state =
@@ -128,13 +128,13 @@ pub fn set_attachments_open(ui: &egui::Ui, owner: Uuid, open: bool) {
     }
 }
 
-/// Dessine le contenu HUD d'une ligne de calque.
+/// Draws a layer row's HUD content.
 ///
-/// Toute icône passe par `Icon` (via [`IconButton`]). La rangée est
-/// en `Align::Center` : œil, vignette et nom sont centrés
-/// verticalement (jamais de chevauchement : la hauteur est allouée
-/// par la liste, voir `layer_list`). Retourne les actions, traitées
-/// par l'app (jamais d'envoi worker direct).
+/// Every icon goes through `Icon` (via [`IconButton`]). The row is
+/// `Align::Center`: eye, thumbnail, and name are centered
+/// vertically (never overlapping: height is allocated
+/// by the list, see `layer_list`). Returns the actions, handled
+/// by the app (never a direct worker send).
 #[allow(clippy::too_many_lines)]
 pub fn draw_photo_layer_item(
     ui: &mut egui::Ui,
@@ -150,17 +150,17 @@ pub fn draw_photo_layer_item(
     let theme = ui.cygnus_theme();
     let mut actions = Vec::new();
 
-    // Interaction de la rangée (clic = sélection, double-clic sur le
-    // nom = renommage) — enregistrée AVANT le contenu pour peindre le
-    // fond sélectionné/survolé sans retard d'une frame.
+    // Row interaction (click = select, double-click on the
+    // name = rename) — registered BEFORE the content to paint the
+    // selected/hovered background with no frame delay.
     let row_rect = ui.available_rect_before_wrap();
     let row_id = ui.make_persistent_id(("photo_layer_row", layer.id));
     let row_resp = ui.interact(row_rect, row_id, egui::Sense::click());
     if row_resp.clicked() {
         actions.push(LayerItemAction::Select(layer.id));
     }
-    // Clic droit : sélectionne la rangée et ouvre le menu
-    // contextuel (sections façon rerun : édition, visibilité).
+    // Right click: selects the row and opens the
+    // context menu (rerun-style sections: edit, visibility).
     if row_resp.secondary_clicked() {
         actions.push(LayerItemAction::Select(layer.id));
     }
@@ -176,8 +176,8 @@ pub fn draw_photo_layer_item(
                 actions.push(LayerItemAction::DuplicateLayer(layer.id));
                 ui.close();
             }
-            // Transformations du calque (sélection déjà posée par le
-            // clic droit) : sous-menu façon barre de menus.
+            // Layer transformations (selection already set by the
+            // right click): menu-bar-style submenu.
             ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
                 if menu_row(ui, &theme, texts.get(PhotoTextKey::FlipHorizontal)) {
                     actions.push(LayerItemAction::FlipHorizontalSelected);
@@ -216,7 +216,7 @@ pub fn draw_photo_layer_item(
             }
         });
 
-    // Fond de sélection sur toute la largeur de la ligne.
+    // Selection background across the full row width.
     if selected || row_resp.hovered() {
         let bg = if selected {
             theme.colors.item_selected
@@ -227,10 +227,10 @@ pub fn draw_photo_layer_item(
     }
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        // Indentation hiérarchique (un cran par niveau).
+        // Hierarchical indent (one notch per level).
         ui.add_space(depth as f32 * theme.spacing.lg);
-        // Chevron repli/dépli (groupes avec enfants) ou espace
-        // équivalent pour aligner les colonnes.
+        // Collapse/expand chevron (groups with children) or
+        // equivalent space to align columns.
         if layer.kind == super::types::PhotoLayerKind::Group && !layer.children.is_empty() {
             let chevron = if layer.collapsed {
                 Icon::ExpandMore
@@ -251,8 +251,8 @@ pub fn draw_photo_layer_item(
         } else {
             ui.add_space(theme.sizes.icon_button);
         }
-        // Chevron des pièces jointes (tree façon egui demo) : repli /
-        // dépli des lignes filtres + masques sous leur porteur.
+        // Attachment chevron (egui-demo-style tree): collapse /
+        // expand of the filter + mask rows under their owner.
         if layer.has_filters || layer.has_masks {
             let open = attachments_open(ui, layer.id);
             let chevron = if open {
@@ -286,8 +286,8 @@ pub fn draw_photo_layer_item(
         {
             actions.push(LayerItemAction::ToggleVisibility(layer.id));
         }
-        // Visualiseur du calque : miniature pixels si disponible,
-        // sinon vignette symbolique (icône de type encadrée).
+        // Layer viewer: pixel thumbnail when available,
+        // else symbolic vignette (framed type icon).
         if let Some(view) = thumb {
             ui.add(
                 egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
@@ -306,8 +306,8 @@ pub fn draw_photo_layer_item(
             );
         }
         ui.add_space(theme.spacing.xs);
-        // Nom : double-clic = édition inline, Entrée = valider,
-        // Échap = annuler, perte de focus = valider si modifié.
+        // Name: double-click = inline edit, Enter = confirm,
+        // Escape = cancel, focus loss = confirm when modified.
         if rename.editing == Some(layer.id) {
             let edit = egui::TextEdit::singleline(&mut rename.buffer)
                 .desired_width(ui.available_width() - 40.0)
@@ -327,7 +327,7 @@ pub fn draw_photo_layer_item(
                     });
                 }
             }
-            // Focus immédiat à l'ouverture de l'édition.
+            // Immediate focus when editing opens.
             edit.response.request_focus();
         } else {
             let name_resp = ui.add(
@@ -339,18 +339,18 @@ pub fn draw_photo_layer_item(
                 rename.buffer = layer.name.clone();
             }
         }
-        // Pas de bouton de suppression par rangée (façon Affinity :
-        // suppression via le menu contextuel ou la barre du bas).
+        // No delete button per row (Affinity-style:
+        // delete via the context menu or the bottom bar).
     });
     actions
 }
 
-/// Ligne enfant d'une pièce jointe (filtre live ou masque) : nœud
-/// d'arbre sélectionnable (clic = focus pour modification, voir
-/// [`LayerItemAction::SelectAttachment`]), œil on/off, indentée sous
-/// son porteur. Retourne les actions (routées au worker par l'app).
-/// Ni renommable ni déplaçable par DnD (ordre aux boutons
-/// monter/descendre, comme avant).
+/// Child row of an attachment (live filter or mask): selectable
+/// tree node (click = focus for editing, see
+/// [`LayerItemAction::SelectAttachment`]), on/off eye, indented under
+/// its owner. Returns the actions (routed to the worker by the app).
+/// Neither renamable nor DnD-movable (order via the
+/// up/down buttons, as before).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_attachment_row(
     ui: &mut egui::Ui,
@@ -367,14 +367,14 @@ pub fn draw_attachment_row(
     let is_filter = sub.is_filter;
     let enabled = sub.enabled;
     let name = sub.name.as_str();
-    // Clic = focus (sélection secondaire, porteur sélectionné aussi).
+    // Click = focus (secondary selection, owner selected too).
     let row_rect = ui.available_rect_before_wrap();
     let row_id = ui.make_persistent_id(("photo_attachment_row", owner, sub_id));
     let row_resp = ui.interact(row_rect, row_id, egui::Sense::click());
     if row_resp.clicked() {
         actions.push(LayerItemAction::SelectAttachment { owner, id: sub_id });
     }
-    // Fond de sélection sur toute la largeur de la ligne.
+    // Selection background across the full row width.
     if selected || row_resp.hovered() {
         let bg = if selected {
             theme.colors.item_selected
@@ -385,11 +385,11 @@ pub fn draw_attachment_row(
     }
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.add_space(depth as f32 * theme.spacing.lg);
-        // Colonne du chevron (vide ici : alignée sur les calques).
+        // Chevron column (empty here: aligned with layers).
         ui.add_space(theme.sizes.icon_button);
-        // Colonne du chevron pièces jointes (vide : alignée).
+        // Attachment chevron column (empty: aligned).
         ui.add_space(theme.sizes.icon_button);
-        // Œil on/off (bascule sans perdre réglages ni pixels).
+        // On/off eye (toggles without losing settings or pixels).
         let vis_icon = if enabled {
             Icon::Visibility
         } else {
@@ -451,8 +451,8 @@ pub fn draw_attachment_row(
                 texts.get(PhotoTextKey::DeleteMask),
             )
         };
-        // Monte/descend : pas de flèches au registre d'icônes —
-        // petits boutons texte ASCII ("^"/"v"), jamais d'unicode.
+        // Up/down: no arrows in the icon registry —
+        // small ASCII text buttons ("^"/"v"), never unicode.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if IconButton::new(Icon::Close)
                 .tooltip(del_tip)
@@ -536,7 +536,7 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| {
                 let actions = draw_photo_layer_item(ui, &layer, true, &mut rename, None, 0, texts);
                 assert!(actions.is_empty(), "aucun clic sans interaction");
-                // Tous les types, masqué / visible.
+                // All types, hidden / visible.
                 for kind in [
                     PhotoLayerKind::Pixel,
                     PhotoLayerKind::Group,
@@ -585,15 +585,15 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let owner = Uuid::new_v4();
-        // Ouvert par défaut, même sans état stocké.
+        // Open by default, even with no stored state.
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert!(attachments_open(ui, owner));
             });
         })
         .drop_without_applying_deltas();
-        // Premier clic : bascule vraiment (régression : `load` seul
-        // rendait `None` et figeait le chevron).
+        // First click: really toggles (regression: `load` alone
+        // yielded `None` and froze the chevron).
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 set_attachments_open(ui, owner, false);

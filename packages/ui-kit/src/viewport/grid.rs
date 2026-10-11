@@ -14,26 +14,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Grille monde : calcul pur des lignes + dessin via `egui::Painter`.
+//! World grid: pure line computation + drawing via `egui::Painter`.
 //!
-//! Aucune connaissance du contenu (pixels, formes, clips) : la grille
-//! est un repère en coordonnées monde, projeté par la
+//! No knowledge of content (pixels, shapes, clips): the grid is a
+//! world-coordinate reference frame, projected by the
 //! [`Camera`](super::camera::Camera).
 
 use super::camera::Camera;
 use crate::theme::CygnusTheme;
 
-/// Configuration d'une grille monde.
+/// A world grid's configuration.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GridConfig {
-    /// Pas en unités monde (> 0).
+    /// Step in world units (> 0).
     pub spacing: f32,
-    /// Couleur des lignes.
+    /// Line color.
     pub color: egui::Color32,
 }
 
 impl GridConfig {
-    /// Grille calibrée sur le thème (pas `spacing`, couleur bordure).
+    /// Theme-calibrated grid (`spacing` step, border color).
     pub fn themed(theme: &CygnusTheme, spacing: f32) -> Self {
         Self {
             spacing: if spacing > 0.0 { spacing } else { 1.0 },
@@ -41,8 +41,8 @@ impl GridConfig {
         }
     }
 
-    /// Abcisses / ordonnées monde des lignes traversant `world`.
-    /// `world` négatif ou pas invalide → vecteurs vides.
+    /// World abscissas / ordinates of the lines crossing `world`.
+    /// Negative `world` or invalid step → empty vectors.
     pub fn lines_in(&self, world: egui::Rect) -> (Vec<f32>, Vec<f32>) {
         if self.spacing <= 0.0 || world.is_negative() {
             return (Vec::new(), Vec::new());
@@ -52,7 +52,7 @@ impl GridConfig {
         (xs, ys)
     }
 
-    /// Dessine la grille sur `painter` (rect écran `screen_rect`).
+    /// Draws the grid on `painter` (screen rect `screen_rect`).
     pub fn draw(
         self,
         painter: &egui::Painter,
@@ -79,7 +79,7 @@ impl GridConfig {
     }
 }
 
-/// Valeurs de `min..=max` alignées sur `step` (incluses, ordonnées).
+/// `min..=max` values aligned on `step` (included, ordered).
 fn stepped(min: f32, max: f32, step: f32) -> Vec<f32> {
     if step <= 0.0 || max < min {
         return Vec::new();
@@ -89,7 +89,7 @@ fn stepped(min: f32, max: f32, step: f32) -> Vec<f32> {
     if last < first {
         return Vec::new();
     }
-    // Garde-fou : jamais plus de 10 000 lignes par axe.
+    // Guard: never more than 10,000 lines per axis.
     let count = (last - first + 1).min(10_000);
     (0..count)
         .map(|offset| (first + offset) as f32 * step)

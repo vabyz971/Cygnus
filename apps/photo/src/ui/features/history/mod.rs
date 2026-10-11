@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Fonctionnalité Historique : panneau position-indépendant.
+//! History feature: position-independent panel.
 //!
-//! Liste des pas undo (plus ancien → plus récent), état actuel
-//! surligné, pas redo (prochain en tête). Clic sur une rangée =
-//! saut d'état ([`HistoryPanelAction`]), converti en
-//! [`PhotoAction`](crate::commands::PhotoAction) (voir
-//! [`super::actions`]). Style exclusivement ui-kit, aucune couleur
-//! en dur.
+//! Undo step list (oldest → newest), current state
+//! highlighted, redo steps (next one first). Clicking a row =
+//! state jump ([`HistoryPanelAction`]), converted to
+//! [`PhotoAction`](crate::commands::PhotoAction) (see
+//! [`super::actions`]). ui-kit-only styling, no hardcoded
+//! color.
 
 pub mod actions;
 pub mod panel;

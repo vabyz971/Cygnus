@@ -14,46 +14,46 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Transform monde : matrice affine 2D dérivée, jamais stockée.
+//! World transform: derived 2D affine matrix, never stored.
 //!
-//! [`Affine2`] est la forme COMPOSABLE du [`Transform2D`](math_utils::Transform2D)
-//! local. La scène ne stocke que des locaux ; le monde se calcule à la
-//! demande par multiplication parent → enfant
+//! [`Affine2`] is the COMPOSABLE form of the local [`Transform2D`](math_utils::Transform2D).
+//! The scene only stores locals; the world is computed on
+//! demand by parent → child multiplication
 //! ([`crate::Scene::world_affine`]).
 //!
-//! Convention (origine, pas de centre d'image) :
-//! `M = T(offset) · R(rotation) · K(skew) · S(scale)` avec
-//! `K·S = [[sx, kx·sy], [ky·sx, sy]]` — même décomposition que
+//! Convention (origin, no image center):
+//! `M = T(offset) · R(rotation) · K(skew) · S(scale)` with
+//! `K·S = [[sx, kx·sy], [ky·sx, sy]]` — same decomposition as
 //! [`Transform2D::shear_scale_matrix`](math_utils::Transform2D::shear_scale_matrix),
-//! mêmes formules de rotation que
+//! same rotation formulas as
 //! [`Transform2D::local_to_doc`](math_utils::Transform2D::local_to_doc),
-//! mais sans les termes de centre `(cx·sx, cy·sy)` qui dépendent des
-//! dimensions d'un contenu raster et n'ont pas de sens pour un groupe,
-//! une forme ou un cadre de mise en page.
+//! but without the center terms `(cx·sx, cy·sy)` which depend on
+//! a raster content's dimensions and are meaningless for a group,
+//! a shape or a layout frame.
 
 use math_utils::Transform2D;
 
-/// Matrice affine 2D : `x' = m00·x + m01·y + tx`, `y' = m10·x + m11·y + ty`.
+/// 2D affine matrix: `x' = m00·x + m01·y + tx`, `y' = m10·x + m11·y + ty`.
 ///
-/// Valeur pure dérivée des [`Transform2D`] locaux — jamais source de vérité.
+/// Pure value derived from local [`Transform2D`]s — never the source of truth.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Affine2 {
-    /// Ligne X : `(m00, m01, tx)`.
+    /// X row: `(m00, m01, tx)`.
     pub m00: f32,
-    /// Ligne X : `(m00, m01, tx)`.
+    /// X row: `(m00, m01, tx)`.
     pub m01: f32,
-    /// Translation X.
+    /// X translation.
     pub tx: f32,
-    /// Ligne Y : `(m10, m11, ty)`.
+    /// Y row: `(m10, m11, ty)`.
     pub m10: f32,
-    /// Ligne Y : `(m10, m11, ty)`.
+    /// Y row: `(m10, m11, ty)`.
     pub m11: f32,
-    /// Translation Y.
+    /// Y translation.
     pub ty: f32,
 }
 
 impl Affine2 {
-    /// Identité.
+    /// Identity.
     pub const IDENTITY: Self = Self {
         m00: 1.0,
         m01: 0.0,
@@ -63,20 +63,20 @@ impl Affine2 {
         ty: 0.0,
     };
 
-    /// Matrice identité.
+    /// Identity matrix.
     #[must_use]
     pub fn identity() -> Self {
         Self::IDENTITY
     }
 
-    /// Convertit un transform local en matrice (convention du module).
+    /// Converts a local transform into a matrix (module convention).
     #[must_use]
     pub fn from_transform(t: &Transform2D) -> Self {
-        // K·S partagé avec math-utils : [[sx, kx·sy], [ky·sx, sy]].
+        // K·S shared with math-utils: [[sx, kx·sy], [ky·sx, sy]].
         let (s00, s01, s10, s11) = t.shear_scale_matrix();
         let rad = t.rotation_deg.to_radians();
         let (cos, sin) = (rad.cos(), rad.sin());
-        // R·(K·S), puis translation par l'offset (origine, pas de centre).
+        // R·(K·S), then translation by the offset (origin, no center).
         Self {
             m00: cos * s00 - sin * s10,
             m01: cos * s01 - sin * s11,
@@ -87,8 +87,8 @@ impl Affine2 {
         }
     }
 
-    /// Compose : `self` (parent) suivi de `child` — appliquer `child`
-    /// d'abord, puis `self`. C'est l'ordre de la propagation monde.
+    /// Composes: `self` (parent) followed by `child` — apply `child`
+    /// first, then `self`. This is the world-propagation order.
     #[must_use]
     pub fn concat(self, child: Self) -> Self {
         Self {
@@ -101,7 +101,7 @@ impl Affine2 {
         }
     }
 
-    /// Applique la matrice à un point.
+    /// Applies the matrix to a point.
     #[must_use]
     pub fn apply(self, x: f32, y: f32) -> (f32, f32) {
         (

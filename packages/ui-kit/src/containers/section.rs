@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Section titrée sans fond (regroupe des composants).
+//! Background-free titled section (groups components).
 //!
-//! Contrairement à [`Panel`](super::panel::Panel), la section ne
-//! dessine aucune surface : titre + contenu, sans chrome.
+//! Unlike [`Panel`](super::panel::Panel), the section draws
+//! no surface: title + content, no chrome.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::containers::Section;
 //! # use ui_kit::theme::CygnusTheme;
@@ -34,19 +34,19 @@
 use crate::primitives::{Text, divider};
 use crate::theme::CygnusTheme;
 
-/// Section titrée via API builder.
+/// Titled section via builder API.
 #[derive(Debug, Clone)]
 pub struct Section<'a> {
     title: &'a str,
 }
 
 impl<'a> Section<'a> {
-    /// Crée une section avec titre.
+    /// Creates a section with title.
     pub fn new(title: &'a str) -> Self {
         Self { title }
     }
 
-    /// Affiche la section et son contenu.
+    /// Displays the section and its content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

@@ -1,17 +1,17 @@
-//! Gallery — d\'exemples visuels des composants ui-kit.
+//! Gallery — visual examples of the ui-kit components.
 //
-//! Affiche les widgets ui-kit (boutons, curseurs, tableaux, conteneurs)
-//! avec le thème sombre par défaut.
+//! Displays the ui-kit widgets (buttons, sliders, tables, containers)
+//! with the default dark theme.
 //
-//! Lancer avec :
+//! Run with:
 //! ```bash
 //! cargo run --package ui-kit --example gallery
 //! ```
 //!
-//! Cet exemple montre :
-//! - Les tokens du thème (`ui_kit::theme::CygnusTheme`)
-//! - Les composants de base via la `prelude`
-//! - L'intégration avec egui et eframe
+//! This example shows:
+//! - The theme tokens (`ui_kit::theme::CygnusTheme`)
+//! - The base components via the `prelude`
+//! - Integration with egui and eframe
 
 use eframe::egui;
 
@@ -33,20 +33,20 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// Application d'exemple : une page avec plusieurs widgets ui-kit.
+/// Example app: one page with several ui-kit widgets.
 struct GalleryApp;
 
 impl eframe::App for GalleryApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Installer le thème Cygnus
+        // Install the Cygnus theme
         install_theme(ui.ctx(), CygnusTheme::default());
 
         ui.heading("ui-kit Gallery");
 
-        // Curseur
+        // Slider
         ui.add(egui::Slider::new(&mut 0.0, 0.0..=1.0).text("Opacité"));
 
-        // Onglets
+        // Tabs
         ui.horizontal(|ui| {
             if ui.selectable_label(true, "Accueil").clicked() {
                 // nothing yet
@@ -56,12 +56,12 @@ impl eframe::App for GalleryApp {
             }
         });
 
-        // Conteneur card
+        // Card container
         ui.group(|ui| {
             ui.label("C'est un groupe/conteneur");
         });
 
-        // Zone simple avec texte
+        // Plain area with text
         ui.label("Aperçu canvas (widget métier)");
     }
 }

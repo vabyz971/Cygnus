@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Carte : surface bordée pour un contenu autonome.
+//! Card: bordered surface for standalone content.
 //!
-//! Fine enveloppe sur [`Surface`](crate::primitives::Surface) avec
-//! la bordure du thème.
+//! Thin wrapper over [`Surface`](crate::primitives::Surface) with
+//! the theme's border.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::containers::Card;
 //! # use ui_kit::theme::CygnusTheme;
@@ -34,17 +34,17 @@
 use crate::primitives::Surface;
 use crate::theme::CygnusTheme;
 
-/// Carte via API builder.
+/// Card via builder API.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Card;
 
 impl Card {
-    /// Crée une carte.
+    /// Creates a card.
     pub fn new() -> Self {
         Self
     }
 
-    /// Affiche la carte et son contenu.
+    /// Displays the card and its content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

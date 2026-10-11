@@ -14,26 +14,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Render Graph dérivé : liaisons scène→rendu et reconstruction partielle.
+//! Derived Render Graph: scene→render bindings and partial rebuild.
 //!
-//! [`RenderGraph`] possède un [`graph::Graph`] (propagation dirty,
-//! révisions, ordre topo) et ajoute :
+//! [`RenderGraph`] owns a [`graph::Graph`] (dirty propagation,
+//! revisions, topo order) and adds:
 //!
-//! - la DÉRIVATION : chaque nœud de scène produit une chaîne
-//!   `Source → Transform → [Effect…] → [Mask] → Blend`, les fratries se
-//!   plient en chaîne fond/premier-plan, l'unique `Output` consomme le
-//!   dernier top ;
-//! - les LIAISONS (`source_map`, `tops`, `bindings`, `synced`) qui disent,
-//!   pour chaque nœud de scène, quels nœuds de rendu en dépendent et à
-//!   quelle révision de scène ils sont synchronisés ;
-//! - le SYNC incrémental : attribut modifié → dirty sans reconstruction ;
-//!   ajout/retrait/réordre dans une portée → re-câblage local ; autre
-//!   changement structurel → reconstruction de LA portée (fratrie), jamais
-//!   du graphe entier. Le nœud consommateur de portée (groupe-`Blend` ou
-//!   `Output`) survit toujours (identité stable pour les backends).
+//! - DERIVATION: each scene node produces a chain
+//!   `Source → Transform → [Effect…] → [Mask] → Blend`, sibling groups fold
+//!   into background/foreground chains, the single `Output` consumes the
+//!   last top;
+//! - BINDINGS (`source_map`, `tops`, `bindings`, `synced`) telling,
+//!   for each scene node, which render nodes depend on it and at
+//!   which scene revision they are synchronized;
+//! - incremental SYNC: modified attribute → dirty without rebuild;
+//!   add/remove/reorder within a scope → local rewiring; any other
+//!   structural change → rebuild of THE scope (sibling group), never
+//!   of the whole graph. The scope consumer node (group-`Blend` or
+//!   `Output`) always survives (stable identity for backends).
 //!
-//! Reconstruire le graphe ne recalcule aucun pixel : seuls les flags dirty
-//! (lus via [`RenderGraph::plan_dirty`]) pilotent le travail du backend.
+//! Rebuilding the graph recomputes no pixels: only dirty flags
+//! (read via [`RenderGraph::plan_dirty`]) drive the backend's work.
 
 use std::collections::{HashMap, HashSet};
 
@@ -46,48 +46,48 @@ use crate::{
     SceneNodeId,
 };
 
-/// Échec de dérivation, de synchronisation ou d'exécution.
+/// Derivation, synchronization or execution failure.
 ///
-/// La dérivation interne est acyclique par construction : [`RenderError::Cycle`]
-/// ne survient que sur usage manuel incohérent (défensif).
+/// Internal derivation is acyclic by construction: [`RenderError::Cycle`]
+/// only occurs on inconsistent manual use (defensive).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RenderError {
-    /// Nœud de scène inconnu au moment de dériver.
+    /// Scene node unknown at derivation time.
     #[error("unknown scene node: {0}")]
     UnknownScene(SceneNodeId),
-    /// Dépendance cyclique (défensif — la dérivation n'en produit pas).
+    /// Cyclic dependency (defensive — derivation produces none).
     #[error("cyclic render dependency: {from} -> {to}")]
     Cycle {
-        /// Amont demandé.
+        /// Requested upstream.
         from: RenderNodeId,
-        /// Aval demandé.
+        /// Requested downstream.
         to: RenderNodeId,
     },
-    /// Nœud de rendu inconnu (plan périmé entre deux `sync`).
+    /// Unknown render node (stale plan between two `sync`s).
     #[error("unknown render node: {0}")]
     UnknownRender(RenderNodeId),
-    /// Le backend a échoué pendant l'exécution.
+    /// The backend failed during execution.
     #[error("backend failed: {0}")]
     Backend(String),
 }
 
-/// Ce que `sync` a fait — observabilité sans effet sur le rendu.
+/// What `sync` did — observability with no effect on rendering.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SyncReport {
-    /// Nœuds de scène ajoutés (chaînes dérivées, sans toucher l'existant).
+    /// Added scene nodes (derived chains, without touching the existing).
     pub appended: usize,
-    /// Nœuds de scène supprimés (dérivés purgés, voisins re-câblés).
+    /// Removed scene nodes (derivatives purged, neighbors rewired).
     pub removed: usize,
-    /// Portées entièrement reconstruites (fratries).
+    /// Fully rebuilt scopes (sibling groups).
     pub rebuilt_scopes: usize,
-    /// Portées réordonnées par re-câblage seul (identités préservées).
+    /// Scopes reordered by rewiring alone (identities preserved).
     pub reordered: usize,
-    /// Nœuds de scène attribut-modifiés (dirty, zéro reconstruction).
+    /// Attribute-modified scene nodes (dirty, zero rebuild).
     pub dirtied: usize,
 }
 
 impl SyncReport {
-    /// Vrai si rien n'a changé (graphe déjà synchronisé).
+    /// True if nothing changed (graph already synchronized).
     #[must_use]
     pub fn is_clean(self) -> bool {
         self == Self::default()
@@ -102,40 +102,40 @@ impl SyncReport {
     }
 }
 
-/// Plan d'exécution : nœuds en ordre topologique (amont d'abord).
-/// Instantané — à recalculer après chaque `sync` qui touche la structure.
+/// Execution plan: nodes in topological order (upstream first).
+/// Snapshot — recompute after each `sync` touching the structure.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionPlan {
-    /// Nœuds à exécuter, en ordre.
+    /// Nodes to execute, in order.
     pub order: Vec<RenderNodeId>,
 }
 
 impl ExecutionPlan {
-    /// Nombre de nœuds planifiés.
+    /// Number of scheduled nodes.
     #[must_use]
     pub fn len(&self) -> usize {
         self.order.len()
     }
 
-    /// Vrai si le plan est vide.
+    /// True if the plan is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
 }
 
-/// Bilan d'exécution (voir [`RenderGraph::execute`]).
+/// Execution report (see [`RenderGraph::execute`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecuteReport {
-    /// Nœuds soumis au backend.
+    /// Nodes submitted to the backend.
     pub executed: usize,
 }
 
-/// Signature de dérivation d'un nœud de scène : tout ce qui, en changeant,
-/// EXIGE une reconstruction (le reste = attribut → dirty seul).
+/// Derivation signature of a scene node: everything which, when changed,
+/// REQUIRES a rebuild (the rest = attribute → dirty only).
 ///
-/// La nature fine (`TextData`, paramètres d'effets…) en est exclue : un
-/// texte réécrit salit sa chaîne sans la reconstruire.
+/// Fine nature (`TextData`, effect parameters…) is excluded: rewritten
+/// text dirties its chain without rebuilding it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Binding {
     tag: u8,
@@ -145,10 +145,10 @@ struct Binding {
     effects: Vec<EffectKey>,
 }
 
-/// Render Graph : opérations dérivées + liaisons + moteur d'invalidation.
+/// Render Graph: derived operations + bindings + invalidation engine.
 ///
-/// Le puits [`RenderOp::Output`] est créé par [`RenderGraph::new`] et
-/// survit à tous les `sync` (identité stable pour les backends).
+/// The [`RenderOp::Output`] sink is created by [`RenderGraph::new`] and
+/// survives all `sync`s (stable identity for backends).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RenderGraph {
     inner: DepGraph,
@@ -169,7 +169,7 @@ impl Default for RenderGraph {
 }
 
 impl RenderGraph {
-    /// Graphe vide avec son puits `Output` (aucune scène dérivée).
+    /// Empty graph with its `Output` sink (no scene derived).
     #[must_use]
     pub fn new() -> Self {
         let mut inner = DepGraph::new();
@@ -192,7 +192,7 @@ impl RenderGraph {
         }
     }
 
-    /// Dérive le graphe complet d'une scène (+ overlay d'effets).
+    /// Derives the full graph from a scene (+ effect overlay).
     #[must_use]
     pub fn build(scene: &Scene, overlay: &EffectOverlay) -> Self {
         let mut graph = Self::new();
@@ -213,94 +213,94 @@ impl RenderGraph {
         graph
     }
 
-    /// Puits final unique (identité stable entre les `sync`).
+    /// Single final sink (stable identity across `sync`s).
     #[must_use]
     pub fn output(&self) -> RenderNodeId {
         self.output
     }
 
-    /// Nombre de nœuds de rendu (puits inclus).
+    /// Number of render nodes (sink included).
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Nombre d'arêtes typées.
+    /// Number of typed edges.
     #[must_use]
     pub fn edge_count(&self) -> usize {
         self.inner.edge_count()
     }
 
-    /// Nœud en lecture seule (`None` si inconnu).
+    /// Read-only node (`None` if unknown).
     #[must_use]
     pub fn find(&self, id: RenderNodeId) -> Option<&RenderNode> {
         self.nodes.get(&id)
     }
 
-    /// Vrai si le nœud est suivi.
+    /// True if the node is tracked.
     #[must_use]
     pub fn contains(&self, id: RenderNodeId) -> bool {
         self.nodes.contains_key(&id)
     }
 
-    /// Arêtes entrantes (zéro allocation — tranche sur le stocké).
+    /// Incoming edges (zero allocation — slice over the stored).
     #[must_use]
     pub fn inputs_of(&self, id: RenderNodeId) -> Option<&[RenderEdge]> {
         self.incoming.get(&id).map(Vec::as_slice)
     }
 
-    /// Nœuds de rendu dérivés d'un nœud de scène, dans l'ordre de dérivation
-    /// (chaîne amont d'abord — `mapped[0]` = `Source`).
+    /// Render nodes derived from a scene node, in derivation order
+    /// (upstream chain first — `mapped[0]` = `Source`).
     #[must_use]
     pub fn derived_of(&self, scene: SceneNodeId) -> Option<&[RenderNodeId]> {
         self.source_map.get(&scene).map(Vec::as_slice)
     }
 
-    /// Top (`Blend`) d'un nœud de scène (`None` si non dérivé).
+    /// Top (`Blend`) of a scene node (`None` if not derived).
     #[must_use]
     pub fn top_of(&self, scene: SceneNodeId) -> Option<RenderNodeId> {
         self.tops.get(&scene).copied()
     }
 
-    /// Saleté d'un nœud (`None` si inconnu).
+    /// Dirtiness of a node (`None` if unknown).
     #[must_use]
     pub fn is_dirty(&self, id: RenderNodeId) -> Option<bool> {
         self.inner.is_dirty(id.as_graph_id())
     }
 
-    /// Révision d'un nœud (`None` si inconnu — source unique : le graphe).
+    /// Revision of a node (`None` if unknown — single source: the graph).
     #[must_use]
     pub fn node_revision(&self, id: RenderNodeId) -> Option<Revision> {
         self.inner.node_revision(id.as_graph_id())
     }
 
-    /// Dernière révision émise.
+    /// Last emitted revision.
     #[must_use]
     pub fn tree_revision(&self) -> Revision {
         self.inner.tree_revision()
     }
 
-    /// Salit un nœud et son aval (invalidation manuelle — `sync` est la
-    /// voie normale depuis la scène).
+    /// Dirties a node and its downstream (manual invalidation — `sync` is the
+    /// normal path from the scene).
     pub fn mark_dirty(&mut self, id: RenderNodeId) -> Option<Revision> {
         self.inner.mark_dirty(id.as_graph_id())
     }
 
-    /// Marque un nœud recalculé (voir `graph::Graph::clear_dirty` : sans bump).
+    /// Marks a node recomputed (see `graph::Graph::clear_dirty`: no bump).
     pub fn clear_dirty(&mut self, id: RenderNodeId) -> Option<bool> {
         self.inner.clear_dirty(id.as_graph_id())
     }
 
-    // -- Synchronisation ---------------------------------------------------
+    // -- Synchronization --------------------------------------------------
 
-    /// Synchronise depuis la scène (+ overlay) : purge les disparus,
-    /// reconstruit les portées structurellement changées, salit les
-    /// attribut-modifiés. Idempotent : rappelé sans changement, le rapport
-    /// est vierge ([`SyncReport::is_clean`]).
+    /// Synchronizes from the scene (+ overlay): purges the vanished,
+    /// rebuilds structurally changed scopes, dirties the
+    /// attribute-modified ones. Idempotent: called again with no change, the report
+    /// is clean ([`SyncReport::is_clean`]).
     #[must_use = "le rapport dit ce qui a changé"]
     pub fn sync(&mut self, scene: &Scene, overlay: &EffectOverlay) -> SyncReport {
         let mut report = SyncReport::default();
-        // Phase A : purge des disparus (fonds de sortie capturés AVANT).
+        // Phase A: purge the vanished (exit backgrounds captured BEFORE).
         let gone: Vec<SceneNodeId> = self
             .bindings
             .keys()
@@ -309,8 +309,8 @@ impl RenderGraph {
             .collect();
         let mut removed = HashSet::new();
         let mut exit = HashMap::new();
-        // Fonds pré-purge de TOUS les nœuds : le scrub de suppression
-        // efface les arêtes entrantes, cette table permet de re-câbler.
+        // Pre-purge backgrounds of ALL nodes: the removal scrub
+        // erases incoming edges; this table allows rewiring.
         let prev_bg: HashMap<RenderNodeId, Option<RenderNodeId>> = self
             .nodes
             .keys()
@@ -329,7 +329,7 @@ impl RenderGraph {
             self.remove_scene_derived(sid);
             report.removed += 1;
         }
-        // Phase B : portées de haut en bas (racines puis groupes en DFS).
+        // Phase B: scopes top-down (roots then groups in DFS).
         report.absorb(self.reconcile_scope(scene, overlay, None, &exit, &removed, &prev_bg));
         for group in scene_groups_dfs(scene) {
             report.absorb(self.reconcile_scope(
@@ -344,9 +344,9 @@ impl RenderGraph {
         report
     }
 
-    // -- Plans et exécution --------------------------------------------------
+    // -- Plans and execution -------------------------------------------------
 
-    /// Plan complet : tous les nœuds en ordre topologique.
+    /// Full plan: all nodes in topological order.
     #[must_use]
     pub fn plan(&self) -> ExecutionPlan {
         ExecutionPlan {
@@ -360,8 +360,8 @@ impl RenderGraph {
         }
     }
 
-    /// Plan incrémental : seuls les nœuds dirty, en ordre topologique.
-    /// Prépare un futur scheduler (aujourd'hui : saut des propres).
+    /// Incremental plan: only dirty nodes, in topological order.
+    /// Prepares a future scheduler (today: clean nodes skipped).
     #[must_use]
     pub fn plan_dirty(&self) -> ExecutionPlan {
         ExecutionPlan {
@@ -378,14 +378,14 @@ impl RenderGraph {
         }
     }
 
-    /// Exécute un plan via le backend ( Cadre ouvert/fermé par le backend ;
-    /// erreur remontée sans état partiel observable côté graphe).
+    /// Executes a plan via the backend (frame opened/closed by the backend;
+    /// error propagated with no observable partial state graph-side).
     ///
     /// # Errors
     ///
-    /// [`RenderError::UnknownRender`] si le plan référence un nœud disparu
-    /// (plan périmé entre deux `sync`), [`RenderError::Backend`] si le
-    /// backend échoue.
+    /// [`RenderError::UnknownRender`] if the plan references a vanished node
+    /// (stale plan between two `sync`s), [`RenderError::Backend`] if the
+    /// backend fails.
     pub fn execute<B: Backend>(
         &self,
         backend: &mut B,
@@ -405,10 +405,10 @@ impl RenderGraph {
         Ok(ExecuteReport { executed })
     }
 
-    // -- Dérivation ----------------------------------------------------------
+    // -- Derivation ----------------------------------------------------------
 
-    /// Dérive le sous-arbre de `sid`, chaîné sur `bg` (fond), et retourne
-    /// son top (`Blend`). Les liaisons sont enregistrées au fil de l'eau.
+    /// Derives the subtree of `sid`, chained onto `bg` (background), and returns
+    /// its top (`Blend`). Bindings are recorded along the way.
     fn derive_subtree(
         &mut self,
         scene: &Scene,
@@ -465,9 +465,9 @@ impl RenderGraph {
         }
     }
 
-    /// Réconcilie UNE portée (fratrie) : `None` = racines, `Some(g)` =
-    /// enfants du groupe `g`. Le consommateur (puits ou `Blend` du groupe)
-    /// survit toujours — seul son câblage change.
+    /// Reconciles ONE scope (sibling group): `None` = roots, `Some(g)` =
+    /// children of group `g`. The consumer (sink or group `Blend`)
+    /// always survives — only its wiring changes.
     fn reconcile_scope(
         &mut self,
         scene: &Scene,
@@ -498,11 +498,11 @@ impl RenderGraph {
             if self.scope_fresh(scene, overlay, parent, &cur) {
                 return self.attribute_pass(scene, &cur);
             }
-            // Même fratrie mais liaison périmée (masques/effets/parent) :
-            // la forme des chaînes a changé → reconstruction.
+            // Same sibling group but stale binding (masks/effects/parent):
+            // chain shapes changed → rebuild.
             return self.rebuild_scope(scene, overlay, parent, &cur);
         }
-        // Fraîcheur de l'existant conservé (les nouveaux n'ont pas de liaison).
+        // Freshness of the kept existing (new nodes have no binding).
         let shared = prev_intersect_cur(&prev, &cur);
         if self.scope_fresh(scene, overlay, parent, &shared) {
             if is_permutation(&prev, &cur) {
@@ -518,7 +518,7 @@ impl RenderGraph {
         self.rebuild_scope(scene, overlay, parent, &cur)
     }
 
-    /// Les liaisons des membres sont-elles intactes (hors ordre) ?
+    /// Are the members' bindings intact (besides order)?
     fn scope_fresh(
         &self,
         scene: &Scene,
@@ -538,8 +538,8 @@ impl RenderGraph {
         })
     }
 
-    /// Passe attributs : salit les dérivés des nœuds dont la révision de
-    /// scène a avancé (zéro reconstruction).
+    /// Attribute pass: dirties the derivatives of nodes whose scene
+    /// revision advanced (zero rebuild).
     fn attribute_pass(&mut self, scene: &Scene, scope: &[SceneNodeId]) -> SyncReport {
         let mut report = SyncReport::default();
         for sid in scope_subtree_ids(scene, scope) {
@@ -566,8 +566,8 @@ impl RenderGraph {
         report
     }
 
-    /// Ajout pur en fin de portée : dérive les nouveaux, re-câble le
-    /// consommateur (l'existant est intouché).
+    /// Pure append at scope end: derives the new nodes, rewires the
+    /// consumer (the existing is untouched).
     fn append_scope(
         &mut self,
         scene: &Scene,
@@ -590,10 +590,10 @@ impl RenderGraph {
         report
     }
 
-    /// Retrait pur (ordre des survivants préservé) : re-câble les fonds
-    /// orphelins vers les fonds de sortie capturés, puis le consommateur.
-    /// Les arêtes entrantes des nœuds purgés ayant été effacées, les fonds
-    /// d'avant-purge (`prev_bg`) guident le re-câblage.
+    /// Pure removal (survivor order preserved): rewires the orphaned
+    /// backgrounds to the captured exit backgrounds, then the consumer.
+    /// The purged nodes' incoming edges having been erased, the pre-purge
+    /// backgrounds (`prev_bg`) guide the rewiring.
     fn removal_scope(
         &mut self,
         parent: Option<SceneNodeId>,
@@ -635,7 +635,7 @@ impl RenderGraph {
         report
     }
 
-    /// Entrée Foreground actuelle du consommateur de portée (`None` si aucune).
+    /// Current Foreground input of the scope consumer (`None` if none).
     fn consumer_foreground(&self, parent: Option<SceneNodeId>) -> Option<RenderNodeId> {
         let consumer = match parent {
             None => self.output,
@@ -644,7 +644,7 @@ impl RenderGraph {
         self.foreground_of(consumer)
     }
 
-    /// Entrée Foreground actuelle d'un nœud (`None` si aucune).
+    /// Current Foreground input of a node (`None` if none).
     fn foreground_of(&self, id: RenderNodeId) -> Option<RenderNodeId> {
         self.incoming.get(&id).and_then(|edges| {
             edges
@@ -654,7 +654,7 @@ impl RenderGraph {
         })
     }
 
-    /// Réordre pur : re-câble fonds et consommateur, identités préservées.
+    /// Pure reorder: rewires backgrounds and consumer, identities preserved.
     fn reorder_scope(&mut self, parent: Option<SceneNodeId>, cur: &[SceneNodeId]) -> SyncReport {
         let mut report = SyncReport::default();
         let mut bg = None;
@@ -681,8 +681,8 @@ impl RenderGraph {
         report
     }
 
-    /// Reconstruction de portée : purge les dérivés de la fratrie,
-    /// re-dérive, re-câble le consommateur (lui-même préservé).
+    /// Scope rebuild: purges the sibling group's derivatives,
+    /// re-derives, rewires the consumer (itself preserved).
     fn rebuild_scope(
         &mut self,
         scene: &Scene,
@@ -707,7 +707,7 @@ impl RenderGraph {
         report
     }
 
-    /// Anciens membres d'une portée (ordre stocké avant purge).
+    /// Former members of a scope (order stored before purge).
     fn previous_scope_members(&self, parent: Option<SceneNodeId>) -> Vec<SceneNodeId> {
         match parent {
             None => self.root_order.clone(),
@@ -718,17 +718,17 @@ impl RenderGraph {
         }
     }
 
-    /// Dernier top d'une portée avant reconstruction (pour le consommateur).
+    /// Last top of a scope before rebuild (for the consumer).
     fn scope_last_top(&self, parent: Option<SceneNodeId>) -> Option<RenderNodeId> {
         let prev = self.previous_scope_members(parent);
         prev.last().and_then(|sid| self.tops.get(sid).copied())
     }
 
-    // -- Câblage de bas niveau ------------------------------------------------
+    // -- Low-level wiring ------------------------------------------------
 
-    /// Re-câble l'arête Foreground du consommateur (`old → new`, `None`
-    /// = absence). Le consommateur racine est le puits ; le consommateur
-    /// de groupe est son `Blend` (préservé par les reconstructions).
+    /// Rewires the consumer's Foreground edge (`old → new`, `None`
+    /// = absent). The root consumer is the sink; the group
+    /// consumer is its `Blend` (preserved across rebuilds).
     fn rewire_consumer(
         &mut self,
         parent: Option<SceneNodeId>,
@@ -749,7 +749,7 @@ impl RenderGraph {
             self.remove_render_edge(from, consumer);
         }
         if let Some(to) = new {
-            // Évite le doublon si l'arête existe déjà (réordres partiels).
+            // Avoids the duplicate if the edge already exists (partial reorders).
             let exists = self.incoming.get(&consumer).is_some_and(|edges| {
                 edges
                     .iter()
@@ -761,7 +761,7 @@ impl RenderGraph {
         }
     }
 
-    /// Fond actuel d'un nœud (`None` si aucun).
+    /// Current background of a node (`None` if none).
     fn background_of(&self, id: RenderNodeId) -> Option<RenderNodeId> {
         self.incoming.get(&id).and_then(|edges| {
             edges
@@ -771,8 +771,8 @@ impl RenderGraph {
         })
     }
 
-    /// Ajoute une arête typée (miroir graphe inclus). La dérivation est
-    /// acyclique par construction — l'échec est défensif (debug_assert).
+    /// Adds a typed edge (graph mirror included). Derivation is
+    /// acyclic by construction — failure is defensive (debug_assert).
     fn link(&mut self, from: RenderNodeId, to: RenderNodeId, port: RenderPort) {
         self.incoming
             .entry(to)
@@ -785,7 +785,7 @@ impl RenderGraph {
         debug_assert!(ok, "render derivation is acyclic by construction");
     }
 
-    /// Retire une arête typée (absente = sans effet).
+    /// Removes a typed edge (absent = no effect).
     fn remove_render_edge(&mut self, from: RenderNodeId, to: RenderNodeId) {
         if let Some(edges) = self.incoming.get_mut(&to) {
             edges.retain(|e| e.from != from);
@@ -793,7 +793,7 @@ impl RenderGraph {
         self.inner.remove_edge(from.as_graph_id(), to.as_graph_id());
     }
 
-    /// Crée un nœud de rendu + liaisons vierges.
+    /// Creates a render node + clean bindings.
     fn add_render_node(&mut self, op: RenderOp, scene: Option<SceneNodeId>) -> RenderNodeId {
         let id = RenderNodeId::new();
         self.inner.insert(id.as_graph_id());
@@ -805,7 +805,7 @@ impl RenderGraph {
         id
     }
 
-    /// Supprime un nœud de rendu et ses arêtes (miroir graphe + tranches).
+    /// Removes a render node and its edges (graph mirror + slices).
     fn remove_render_node(&mut self, id: RenderNodeId) {
         self.inner.remove_node(id.as_graph_id());
         self.nodes.remove(&id);
@@ -820,7 +820,7 @@ impl RenderGraph {
         self.tops.retain(|_, top| *top != id);
     }
 
-    /// Purge les dérivés d'un nœud de scène + ses liaisons.
+    /// Purges a scene node's derivatives + its bindings.
     fn remove_scene_derived(&mut self, sid: SceneNodeId) {
         if let Some(list) = self.source_map.remove(&sid) {
             for rid in list {
@@ -832,7 +832,7 @@ impl RenderGraph {
         self.synced.remove(&sid);
     }
 
-    /// Enregistre liaison + révision synchronisée d'un nœud dérivé.
+    /// Records the binding + synchronized revision of a derived node.
     fn store_binding(&mut self, scene: &Scene, overlay: &EffectOverlay, sid: SceneNodeId) {
         let Some(node) = scene.find(sid) else {
             return;
@@ -851,7 +851,7 @@ impl RenderGraph {
             .insert(sid, scene.node_revision(sid).unwrap_or(Revision::NONE));
     }
 
-    /// Mémorise l'ordre d'une portée après mutation structurelle.
+    /// Memorizes a scope's order after a structural mutation.
     fn store_scope_order(&mut self, parent: Option<SceneNodeId>, cur: &[SceneNodeId]) {
         match parent {
             None => self.root_order = cur.to_vec(),
@@ -864,9 +864,9 @@ impl RenderGraph {
     }
 }
 
-// -- Helpers libres ----------------------------------------------------------
+// -- Free helpers ----------------------------------------------------------
 
-/// Discriminant de nature (le contenu fin — `TextData`… — est attribut).
+/// Nature discriminant (fine content — `TextData`… — is an attribute).
 fn kind_tag(kind: &NodeKind) -> u8 {
     match kind {
         NodeKind::Group => 0,
@@ -878,12 +878,12 @@ fn kind_tag(kind: &NodeKind) -> u8 {
     }
 }
 
-/// Discriminant de la nature actuelle (`u8::MAX` si nœud inconnu).
+/// Current-nature discriminant (`u8::MAX` if node unknown).
 fn kind_tag_of(scene: &Scene, sid: SceneNodeId) -> u8 {
     scene.find(sid).map_or(u8::MAX, |n| kind_tag(&n.kind))
 }
 
-/// Groupes en DFS depuis les racines (parents avant enfants — déterministe).
+/// Groups in DFS from the roots (parents before children — deterministic).
 fn scene_groups_dfs(scene: &Scene) -> Vec<SceneNodeId> {
     let mut groups = Vec::new();
     let mut stack: Vec<SceneNodeId> = scene.roots().iter().rev().copied().collect();
@@ -898,7 +898,7 @@ fn scene_groups_dfs(scene: &Scene) -> Vec<SceneNodeId> {
     groups
 }
 
-/// Tous les nœuds de scène des sous-arbres d'une fratrie (inclus, en ordre).
+/// All scene nodes of a sibling group's subtrees (included, in order).
 fn scope_subtree_ids(scene: &Scene, scope: &[SceneNodeId]) -> Vec<SceneNodeId> {
     let mut out = Vec::new();
     let mut stack: Vec<SceneNodeId> = scope.iter().rev().copied().collect();
@@ -911,17 +911,17 @@ fn scope_subtree_ids(scene: &Scene, scope: &[SceneNodeId]) -> Vec<SceneNodeId> {
     out
 }
 
-/// Intersection `prev ∩ cur` dans l'ordre de `prev` (fraîcheur de l'existant).
+/// Intersection `prev ∩ cur` in `prev`'s order (freshness of the existing).
 fn prev_intersect_cur(prev: &[SceneNodeId], cur: &[SceneNodeId]) -> Vec<SceneNodeId> {
     prev.iter().copied().filter(|id| cur.contains(id)).collect()
 }
 
-/// Même ensemble, ordre différent (réordre pur).
+/// Same set, different order (pure reorder).
 fn is_permutation(prev: &[SceneNodeId], cur: &[SceneNodeId]) -> bool {
     cur.len() == prev.len() && cur.iter().all(|id| prev.contains(id))
 }
 
-/// `cur` = `prev` amputé, ordre préservé (retrait pur).
+/// `cur` = `prev` amputated, order preserved (pure removal).
 fn is_subsequence(prev: &[SceneNodeId], cur: &[SceneNodeId]) -> bool {
     if cur.len() >= prev.len() {
         return false;
@@ -936,7 +936,7 @@ fn is_subsequence(prev: &[SceneNodeId], cur: &[SceneNodeId]) -> bool {
     want.is_none()
 }
 
-/// Suit les fonds de sortie à travers les nœuds purgés (re-câblage retrait).
+/// Follows exit backgrounds through purged nodes (removal rewiring).
 fn resolve_exit(
     mut current: RenderNodeId,
     exit: &HashMap<RenderNodeId, Option<RenderNodeId>>,

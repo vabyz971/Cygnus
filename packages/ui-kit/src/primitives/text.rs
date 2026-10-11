@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Texte : primitive d'affichage typé via builder.
+//! Text: typed display primitive via builder.
 //!
-//! Générique et indépendante du domaine : le style provient du
-//! [`CygnusTheme`](crate::theme::CygnusTheme), jamais de littéraux.
+//! Generic and domain-independent: style comes from the
+//! [`CygnusTheme`](crate::theme::CygnusTheme), never from literals.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::primitives::Text;
 //! # use ui_kit::theme::CygnusTheme;
@@ -34,7 +34,7 @@
 
 use crate::theme::CygnusTheme;
 
-/// Texte affichable via une API builder.
+/// Text displayable via a builder API.
 #[derive(Debug, Clone)]
 pub struct Text<'a> {
     text: &'a str,
@@ -44,7 +44,7 @@ pub struct Text<'a> {
 }
 
 impl<'a> Text<'a> {
-    /// Crée un texte brut (style hérité du `egui::Visuals` courant).
+    /// Creates raw text (style inherited from the current `egui::Visuals`).
     pub fn new(text: &'a str) -> Self {
         Self {
             text,
@@ -54,47 +54,47 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// Texte calibré "titre de panneau" (taille + gras du thème).
+    /// Calibrated "panel heading" text (theme size + bold).
     pub fn heading(theme: &CygnusTheme, text: &'a str) -> Self {
         Self::new(text).size(theme.typography.heading_size).strong()
     }
 
-    /// Texte calibré "corps" (taille + couleur principale du thème).
+    /// Calibrated "body" text (theme size + primary color).
     pub fn body(theme: &CygnusTheme, text: &'a str) -> Self {
         Self::new(text)
             .size(theme.typography.body_size)
             .color(theme.colors.fg_primary)
     }
 
-    /// Texte calibré "légende" (taille + couleur secondaire du thème).
+    /// Calibrated "caption" text (theme size + secondary color).
     pub fn caption(theme: &CygnusTheme, text: &'a str) -> Self {
         Self::new(text)
             .size(theme.typography.caption_size)
             .color(theme.colors.fg_secondary)
     }
 
-    /// Teinte du texte.
+    /// Text tint.
     #[must_use]
     pub fn color(mut self, color: egui::Color32) -> Self {
         self.color = Some(color);
         self
     }
 
-    /// Taille du texte (préférer les tokens `theme.typography.*`).
+    /// Text size (prefer `theme.typography.*` tokens).
     #[must_use]
     pub fn size(mut self, size: f32) -> Self {
         self.size = Some(size);
         self
     }
 
-    /// Texte en gras.
+    /// Bold text.
     #[must_use]
     pub fn strong(mut self) -> Self {
         self.strong = true;
         self
     }
 
-    /// Affiche le texte et retourne la réponse egui.
+    /// Displays the text and returns the egui response.
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
         let mut text = egui::RichText::new(self.text);
         if let Some(color) = self.color {

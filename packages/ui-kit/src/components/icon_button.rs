@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Bouton icône du design system (barres d'outils, panneaux).
+//! Design-system icon button (toolbars, panels).
 //!
-//! Prend un [`Icon`](crate::icons::Icon) sémantique : la résolution
-//! du glyphe passe par [`IconRegistry`](crate::icons::IconRegistry),
-//! jamais par une lib d'icônes directement.
+//! Takes a semantic [`Icon`](crate::icons::Icon): glyph resolution
+//! goes through [`IconRegistry`](crate::icons::IconRegistry),
+//! never through an icon lib directly.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::IconButton;
 //! # use ui_kit::icons::Icon;
@@ -32,7 +32,7 @@
 //!     .show(ui, &theme)
 //!     .clicked()
 //! {
-//!     // action déclenchée via UiCommand côté app
+//!     // action triggered via UiCommand on the app side
 //! }
 //! # });
 //! ```
@@ -40,7 +40,7 @@
 use crate::icons::{Icon, IconRegistry};
 use crate::theme::CygnusTheme;
 
-/// Bouton icône via API builder.
+/// Icon button via builder API.
 #[derive(Debug, Clone)]
 pub struct IconButton {
     icon: Icon,
@@ -49,7 +49,7 @@ pub struct IconButton {
 }
 
 impl IconButton {
-    /// Crée un bouton pour l'icône sémantique `icon`.
+    /// Creates a button for the semantic `icon`.
     pub fn new(icon: Icon) -> Self {
         Self {
             icon,
@@ -58,21 +58,21 @@ impl IconButton {
         }
     }
 
-    /// Infobulle au survol.
+    /// Hover tooltip.
     #[must_use]
     pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.tooltip = Some(tooltip.into());
         self
     }
 
-    /// État sélectionné (teinte d'accent).
+    /// Selected state (accent tint).
     #[must_use]
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
-    /// Affiche le bouton et retourne la réponse egui.
+    /// Displays the button and returns the egui response.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme) -> egui::Response {
         let registry = IconRegistry::new();
         let color = if self.selected {

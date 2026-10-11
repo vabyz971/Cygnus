@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Squelette d'app générique : file d'actions et logique de dock.
+//! Generic app skeleton: action queue and dock logic.
 //!
-//! `app-shell` porte ce que les apps photo, video et audio partagent
-//! sans connaître aucun métier : une file d'actions drainée une fois
-//! par frame ([`ActionQueue`]) et la mécanique des tuiles ancrables
-//! `egui_tiles` ([`dock`]). Les contenus des panneaux (titres,
-//! widgets métier) restent dans chaque app.
+//! `app-shell` carries what the photo, video and audio apps share
+//! without knowing any domain: an action queue drained once
+//! per frame ([`ActionQueue`]) and the dockable-tile mechanics of
+//! `egui_tiles` ([`dock`]). Panel contents (titles,
+//! domain widgets) stay in each app.
 //!
-//! INTERDIT ici : toute dépendance aux engines et aux apps, et tout
-//! type métier (documents, calques, clips, pistes).
+//! FORBIDDEN here: any dependency on engines and apps, and any
+//! domain type (documents, layers, clips, tracks).
 
 pub mod actions;
 pub mod dock;

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Barre de statut basse : lecture seule (aucune action).
+//! Bottom status bar: read-only (no actions).
 //!
-//! Hint de l'outil à gauche, version de l'application à droite
-//! (préfixe « Alpha »). Style exclusivement ui-kit (`typography`).
+//! Active tool hint on the left, application version on the right
+//! ("Alpha" prefix). ui-kit-only styling (`typography`).
 
 use crate::app::PhotoApp;
 use crate::commands::PhotoUiContext;
 use ui_kit::theme::typography::body_text;
 
-/// Version de l'application (depuis `Cargo.toml`).
+/// Application version (from `Cargo.toml`).
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Barre basse (aucune action émise).
+/// Bottom bar (emits no action).
 pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
     let theme = ctx.shared.theme();
     let translator = ctx.shared.translator();

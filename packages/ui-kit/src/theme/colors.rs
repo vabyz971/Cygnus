@@ -14,50 +14,50 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Couleurs du thème Cygnus.
+//! Cygnus theme colors.
 //!
-//! SEULE source des couleurs de la suite : aucun composant, panneau
-//! ni canvas ne doit coder un [`egui::Color32`] en dur. Les valeurs
-//! du thème sombre vivent dans [`CygnusColors::dark`], repris par
-//! [`Default`] pour un accès direct.
+//! SINGLE source of the suite's colors: no component, panel
+//! or canvas may hardcode an [`egui::Color32`]. The dark-theme
+//! values live in [`CygnusColors::dark`], reused by
+//! [`Default`] for direct access.
 
-/// Couleurs du thème Cygnus.
+/// Cygnus theme colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CygnusColors {
-    /// Fond principal des panneaux.
+    /// Main panel background.
     pub bg_primary: egui::Color32,
-    /// Fond des fenêtres et barres.
+    /// Window and bar background.
     pub bg_secondary: egui::Color32,
-    /// Fond des zones encastrées (inputs, canvas vide).
+    /// Recessed-area background (inputs, empty canvas).
     pub bg_tertiary: egui::Color32,
-    /// Texte principal.
+    /// Primary text.
     pub fg_primary: egui::Color32,
-    /// Texte secondaire / désactivé.
+    /// Secondary / disabled text.
     pub fg_secondary: egui::Color32,
-    /// Accent (sélection, boutons primaires).
+    /// Accent (selection, primary buttons).
     pub accent: egui::Color32,
-    /// Accent au survol.
+    /// Hover accent.
     pub accent_hover: egui::Color32,
-    /// Bordures.
+    /// Borders.
     pub border: egui::Color32,
-    /// Erreur (aussi utilisée pour les actions destructrices).
+    /// Error (also used for destructive actions).
     pub error: egui::Color32,
-    /// Erreur au survol (boutons destructeurs).
+    /// Hover error (destructive buttons).
     pub error_hover: egui::Color32,
-    /// Succès.
+    /// Success.
     pub success: egui::Color32,
-    /// Avertissement.
+    /// Warning.
     pub warning: egui::Color32,
-    /// Fond d'un item sélectionné (calque, clip, piste).
+    /// Selected-item background (layer, clip, track).
     pub item_selected: egui::Color32,
-    /// Fond d'un item survolé.
+    /// Hovered-item background.
     pub item_hover: egui::Color32,
-    /// Indicateur de position de drop (drag & drop).
+    /// Drop-position indicator (drag & drop).
     pub drop_indicator: egui::Color32,
 }
 
 impl CygnusColors {
-    /// Palette sombre par défaut de Cygnus.
+    /// Default Cygnus dark palette.
     pub fn dark() -> Self {
         Self {
             bg_primary: egui::Color32::from_rgb(18, 18, 22),
@@ -80,7 +80,7 @@ impl CygnusColors {
 }
 
 impl Default for CygnusColors {
-    /// Palette sombre par défaut.
+    /// Default dark palette.
     fn default() -> Self {
         Self::dark()
     }

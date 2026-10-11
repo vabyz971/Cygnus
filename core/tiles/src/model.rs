@@ -14,40 +14,40 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modèle spatial : coordonnées, rectangles, identités, padding.
+//! Spatial model: coordinates, rectangles, identities, padding.
 //!
-//! Tout est entier et `Copy` : les conversions rect ↔ tuiles sont exactes
-//! et les clés de cache se comparent par valeur, sans allocation.
+//! Everything is integer and `Copy`: rect ↔ tile conversions are exact
+//! and cache keys compare by value, allocation-free.
 
 use ids::Revision;
 
-/// Révision d'une tuile : le compteur partagé [`Revision`].
+/// Revision of a tile: the shared [`Revision`] counter.
 ///
-/// Même tuile + même révision = contenu identique (cache hit). Toute
-/// salissure avance la révision du nœud source — jamais ici directement.
+/// Same tile + same revision = identical content (cache hit). Any
+/// dirtying advances the source node's revision — never here directly.
 pub type TileRevision = Revision;
 
-/// Coordonnée de tuile dans la grille (indices, signés : les calques
-/// peuvent dépasser du document vers le négatif).
+/// Tile coordinate in the grid (signed indices: layers
+/// may overflow the document toward the negative).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 pub struct TileCoord {
-    /// Colonne (x).
+    /// Column (x).
     pub x: i32,
-    /// Ligne (y).
+    /// Row (y).
     pub y: i32,
 }
 
 impl TileCoord {
-    /// Nouvelle coordonnée.
+    /// New coordinate.
     #[must_use]
     pub fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
 }
 
-/// Dimensions d'une tuile en pixels (non carrées admises).
+/// Tile dimensions in pixels (non-square allowed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TileExtent {
     /// Largeur en pixels (> 0).
@@ -57,7 +57,7 @@ pub struct TileExtent {
 }
 
 impl TileExtent {
-    /// Carré `size × size` (`size` borné à ≥ 1).
+    /// `size × size` square (`size` clamped to ≥ 1).
     #[must_use]
     pub fn square(size: u32) -> Self {
         let size = size.max(1);
@@ -68,31 +68,31 @@ impl TileExtent {
     }
 }
 
-/// Identifiant stable d'un emplacement de tuile : niveau + coordonnée.
+/// Stable identifier of a tile slot: level + coordinate.
 ///
-/// L'identité NE contient PAS la révision (voir [`TileKey`]) : le même
-/// emplacement est réutilisé d'une révision à l'autre — c'est le principe
-/// du cache.
+/// Identity does NOT hold the revision (see [`TileKey`]): the same
+/// slot is reused across revisions — the very point
+/// of the cache.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 pub struct TileId {
-    /// Niveau mip (0 = pleine résolution, +1 = divisé par 2).
+    /// Mip level (0 = full resolution, +1 = halved).
     pub level: u8,
-    /// Colonne.
+    /// Column.
     pub x: i32,
-    /// Ligne.
+    /// Row.
     pub y: i32,
 }
 
 impl TileId {
-    /// Nouvel identifiant.
+    /// New identifier.
     #[must_use]
     pub fn new(level: u8, x: i32, y: i32) -> Self {
         Self { level, x, y }
     }
 
-    /// Coordonnée (sans le niveau).
+    /// Coordinate (without the level).
     #[must_use]
     pub fn coord(self) -> TileCoord {
         TileCoord::new(self.x, self.y)
@@ -105,43 +105,43 @@ impl std::fmt::Display for TileId {
     }
 }
 
-/// Clé de cache : emplacement + révision du contenu.
+/// Cache key: slot + content revision.
 ///
-/// Même `TileId`, révision différente = contenus potentiellement
-/// différents (miss). La révision vient du nœud source (render graph),
-/// jamais devinée ici.
+/// Same `TileId`, different revision = potentially different
+/// contents (miss). The revision comes from the source node (render graph),
+/// never guessed here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TileKey {
-    /// Emplacement.
+    /// Slot.
     pub id: TileId,
-    /// Révision du contenu attendu.
+    /// Expected content revision.
     pub revision: TileRevision,
 }
 
 impl TileKey {
-    /// Nouvelle clé.
+    /// New key.
     #[must_use]
     pub fn new(id: TileId, revision: TileRevision) -> Self {
         Self { id, revision }
     }
 }
 
-/// Rectangle de pixels en coordonnées surface (origine signée, bornes
-/// exclusives `[x, x+w) × [y, y+h)`). Vide ssi `width == 0 || height == 0`.
+/// Pixel rectangle in surface coordinates (signed origin,
+/// exclusive `[x, x+w) × [y, y+h)` bounds). Empty iff `width == 0 || height == 0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TileRegion {
-    /// Origine X (peut être négative : contenu hors document).
+    /// X origin (may be negative: off-document content).
     pub x: i32,
-    /// Origine Y.
+    /// Y origin.
     pub y: i32,
-    /// Largeur en pixels.
+    /// Width in pixels.
     pub width: u32,
-    /// Hauteur en pixels.
+    /// Height in pixels.
     pub height: u32,
 }
 
 impl TileRegion {
-    /// Région vide (ne couvre aucun pixel, aucune tuile).
+    /// Empty region (covers no pixels, no tiles).
     pub const EMPTY: Self = Self {
         x: 0,
         y: 0,
@@ -149,7 +149,7 @@ impl TileRegion {
         height: 0,
     };
 
-    /// Nouveau rectangle.
+    /// New rectangle.
     #[must_use]
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
         Self {
@@ -160,31 +160,31 @@ impl TileRegion {
         }
     }
 
-    /// Vrai si aucun pixel couvert.
+    /// True if no pixel covered.
     #[must_use]
     pub fn is_empty(self) -> bool {
         self.width == 0 || self.height == 0
     }
 
-    /// Aire en pixels (0 si vide).
+    /// Area in pixels (0 if empty).
     #[must_use]
     pub fn area(self) -> u64 {
         u64::from(self.width) * u64::from(self.height)
     }
 
-    /// Borne droite exclusive (i64 : pas de dépassement).
+    /// Exclusive right bound (i64: no overflow).
     #[must_use]
     pub fn right(self) -> i64 {
         i64::from(self.x) + i64::from(self.width)
     }
 
-    /// Borne basse exclusive.
+    /// Exclusive bottom bound.
     #[must_use]
     pub fn bottom(self) -> i64 {
         i64::from(self.y) + i64::from(self.height)
     }
 
-    /// Construit depuis des bornes exclusives (vide si inversées).
+    /// Built from exclusive bounds (empty if inverted).
     fn from_bounds(x0: i64, y0: i64, x1: i64, y1: i64) -> Self {
         let x0 = x0.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
         let y0 = y0.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
@@ -201,7 +201,7 @@ impl TileRegion {
         }
     }
 
-    /// Vrai si le point (px) est couvert.
+    /// True if the (px) point is covered.
     #[must_use]
     pub fn contains(self, x: i32, y: i32) -> bool {
         !self.is_empty()
@@ -211,7 +211,7 @@ impl TileRegion {
             && i64::from(y) < self.bottom()
     }
 
-    /// Intersection (clipping) — vide si disjoints.
+    /// Intersection (clipping) — empty if disjoint.
     #[must_use]
     pub fn intersect(self, bounds: Self) -> Self {
         Self::from_bounds(
@@ -222,7 +222,7 @@ impl TileRegion {
         )
     }
 
-    /// Union (englobant) — vide + r = r.
+    /// Union (bounding) — empty + r = r.
     #[must_use]
     pub fn union(self, other: Self) -> Self {
         if self.is_empty() {
@@ -239,7 +239,7 @@ impl TileRegion {
         )
     }
 
-    /// Élargit de `pad` pixels dans chaque direction (saturé i32).
+    /// Expands by `pad` pixels in each direction (i32-saturating).
     #[must_use]
     pub fn pad(self, pad: Padding) -> Self {
         if self.is_empty() || pad.0 == 0 {
@@ -254,10 +254,10 @@ impl TileRegion {
         )
     }
 
-    /// Réduit à l'échelle du niveau mip de façon CONSERVATIVE : le
-    /// rectangle englobant couvre tous les pixels sources (`floor` en min,
-    /// `ceil` en max). Un pixel sale reste couvert à tout niveau — à
-    /// utiliser pour invalidation et visibilité, jamais l'inverse.
+    /// Downscales to the mip level CONSERVATIVELY: the
+    /// bounding rectangle covers all source pixels (`floor` on min,
+    /// `ceil` on max). A dirty pixel stays covered at every level — for
+    /// invalidation and visibility use, never the reverse.
     #[must_use]
     pub fn downscaled_cover(self, level: u8) -> Self {
         if self.is_empty() || level == 0 {
@@ -278,18 +278,18 @@ impl TileRegion {
     }
 }
 
-/// Plafond de division entière (diviseur > 0).
+/// Ceiling integer division (divisor > 0).
 fn div_ceil(a: i64, b: i64) -> i64 {
     debug_assert!(b > 0);
     if a >= 0 { (a + b - 1) / b } else { a / b }
 }
 
-/// Marge d'invalidation en pixels : les effets à voisinage (flou, bloom…)
-/// lisent AU-DELÀ de la zone modifiée — on invalide donc plus large que le
-/// rectangle source (voir [`TileRegion::pad`]).
+/// Invalidation margin in pixels: neighborhood effects (blur, bloom…)
+/// read BEYOND the modified area — so we invalidate wider than the
+/// source rectangle (see [`TileRegion::pad`]).
 ///
-/// Prépare la logique sans implémenter les filtres : chaque effet déclarera
-/// son rayon, converti ici en marge entière (plafond).
+/// Prepares the logic without implementing filters: each effect will declare
+/// its radius, converted here into an integer margin (ceiling).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
@@ -297,20 +297,20 @@ fn div_ceil(a: i64, b: i64) -> i64 {
 pub struct Padding(pub u32);
 
 impl Padding {
-    /// Aucune marge.
+    /// No margin.
     pub const ZERO: Self = Self(0);
 
-    /// Marge explicite en pixels.
+    /// Explicit margin in pixels.
     #[must_use]
     pub fn new(px: u32) -> Self {
         Self(px)
     }
 
-    /// Marge pour un rayon de flou en pixels (plafond ; ≤ 0 ou NaN → 0).
+    /// Margin for a blur radius in pixels (ceiling; ≤ 0 or NaN → 0).
     ///
-    /// Exemple : `radius = 20.0` ⇒ `Padding(20)` — une retouche dans une
-    /// zone invalide la zone élargie de 20 px (le noyau échantillonne le
-    /// voisinage modifié).
+    /// Example: `radius = 20.0` ⇒ `Padding(20)` — an edit inside an
+    /// area invalidates the 20 px-expanded area (the kernel samples the
+    /// modified neighborhood).
     #[must_use]
     pub fn for_blur_radius(radius: f32) -> Self {
         if !radius.is_finite() || radius <= 0.0 {
@@ -319,7 +319,7 @@ impl Padding {
         Self(radius.ceil() as u32)
     }
 
-    /// Marge pour un rayon générique d'effet à voisinage (même règle).
+    /// Margin for a generic neighborhood-effect radius (same rule).
     #[must_use]
     pub fn for_effect_radius(radius: f32) -> Self {
         Self::for_blur_radius(radius)

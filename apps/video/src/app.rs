@@ -14,24 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! App Video minimale : placeholder en attendant `video-engine`.
+//! Minimal Video app: placeholder while `video-engine` is pending.
 
 use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::{body_text, heading_text};
 
-/// App Video (base minimale).
+/// Video app (minimal base).
 #[derive(Default)]
 pub struct VideoApp {
     _private: (),
 }
 
 impl VideoApp {
-    /// Crée l'app.
+    /// Creates the app.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Dessine le placeholder central.
+    /// Draws the central placeholder.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let theme = ui.cygnus_theme();
         egui::CentralPanel::default().show(ui, |ui| {

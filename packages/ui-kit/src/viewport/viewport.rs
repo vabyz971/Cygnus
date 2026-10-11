@@ -14,32 +14,32 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Widget viewport canvas : affiche une texture moteur, gère pan/zoom.
+//! Canvas viewport widget: displays an engine texture, handles pan/zoom.
 //!
-//! Le widget ne fait QU'afficher la texture (id détenu par l'app) et
-//! router les interactions souris : aucun décodage, aucun rendu lourd
-//! ici. Contrat moteur (câblé en Phase 5 côté app) :
-//! 1. le moteur rend sur un thread background et envoie le résultat
-//!    (`egui::ColorImage`, ou texture wgpu native) via un channel ;
-//! 2. l'app poll le channel chaque frame (non bloquant) et nourrit
-//!    [`ViewportTextureCache`] (ou enregistre la texture native via
-//!    `register_native_texture` d'eframe pour le zéro-copie GPU) ;
-//! 3. l'id est passé à [`Viewport`] qui l'applique au draw avec
-//!    zoom/pan/grille (modèle « state-only »).
+//! The widget ONLY displays the texture (id owned by the app) and
+//! routes mouse interactions: no decoding, no heavy rendering here.
+//! Engine contract (wired in Phase 5 on the app side):
+//! 1. the engine renders on a background thread and sends the result
+//!    (`egui::ColorImage`, or native wgpu texture) through a channel;
+//! 2. the app polls the channel every frame (non-blocking) and feeds
+//!    [`ViewportTextureCache`] (or registers the native texture via
+//!    eframe's `register_native_texture` for zero-copy GPU);
+//! 3. the id is passed to [`Viewport`], which applies it at draw time
+//!    with zoom/pan/grid ("state-only" model).
 
 use super::viewport_interaction::{ViewportAction, ViewportTool, handle_pointer};
 use super::viewport_state::ViewportState;
 use crate::theme::UiThemeExt;
 
-/// UV couvrant toute la texture.
+/// UV covering the whole texture.
 fn full_uv() -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
 }
 
-/// Charge (ou met à jour) une texture egui depuis une image CPU.
+/// Loads (or updates) an egui texture from a CPU image.
 ///
-/// Le `TextureHandle` retourné doit être conservé vivant par l'app
-/// (ex. dans [`ViewportTextureCache`]) tant que la texture est affichée.
+/// The returned `TextureHandle` must be kept alive by the app (e.g.
+/// inside [`ViewportTextureCache`]) while the texture is displayed.
 pub fn load_texture(
     ctx: &egui::Context,
     name: &str,
@@ -54,15 +54,14 @@ pub fn load_texture(
     ctx.load_texture(name, image, options)
 }
 
-/// Cache applicatif d'une texture canvas (id + taille image).
+/// App-side cache of a canvas texture (id + image size).
 ///
-/// L'app en détient une instance, l'alimente depuis son channel moteur
-/// (non bloquant, à chaque nouveau rendu), et passe l'id au widget.
-/// La texture GPU n'est allouée qu'une fois : les images suivantes de
-/// mêmes dimensions mettent à jour le slot existant via
-/// [`egui::TextureHandle::set`] (aucun free/alloc GPU) ; un changement
-/// de dimensions recrée proprement la texture. Zoom/pan/grille et les
-/// simples repaints ne touchent jamais aux pixels ni à la texture.
+/// The app owns an instance, feeds it from its engine channel
+/// (non-blocking, on every new render), and passes the id to the widget.
+/// The GPU texture is allocated only once: subsequent same-size images
+/// update the existing slot via [`egui::TextureHandle::set`] (no GPU
+/// free/alloc); a size change cleanly recreates the texture. Zoom/pan/grid
+/// and mere repaints never touch pixels or the texture.
 #[derive(Default)]
 pub struct ViewportTextureCache {
     handle: Option<egui::TextureHandle>,
@@ -70,23 +69,23 @@ pub struct ViewportTextureCache {
 }
 
 impl ViewportTextureCache {
-    /// Crée un cache vide (aucune image).
+    /// Creates an empty cache (no image).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Met à jour l'image affichée.
-    /// À appeler uniquement à réception d'un nouveau rendu moteur.
+    /// Updates the displayed image. Call only on receiving a new
+    /// engine render.
     ///
-    /// - première image : allocation via `ctx.load_texture()` ;
-    /// - mêmes dimensions que la précédente : mise à jour en place
-    ///   (`TextureHandle::set()`, id stable, aucun realloc GPU) ;
-    /// - dimensions différentes : l'ancien handle est libéré et une
-    ///   nouvelle texture est allouée.
+    /// - first image: allocation via `ctx.load_texture()`;
+    /// - same size as the previous one: in-place update
+    ///   (`TextureHandle::set()`, stable id, no GPU realloc);
+    /// - different sizes: the old handle is freed and a new texture
+    ///   is allocated.
     ///
-    /// Le `ColorImage` fourni est consommé tel quel (aucune copie ni
-    /// conversion supplémentaire ici) : la seule conversion RGBA →
-    /// `ColorImage` a lieu une fois côté appelant, par nouveau rendu.
+    /// The provided `ColorImage` is consumed as-is (no extra copy or
+    /// conversion here): the single RGBA → `ColorImage` conversion happens
+    /// once on the caller side, per new render.
     pub fn update(&mut self, ctx: &egui::Context, name: &str, image: egui::ColorImage) {
         let size = egui::vec2(image.width() as f32, image.height() as f32);
         let same_size = self.handle.is_some() && self.size == size;
@@ -95,32 +94,31 @@ impl ViewportTextureCache {
                 handle.set(image, egui::TextureOptions::LINEAR);
             }
         } else {
-            // Première image ou changement de dimensions : (re)création
-            // (l'ancien handle éventuel est libéré au remplacement).
+            // First image or size change: (re)creation (any previous
+            // handle is freed on replacement).
             self.handle = Some(load_texture(ctx, name, image, true));
         }
         self.size = size;
     }
 
-    /// Vide le cache (fermeture de document) : le handle est libéré
-    /// (delta `free` egui) et la prochaine image réallouera.
+    /// Empties the cache (document close): the handle is freed (egui
+    /// `free` delta) and the next image will reallocate.
     pub fn clear(&mut self) {
         self.handle = None;
         self.size = egui::Vec2::ZERO;
     }
 
-    /// Id de texture et taille image, si une image est chargée.
-    /// Stable entre deux `update()` de mêmes dimensions (aucune
-    /// nouvelle texture GPU sur simple repaint : `show()` ne fait que
-    /// relire cet id).
+    /// Texture id and image size, when an image is loaded. Stable
+    /// across two same-size `update()` calls (no new GPU texture on a
+    /// mere repaint: `show()` only re-reads this id).
     pub fn texture(&self) -> Option<(egui::TextureId, egui::Vec2)> {
         self.handle.as_ref().map(|handle| (handle.id(), self.size))
     }
 }
 
-/// Widget viewport canvas (texture moteur + interactions).
+/// Canvas viewport widget (engine texture + interactions).
 ///
-/// # Exemple
+/// # Example
 /// ```rust,no_run
 /// # use ui_kit::viewport::{Viewport, ViewportState, ViewportTextureCache};
 /// # egui::__run_test_ui(|ui| {
@@ -149,7 +147,7 @@ impl Default for Viewport {
 }
 
 impl Viewport {
-    /// Crée un canvas sans texture (état vide).
+    /// Creates a texture-less canvas (empty state).
     pub fn new() -> Self {
         Self {
             texture_id: None,
@@ -159,38 +157,38 @@ impl Viewport {
         }
     }
 
-    /// Texture à afficher (`None` = état vide).
+    /// Texture to display (`None` = empty state).
     #[must_use]
     pub fn texture(mut self, texture_id: Option<egui::TextureId>) -> Self {
         self.texture_id = texture_id;
         self
     }
 
-    /// Taille en pixels de l'image source (pour l'ajustement + le pan).
+    /// Source-image size in pixels (for fit + pan).
     #[must_use]
     pub fn image_size(mut self, size: egui::Vec2) -> Self {
         self.image_size = size;
         self
     }
 
-    /// Outil actif (pan, loupe, pinceau…).
+    /// Active tool (pan, magnifier, brush…).
     #[must_use]
     pub fn tool(mut self, tool: ViewportTool) -> Self {
         self.tool = tool;
         self
     }
 
-    /// Affiche/masque la grille.
+    /// Shows/hides the grid.
     #[must_use]
     pub fn show_grid(mut self, show: bool) -> Self {
         self.show_grid = show;
         self
     }
 
-    /// Rectangle de destination : image ajustée au viewport, centrée,
-    /// mise à l'échelle par le zoom et décalée par le pan.
-    /// `None` si la taille image est invalide. Exposée pour que les
-    /// apps convertissent écran→pixels image (outils de dessin).
+    /// Destination rectangle: image fitted to the viewport, centered,
+    /// scaled by the zoom and shifted by the pan. `None` when the image
+    /// size is invalid. Exposed so apps convert screen→image pixels
+    /// (drawing tools).
     pub fn fit_dest(
         available: egui::Rect,
         image_size: egui::Vec2,
@@ -208,7 +206,7 @@ impl Viewport {
         Some(egui::Rect::from_center_size(center, size))
     }
 
-    /// Dessine la grille dans `rect` (pas écran de 32px, plafonnée).
+    /// Draws the grid inside `rect` (32px screen step, capped).
     fn paint_grid(ui: &mut egui::Ui, rect: egui::Rect) {
         let theme = ui.cygnus_theme();
         let stroke = egui::Stroke::new(1.0, theme.colors.border.linear_multiply(0.5));
@@ -231,7 +229,7 @@ impl Viewport {
         }
     }
 
-    /// Affiche le canvas et applique les interactions au `state`.
+    /// Displays the canvas and applies interactions to `state`.
     pub fn show(self, ui: &mut egui::Ui, state: &mut ViewportState) -> ViewportResponse {
         let theme = ui.cygnus_theme();
         let (rect, response) =
@@ -270,11 +268,11 @@ impl Viewport {
     }
 }
 
-/// Réponse de [`Viewport::show`].
+/// [`Viewport::show`] response.
 pub struct ViewportResponse {
-    /// Réponse egui du viewport.
+    /// The viewport's egui response.
     pub response: egui::Response,
-    /// Actions d'interaction (pan, zoom, positions monde).
+    /// Interaction actions (pan, zoom, world positions).
     pub actions: Vec<ViewportAction>,
 }
 
@@ -301,10 +299,10 @@ mod tests {
 
     #[test]
     fn canvas_with_texture_renders_without_panic() {
-        // Texture factice (id managé bidon) : aucun GPU requis en
-        // headless — le widget ne fait qu'émettre la primitive image.
-        // Le chemin GPU réel (register_native_texture) est câblé en
-        // Phase 5 côté app (eframe).
+        // Dummy texture (bogus managed id): no GPU needed headless — the
+        // widget only emits the image primitive. The real GPU path
+        // (register_native_texture) is wired in Phase 5 on the app side
+        // (eframe).
         let ctx = egui::Context::default();
         let mut viewport = ViewportState::default();
         let output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -330,7 +328,7 @@ mod tests {
         let (id, size) = cache.texture().expect("texture chargee");
         assert_eq!(size, egui::vec2(4.0, 4.0));
         let _ = id;
-        // Afficher la texture du cache sans panic.
+        // Display the cache's texture without panic.
         let mut viewport = ViewportState::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -351,8 +349,8 @@ mod tests {
 
     #[test]
     fn texture_id_stable_on_same_size_update() {
-        // Deuxième image de mêmes dimensions : mise à jour en place,
-        // aucun nouveau slot GPU (id stable).
+        // Second same-size image: in-place update, no new GPU slot
+        // (stable id).
         let ctx = egui::Context::default();
         let mut cache = ViewportTextureCache::new();
         cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
@@ -362,15 +360,15 @@ mod tests {
         assert_eq!(first_id, second_id, "mêmes dimensions = même texture");
         assert_eq!(second_size, egui::vec2(4.0, 4.0));
         assert_eq!(first_size, second_size);
-        // Troisième update identique : toujours stable.
+        // Third identical update: still stable.
         cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::GREEN));
         assert_eq!(cache.texture().expect("texture").0, first_id);
     }
 
     #[test]
     fn texture_recreated_on_dimension_change() {
-        // Changement de dimensions : l'ancien slot est abandonné et une
-        // nouvelle texture est allouée (nouvel id, nouvelle taille).
+        // Size change: the old slot is dropped and a new texture is
+        // allocated (new id, new size).
         let ctx = egui::Context::default();
         let mut cache = ViewportTextureCache::new();
         cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
@@ -382,8 +380,8 @@ mod tests {
             "dimensions différentes = nouvelle texture"
         );
         assert_eq!(big_size, egui::vec2(8.0, 6.0));
-        // Retour aux dimensions précédentes : realloc à nouveau (l'ancien
-        // slot 4x4 a été libéré), puis stabilité.
+        // Back to the previous sizes: realloc again (the old 4x4 slot was
+        // freed), then stability.
         cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
         let (back_id, back_size) = cache.texture().expect("texture chargee");
         assert_ne!(back_id, big_id);
@@ -394,8 +392,8 @@ mod tests {
 
     #[test]
     fn clear_then_update_reallocates() {
-        // `clear()` libère le handle : l'update suivant réalloue même à
-        // dimensions identiques (l'id libéré n'est pas réutilisé).
+        // `clear()` frees the handle: the next update reallocates even at
+        // identical sizes (the freed id is not reused).
         let ctx = egui::Context::default();
         let mut cache = ViewportTextureCache::new();
         cache.update(&ctx, "test_canvas", solid_image(4, 4, egui::Color32::RED));
@@ -410,8 +408,8 @@ mod tests {
 
     #[test]
     fn repaint_and_zoom_pan_keep_texture_id() {
-        // Sans appel à `update()`, ni les repaints ni zoom/pan/grille ne
-        // créent de texture : l'id reste stable sur plusieurs frames.
+        // Without any `update()` call, neither repaints nor zoom/pan/grid
+        // create a texture: the id stays stable across frames.
         let ctx = egui::Context::default();
         let mut cache = ViewportTextureCache::new();
         cache.update(&ctx, "test_canvas", solid_image(64, 48, egui::Color32::RED));
@@ -438,16 +436,16 @@ mod tests {
     #[test]
     fn dest_rect_fits_and_zooms() {
         let available = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0));
-        // Ajustement parfait à zoom 1 : 400x300.
+        // Perfect fit at zoom 1: 400x300.
         let dest = Viewport::fit_dest(available, egui::vec2(800.0, 600.0), 1.0, egui::Vec2::ZERO)
             .expect("dest calcule");
         assert!((dest.width() - 400.0).abs() < 1e-3);
         assert!((dest.height() - 300.0).abs() < 1e-3);
-        // Zoom 2x : dimensions doublées.
+        // 2x zoom: doubled dimensions.
         let dest = Viewport::fit_dest(available, egui::vec2(800.0, 600.0), 2.0, egui::Vec2::ZERO)
             .expect("dest calcule");
         assert!((dest.width() - 800.0).abs() < 1e-3);
-        // Taille invalide : rien à dessiner.
+        // Invalid size: nothing to draw.
         assert!(Viewport::fit_dest(available, egui::Vec2::ZERO, 1.0, egui::Vec2::ZERO).is_none());
     }
 }

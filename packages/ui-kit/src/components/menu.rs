@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Style partagé des menus et popups contextuels (façon rerun).
+//! Shared menu and context-popup style (rerun-style).
 //!
-//! Lignes compactes, marges resserrées, coins du thème : à appliquer
-//! via `egui::Popup::context_menu(...).style(menu_style(theme))`.
-//! Une variante `menu_bar_style` existe pour la barre de menus haute
-//! (coins carrés, pas d'arrondi sur les boutons de titre).
-//! Les lignes elles-mêmes utilisent [`menu_row`](super::button::menu_row).
-//! 100 % tokens, aucune valeur en dur.
+//! Compact rows, tight margins, theme corners: apply via
+//! `egui::Popup::context_menu(...).style(menu_style(theme))`.
+//! A `menu_bar_style` variant exists for the top menu bar
+//! (square corners, no rounding on title buttons).
+//! The rows themselves use [`menu_row`](super::button::menu_row).
+//! 100% tokens, no hardcoded value.
 
 use crate::theme::CygnusTheme;
 
-/// Style des popups de menu, dérivé du thème.
+/// Menu-popup style, derived from the theme.
 pub fn menu_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
     let row_height = theme.sizes.button_sm;
     let margin = theme.spacing.xs;
@@ -50,7 +50,7 @@ pub fn menu_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
     })
 }
 
-/// Style de la barre de menus haute
+/// Top menu-bar style.
 pub fn menu_bar_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
     let row_height = theme.sizes.button_sm;
     let margin = theme.spacing.xs;
@@ -74,8 +74,8 @@ pub fn menu_bar_style(theme: &CygnusTheme) -> egui::style::StyleModifier {
     })
 }
 
-/// Item de menu : bouton fantôme pleine largeur ; `true` si cliqué
-/// (et menu refermé).
+/// Menu item: full-width ghost button; `true` when clicked
+/// (and menu closed).
 pub fn menu_item(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
     use crate::components::Button;
     use crate::components::ButtonSize;
@@ -91,11 +91,11 @@ pub fn menu_item(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
     clicked
 }
 
-/// Item de menu désactivable (remplace `add_enabled_ui` + bouton brut).
+/// Disablable menu item (replaces `add_enabled_ui` + raw button).
 ///
-/// Même hauteur que [`menu_item`] (`Small`, calibrée sur
-/// `interact_size` du style de menu) : mélanger les tailles dans un
-/// même popup peint des surlignages débordants (carrés glitchés).
+/// Same height as [`menu_item`] (`Small`, calibrated on the menu
+/// style's `interact_size`): mixing sizes in one popup paints
+/// overflowing highlights (glitched squares).
 pub fn menu_item_enabled(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
@@ -117,8 +117,8 @@ pub fn menu_item_enabled(
     clicked
 }
 
-/// Lignes de menu : voir [`menu_row`](super::button::menu_row),
-/// réexporté ici pour un import unique.
+/// Menu rows: see [`menu_row`](super::button::menu_row),
+/// re-exported here for a single import.
 pub use super::button::menu_row;
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ mod tests {
             style.visuals.widgets.hovered.corner_radius,
             theme.radius.sm.into()
         );
-        // Base egui conservée : pas de contour sur les lignes.
+        // Kept egui base: no outline on rows.
         assert_eq!(style.visuals.widgets.inactive.bg_stroke, egui::Stroke::NONE);
     }
 
@@ -154,8 +154,8 @@ mod tests {
         assert!(!clicked, "aucun clic sans interaction");
     }
 
-    /// Les deux variantes d'item réservent la même hauteur : mélangées
-    /// dans un popup, aucun surlignage ne déborde (carrés glitchés).
+    /// Both item variants reserve the same height: mixed in one popup,
+    /// no highlight overflows (glitched squares).
     #[test]
     fn menu_items_share_row_height() {
         let theme = CygnusTheme::dark();

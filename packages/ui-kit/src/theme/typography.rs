@@ -14,29 +14,29 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Échelle typographique de Cygnus.
+//! Cygnus type scale.
 //!
-//! SEULE source des tailles de texte : aucun widget ne doit coder une
-//! taille en dur. Les assistants [`heading_text`], [`body_text`] et
-//! [`caption_text`] construisent des [`egui::RichText`] calibrés.
+//! SINGLE source of text sizes: no widget may hardcode a
+//! size. The [`heading_text`], [`body_text`] and
+//! [`caption_text`] helpers build calibrated [`egui::RichText`].
 
 use super::theme::CygnusTheme;
 
-/// Tailles typographiques du thème.
+/// Theme typographic sizes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusTypography {
-    /// Titres de panneaux.
+    /// Panel headings.
     pub heading_size: f32,
-    /// Texte courant.
+    /// Body text.
     pub body_size: f32,
-    /// Légendes et textes secondaires.
+    /// Captions and secondary text.
     pub caption_size: f32,
-    /// Icônes.
+    /// Icons.
     pub icon_size: f32,
 }
 
 impl CygnusTypography {
-    /// Échelle du thème sombre.
+    /// Dark-theme scale.
     pub fn dark() -> Self {
         Self {
             heading_size: 16.0,
@@ -48,43 +48,43 @@ impl CygnusTypography {
 }
 
 impl Default for CygnusTypography {
-    /// Échelle par défaut.
+    /// Default scale.
     fn default() -> Self {
         Self::dark()
     }
 }
 
-/// Taille du texte des titres de panneaux.
+/// Panel-heading text size.
 pub fn heading_size(theme: &CygnusTheme) -> f32 {
     theme.typography.heading_size
 }
 
-/// Taille du texte courant.
+/// Body text size.
 pub fn body_size(theme: &CygnusTheme) -> f32 {
     theme.typography.body_size
 }
 
-/// Taille des légendes et textes secondaires.
+/// Caption and secondary-text size.
 pub fn caption_size(theme: &CygnusTheme) -> f32 {
     theme.typography.caption_size
 }
 
-/// Taille des icônes.
+/// Icon size.
 pub fn icon_size(theme: &CygnusTheme) -> f32 {
     theme.typography.icon_size
 }
 
-/// Texte formaté en style titre.
+/// Text formatted in heading style.
 pub fn heading_text(theme: &CygnusTheme, text: &str) -> egui::RichText {
     egui::RichText::new(text).size(heading_size(theme)).strong()
 }
 
-/// Texte formaté en style courant.
+/// Text formatted in body style.
 pub fn body_text(theme: &CygnusTheme, text: &str) -> egui::RichText {
     egui::RichText::new(text).size(body_size(theme))
 }
 
-/// Texte formaté en style légende (couleur secondaire du thème).
+/// Text formatted in caption style (theme secondary color).
 pub fn caption_text(theme: &CygnusTheme, text: &str) -> egui::RichText {
     egui::RichText::new(text)
         .size(caption_size(theme))

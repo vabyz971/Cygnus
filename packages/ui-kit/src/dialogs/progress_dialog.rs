@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Dialogue de progression pour les opérations longues (export…).
+//! Progress dialog for long operations (export…).
 //!
-//! Le travail reste sur thread background ; l'app nourrit `fraction`
-//! depuis son channel et peut annuler via `cancel_requested`.
+//! Work stays on a background thread; the app feeds `fraction`
+//! from its channel and can cancel via `cancel_requested`.
 
 use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
-/// Dialogue de progression (export, rendu…).
+/// Progress dialog (export, render…).
 ///
-/// # Exemple
+/// # Example
 /// ```rust
 /// # use ui_kit::dialogs::CygnusProgressDialog;
 /// # egui::__run_test_ui(|ui| {
@@ -41,13 +41,13 @@ pub struct CygnusProgressDialog<'a> {
 }
 
 impl<'a> CygnusProgressDialog<'a> {
-    /// Crée un dialogue de progression.
+    /// Creates a progress dialog.
     pub fn new(title: &'a str) -> Self {
         Self { title }
     }
 
-    /// Affiche le dialogue si `open` : barre 0..=1, tâche courante,
-    /// bouton Annuler (positionne `cancel_requested`).
+    /// Shows the dialog when `open`: 0..=1 bar, current task,
+    /// Cancel button (sets `cancel_requested`).
     pub fn show(
         self,
         ctx: &egui::Context,
@@ -94,7 +94,7 @@ mod tests {
                 "image.png",
                 &mut cancel,
             );
-            // Fraction hors bornes clampée sans panic.
+            // Out-of-bounds fraction clamped without panic.
             CygnusProgressDialog::new("Export").show(
                 ui.ctx(),
                 &mut open,

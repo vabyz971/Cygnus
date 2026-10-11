@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Liste déroulante (modes de fusion, presets, formats…).
+//! Drop-down list (blend modes, presets, formats…).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::Select;
 //! # use ui_kit::theme::CygnusTheme;
@@ -30,22 +30,22 @@
 
 use crate::theme::CygnusTheme;
 
-/// Borne un index à la plage valide (0 pour liste vide).
+/// Clamps an index to the valid range (0 for an empty list).
 pub fn sanitize_selected(selected: usize, len: usize) -> usize {
     if len == 0 { 0 } else { selected.min(len - 1) }
 }
 
-/// Liste déroulante via API builder.
+/// Drop-down list via builder API.
 #[derive(Debug, Clone, Copy)]
 pub struct Select<'a> {
     label: &'a str,
     options: &'a [&'a str],
-    /// Vrai = libellé au-dessus du champ (colonne verticale).
+    /// True = label above the field (vertical column).
     stacked: bool,
 }
 
 impl<'a> Select<'a> {
-    /// Crée une liste avec libellé et options.
+    /// Creates a list with label and options.
     pub fn new(label: &'a str, options: &'a [&'a str]) -> Self {
         Self {
             label,
@@ -54,25 +54,25 @@ impl<'a> Select<'a> {
         }
     }
 
-    /// Empile le libellé au-dessus du champ (au lieu de côte à côte).
+    /// Stacks the label above the field (instead of side by side).
     #[must_use]
     pub fn stacked(mut self) -> Self {
         self.stacked = true;
         self
     }
 
-    /// Nombre d'options.
+    /// Number of options.
     pub fn len(self) -> usize {
         self.options.len()
     }
 
-    /// Vrai si aucune option.
+    /// True when there are no options.
     pub fn is_empty(self) -> bool {
         self.options.is_empty()
     }
 
-    /// Affiche la liste, met à jour l'index, retourne la réponse egui.
-    /// En mode [`Select::stacked`], le libellé est au-dessus du champ.
+    /// Displays the list, updates the index, returns the egui response.
+    /// In [`Select::stacked`] mode, the label sits above the field.
     pub fn show(
         self,
         ui: &mut egui::Ui,

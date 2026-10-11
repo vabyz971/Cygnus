@@ -14,31 +14,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Viewport GÉNÉRIQUE : état (zoom, pan) et widget d'affichage.
+//! GENERIC viewport: state (zoom, pan) and display widget.
 //!
-//! Le viewport affiche une texture produite par un moteur (via
-//! [`ViewportTextureCache`](viewport::ViewportTextureCache), alimenté
-//! par l'app depuis son channel moteur) et applique zoom/pan/grille au
-//! moment du draw — jamais en régénérant des pixels (rendu
-//! « state-only », voir ARCHITECTURE.md).
+//! The viewport displays a texture produced by an engine (via
+//! [`ViewportTextureCache`](viewport::ViewportTextureCache), fed
+//! by the app from its engine channel) and applies zoom/pan/grid at
+//! draw time — never by regenerating pixels ("state-only"
+//! rendering, see ARCHITECTURE.md).
 //!
-//! ui-kit ne sait PAS ce que contient la texture : photo, video ou
-//! audio. Le rendu GPU réel (enregistrement natif wgpu) est câblé
-//! côté app (eframe) : ui-kit ne porte que l'id de texture.
+//! ui-kit does NOT know what the texture holds: photo, video or
+//! audio. Real GPU rendering (native wgpu registration) is wired
+//! on the app side (eframe): ui-kit only carries the texture id.
 //!
-//! Les [`camera`], [`grid`] et [`overlay`] sont totalement
-//! agnostiques (aucun type PhotoDocument, Layer, Shape…) : ils ne
-//! manipulent que des coordonnées monde / écran. La source canonique
-//! de l'état zoom/pan est [`ViewportState`] ; [`Camera`] n'en est
-//! qu'une projection (voir [`Camera::from_viewport`]) utilisée par la
-//! grille et les overlays.
+//! [`camera`], [`grid`] and [`overlay`] are fully agnostic
+//! (no PhotoDocument, Layer, Shape… types): they only manipulate
+//! world / screen coordinates. The canonical source of the
+//! zoom/pan state is [`ViewportState`]; [`Camera`] is merely a
+//! projection of it (see [`Camera::from_viewport`]) used by the
+//! grid and the overlays.
 
 pub mod camera;
 pub mod grid;
 pub mod overlay;
 pub mod viewport_interaction;
 pub mod viewport_state;
-// Nom imposé par la structure cible v2 (§4.1) : `viewport/viewport.rs`.
+// Name imposed by the target v2 structure (§4.1): `viewport/viewport.rs`.
 #[allow(clippy::module_inception)]
 pub mod viewport;
 

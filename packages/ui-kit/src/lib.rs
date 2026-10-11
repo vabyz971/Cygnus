@@ -14,36 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Crate `ui_kit` — design system egui de la suite Cygnus.
+//! `ui_kit` crate — the Cygnus suite's egui design system.
 //!
-//! Architecture en couches (bas vers haut) :
+//! Layered architecture (bottom to top):
 //!
-//! 1. **`theme`** — SEULE source des couleurs, espacements, rayons,
-//!    typo, tailles et bordures. Aucun autre module ne code de valeur
-//!    en dur.
-//! 2. **`primitives`** — briques génériques (`Text`, `Icon`,
-//!    `divider`, `Surface`), indépendantes du domaine.
-//! 3. **`icons`** — enum d'icônes stable + registre (aucune lib
-//!    externe exposée aux apps).
-//! 4. **`components`** — boutons, cases, interrupteurs, curseurs,
-//!    inputs, listes, onglets, liste réordonnable (variants par enums,
-//!    style par thème ; `sanitize_selected` unique dans `select`).
-//! 5. **`containers`** — conteneurs agnostiques (`Section`, `Card`,
+//! 1. **`theme`** — SINGLE source of colors, spacing, radii,
+//!    typo, sizes and borders. No other module hardcodes a value
+//!    directly.
+//! 2. **`primitives`** — generic building blocks (`Text`, `Icon`,
+//!    `divider`, `Surface`), domain-independent.
+//! 3. **`icons`** — stable icon enum + registry (no external
+//!    lib exposed to apps).
+//! 4. **`components`** — buttons, checkboxes, switches, sliders,
+//!    inputs, lists, tabs, reorderable list (enum variants,
+//!    theme styling; single `sanitize_selected` in `select`).
+//! 5. **`containers`** — agnostic containers (`Section`, `Card`,
 //!    `Stack`, `Panel`, `Split` + `SplitState`, `Collapsible`,
 //!    `Toolbar`).
-//! 6. **`layout`** — état du workspace (`PanelId`, `WorkspaceState`,
-//!    persistence JSON via `preferences`).
-//! 7. **`i18n`** — clés de traduction stables + catalogue.
-//! 8. **`viewport`** — état zoom/pan (`ViewportState`), grille,
-//!    overlays + affichage texture.
-//! 9. **`dialogs`** — modales, sélecteurs de fichiers, progression.
-//! 10. **`utils`** — état de drag & drop générique (index).
-//! 11. **`context`** — dépendances communes (`UiContext` : egui,
-//!     thème, icônes, traduction — ni moteurs ni documents).
+//! 6. **`layout`** — workspace state (`PanelId`, `WorkspaceState`,
+//!    JSON persistence via `preferences`).
+//! 7. **`i18n`** — stable translation keys + catalog.
+//! 8. **`viewport`** — zoom/pan state (`ViewportState`), grid,
+//!    overlays + texture display.
+//! 9. **`dialogs`** — modals, file pickers, progress.
+//! 10. **`utils`** — generic drag & drop state (index).
+//! 11. **`context`** — shared dependencies (`UiContext`: egui,
+//!     theme, icons, translation — neither engines nor documents).
 //!
-//! INTERDIT ici : toute référence aux types métier des apps et aux
-//! engines. Les widgets métier vivent dans `apps/*/src/ui/`. Le flux
-//! reste Application → Domain UI → UI Kit → egui, et les actions
+//! FORBIDDEN here: any reference to apps' domain types and to
+//! engines. Domain widgets live in `apps/*/src/ui/`. The flow
+//! stays Application → Domain UI → UI Kit → egui, and actions
 //! UI → UiCommand → Application → Engine.
 
 pub mod components;

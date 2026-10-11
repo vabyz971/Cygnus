@@ -14,30 +14,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Caméra 2D agnostique : conversions monde ↔ écran.
+//! Agnostic 2D camera: world ↔ screen conversions.
 //!
-//! Logique pure, sans type métier (ni document, ni calque, ni forme).
-//! Convention : `écran = (monde - centre) * zoom + taille_vue / 2`.
-//! Le zoom/pan s'appliquent au draw (modèle « state-only »).
+//! Pure logic, no domain type (no document, layer or shape).
+//! Convention: `screen = (world - center) * zoom + view_size / 2`.
+//! Zoom/pan apply at draw time ("state-only" model).
 //!
-//! La source canonique de l'état zoom/pan est
-//! [`ViewportState`](super::viewport_state::ViewportState) ; cette
-//! caméra n'en est qu'une projection pour la grille et les overlays
-//! (voir [`Camera::from_viewport`]).
+//! The canonical source of the zoom/pan state is
+//! [`ViewportState`](super::viewport_state::ViewportState); this
+//! camera is merely a projection of it for the grid and the overlays
+//! (see [`Camera::from_viewport`]).
 
 use super::viewport_state::ViewportState;
 
-/// Caméra 2D (centre monde + zoom).
+/// 2D camera (world center + zoom).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
-    /// Point monde affiché au centre de la vue.
+    /// World point displayed at the view's center.
     center: egui::Vec2,
-    /// Facteur de zoom (> 0).
+    /// Zoom factor (> 0).
     zoom: f32,
 }
 
 impl Camera {
-    /// Caméra identité (centre origine, zoom 1).
+    /// Identity camera (origin center, zoom 1).
     pub fn new() -> Self {
         Self {
             center: egui::Vec2::ZERO,
@@ -45,10 +45,10 @@ impl Camera {
         }
     }
 
-    /// Projette un [`ViewportState`] (canonique) en caméra pour une
-    /// taille de vue donnée. Les deux modèles vérifient
-    /// `écran = monde * zoom + offset` : le centre vaut donc
-    /// `(taille_vue / 2 - offset) / zoom`.
+    /// Projects a (canonical) [`ViewportState`] to a camera for a
+    /// given view size. Both models satisfy
+    /// `screen = world * zoom + offset`: the center is therefore
+    /// `(view_size / 2 - offset) / zoom`.
     pub fn from_viewport(state: ViewportState, viewport_size: egui::Vec2) -> Self {
         let zoom = state.zoom().max(f32::EPSILON);
         Self {
@@ -57,17 +57,17 @@ impl Camera {
         }
     }
 
-    /// Centre monde courant.
+    /// Current world center.
     pub fn center(self) -> egui::Vec2 {
         self.center
     }
 
-    /// Zoom courant.
+    /// Current zoom.
     pub fn zoom(self) -> f32 {
         self.zoom
     }
 
-    /// Convertit un point monde en point écran.
+    /// Converts a world point to a screen point.
     pub fn world_to_screen(self, world: egui::Pos2, viewport_size: egui::Vec2) -> egui::Pos2 {
         egui::pos2(
             (world.x - self.center.x) * self.zoom + viewport_size.x / 2.0,
@@ -75,7 +75,7 @@ impl Camera {
         )
     }
 
-    /// Convertit un point écran en point monde.
+    /// Converts a screen point to a world point.
     pub fn screen_to_world(self, screen: egui::Pos2, viewport_size: egui::Vec2) -> egui::Pos2 {
         let zoom = self.zoom.max(f32::EPSILON);
         egui::pos2(
@@ -84,7 +84,7 @@ impl Camera {
         )
     }
 
-    /// Convertit un rectangle monde en rectangle écran.
+    /// Converts a world rectangle to a screen rectangle.
     pub fn rect_to_screen(self, world: egui::Rect, viewport_size: egui::Vec2) -> egui::Rect {
         egui::Rect::from_two_pos(
             self.world_to_screen(world.min, viewport_size),
@@ -92,20 +92,20 @@ impl Camera {
         )
     }
 
-    /// Déplace le centre en coordonnées monde.
+    /// Moves the center in world coordinates.
     pub fn set_center(&mut self, center: egui::Vec2) {
         self.center = center;
     }
 
-    /// Change le zoom (valeurs non strictement positives ignorées).
+    /// Changes the zoom (non-strictly-positive values ignored).
     pub fn set_zoom(&mut self, zoom: f32) {
         if zoom > 0.0 && zoom.is_finite() {
             self.zoom = zoom;
         }
     }
 
-    /// Cadre `content` (monde) dans `viewport_size` avec `padding`.
-    /// Tailles nulles ou négatives : sans effet.
+    /// Fits `content` (world) into `viewport_size` with `padding`.
+    /// Null or negative sizes: no effect.
     pub fn fit(&mut self, content: egui::Rect, viewport_size: egui::Vec2, padding: f32) {
         if content.is_negative()
             || content.width() <= 0.0
@@ -126,7 +126,7 @@ impl Camera {
 }
 
 impl Default for Camera {
-    /// Caméra identité.
+    /// Identity camera.
     fn default() -> Self {
         Self::new()
     }
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn from_viewport_matches_state_projection() {
-        // La caméra dérivée projette comme l'état canonique.
+        // The derived camera projects like the canonical state.
         let mut state = ViewportState::default();
         state.pan_by(egui::vec2(30.0, -12.0));
         state.zoom_by(2.0, None);

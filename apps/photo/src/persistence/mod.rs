@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Persistance de l'interface : document vs workspace.
+//! UI persistence: document vs workspace.
 //!
-//! Le layout utilisateur se sauvegarde INDÉPENDAMMENT du document
-//! (projet `.cygp` côté moteur). `ui_state` sérialise le
-//! [`WorkspaceState`](ui_kit::layout::WorkspaceState) en JSON via
-//! ui-kit ; le branchement disque (chemins, `preferences`) viendra
-//! au câblage disque — d'où les fonctions en attente.
+//! The user layout is saved INDEPENDENTLY of the document
+//! (`.cygp` project engine-side). `ui_state` serializes the
+//! [`WorkspaceState`](ui_kit::layout::WorkspaceState) to JSON via
+//! ui-kit; the disk wiring (paths, `preferences`) will come
+//! with the disk hookup — hence the pending functions.
 
 pub mod ui_state;
 

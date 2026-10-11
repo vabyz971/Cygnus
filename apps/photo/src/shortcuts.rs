@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Actions raccourcissables de l'app photo.
+//! Shortcuttable actions of the photo app.
 //!
-//! [`PhotoShortcut`] est la contrepartie typée des identifiants
-//! sérialisés (`"undo"`, …) stockés dans les préférences : le
-//! [`KeybindingResolver`](preferences::KeybindingResolver) générique
-//! retourne un id, [`shortcut_for`] le convertit en action. Les ids
-//! sont la clé de compatibilité du JSON de préférences — ne jamais
-//! les renommer sans migration.
+//! [`PhotoShortcut`] is the typed counterpart of the serialized
+//! identifiers (`"undo"`, …) stored in preferences: the generic
+//! [`KeybindingResolver`](preferences::KeybindingResolver)
+//! returns an id, [`shortcut_for`] converts it into an action. The ids
+//! are the preferences-JSON compatibility key — never
+//! rename them without a migration.
 //!
-//! Câblage (O002) : [`poll_shortcut_actions`] convertit les
-//! événements clavier egui de la frame en [`PhotoAction`] via le
-//! résolveur ; `PhotoApp::draw` pousse le résultat dans la file
-//! (même flux que menus et panels). `Escape` reste géré localement
-//! par les widgets (annulation de stroke/renommage).
+//! Wiring (O002): [`poll_shortcut_actions`] converts the
+//! frame's egui keyboard events into [`PhotoAction`] via the
+//! resolver; `PhotoApp::draw` pushes the result into the queue
+//! (same flow as menus and panels). `Escape` stays handled locally
+//! by widgets (stroke/rename cancellation).
 
 #![allow(dead_code)]
 
@@ -36,34 +36,34 @@ use crate::layout::dock::PhotoDockTab;
 use crate::ui::PhotoCanvasTool;
 use preferences::{AppKey, AppModifiers, KeybindingResolver, NamedKey};
 
-/// Toutes les actions raccourcissables de l'app photo.
+/// Every shortcuttable action of the photo app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhotoShortcut {
-    // Outils
+    // Tools
     ToolBrush,
     ToolEraser,
     ToolEyedropper,
     ToolMove,
     ToolHand,
     ToolZoom,
-    // Édition
+    // Edit
     Undo,
     Redo,
     DeleteLayer,
-    // Fichier
+    // File
     NewProject,
     Open,
     Save,
     SaveAs,
     Export,
-    // Affichage
+    // View
     ZoomIn,
     ZoomOut,
     ZoomFit,
     Zoom100,
     ToggleLayersPanel,
     ToggleToolsPanel,
-    // Calques
+    // Layers
     NewLayer,
     DuplicateLayer,
     // Application
@@ -71,7 +71,7 @@ pub enum PhotoShortcut {
 }
 
 impl PhotoShortcut {
-    /// Toutes les actions, ordre d'affichage stable dans la fenêtre.
+    /// Every action, stable display order in the window.
     pub const ALL: [PhotoShortcut; 23] = [
         PhotoShortcut::ToolBrush,
         PhotoShortcut::ToolEraser,
@@ -98,7 +98,7 @@ impl PhotoShortcut {
         PhotoShortcut::OpenPreferences,
     ];
 
-    /// Identifiant sérialisé (clé de la table de bindings, stable).
+    /// Serialized id (bindings-table key, stable).
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
@@ -128,7 +128,7 @@ impl PhotoShortcut {
         }
     }
 
-    /// Libellé affiché à l'utilisateur.
+    /// Label shown to the user.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -158,7 +158,7 @@ impl PhotoShortcut {
         }
     }
 
-    /// Catégorie pour le groupement visuel.
+    /// Category for visual grouping.
     #[must_use]
     pub fn category(self) -> &'static str {
         match self {
@@ -181,15 +181,15 @@ impl PhotoShortcut {
         }
     }
 
-    /// Retrouve l'action depuis son identifiant sérialisé.
+    /// Finds the action from its serialized id.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|a| a.id() == id)
     }
 }
 
-/// Convertit un événement clavier en action photo via le résolveur
-/// générique (id → [`PhotoShortcut`]).
+/// Converts a keyboard event into a photo action via the generic
+/// resolver (id → [`PhotoShortcut`]).
 #[must_use]
 pub fn shortcut_for(
     resolver: &KeybindingResolver,
@@ -202,10 +202,10 @@ pub fn shortcut_for(
 }
 
 impl PhotoShortcut {
-    /// Convertit le raccourci en action app (`None` = sans cible
-    /// actuelle : `ZoomFit` attend un cadrage contenu, `OpenPreferences`
-    /// attend un panneau de préférences — futurs objectifs, pas des
-    /// oublis).
+    /// Converts the shortcut into an app action (`None` = no current
+    /// target: `ZoomFit` waits for content framing, `OpenPreferences`
+    /// waits for a preferences panel — future goals, not
+    /// oversights).
     #[must_use]
     pub fn to_action(self) -> Option<PhotoAction> {
         Some(match self {
@@ -235,11 +235,11 @@ impl PhotoShortcut {
     }
 }
 
-/// Convertit une touche egui en touche logique (`None` = ignorée :
-/// ni liée par défaut, ni exposée par le résolveur).
+/// Converts an egui key into a logical key (`None` = ignored:
+/// neither bound by default nor exposed by the resolver).
 ///
-/// L'orthographe suit les défauts (`model.rs`) : `"Plus"` (→ `PLUS`),
-/// `"Minus"`, `","`, chiffres `"0"`…` (insensible à la casse via
+/// Spelling follows the defaults (`model.rs`): `"Plus"` (→ `PLUS`),
+/// `"Minus"`, `","`, digits `"0"`…` (case-insensitive via
 /// `key_to_string`).
 #[must_use]
 pub fn egui_key_to_app(key: egui::Key) -> Option<AppKey> {
@@ -308,8 +308,8 @@ pub fn egui_key_to_app(key: egui::Key) -> Option<AppKey> {
     })
 }
 
-/// Convertit les modificateurs egui vers le modèle logique
-/// (`command` ⌘ replié sur ctrl, comme le résolveur).
+/// Converts egui modifiers to the logical model
+/// (`command` ⌘ folded onto ctrl, like the resolver).
 #[must_use]
 pub fn egui_modifiers_to_app(modifiers: egui::Modifiers) -> AppModifiers {
     AppModifiers {
@@ -320,12 +320,12 @@ pub fn egui_modifiers_to_app(modifiers: egui::Modifiers) -> AppModifiers {
     }
 }
 
-/// Actions clavier de la frame : événements `Key` pressés (hors
-/// répétition) résolus puis convertis.
+/// Frame keyboard actions: pressed `Key` events (no
+/// repeat) resolved then converted.
 ///
-/// Garde D007 : saisie texte en cours (`wants_keyboard_input`, ex.
-/// renommage de calque) = aucun raccourci — taper `b` ne doit pas
-/// changer d'outil.
+/// D007 guard: text entry in progress (`wants_keyboard_input`, e.g.
+/// layer rename) = no shortcut — typing `b` must not
+/// switch tools.
 #[must_use]
 pub fn poll_shortcut_actions(
     ctx: &egui::Context,
@@ -391,14 +391,14 @@ mod tests {
             Some(PhotoShortcut::Undo)
         );
 
-        // 'b' sans modificateur → ToolBrush
+        // 'b' with no modifier → ToolBrush
         let b = AppKey::Character("b".into());
         assert_eq!(
             shortcut_for(&resolver, &b, AppModifiers::EMPTY),
             Some(PhotoShortcut::ToolBrush)
         );
 
-        // F7 → panneau calques
+        // F7 → layers panel
         assert_eq!(
             shortcut_for(&resolver, &AppKey::Named(NamedKey::F7), AppModifiers::EMPTY),
             Some(PhotoShortcut::ToggleLayersPanel)
@@ -409,7 +409,7 @@ mod tests {
     fn resolution_sensible_aux_modificateurs() {
         let defaults = preferences::KeybindingPreferences::with_defaults();
         let resolver = KeybindingResolver::from_bindings(&defaults.bindings);
-        // 's' SANS Ctrl ne doit PAS déclencher Enregistrer
+        // 's' WITHOUT Ctrl must NOT trigger Save
         let s = AppKey::Character("s".into());
         assert_ne!(
             shortcut_for(&resolver, &s, AppModifiers::EMPTY),
@@ -421,8 +421,8 @@ mod tests {
         );
     }
 
-    /// Les 23 raccourcis mappent vers une action, sauf les 2 trous
-    /// documentés (`ZoomFit`, `OpenPreferences`).
+    /// All 23 shortcuts map to an action, except the 2 documented
+    /// gaps (`ZoomFit`, `OpenPreferences`).
     #[test]
     fn every_shortcut_maps_or_is_documented_gap() {
         let mut mapped = 0;
@@ -441,7 +441,7 @@ mod tests {
         assert_eq!(mapped, 21);
     }
 
-    /// Conversions ciblées : outils, fichier (O001), calques, panneaux.
+    /// Targeted conversions: tools, file (O001), layers, panels.
     #[test]
     fn mapping_targets_expected_actions() {
         use crate::commands::PhotoAction;
@@ -473,8 +473,8 @@ mod tests {
         );
     }
 
-    /// Les touches egui des défauts résolvent (lettres, chiffres,
-    /// Plus/Minus, virgule, F7, Tab, Suppr).
+    /// The defaults' egui keys resolve (letters, digits,
+    /// Plus/Minus, comma, F7, Tab, Delete).
     #[test]
     fn egui_keys_resolve_to_bound_shortcuts() {
         use egui::Key as K;
@@ -526,12 +526,12 @@ mod tests {
             shortcut_for(&resolver, &key(K::Comma), AppModifiers::CTRL),
             Some(PhotoShortcut::OpenPreferences)
         );
-        // Touche hors table : ignorée (jamais d'action surprise).
+        // Off-table key: ignored (never a surprise action).
         assert_eq!(egui_key_to_app(K::Copy), None);
     }
 
-    /// Dispatch de frame : Ctrl+S donne `SaveProject`, mais rien ne
-    /// sort pendant une saisie texte (D007).
+    /// Frame dispatch: Ctrl+S yields `SaveProject`, but nothing comes
+    /// out during text entry (D007).
     #[test]
     fn dispatch_delivers_and_suspends_on_text_entry() {
         use crate::commands::PhotoAction;
@@ -549,7 +549,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        // Sans saisie : l'action sort.
+        // No entry: the action comes out.
         let input = RawInput {
             events: vec![save.clone()],
             ..Default::default()
@@ -560,7 +560,7 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(actions, vec![PhotoAction::SaveProject]);
-        // Saisie en cours (renommage) : la même touche est ignorée.
+        // Entry in progress (rename): the same key is ignored.
         let input = RawInput {
             events: vec![save],
             ..Default::default()

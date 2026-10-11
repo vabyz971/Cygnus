@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Identifiant stable d'un nœud du graphe de dépendances.
+//! Stable identifier of a dependency-graph node.
 //!
-//! Newtype de [`EntityId`](ids::EntityId) : même unicité globale et même
-//! stabilité persistante, mais type distinct — un [`NodeId`] ne peut être
-//! confondu ni avec un `SceneNodeId`, ni avec un `datatypes::NodeId`.
+//! Newtype over [`EntityId`](ids::EntityId): same global uniqueness and same
+//! persistent stability, but a distinct type — a [`NodeId`] cannot be
+//! confused with a `SceneNodeId` nor a `datatypes::NodeId`.
 
 use ids::EntityId;
 
-/// Identifiant stable d'un [`crate::Node`].
+/// Stable identifier of a [`crate::Node`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -30,25 +30,25 @@ use ids::EntityId;
 pub struct NodeId(EntityId);
 
 impl NodeId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul — sentinelle explicite, jamais attribué par [`crate::Graph`].
+    /// Null identifier — explicit sentinel, never assigned by [`crate::Graph`].
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente (ponts inter-systèmes).
+    /// The underlying entity (inter-system bridges).
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante (restauration, migration).
+    /// Wraps an existing entity (restore, migration).
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -56,7 +56,7 @@ impl NodeId {
 }
 
 impl Default for NodeId {
-    /// Identifiant nul — même valeur que [`NodeId::nil`].
+    /// Null identifier — same value as [`NodeId::nil`].
     fn default() -> Self {
         Self::nil()
     }

@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Conteneurs agnostiques : organisation sans connaissance métier.
+//! Agnostic containers: organization with no domain knowledge.
 //!
-//! [`Section`] (titre nu), [`Card`] (surface), [`Stack`] (pile),
-//! [`Panel`] (bloc titré), [`Split`] (deux volets redimensionnables),
-//! [`Collapsible`] (section repliable) et [`Toolbar`] (barreau
-//! d'outils). La disposition globale reste propre à chaque app ;
-//! l'état persistant des régions vit dans [`crate::layout`].
+//! [`Section`] (bare title), [`Card`] (surface), [`Stack`] (stack),
+//! [`Panel`] (titled block), [`Split`] (two resizable panes),
+//! [`Collapsible`] (foldable section) and [`Toolbar`] (toolbar).
+//! Overall layout stays per-app; the regions' persistent state
+//! lives in [`crate::layout`].
 
 pub mod card;
 pub mod collapsible;

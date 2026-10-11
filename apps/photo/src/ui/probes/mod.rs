@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Sondes de mesure perf (diagnostic temporaire, tests uniquement).
+//! Perf measurement probes (temporary diagnostics, tests only).
 //!
-//! Regroupe `perf_probe` (campagne composite chronométrée) et
-//! `matrix_probe` (matrices de mesure) : même rôle, même durée de
-//! vie. Le parent (`ui`) ne déclare ce module qu'en `#[cfg(test)]` :
-//! ne JAMAIS brancher au runtime (voir chaque module).
+//! Groups `perf_probe` (timed composite campaign) and
+//! `matrix_probe` (measurement matrices): same role, same
+//! lifetime. The parent (`ui`) declares this module only under `#[cfg(test)]`:
+//! NEVER wire to the runtime (see each module).
 
 pub mod matrix_probe;
 pub mod perf_probe;

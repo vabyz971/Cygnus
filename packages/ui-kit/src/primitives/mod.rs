@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Primitives génériques et indépendantes du domaine.
+//! Domain-independent generic primitives.
 //!
-//! Briques de base sous les composants : [`Text`], [`Icon`],
-//! [`divider`] et [`Surface`]. Le style provient toujours du
+//! Base building blocks under components: [`Text`], [`Icon`],
+//! [`divider`] and [`Surface`]. Style always comes from the
 //! [`CygnusTheme`](crate::theme::CygnusTheme).
 
 pub mod divider;

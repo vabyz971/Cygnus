@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests du graphe de dépendances : création, propagation, cycles, ordre.
+//! Dependency-graph tests: creation, propagation, cycles, order.
 
 use super::*;
 use crate::{Edge, GraphError, Node, NodeId};
@@ -48,13 +48,13 @@ fn creation_noeuds_identifiants_stables() {
     assert!(!node.is_dirty());
     assert!(!graph.is_dirty(a).expect("exists"));
 
-    // Insertion d'identifiant stable (restauration) + doublon rejeté.
+    // Stable-identifier insertion (restore) + duplicate rejected.
     let stable = NodeId::new();
     assert!(graph.insert(stable));
     assert!(!graph.insert(stable));
     assert_eq!(graph.len(), 3);
 
-    // Les nœuds sont Copy : instantanés sans clones.
+    // Nodes are Copy: snapshots without clones.
     fn assert_copy<T: Copy>() {}
     assert_copy::<Node>();
     assert_copy::<Edge>();
@@ -73,7 +73,7 @@ fn creation_aretes_et_adjacences() {
     assert_eq!(graph.all_edges().len(), 2);
     assert!(graph.all_edges().contains(&Edge::new(a, b)));
 
-    // Inconnus : None, pas de panique.
+    // Unknown ids: None, no panic.
     assert_eq!(graph.dependencies(NodeId::nil()), None);
     assert_eq!(graph.is_dirty(NodeId::nil()), None);
     assert_eq!(graph.node_revision(NodeId::nil()), None);
@@ -118,13 +118,13 @@ fn propagation_salete_aval_un_seul_timbre() {
     assert!(graph.is_dirty(c).expect("exists"));
     assert!(!graph.is_dirty(independant).expect("exists"));
 
-    // Un changement logique = un timbre partagé sur toute la fermeture.
+    // One logical change = one stamp shared over the whole closure.
     assert_eq!(graph.node_revision(a), Some(rev));
     assert_eq!(graph.node_revision(b), Some(rev));
     assert_eq!(graph.node_revision(c), Some(rev));
     assert_ne!(graph.node_revision(independant), Some(rev));
 
-    // Salissure ciblée en milieu de chaîne : l'amont est épargné.
+    // Targeted dirtying mid-chain: upstream is spared.
     graph.clear_dirty(a);
     graph.clear_dirty(b);
     graph.clear_dirty(c);
@@ -134,7 +134,7 @@ fn propagation_salete_aval_un_seul_timbre() {
     assert!(graph.is_dirty(b).expect("exists"));
     assert!(graph.is_dirty(c).expect("exists"));
 
-    // Inconnu.
+    // Unknown.
     assert_eq!(graph.mark_dirty(NodeId::nil()), None);
 }
 
@@ -145,7 +145,7 @@ fn nettoyage_salete_sans_bump_de_revision() {
 
     assert_eq!(graph.clear_dirty(a), Some(true));
     assert_eq!(graph.clear_dirty(a), Some(false));
-    // La révision identifie l'état calculé : inchangée après nettoyage.
+    // The revision identifies the computed state: unchanged after clearing.
     assert_eq!(graph.node_revision(a), Some(rev));
     assert_eq!(graph.tree_revision(), rev);
     assert_eq!(graph.clear_dirty(NodeId::nil()), None);
@@ -155,21 +155,21 @@ fn nettoyage_salete_sans_bump_de_revision() {
 fn detection_cycle_direct_et_indirect() {
     let (mut graph, a, b, c) = chaine_abc();
 
-    // C → A refermerait A → B → C → A.
+    // C → A would close A → B → C → A.
     assert_eq!(
         graph.add_edge(c, a),
         Err(GraphError::Cycle { from: c, to: a })
     );
-    // B → A refermerait A → B → A.
+    // B → A would close A → B → A.
     assert_eq!(
         graph.add_edge(b, a),
         Err(GraphError::Cycle { from: b, to: a })
     );
-    // Le graphe est intact après les rejets.
+    // The graph is intact after the rejections.
     assert_eq!(graph.edge_count(), 2);
     assert_eq!(graph.topo_order().len(), 3);
 
-    // Pré-validation sans mutation.
+    // Pre-validation without mutation.
     assert!(graph.would_create_cycle(c, a));
     assert!(graph.would_create_cycle(a, a));
     assert!(!graph.would_create_cycle(a, c));
@@ -192,7 +192,7 @@ fn diamant_sans_cycle_propagation_complete() {
     for id in [a, b, c, d] {
         assert!(graph.is_dirty(id).expect("exists"), "{id}");
     }
-    // Chaque nœud visité une fois malgré les deux chemins : ordre valide.
+    // Each node visited once despite both paths: valid order.
     let order = graph.topo_order();
     assert_eq!(order.len(), 4);
     let pos = |id| order.iter().position(|&n| n == id).expect("present");
@@ -212,7 +212,7 @@ fn ordre_topologique_deterministe_sans_aretes() {
     let ids: Vec<_> = (0..5).map(|_| graph.add_node()).collect();
     let mut expected = ids.clone();
     expected.sort();
-    // Sans arêtes : ordre total déterministe par identifiant.
+    // Without edges: deterministic total order by identifier.
     assert_eq!(graph.topo_order(), expected);
     assert_eq!(graph.topo_order(), graph.topo_order());
 }
@@ -244,7 +244,7 @@ fn mutation_suppression_noeud_purge_les_aretes() {
     assert_eq!(graph.dependents(a), Some(&[][..]));
     assert_eq!(graph.dependencies(c), Some(&[][..]));
 
-    // Le reste du graphe reste exploitable.
+    // The rest of the graph stays usable.
     graph.mark_dirty(a).expect("exists");
     assert!(!graph.is_dirty(c).expect("exists"));
     assert_eq!(graph.topo_order().len(), 2);
@@ -260,7 +260,7 @@ fn revisions_avancent_aux_mutations_structurelles() {
     let b = graph.add_node();
     let r1 = graph.tree_revision();
     let r2 = graph.add_edge(a, b).expect("ok");
-    // L'insertion d'arête alloue : le compteur avance.
+    // Edge insertion allocates: the counter advances.
     assert!(r2.is_newer_than(r1));
     assert_eq!(graph.tree_revision(), r2);
     assert_eq!(graph.dependencies(b), Some(&[a][..]));

@@ -14,32 +14,32 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Export d'image vers les formats d'échange (PNG / JPEG).
+//! Image export to exchange formats (PNG / JPEG).
 //!
-//! - PNG : transparence préservée (plan de travail infini inclus).
-//! - JPEG : ne gère pas l'alpha → aplatement automatique sur fond BLANC
-//!   (comportement des éditeurs pro), qualité réglable.
+//! - PNG: transparency preserved (infinite canvas included).
+//! - JPEG: no alpha support → automatic flattening on a WHITE background
+//!   (pro-editor behavior), adjustable quality.
 
 use std::path::Path;
 
 use image::{DynamicImage, ImageBuffer, Rgba};
 
-/// Qualité JPEG par défaut (échelle libturbo-jpeg 1..=100).
+/// Default JPEG quality (libturbo-jpeg scale 1..=100).
 pub const DEFAULT_JPEG_QUALITY: u8 = 90;
 
-/// Format d'export demandé.
+/// Requested export format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
-    /// Transparence préservée
+    /// Transparency preserved
     Png,
-    /// Alpha aplati sur fond blanc ; `quality` dans 1..=100
+    /// Alpha flattened on white; `quality` in 1..=100
     Jpeg { quality: u8 },
 }
 
 impl ExportFormat {
-    /// Déduit le format de l'extension du chemin (`.png`, `.jpg`, `.jpeg`),
-    /// insensible à la casse. Toute autre extension → PNG (valeur sûre :
-    /// sans perte, transparence conservée).
+    /// Deduces the format from the path extension (`.png`, `.jpg`, `.jpeg`),
+    /// case-insensitive. Any other extension → PNG (safe value: lossless,
+    /// transparency kept).
     #[must_use]
     pub fn from_path(path: &Path) -> Self {
         let ext = path
@@ -55,14 +55,14 @@ impl ExportFormat {
     }
 }
 
-/// Le JPEG ignore l'alpha : on composite l'image sur un fond opaque BLANC
-/// (et non un simple décapage du canal alpha qui rendrait les zones
-/// transparentes noires ou arbitraires).
+/// JPEG ignores alpha: the image is composited over an opaque WHITE
+/// background (not a mere stripping of the alpha channel, which would
+/// render transparent zones black or arbitrary).
 #[must_use]
 pub fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
     let rgba = img.to_rgba8();
     if rgba.pixels().all(|p| p.0[3] == 255) {
-        return DynamicImage::ImageRgba8(rgba); // déjà opaque : zéro copie utile
+        return DynamicImage::ImageRgba8(rgba); // already opaque: no useful copy
     }
     let (w, h) = rgba.dimensions();
     let mut canvas: ImageBuffer<Rgba<u8>, Vec<u8>> =
@@ -71,10 +71,10 @@ pub fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgba8(canvas)
 }
 
-/// Écrit l'image sur disque au format demandé.
+/// Writes the image to disk in the requested format.
 ///
 /// # Errors
-/// Erreur d'encodage ou d'écriture disque — message descriptif en français.
+/// Encoding or disk-write error — descriptive message in French.
 pub fn export_image(img: &DynamicImage, path: &Path, format: ExportFormat) -> Result<(), String> {
     let mut file =
         std::fs::File::create(path).map_err(|e| format!("Création de {}: {e}", path.display()))?;
@@ -100,7 +100,7 @@ mod tests {
     use super::*;
 
     fn sample_transparent() -> DynamicImage {
-        // Moitié gauche rouge opaque, moitié droite TRANSPARENTE
+        // Opaque red left half, TRANSPARENT right half
         let mut b = ImageBuffer::from_pixel(4, 2, Rgba([0, 0, 0, 0]));
         for y in 0..2 {
             for x in 0..2 {
@@ -140,7 +140,7 @@ mod tests {
                 quality: DEFAULT_JPEG_QUALITY
             }
         );
-        // Extension inconnue : PNG par défaut (sûr, sans perte)
+        // Unknown extension: default PNG (safe, lossless)
         assert_eq!(
             ExportFormat::from_path(Path::new("d.webp")),
             ExportFormat::Png
@@ -173,14 +173,14 @@ mod tests {
         let reloaded = image::open(&path).expect("relecture");
         std::fs::remove_file(&path).ok();
 
-        // Zone transparente → blanc pur (tolérance compression)
+        // Transparent zone → pure white (compression tolerance)
         let rgb = reloaded.to_rgb8();
         let bg = rgb.get_pixel(3, 0);
         assert!(
             i16::from(bg[0]) >= 252 && i16::from(bg[1]) >= 252 && i16::from(bg[2]) >= 252,
             "fond attendu blanc, obtenu {bg:?}"
         );
-        // Zone opaque rouge → reste dominée par le rouge
+        // Opaque red zone → stays red-dominated
         let fg = rgb.get_pixel(0, 0);
         assert!(
             fg[0] > 200 && fg[1] < 80 && fg[2] < 80,
@@ -192,7 +192,7 @@ mod tests {
     fn image_deja_opaque_n_est_pas_recopiee_par_flatten() {
         let opaque =
             DynamicImage::ImageRgba8(ImageBuffer::from_pixel(2, 2, Rgba([10, 20, 30, 255])));
-        // Même contenu pixel : le fast-path évite l'overlay inutile
+        // Same pixel content: the fast path skips the useless overlay
         let out = flatten_on_white(&opaque);
         assert_eq!(*out.to_rgba8(), *opaque.to_rgba8());
     }

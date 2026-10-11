@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,7 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Métriques et timings du worker : [`PreviewTimings`], [`OpMetrics`],
+//! Worker metrics and timings: [`PreviewTimings`], [`OpMetrics`],
 //! [`WorkerMetrics`].
 
 use crate::ui::features::layers::{
@@ -31,133 +31,133 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
-/// Durées d'une passe `render_preview` (microsecondes).
+/// Durations of one `render_preview` pass (microseconds).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PreviewTimings {
-    /// Pixels d'entrée du downscale preview §8 (0 si pas de rétrécissement).
+    /// Preview downscale input pixels §8 (0 when not downscaled).
     pub preview_resize_pixels: u64,
-    /// Composite pleine résolution (`composite_preview` / `composite`).
+    /// Full-resolution composite (`composite_preview` / `composite`).
     pub composite_us: u128,
-    /// Miniature (`capped_preview` + `into_raw`).
+    /// Thumbnail (`capped_preview` + `into_raw`).
     pub thumb_us: u128,
-    /// Géométrie document (`preview_geometry`, 3e passe apparences).
+    /// Document geometry (`preview_geometry`, 3rd appearance pass).
     pub geometry_us: u128,
-    /// Balayages prepare + blend + mix (hors extents, hors alloc).
+    /// Prepare + blend + mix sweeps (excl. extents, excl. alloc).
     pub blend_us: u128,
-    /// Calques pixels et groupes effectivement blendés.
+    /// Pixel layers and groups actually blended.
     pub layers_blended: u64,
-    /// Pixels parcourus (sommes des balayages d'accumulateur).
+    /// Pixels traversed (accumulator sweep sums).
     pub pixels_processed: u64,
-    /// Pixels de l'accumulateur (scope).
+    /// Accumulator pixels (scope).
     pub scope_px: u64,
-    /// Pixels du composite pleine résolution.
+    /// Full-resolution composite pixels.
     pub full_px: u64,
-    /// Pixels de la miniature envoyée.
+    /// Sent thumbnail pixels.
     pub preview_px: u64,
 }
 
-/// Métriques d'une commande worker (remplies par `apply`).
+/// Metrics of one worker command (filled by `apply`).
 #[derive(Debug, Default, Clone)]
 pub struct OpMetrics {
-    /// Nom de la commande (voir `PhotoEngineCommand::op_name`).
+    /// Command name (see `PhotoEngineCommand::op_name`).
     pub op: &'static str,
-    /// Durée totale de `apply` (mutation + snapshot + réponse).
+    /// Total `apply` duration (mutation + snapshot + response).
     pub total_us: u128,
-    /// Mutation pure (`mutate` : setters + historique + peinture).
+    /// Pure mutation (`mutate`: setters + history + painting).
     pub mutation_us: u128,
-    /// Construction du snapshot couches (`snapshot_layers`).
+    /// Layer snapshot construction (`snapshot_layers`).
     pub snapshot_us: u128,
-    /// Composite pleine résolution.
+    /// Full-resolution composite.
     pub composite_us: u128,
-    /// Miniature + mise en buffer.
+    /// Thumbnail + buffering.
     pub thumb_us: u128,
-    /// Géométrie document (origine du plan infini).
+    /// Document geometry (infinite-plane origin).
     pub geometry_us: u128,
-    /// Construction du partage inter-passes (résolutions renderer).
+    /// Inter-pass sharing construction (renderer resolutions).
     pub frame_us: u128,
-    /// Apparences résolues auprès du renderer pendant la réponse.
+    /// Appearances resolved from the renderer during the response.
     pub appearance_resolves: u64,
-    /// Réutilisations inter-passes (zéro nouvelle résolution).
+    /// Inter-pass reuses (zero new resolutions).
     pub appearance_frame_hits: u64,
-    /// Buffers `preview` régénérés (delta compteurs renderer).
+    /// Regenerated `preview` buffers (renderer counter delta).
     pub preview_rebuilds: u64,
-    /// Miniatures `thumb` régénérées (delta compteurs renderer).
+    /// Regenerated `thumb` thumbnails (renderer counter delta).
     pub thumb_rebuilds: u64,
-    /// OBSERVATION tuiles (vertical slice, sans effet sur le rendu) :
-    /// aire de la région sale du dernier stroke en pixels.
+    /// Tile OBSERVATION (vertical slice, no render effect):
+    /// dirty-region area of the last stroke in pixels.
     pub dirty_region_px: u64,
-    /// OBSERVATION tuiles : tuiles niveau 0 marquées sales.
+    /// Tile OBSERVATION: level-0 tiles marked dirty.
     pub dirty_tiles: u64,
-    /// OBSERVATION tuiles : tuiles retenues par le scheduler.
+    /// Tile OBSERVATION: tiles kept by the scheduler.
     pub scheduled_tiles: u64,
-    /// Phase 6E : tuiles resservies depuis le cache incrémental (0 calcul).
+    /// Phase 6E: tiles re-served from the incremental cache (0 compute).
     pub cache_hits: u64,
-    /// Phase 6E : tuiles évaluées (`composite_region_with` fenêtré).
+    /// Phase 6E: evaluated tiles (windowed `composite_region_with`).
     pub cache_misses: u64,
-    /// Phase 6E : rendus évités par les hits (== `cache_hits`).
+    /// Phase 6E: renders avoided by hits (== `cache_hits`).
     pub renders_avoided: u64,
-    /// Phase 6F : tuiles visibles requises par le viewport rendu.
+    /// Phase 6F: visible tiles required by the rendered viewport.
     pub visible_tiles: u64,
-    /// Phase 6F : tuiles demandées au worker (== visibles sans prefetch).
+    /// Phase 6F: tiles requested from the worker (== visible, no prefetch).
     pub requested_tiles: u64,
-    /// Phase 6G.2 §8 : zones dirty entièrement soldées par la frame
-    /// (consommation post-rendu — le garde-fou anti-dérive F1).
+    /// Phase 6G.2 §8: dirty zones fully settled by the frame
+    /// (post-render consumption — the F1 anti-drift guard).
     pub dirty_tiles_cleared: u64,
-    /// Phase 6G : pixels écrits dans la surface persistante (0 si warm —
-    /// hits n'écrivent rien ; partiel ≈ tuiles sales).
+    /// Phase 6G: pixels written to the persistent surface (0 when warm —
+    /// hits write nothing; partial ≈ dirty tiles).
     pub surface_pixels_written: u64,
-    /// Phase 6G.1 : temps d'ordonnancement du plan (scheduler pur).
+    /// Phase 6G.1: plan scheduling time (pure scheduler).
     pub schedule_us: u128,
-    /// Phase 6G.1 : temps total des évaluations de tuiles (lookup + rendus).
+    /// Phase 6G.1: total tile evaluation time (lookup + renders).
     pub tile_render_total_us: u128,
-    /// Phase 6G.1 : temps de découpe d'assemblage (memcpy O(viewport)).
+    /// Phase 6G.1: assembly slicing time (memcpy O(viewport)).
     pub assembly_us: u128,
-    /// Phase 6G.1 : temps d'écriture surface de cette frame (delta).
+    /// Phase 6G.1: this frame's surface write time (delta).
     pub surface_update_us: u128,
-    /// Phase 6G.2 §8 : pixels d'entrée du downscale preview (0 si pas de
-    /// rétrécissement — même dimensions conservées, §3.7).
+    /// Phase 6G.2 §8: preview downscale input pixels (0 when no
+    /// downscale — same dimensions kept, §3.7).
     pub preview_resize_pixels: u64,
-    /// Phase 6G.3 §14 : miniatures secondaires terminées cette frame.
+    /// Phase 6G.3 §14: secondary thumbnails finished this frame.
     pub thumbnail_jobs_completed: u64,
-    /// Phase 6G.4 : résultats miniature resservis par le cache sans
-    /// calcul cette frame (HIT).
+    /// Phase 6G.4: thumbnail results re-served by the cache without
+    /// computation this frame (HIT).
     pub thumb_cache_hits: u64,
-    /// Phase 6G.4 : résultats miniature ayant exigé un calcul.
+    /// Phase 6G.4: thumbnail results that required computation.
     pub thumb_cache_misses: u64,
-    /// Phase 6G.3 §14 : temps canvas-critical (frame images + composite +
-    /// downscale + assemblage — tout ce qui produit les pixels du canvas,
-    /// sans les miniatures).
+    /// Phase 6G.3 §14: canvas-critical time (frame images + composite +
+    /// downscale + assembly — everything producing the canvas pixels,
+    /// without thumbnails).
     pub canvas_critical_us: u128,
-    /// Phase 6G.3 §14 : travail secondaire absorbé cette frame (miniatures
-    /// terminées, hors chemin canvas).
+    /// Phase 6G.3 §14: secondary work absorbed this frame (finished
+    /// thumbnails, off the canvas path).
     pub secondary_work_us: u128,
-    /// Balayages prepare + blend + mix (hors extents, hors alloc).
+    /// Prepare + blend + mix sweeps (excl. extents, excl. alloc).
     pub blend_us: u128,
-    /// Calques pixels et groupes effectivement blendés.
+    /// Pixel layers and groups actually blended.
     pub layers_blended: u64,
-    /// Pixels parcourus (sommes des balayages d'accumulateur).
+    /// Pixels traversed (accumulator sweep sums).
     pub pixels_processed: u64,
-    /// Pixels de l'accumulateur (scope).
+    /// Accumulator pixels (scope).
     pub scope_px: u64,
-    /// Pixels du composite pleine résolution.
+    /// Full-resolution composite pixels.
     pub full_px: u64,
-    /// Pixels de la miniature envoyée.
+    /// Sent thumbnail pixels.
     pub preview_px: u64,
 }
 
-/// Compteurs cumulés du worker (remis à zéro à la création).
+/// Cumulative worker counters (zeroed at creation).
 #[derive(Debug, Default)]
 pub struct WorkerMetrics {
-    /// Métriques de la dernière commande traitée.
+    /// Metrics of the last processed command.
     pub last: Option<OpMetrics>,
-    /// Commande en cours (posée par `apply`/`apply_batch`).
+    /// Command in flight (set by `apply`/`apply_batch`).
     pub(crate) current_op: &'static str,
-    /// Nombre de réponses produites.
+    /// Number of produced responses.
     pub responses: u64,
-    /// Nombre de réponses avec aperçu.
+    /// Number of responses with a preview.
     pub previews: u64,
-    /// Nombre de composites réellement produits (rendus non coalescés).
+    /// Number of composites actually produced (non-coalesced renders).
     pub renders: u64,
-    /// Miniatures secondaires (Phase 6G.3 §14, cumulé).
+    /// Secondary thumbnails (Phase 6G.3 §14, cumulative).
     pub thumb: crate::ui::thumb_worker::ThumbStats,
 }

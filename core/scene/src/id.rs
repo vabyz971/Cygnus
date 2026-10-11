@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Identifiants stables des nœuds de la scène.
+//! Stable identifiers of scene nodes.
 //!
-//! [`SceneNodeId`] enveloppe [`EntityId`](ids::EntityId) : même unicité
-//! globale et même stabilité persistante, mais type distinct — un
-//! identifiant de scène ne peut être confondu ni avec un `graph::NodeId`,
-//! ni avec le `datatypes::NodeId` (`u32`, registre nodal générique).
+//! [`SceneNodeId`] wraps [`EntityId`](ids::EntityId): same
+//! global uniqueness and same persistent stability, but a distinct type — a
+//! scene identifier cannot be confused with a `graph::NodeId`,
+//! nor with `datatypes::NodeId` (`u32`, generic node registry).
 
 use ids::EntityId;
 use uuid::Uuid;
 
-/// Identifiant stable d'un [`crate::SceneNode`].
+/// Stable identifier of a [`crate::SceneNode`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -32,27 +32,27 @@ use uuid::Uuid;
 pub struct SceneNodeId(EntityId);
 
 impl SceneNodeId {
-    /// Nouvel identifiant aléatoire (v4).
+    /// New random (v4) identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul — réservé aux tests et aux sentinelles explicites,
-    /// jamais attribué par [`crate::Scene`].
+    /// Null identifier — reserved for tests and explicit sentinels,
+    /// never assigned by [`crate::Scene`].
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'`Uuid` sous-jacent (persistance, ponts inter-moteurs).
+    /// The underlying `Uuid` (persistence, inter-engine bridges).
     #[must_use]
     pub fn as_uuid(self) -> Uuid {
         self.0.as_uuid()
     }
 
-    /// Reconstruit depuis un `Uuid` existant (chargement projet, migration
-    /// depuis les `Uuid` de `photo-engine`).
+    /// Rebuilt from an existing `Uuid` (project loading, migration
+    /// from `photo-engine` `Uuid`s).
     #[must_use]
     pub fn from_uuid(id: Uuid) -> Self {
         Self(EntityId::from_uuid(id))
@@ -60,7 +60,7 @@ impl SceneNodeId {
 }
 
 impl Default for SceneNodeId {
-    /// Identifiant nul — même valeur que [`SceneNodeId::nil`].
+    /// Null identifier — same value as [`SceneNodeId::nil`].
     fn default() -> Self {
         Self::nil()
     }

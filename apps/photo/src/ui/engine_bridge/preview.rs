@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,9 +16,9 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Aperçus composites : [`PreviewImage`], cache d'apparences
-//! ([`AppearanceFrameCache`]), legacy ([`render_preview`]) et pipeline
-//! incrémental (`EngineWorker::render_preview_incremental`).
+//! Composite previews: [`PreviewImage`], appearance cache
+//! ([`AppearanceFrameCache`]), legacy ([`render_preview`]) and incremental
+//! pipeline (`EngineWorker::render_preview_incremental`).
 
 use super::commands::{DirtyMark, Mutation, PhotoEngineCommand, RenderInvalidation};
 use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
@@ -36,55 +36,55 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
-/// Plus grande dimension de l'aperçu canvas (pixels).
+/// Largest canvas preview dimension (pixels).
 pub const PREVIEW_MAX_DIMENSION: u32 = 1600;
 
-/// Aperçu composite pour le canvas (RGBA8, pur, thread-safe).
+/// Composite preview for the canvas (RGBA8, pure, thread-safe).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewImage {
-    /// Largeur en pixels (miniature).
+    /// Width in pixels (thumbnail).
     pub width: u32,
-    /// Hauteur en pixels (miniature).
+    /// Height in pixels (thumbnail).
     pub height: u32,
-    /// Pixels RGBA8 ligne par ligne (miniature).
+    /// RGBA8 pixels row by row (thumbnail).
     pub rgba: Vec<u8>,
-    /// Dimensions du composite pleine résolution avant miniature.
+    /// Full-resolution composite dimensions before thumbnailing.
     pub full_width: u32,
-    /// Hauteur pleine résolution.
+    /// Full-resolution height.
     pub full_height: u32,
-    /// Coin haut-gauche du DOCUMENT en pixels pleine résolution
-    /// (le composite couvre le plan infini : origine > 0 dès qu'un
-    /// calque dépasse).
+    /// Top-left corner of the DOCUMENT in full-resolution pixels
+    /// (the composite covers the infinite plane: origin > 0 as soon as
+    /// a layer sticks out).
     pub origin_x: f32,
-    /// Origine verticale pleine résolution.
+    /// Full-resolution vertical origin.
     pub origin_y: f32,
-    /// Dimensions du document (le cadre à dessiner par-dessus).
+    /// Document dimensions (the frame to draw on top).
     pub doc_width: u32,
-    /// Hauteur du document.
+    /// Document height.
     pub doc_height: u32,
 }
 
-/// Partage des apparences pendant UNE réponse (`respond()`).
+/// Appearance sharing during ONE response (`respond()`).
 ///
-/// Le renderer persistant décide seul des recalculs pixels ; ce cache
-/// local évite seulement de redemander le même résultat aux trois
-/// consommateurs (snapshot, composite, géométrie) : chaque calque
-/// pixels est résolu une fois, puis cloné en `Arc` partagés (aucune
-/// copie de buffers, conformément à l'objectif 5).
+/// The persistent renderer alone decides pixel recomputes; this local
+/// cache only avoids re-requesting the same result from the three
+/// consumers (snapshot, composite, geometry): each pixel
+/// layer is resolved once, then cloned into shared `Arc`s (no
+/// buffer copies, per goal 5).
 pub(crate) struct AppearanceFrameCache {
-    /// Images résolues, par calque (clones `Arc`, pas de pixels).
-    /// Phase 6G.3 : UNIQUEMENT les images (composite + géométrie). Les
-    /// miniatures partent en tâche secondaire (jamais sur ce chemin).
+    /// Resolved images, per layer (`Arc` clones, no pixels).
+    /// Phase 6G.3: images ONLY (composite + geometry). Thumbnails
+    /// go to the secondary task (never on this path).
     pub(crate) map: HashMap<Uuid, Arc<image::DynamicImage>>,
-    /// Appels au renderer (premières résolutions).
+    /// Renderer calls (first resolutions).
     pub(crate) resolves: u64,
-    /// Réutilisations inter-passes (`Cell` : le résolveur est `Fn`).
+    /// Inter-pass reuses (`Cell`: the resolver is `Fn`).
     pub(crate) hits: std::cell::Cell<u64>,
 }
 
 impl AppearanceFrameCache {
-    /// Résout chaque calque pixels UNE fois auprès du renderer
-    /// (chemin image seule, sans miniature ni preview).
+    /// Resolves each pixel layer ONCE from the renderer
+    /// (image-only path, no thumbnail or preview).
     pub(crate) fn build(document: &Document) -> Self {
         let ids: Vec<Uuid> = document.all_pixel_ids();
         let mut map = HashMap::with_capacity(ids.len());
@@ -102,29 +102,29 @@ impl AppearanceFrameCache {
         }
     }
 
-    /// Image partagée pour le compositing (clone d'`Arc`).
+    /// Shared image for compositing (`Arc` clone).
     pub(crate) fn image(&self, id: Uuid) -> Option<Arc<image::DynamicImage>> {
         let image = self.map.get(&id)?;
         self.hits.set(self.hits.get() + 1);
         Some(Arc::clone(image))
     }
 
-    /// Compteur de réutilisations (lecture après la réponse).
+    /// Reuse counter (read after the response).
     pub(crate) fn hits(&self) -> u64 {
         self.hits.get()
     }
 }
 
-/// Réduit un composite au plafond `PREVIEW_MAX_DIMENSION` SANS
-/// jamais agrandir (`thumbnail` agrandit les petits composites, ce
-/// qui gonfle la texture et fausse l'échelle miniature→document).
-/// Miniature plafonnée + pixels d'entrée du rétrécissement (0 si pas de
-/// shrink — compteur §8 6G.2, aucun effet sur les octets).
+/// Downscales a composite to the `PREVIEW_MAX_DIMENSION` cap WITHOUT
+/// ever upscaling (`thumbnail` upscales small composites, which
+/// inflates the texture and skews the thumbnail→document scale).
+/// Capped thumbnail + shrink input pixels (0 when no
+/// shrink — §8 6G.2 counter, no effect on bytes).
 fn capped_preview(image: image::DynamicImage) -> (image::DynamicImage, u64) {
     let (w, h) = (image.width(), image.height());
-    // Chemin rapide bit-exact (Phase 6G.2 §3.5D) : mêmes octets que
-    // `thumbnail` (fuzz prouvé : dims + pixels), ~4× plus rapide, pool
-    // dédié existant. Tout autre cas : legacy inchangé.
+    // Bit-exact fast path (Phase 6G.2 §3.5D): same bytes as
+    // `thumbnail` (proven by fuzzing: dims + pixels), ~4× faster, existing
+    // dedicated pool. Every other case: unchanged legacy.
     if let image::DynamicImage::ImageRgba8(buf) = &image {
         if let Some((nw, nh)) =
             photo_engine::document::compositing::capped_thumbnail_dims(w, h, PREVIEW_MAX_DIMENSION)
@@ -148,17 +148,17 @@ fn capped_preview(image: image::DynamicImage) -> (image::DynamicImage, u64) {
     }
 }
 
-/// Calcule l'aperçu composite (plafonné à `PREVIEW_MAX_DIMENSION`).
-/// Coûteux : à appeler uniquement sur thread background.
-/// `clip_to_doc` = aperçu rogné au document (sinon plan infini avec
-/// l'origine du document dans `origin_*`).
+/// Computes the composite preview (capped at `PREVIEW_MAX_DIMENSION`).
+/// Expensive: call only on a background thread.
+/// `clip_to_doc` = preview clipped to the document (else infinite plane with
+/// the document origin in `origin_*`).
 pub fn render_preview(document: &Document, clip_to_doc: bool) -> Option<PreviewImage> {
     render_preview_timed(document, clip_to_doc).0
 }
 
-/// Variante instrumentée de [`render_preview`] (diagnostic perf) :
-/// sépare le temps du composite pleine résolution et celui de la
-/// miniature. Comportement fonctionnel identique.
+/// Instrumented variant of [`render_preview`] (perf diagnostics):
+/// separates full-resolution composite time from thumbnail
+/// time. Identical functional behavior.
 pub fn render_preview_timed(
     document: &Document,
     clip_to_doc: bool,
@@ -167,9 +167,9 @@ pub fn render_preview_timed(
     render_preview_timed_with(document, clip_to_doc, &frame)
 }
 
-/// Variante de [`render_preview_timed`] avec cadre d'apparences déjà
-/// résolu : composite et géométrie partagent les mêmes `Arc` (zéro
-/// nouvelle résolution). Comportement identique à parité de contenu.
+/// Variant of [`render_preview_timed`] with an already-resolved
+/// appearance frame: composite and geometry share the same `Arc`s (zero
+/// new resolutions). Identical behavior at equal content.
 fn render_preview_timed_with(
     document: &Document,
     clip_to_doc: bool,
@@ -189,8 +189,8 @@ fn render_preview_timed_with(
         let raster = capped.to_rgba8();
         let (w, h) = (raster.width(), raster.height());
         let thumb_us = t_thumb.elapsed().as_micros();
-        // `composite()` centre le document (extents symétriques) : le
-        // cadre vaut le buffer sauf contenu plus petit que le document.
+        // `composite()` centers the document (symmetric extents): the
+        // frame equals the buffer except when content is smaller than the document.
         return (
             Some(PreviewImage {
                 width: w,
@@ -231,9 +231,9 @@ fn render_preview_timed_with(
     let raster = preview.to_rgba8();
     let (w, h) = (raster.width(), raster.height());
     let thumb_us = t_thumb.elapsed().as_micros();
-    // Même miniature uniforme : la géométrie pleine résolution est
-    // ramenée à l'échelle (demi-extents symétriques → origine exacte,
-    // pas un recentrage entier approximatif).
+    // Same uniform thumbnail: full-resolution geometry is
+    // scaled down (symmetric half-extents → exact origin,
+    // not an approximate integer re-centering).
     let t_geometry = std::time::Instant::now();
     let (origin_x, origin_y) = document
         .preview_geometry_with(&|id| frame.image(id))
@@ -281,15 +281,15 @@ fn render_preview_timed_with(
 }
 
 impl EngineWorker {
-    /// Aperçu composite via le pipeline incrémental (Phase 6E) : le périmètre
-    /// (document rogné ou plan infini) est découpé en tuiles rendues par
-    /// `RenderWorker` (hits réutilisés, miss ⇒ `composite_region_with`
-    /// fenêtré 6C), puis assemblé. Post-traitement (plafond, géométrie)
-    /// IDENTIQUE au legacy : à contenu égal, mêmes octets.
+    /// Composite preview via the incremental pipeline (Phase 6E): the extent
+    /// (clipped document or infinite plane) is cut into tiles rendered by
+    /// `RenderWorker` (hits reused, miss ⇒ windowed 6C
+    /// `composite_region_with`), then assembled. Post-processing (cap, geometry)
+    /// IDENTICAL to legacy: at equal content, same bytes.
     ///
-    /// Retourne aussi les stats d'orchestration (tuiles demandées/hits/miss)
-    /// pour `OpMetrics`. Le cache persiste entre les appels : une petite
-    /// mutation ne re-rend que ses tuiles sales.
+    /// Also returns orchestration stats (requested tiles/hits/miss)
+    /// for `OpMetrics`. The cache persists across calls: a small
+    /// mutation only re-renders its dirty tiles.
     pub(crate) fn render_preview_incremental(
         &mut self,
         frame: &AppearanceFrameCache,
@@ -301,10 +301,10 @@ impl EngineWorker {
         let doc_width = self.document.width.max(1);
         let doc_height = self.document.height.max(1);
         let resolve = |id: Uuid| frame.image(id);
-        // Périmètre + requête selon le mode (mêmes espaces que le legacy) :
-        // rogné ⇒ viewport document ; plan infini ⇒ requête couvrant le
-        // scope (DOCUMENT SPACE via `scope_request`). Échelle 1.0 : le zoom
-        // d'affichage reste state-only côté canvas (AGENTS.md).
+        // Extent + request per mode (same spaces as legacy):
+        // clipped ⇒ document viewport; infinite plane ⇒ request covering the
+        // scope (DOCUMENT SPACE via `scope_request`). Scale 1.0: display
+        // zoom stays state-only canvas-side (AGENTS.md).
         let (scope, request) = if self.clip_to_doc {
             let scope = photo_engine::document::ScopeGeom::document(doc_width, doc_height);
             let request = photo_engine::document::RenderRequest::new(
@@ -335,8 +335,8 @@ impl EngineWorker {
         let Some(assembled) = assembled else {
             return (None, PreviewTimings::default(), worker_stats);
         };
-        // L'assemblage démarre à l'origine du viewport (0,0 en pratique :
-        // viewports pleins) ; le legacy raisonne de même sur son buffer.
+        // Assembly starts at the viewport origin (0,0 in practice:
+        // full viewports); legacy reasons the same way over its buffer.
         let composite = assembled.image;
         if self.clip_to_doc {
             let t_thumb = std::time::Instant::now();

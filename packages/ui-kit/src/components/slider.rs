@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Curseur numérique labellisé (opacité, taille, zoom…).
+//! Labeled numeric slider (opacity, size, zoom…).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::Slider;
 //! # use ui_kit::theme::CygnusTheme;
@@ -30,7 +30,7 @@
 use crate::theme::CygnusTheme;
 use std::ops::RangeInclusive;
 
-/// Curseur `f32` via API builder.
+/// `f32` slider via builder API.
 #[derive(Debug, Clone)]
 pub struct Slider<'a> {
     label: &'a str,
@@ -39,7 +39,7 @@ pub struct Slider<'a> {
 }
 
 impl<'a> Slider<'a> {
-    /// Crée un curseur avec libellé et plage.
+    /// Creates a slider with label and range.
     pub fn new(label: &'a str, range: RangeInclusive<f32>) -> Self {
         Self {
             label,
@@ -48,14 +48,14 @@ impl<'a> Slider<'a> {
         }
     }
 
-    /// Pas de discrétisation (optionnel).
+    /// Discretization step (optional).
     #[must_use]
     pub fn step(mut self, step: f64) -> Self {
         self.step = Some(step);
         self
     }
 
-    /// Affiche le curseur, met à jour `value`, retourne la réponse egui.
+    /// Displays the slider, updates `value`, returns the egui response.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, value: &mut f32) -> egui::Response {
         ui.horizontal(|ui| {
             ui.label(

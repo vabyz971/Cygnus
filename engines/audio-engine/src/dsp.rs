@@ -14,25 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! DSP : buffers, mathématiques partagées et frontière backend.
+//! DSP: buffers, shared math and backend boundary.
 //!
-//! [`SampleBuffer`] transporte des échantillons mono (`f32`) ; [`gain_linear`]
-//! et [`mix_into`] sont les deux primitives partagées (vraies mathématiques,
-//! testées) ; [`DspBackend`] traite nœud par nœud en ordre topo
-//! ([`process_graph`]). Le routage des buffers inter-nœuds et l'audio I/O
-//! appartiennent aux backends réels — pas de fausse machinerie ici.
+//! [`SampleBuffer`] carries mono samples (`f32`); [`gain_linear`]
+//! and [`mix_into`] are the two shared primitives (real math,
+//! tested); [`DspBackend`] processes node by node in topo order
+//! ([`process_graph`]). Inter-node buffer routing and audio I/O
+//! belong to real backends — no fake machinery here.
 
 use crate::{AudioGraph, AudioId, AudioNode};
 
-/// Tampon d'échantillons mono.
+/// Mono sample buffer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleBuffer {
-    /// Échantillons (1.0 = pleine échelle).
+    /// Samples (1.0 = full scale).
     pub data: Vec<f32>,
 }
 
 impl SampleBuffer {
-    /// Silence (`frames` zéros).
+    /// Silence (`frames` zeros).
     #[must_use]
     pub fn silence(frames: usize) -> Self {
         Self {
@@ -40,70 +40,70 @@ impl SampleBuffer {
         }
     }
 
-    /// Nombre d'échantillons.
+    /// Number of samples.
     #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Tranche de lecture.
+    /// Read slice.
     #[must_use]
     pub fn as_slice(&self) -> &[f32] {
         &self.data
     }
 
-    /// Tranche d'écriture.
+    /// Write slice.
     #[must_use]
     pub fn as_mut_slice(&mut self) -> &mut [f32] {
         &mut self.data
     }
 }
 
-/// Facteur linéaire pour un gain dB (`0 dB → 1`, `-6 dB → ~0.5`).
+/// Linear factor for a dB gain (`0 dB → 1`, `-6 dB → ~0.5`).
 #[must_use]
 pub fn gain_linear(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
 }
 
-/// Mixe `src` dans `dst` (addition, taille = min des deux — pas de
-/// troncature silencieuse au-delà : l'appelant dimensionne).
+/// Mixes `src` into `dst` (addition, size = min of both — no
+/// silent truncation beyond: the caller sizes).
 pub fn mix_into(dst: &mut [f32], src: &[f32]) {
     for (d, s) in dst.iter_mut().zip(src.iter()) {
         *d += *s;
     }
 }
 
-/// Backend DSP : traite les nœuds en ordre topo (voir [`process_graph`]).
-/// Le routage des buffers et l'I/O appartiennent à l'implémentation.
+/// DSP backend: processes nodes in topo order (see [`process_graph`]).
+/// Buffer routing and I/O belong to the implementation.
 pub trait DspBackend {
-    /// Traite UN nœud pour `frames` échantillons (état interne conservé
-    /// d'un appel à l'autre — réverbérations, enveloppes…).
+    /// Processes ONE node for `frames` samples (internal state kept
+    /// across calls — reverbs, envelopes…).
     ///
     /// # Errors
     ///
-    /// Retourne un message si le traitement échoue.
+    /// Returns a message if processing fails.
     fn process_node(&mut self, node: &AudioNode, frames: usize) -> Result<(), String>;
 }
 
-/// Bilan de [`process_graph`].
+/// Summary of [`process_graph`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProcessReport {
-    /// Nœuds soumis au backend.
+    /// Nodes submitted to the backend.
     pub processed: usize,
 }
 
-/// Soumet le graphe en ordre topo (amont d'abord), nœuds désactivés
-/// INCLUS (le bypass est décidé par le backend, pas par l'ordre).
+/// Submits the graph in topo order (upstream first), disabled nodes
+/// INCLUDED (bypass is decided by the backend, not by the order).
 ///
 /// # Errors
 ///
-/// Remonte la première erreur du backend.
+/// Propagates the backend's first error.
 pub fn process_graph<B: DspBackend>(
     backend: &mut B,
     graph: &AudioGraph,
@@ -119,21 +119,21 @@ pub fn process_graph<B: DspBackend>(
     Ok(ProcessReport { processed })
 }
 
-/// Backend nul : enregistre (id, frames), ne produit rien.
-/// Gabarit des backends réels + tests sans carte son.
+/// Null backend: records (id, frames), produces nothing.
+/// Template for real backends + tests without a sound card.
 #[derive(Debug, Default)]
 pub struct NullBackend {
     calls: Vec<(AudioId, usize)>,
 }
 
 impl NullBackend {
-    /// Nouveau backend nul.
+    /// New null backend.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Appels reçus, en ordre.
+    /// Received calls, in order.
     #[must_use]
     pub fn calls(&self) -> &[(AudioId, usize)] {
         &self.calls

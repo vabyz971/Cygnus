@@ -14,40 +14,40 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Scene Graph sémantique de Cygnus — le modèle commun aux domaines visuels.
+//! Cygnus semantic Scene Graph — the model shared by visual domains.
 //!
-//! Séparation visée :
+//! Intended separation:
 //!
 //! ```text
-//! Document (métier, par domaine : photo, vectoriel, layout, video)
-//!   ↓ dérive / synchronise
-//! Scene (ici : hiérarchie sémantique — groupes, images, formes, texte, video)
-//!   ↓ dérive (futur Render Graph, hors périmètre)
-//! Rendering (textures GPU, caches, passes — jamais ici)
+//! Document (business, per domain: photo, vector, layout, video)
+//!   ↓ derives / synchronizes
+//! Scene (here: semantic hierarchy — groups, images, shapes, text, video)
+//!   ↓ derives (future Render Graph, out of scope)
+//! Rendering (GPU textures, caches, passes — never here)
 //! ```
 //!
-//! Règles de cette crate :
+//! Rules of this crate:
 //!
-//! - AUCUNE dépendance `wgpu`, texture GPU, `RenderPass`, buffer GPU, `egui`
-//!   ou état spécifique à un renderer. La scène représente le document,
-//!   pas son rendu.
-//! - Le transform LOCAL ([`Transform2D`], réutilisé depuis `math-utils`)
-//!   est la seule source de vérité géométrique stockée. Le transform MONDE
-//!   ([`Affine2`]) est toujours DÉRIVÉ par composition parent → enfant,
-//!   jamais stocké.
-//! - Convention géométrique : la matrice locale vaut
-//!   `T(offset) · R(rotation) · K(skew) · S(scale)` autour de l'ORIGINE
-//!   (voir [`Affine2::from_transform`]). C'est la même décomposition que
-//!   `photo-engine`, sans sa convention « autour du centre de l'image »
-//!   qui dépend des dimensions du contenu et n'a pas de sens pour un
-//!   groupe ou un cadre de mise en page. L'adaptation vers le placement
-//!   raster existant (`Transform2D::local_to_doc`) reste à la charge des
-//!   moteurs au moment de dériver leurs opérations de rendu.
-//! - Opacité en `0.0..=100.0` (même unité que `photo-engine`) pour une
-//!   future migration sans conversion silencieuse.
-//! - Audio est volontairement EXCLU : aucun variant audio dans [`NodeKind`].
-//!   L'audio partage le nodal générique (`datatypes`) et les futurs
-//!   `ids`/`time`, jamais ce graphe.
+//! - NO `wgpu`, GPU texture, `RenderPass`, GPU buffer, `egui`
+//!   or renderer-specific state dependency. The scene represents the document,
+//!   not its rendering.
+//! - The LOCAL transform ([`Transform2D`], reused from `math-utils`)
+//!   is the only stored geometric source of truth. The WORLD transform
+//!   ([`Affine2`]) is always DERIVED by parent → child composition,
+//!   never stored.
+//! - Geometric convention: the local matrix is
+//!   `T(offset) · R(rotation) · K(skew) · S(scale)` around the ORIGIN
+//!   (see [`Affine2::from_transform`]). This is the same decomposition as
+//!   `photo-engine`, without its "around the image center" convention
+//!   which depends on content dimensions and is meaningless for a
+//!   group or a layout frame. Adapting to the existing raster
+//!   placement (`Transform2D::local_to_doc`) stays the engines'
+//!   job when deriving their render operations.
+//! - Opacity in `0.0..=100.0` (same unit as `photo-engine`) for a
+//!   future migration with no silent conversion.
+//! - Audio is deliberately EXCLUDED: no audio variant in [`NodeKind`].
+//!   Audio shares the generic nodal system (`datatypes`) and the future
+//!   `ids`/`time`, never this graph.
 //!
 //! # Examples
 //!

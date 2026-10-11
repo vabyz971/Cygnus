@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœud Calque : superpose un contenu (`top`) sur une base (`base`)
-//! avec opacité et mode de fusion. C'est la brique du système de calques :
-//! empilable en chaîne, chaque calque ajouté s'insère au-dessus du précédent.
+//! Layer node: composites content (`top`) over a base (`base`)
+//! with opacity and blend mode. It is the building block of the layer system:
+//! chain-stackable, each added layer is inserted above the previous one.
 //!
-//! Le flag `enabled` du nœud sert de visibilité (bypass = calque masqué).
+//! The node's `enabled` flag acts as visibility (bypass = hidden layer).
 
 use super::{Effect, NodeCtx, to_rgba8};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
@@ -38,12 +38,12 @@ pub fn definition() -> NodeDefinition {
         .description("Calque — superpose son image (ou entrée top) sur la base")
 }
 
-/// Identifiant de socket d'entrée n° i du nœud Mélange (1-based)
+/// Input socket id #i of the Mix node (1-based)
 pub fn mix_socket(i: usize) -> String {
     format!("image_{i}")
 }
 
-/// Nombre maximal d'entrées du Mélange
+/// Maximum number of Mix inputs
 pub const MIX_MAX_INPUTS: usize = 6;
 
 fn mode_id(mode: &str) -> u32 {
@@ -57,7 +57,7 @@ fn mode_id(mode: &str) -> u32 {
     }
 }
 
-/// Fusion d'un pixel : renvoie la couleur composée (top sur base)
+/// Single-pixel blend: returns the composited color (top over base)
 #[inline]
 fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4] {
     let blended = match mode {
@@ -90,7 +90,7 @@ fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4] {
         5 => [b[0].max(t[0]), b[1].max(t[1]), b[2].max(t[2])], // Lighten
         _ => [t[0], t[1], t[2]],                               // Normal
     };
-    // Alpha compositing : top au-dessus de base, pondéré par l'alpha du top
+    // Alpha compositing: top over base, weighted by the top alpha
     let ta = t[3];
     let a = ta + b[3] * (1.0 - ta);
     let mut out = [b[0], b[1], b[2], a];
@@ -111,14 +111,14 @@ pub fn apply_effect(
     offset_x: f32,
     offset_y: f32,
 ) -> DynamicImage {
-    // Tenter le GPU (bandes, opérations ponctuelles exactes)
+    // Try the GPU (row bands, exact point-wise ops)
     if let Some(out) =
         crate::gpu::apply_blend_gpu(base, top, opacity, mode_id(blend_mode), offset_x, offset_y)
     {
         return out;
     }
 
-    // Fallback CPU rayon — gère le décalage du calque
+    // Rayon CPU fallback — handles the layer offset
     let op = (opacity / 100.0).clamp(0.0, 1.0);
     let mode = mode_id(blend_mode);
     let b_img = to_rgba8(base);
@@ -145,7 +145,7 @@ pub fn apply_effect(
                 b_raw[b_off + 2] as f32 / 255.0,
                 b_raw[b_off + 3] as f32 / 255.0,
             ];
-            // Échantillonne le dessus à (x - ox, y - oy) — transparent hors bornes
+            // Samples the top at (x - ox, y - oy) — transparent out of bounds
             let tx = x - ox;
             let ty = y - oy;
             let mut t: [f32; 4] = if tx >= 0 && tx < tw && ty >= 0 && ty < th {
@@ -165,7 +165,7 @@ pub fn apply_effect(
             } else {
                 blend_pixel(b, t, mode)
             };
-            // Si le calque est transparent à ce pixel, on garde la base
+            // If the layer is transparent at this pixel, keep the base
             let is_transparent = t[3] <= 0.001;
             let out_px = if is_transparent { b } else { o };
             px[0] = (out_px[0].clamp(0.0, 1.0) * 255.0) as u8;
@@ -184,8 +184,8 @@ fn blend_mode_of<'a>(ctx: &'a NodeCtx<'_>) -> &'a str {
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
-    // Chaîne linéaire = une seule image : on applique opacité et décalage
-    // sur fond transparent (même rôle que le calque isolé d'avant).
+    // Linear chain = single image: apply opacity and offset
+    // over a transparent background (same role as the former isolated layer).
     let input = ctx.input()?;
     let opacity = ctx.param("opacity", 100.0);
     let ox = ctx.param("offset_x", 0.0);
@@ -193,7 +193,7 @@ fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
     if ox == 0.0 && oy == 0.0 && (opacity - 100.0).abs() < 0.01 {
         return Some(input.clone());
     }
-    // Fond transparent de même taille que l'entrée, puis fusion
+    // Transparent background the size of the input, then blend
     let (w, h) = (input.width(), input.height());
     let transparent = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(w, h, Rgba([0, 0, 0, 0])));
     Some(apply_effect(

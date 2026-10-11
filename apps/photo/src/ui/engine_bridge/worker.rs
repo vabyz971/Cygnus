@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,9 +16,9 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Worker moteur : [`EngineWorker`] (document vivant, historique undo/redo,
-//! application des commandes), [`apply_command`] et
-//! [`spawn_photo_engine_worker`], plus les tests du pont.
+//! Engine worker: [`EngineWorker`] (live document, undo/redo history,
+//! command application), [`apply_command`] and
+//! [`spawn_photo_engine_worker`], plus the bridge tests.
 
 use super::assert_send;
 use super::commands::{
@@ -40,97 +40,97 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
-/// État du worker : document vivant + historique undo/redo.
+/// Worker state: live document + undo/redo history.
 pub struct EngineWorker {
     pub(crate) document: Document,
-    /// Piles d'historique : snapshot PRÉ-mutation + libellé français
-    /// de l'opération (panneau Historique, O003). `undo` du plus
-    /// ancien au plus récent, `redo` dans l'ordre d'annulation.
+    /// History stacks: PRE-mutation snapshot + French label
+    /// of the operation (History panel, O003). `undo` oldest
+    /// to newest, `redo` in undo order.
     pub(crate) undo: Vec<HistoryStep>,
     pub(crate) redo: Vec<HistoryStep>,
-    /// Nom d'opération (`op_name`) de la commande en cours de
-    /// mutation : consommé par [`Self::push_history`] pour libeller
-    /// le pas (posé par `apply`/`apply_batch`, jamais par les bras).
+    /// Operation name (`op_name`) of the command being
+    /// mutated: consumed by [`Self::push_history`] to label
+    /// the step (set by `apply`/`apply_batch`, never by the arms).
     pub(crate) pending_label: Option<&'static str>,
-    /// Calque du dernier `SetOpacity` (coalescence des sliders).
+    /// Layer of the last `SetOpacity` (slider coalescing).
     pub(crate) coalesced_opacity_layer: Option<Uuid>,
-    /// Aperçu rogné au document (menu Affichage, défaut : plan infini).
+    /// Preview clipped to the document (View menu, default: infinite plane).
     pub(crate) clip_to_doc: bool,
-    /// Révision du dernier composite produit (rendus obsolètes
-    /// ignorés côté UI).
+    /// Revision of the last produced composite (stale renders
+    /// ignored UI-side).
     pub(crate) revision: RenderRevision,
-    /// OBSERVATION tuiles (vertical slice) : plan calculé pendant la
-    /// mutation d'un stroke, consommé par `respond` dans les métriques.
-    /// Jamais lu par le renderer : pur constat, zéro effet de bord.
-    /// En lot (`apply_batch`), seul le dernier stroke du lot est observé.
+    /// Tile OBSERVATION (vertical slice): plan computed during
+    /// a stroke mutation, consumed by `respond` in the metrics.
+    /// Never read by the renderer: pure observation, zero side effects.
+    /// In a batch (`apply_batch`), only the batch's last stroke is observed.
     pub(crate) pending_tile_plan: Option<photo_engine::tiles::StrokeTilePlan>,
-    /// Rendu incrémental (Phase 6E) : cache de tuiles + périmètre suivi,
-    /// alimenté par les marquages `Mutation::dirty`, consommé par le
-    /// preview. Persiste entre les commandes : les tuiles propres sont
-    /// réutilisées d'une frame à l'autre.
+    /// Incremental rendering (Phase 6E): tile cache + tracked extent,
+    /// fed by `Mutation::dirty` markings, consumed by the
+    /// preview. Persists across commands: clean tiles are
+    /// reused from frame to frame.
     pub(crate) render_worker: photo_engine::document::RenderWorker,
-    /// Miniatures connues par calque (Phase 6G.3) : `(RgbaBuf, version)`
-    /// des derniers résultats INGÉRÉS (garde de fraîcheur à l'ingestion).
-    /// Le snapshot les sert (estampillées version live) ; les miniatures
-    /// fraîches partent aussi en `ThumbnailUpdated`.
+    /// Known thumbnails per layer (Phase 6G.3): `(RgbaBuf, version)`
+    /// of the last INGESTED results (freshness guard at ingestion).
+    /// The snapshot serves them (stamped with the live version); fresh
+    /// thumbnails also go out as `ThumbnailUpdated`.
     pub(crate) thumb_store: HashMap<Uuid, (photo_engine::RgbaBuf, u64)>,
-    /// Intentions soumises et non encore soldées : `(version, source)` par
-    /// calque (déduplication d'envoi + second facteur de la garde de
-    /// fraîcheur — voir `ingest_thumb_done`).
+    /// Submitted, not-yet-settled intents: `(version, source)` per
+    /// layer (send dedup + second factor of the freshness
+    /// guard — see `ingest_thumb_done`).
     pub(crate) thumb_pending: HashMap<Uuid, (u64, Arc<image::DynamicImage>)>,
-    /// Calques aux miniatures fraîchement stockées depuis le dernier
-    /// drainage (extras `ThumbnailUpdated` du mode lot).
+    /// Layers with freshly stored thumbnails since the last
+    /// drain (`ThumbnailUpdated` extras of batch mode).
     pub(crate) thumb_fresh: Vec<Uuid>,
-    /// Tâche secondaire de miniatures (thread en production, inline en
-    /// tests : même code, déterminisme préservé).
+    /// Secondary thumbnail task (threaded in production, inline in
+    /// tests: same code, determinism preserved).
     pub(crate) thumb_worker: crate::ui::thumb_worker::ThumbWorker,
-    /// Cumul des pixels écrits en surface à la dernière réponse (Phase 6G) :
-    /// sert à rapporter le delta par frame dans `OpMetrics`.
+    /// Cumulative surface-written pixels at the last response (Phase 6G):
+    /// used to report the per-frame delta in `OpMetrics`.
     pub(crate) last_surface_pixels: u64,
-    /// Cumul du temps surface à la dernière réponse (Phase 6G.1) : idem.
+    /// Cumulative surface time at the last response (Phase 6G.1): same.
     pub(crate) last_surface_us: u128,
-    /// INSTRUMENTATION TEMPORAIRE (diagnostic perf).
+    /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
 }
 
-/// Budget du cache de tuiles du worker (8M px ≈ 32 Mo RGBA8) : couvre
-/// plusieurs documents 1080p en tuiles 256² avec marge pour les halos.
+/// Worker tile-cache budget (8M px ≈ 32 MB RGBA8): covers
+/// several 1080p documents in 256² tiles with margin for halos.
 const TILE_CACHE_BUDGET_PX: usize = 8 << 20;
 
-/// Bornes de l'historique (snapshots partagés, quasi gratuits).
+/// History bounds (shared snapshots, nearly free).
 pub const HISTORY_LIMIT: usize = 100;
 
-/// Un pas d'historique : état à restaurer + libellé affiché dans le
-/// panneau Historique. Le libellé voyage avec le snapshot (undo le
-/// pousse vers redo et inversement : redo réapplique le même intitulé).
+/// One history step: state to restore + label shown in the
+/// History panel. The label travels with the snapshot (undo pushes
+/// it to redo and back: redo reapplies the same title).
 #[derive(Clone)]
 pub(crate) struct HistoryStep {
-    /// État PRÉ-mutation à restaurer.
+    /// PRE-mutation state to restore.
     snapshot: photo_engine::history::Snapshot,
-    /// Libellé français de l'opération (`history_label`).
+    /// French label of the operation (`history_label`).
     label: String,
 }
 
-/// Plan de « rogner au document » (O004) : intersection de
-/// l'empreinte du calque (offset + dimensions) avec le document,
-/// reconvertie en espace calque pour [`Document::crop`](photo_engine::Document::crop).
+/// "Crop to document" plan (O004): intersection of the
+/// layer footprint (offset + dimensions) with the document,
+/// converted back to layer space for [`Document::crop`](photo_engine::Document::crop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CropPlan {
-    /// Pas un calque pixels : no-op silencieux (comme `AddFilter`).
+    /// Not a pixel layer: silent no-op (like `AddFilter`).
     NotPixel,
-    /// Rotation/échelle/inclinaison : l'intersection monde serait
-    /// fausse — refusé avec un message clair.
+    /// Rotation/scale/skew: the world intersection would be
+    /// wrong — rejected with a clear message.
     Transformed,
-    /// Aucun recouvrement : erreur propre, sans entrée d'historique.
+    /// No overlap: clean error, no history entry.
     Outside,
-    /// Déjà contenu : no-op (évite un historique et un rendu vides,
-    /// et tout décalage destructif).
+    /// Already contained: no-op (avoids an empty history and render,
+    /// and any destructive shift).
     Noop,
-    /// Rect à rogner (espace calque, bornes garanties).
+    /// Rect to crop (layer space, guaranteed bounds).
     Rect { x: i32, y: i32, w: u32, h: u32 },
 }
 
-/// Calcule le plan de crop, pur et testable (aucun effet de bord).
+/// Computes the crop plan, pure and testable (no side effects).
 fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
     let Some(layer) = document.pixel_layer(id) else {
         return CropPlan::NotPixel;
@@ -155,8 +155,8 @@ fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
     if right <= left || bottom <= top {
         return CropPlan::Outside;
     }
-    // Vers l'espace calque (offsets potentiellement fractionnaires :
-    // arrondi au pixel).
+    // Into layer space (potentially fractional offsets:
+    // rounded to the pixel).
     let x = (left - transform.offset_x).round() as i32;
     let y = (top - transform.offset_y).round() as i32;
     let cw = (right - left).round() as u32;
@@ -168,8 +168,8 @@ fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
     }
 }
 
-/// Libellé français d'un pas d'historique depuis le nom d'opération
-/// (`op_name`). Repli « Édition » si inconnu (jamais vide en UI).
+/// French label of a history step from the operation name
+/// (`op_name`). "Édition" fallback when unknown (never empty in UI).
 fn history_label(op: &str) -> String {
     String::from(match op {
         "toggle_visibility" => "Visibilité",
@@ -205,7 +205,7 @@ fn history_label(op: &str) -> String {
 }
 
 impl EngineWorker {
-    /// Crée un worker sur un document existant.
+    /// Creates a worker on an existing document.
     pub fn new(document: Document) -> Self {
         Self {
             document,
@@ -230,17 +230,17 @@ impl EngineWorker {
         }
     }
 
-    /// INSTRUMENTATION TEMPORAIRE : accès en lecture au document
-    /// vivant (sondes de mesure uniquement).
+    /// TEMPORARY INSTRUMENTATION: read access to the live
+    /// document (measurement probes only).
     pub fn test_document(&self) -> &Document {
         &self.document
     }
 
-    /// Empile l'état pré-mutation (jamais après) et vide le redo.
-    /// Les gestes continus (sliders) sont coalescés par calque.
-    /// Le pas est libellé depuis [`Self::pending_label`] (nom
-    /// d'opération posé par `apply`/`apply_batch`) : un geste
-    /// coalescé (sans poussée) jette son libellé avec son doublon.
+    /// Pushes the pre-mutation state (never after) and drains redo.
+    /// Continuous gestures (sliders) are coalesced per layer.
+    /// The step is labeled from [`Self::pending_label`] (operation
+    /// name set by `apply`/`apply_batch`): a coalesced
+    /// gesture (no push) drops its label with its duplicate.
     fn push_history(&mut self, coalesce_layer: Option<Uuid>) {
         let label = history_label(self.pending_label.take().unwrap_or("edit"));
         if coalesce_layer.is_some() && coalesce_layer == self.coalesced_opacity_layer {
@@ -257,10 +257,10 @@ impl EngineWorker {
         self.coalesced_opacity_layer = coalesce_layer;
     }
 
-    /// Édition destructive d'un calque pixels (miroir, rotation) :
-    /// garde-fous (pixels uniquement, sinon no-op silencieux comme
-    /// `AddFilter`), snapshot PRÉ-mutation, application, erreur propre
-    /// avec retrait du snapshot (motif `ReorderNodes`).
+    /// Destructive edit of a pixel layer (mirror, rotation):
+    /// guards (pixels only, else silent no-op like
+    /// `AddFilter`), PRE-mutation snapshot, application, clean error
+    /// with snapshot removal (`ReorderNodes` pattern).
     fn mutate_pixels(
         &mut self,
         id: Uuid,
@@ -281,8 +281,8 @@ impl EngineWorker {
         Mutation::changed(invalidation)
     }
 
-    /// Un pas en arrière : restaure le snapshot, le pas annulé (avec
-    /// son libellé) part vers redo. Faux si pile vide.
+    /// One step back: restores the snapshot, the undone step (with
+    /// its label) goes to redo. False when the stack is empty.
     fn apply_undo_step(&mut self) -> bool {
         let Some(step) = self.undo.pop() else {
             return false;
@@ -296,7 +296,7 @@ impl EngineWorker {
         true
     }
 
-    /// Un pas en avant, symétrique. Faux si pile vide.
+    /// One step forward, symmetric. False when the stack is empty.
     fn apply_redo_step(&mut self) -> bool {
         let Some(step) = self.redo.pop() else {
             return false;
@@ -310,22 +310,22 @@ impl EngineWorker {
         true
     }
 
-    /// Construit la réponse d'une mutation : nouveau composite
-    /// (`Composite`, révision incrémentée) ou snapshot seul
-    /// (`StateOnly`/`Unchanged`, texture UI conservée).
+    /// Builds a mutation's response: new composite
+    /// (`Composite`, bumped revision) or snapshot only
+    /// (`StateOnly`/`Unchanged`, UI texture kept).
     ///
-    /// En mode `Composite`, les images sont résolues UNE fois dans un
-    /// [`AppearanceFrameCache`] local (images seules, sans miniatures —
-    /// Phase 6G.3) puis partagées entre composite et géométrie
-    /// (single-pass, sans toucher au cache persistant du renderer). Les
-    /// miniatures viennent du store secondaire (`stored_thumb`, potentiellement
-    /// en retard d'une frame — §18) ; le snapshot n'attend jamais leur calcul.
-    /// INSTRUMENTATION TEMPORAIRE : remplit `metrics.last` (hors
-    /// `op`, `total_us` et `mutation_us`, posés par `apply`/`apply_batch`).
+    /// In `Composite` mode, images are resolved ONCE in a local
+    /// [`AppearanceFrameCache`] (images only, no thumbnails —
+    /// Phase 6G.3) then shared between composite and geometry
+    /// (single-pass, without touching the renderer's persistent cache). The
+    /// thumbnails come from the secondary store (`stored_thumb`, possibly
+    /// one frame late — §18); the snapshot never waits for their computation.
+    /// TEMPORARY INSTRUMENTATION: fills `metrics.last` (except
+    /// `op`, `total_us` and `mutation_us`, set by `apply`/`apply_batch`).
     fn respond(&mut self, invalidation: RenderInvalidation) -> PhotoEngineResponse {
         let stats_before = self.document.appearance_stats();
-        // Miniatures secondaires terminées précédemment : ingérées AVANT le
-        // snapshot (le panneau profite du travail déjà fini, sans attendre).
+        // Previously finished secondary thumbnails: ingested BEFORE the
+        // snapshot (the panel benefits from already-done work, no waiting).
         let thumb_completed_before = self.metrics.thumb.completed;
         let thumb_us_before = self.metrics.thumb.thumb_us;
         let thumb_hits_before = self.metrics.thumb.cache_hits;
@@ -335,33 +335,33 @@ impl EngineWorker {
         let frame = (invalidation == RenderInvalidation::Composite)
             .then(|| AppearanceFrameCache::build(&self.document));
         let frame_us = t_frame.elapsed().as_micros();
-        // Tâche secondaire : soumise APRES le cadre (les entrées sont
-        // clonées, l'état est figé par la mutation terminée) et AVANT le
-        // composite — en mode threadé, le calcul recouvre le rendu canvas.
+        // Secondary task: submitted AFTER the frame (entries are
+        // cloned, state frozen by the finished mutation) and BEFORE the
+        // composite — in threaded mode, computation overlaps canvas rendering.
         if frame.is_some() {
             self.submit_stale_thumbs();
         }
         let t_snapshot = std::time::Instant::now();
-        // Miniatures TOUJOURS depuis le store secondaire (même en StateChanged :
-        // jamais de rebuild synchrone pour le panneau — `None` = icône en
-        // attendant la tâche, §18).
+        // Thumbnails ALWAYS from the secondary store (even in StateChanged:
+        // never a synchronous rebuild for the panel — `None` = icon while
+        // waiting for the task, §18).
         let layers = snapshot_layers_with(&self.document, &|id| self.stored_thumb(id));
         let snapshot_us = t_snapshot.elapsed().as_micros();
         let can_undo = !self.undo.is_empty();
         let can_redo = !self.redo.is_empty();
-        // Libellés du panneau Historique (O003) : piles du plus ancien
-        // au plus récent, clonés par réponse (chaînes courtes, ≤100).
+        // History panel labels (O003): stacks oldest
+        // to newest, cloned per response (short strings, ≤100).
         let undo_labels = self.undo.iter().map(|step| step.label.clone()).collect();
         let redo_labels = self.redo.iter().map(|step| step.label.clone()).collect();
         if invalidation == RenderInvalidation::Composite {
             let frame = frame.as_ref().expect("cadre construit en mode Composite");
-            // Pipeline incrémental 6E : tuiles sales réévaluées, propres
-            // réutilisées ; mêmes octets que le legacy à contenu égal.
+            // 6E incremental pipeline: dirty tiles re-evaluated, clean ones
+            // reused; same bytes as legacy at equal content.
             let (preview, timings, worker_stats) = self.render_preview_incremental(frame);
-            // Phase 6G.2 §1 : le dirty n'est soldé qu'APRÈS production du
-            // résultat (jamais avant, jamais sans rendu). `None` ⇒ rien à
-            // solder (re-tentative conservatrice à la prochaine frame).
-            // Retourne le nombre de zones entièrement soldées (§8).
+            // Phase 6G.2 §1: dirty is settled only AFTER producing the
+            // result (never before, never without rendering). `None` ⇒ nothing to
+            // settle (conservative retry next frame).
+            // Returns the number of fully settled zones (§8).
             let dirty_cleared = if preview.is_some() {
                 let rendered = self.render_worker.take_rendered_tiles();
                 self.render_worker.cache_mut().consume_rendered(&rendered)
@@ -371,8 +371,8 @@ impl EngineWorker {
             let revision = self.revision.bump();
             self.metrics.renders += 1;
             let stats_after = self.document.appearance_stats();
-            // Observation tuiles consommée ici (zéro si la commande
-            // n'était pas un stroke) : le renderer a déjà tourné au-dessus.
+            // Tile observation consumed here (zero when the command
+            // was not a stroke): the renderer already ran above.
             let tiles = self.pending_tile_plan.take().unwrap_or_default();
             self.metrics.last = Some(OpMetrics {
                 op: self.metrics.current_op,
@@ -437,7 +437,7 @@ impl EngineWorker {
                     + worker_stats.assembly_us,
                 secondary_work_us: self.metrics.thumb.thumb_us.saturating_sub(thumb_us_before),
             });
-            // Fenêtre glissante : la prochaine réponse rapportera son delta.
+            // Sliding window: the next response will report its delta.
             self.last_surface_pixels = self.render_worker.surface_stats().pixels_written;
             self.last_surface_us = self.render_worker.surface_stats().update_us;
             PhotoEngineResponse::LayersChanged {
@@ -501,11 +501,11 @@ impl EngineWorker {
         }
     }
 
-    /// Applique une commande (contrat 1:1 : toujours une réponse).
-    /// Ne panique jamais : commande invalide (id inconnu, index hors
-    /// limites) = no-op (avec réponse d'état pour resynchroniser
-    /// l'UI, sans re-rendu).
-    /// INSTRUMENTATION TEMPORAIRE : `metrics` est mis à jour ici.
+    /// Applies one command (1:1 contract: always one response).
+    /// Never panics: invalid command (unknown id, out-of-range
+    /// index) = no-op (with a state response to resynchronize
+    /// the UI, no re-render).
+    /// TEMPORARY INSTRUMENTATION: `metrics` is updated here.
     pub fn apply(&mut self, command: PhotoEngineCommand) -> PhotoEngineResponse {
         let t_total = std::time::Instant::now();
         self.metrics.current_op = command.op_name();
@@ -540,11 +540,11 @@ impl EngineWorker {
         response
     }
 
-    /// Applique un lot de commandes (boucle worker) avec coalescence
-    /// rendu : repli latest-value-wins ([`fold_batch`]), UN seul rendu
-    /// pour tout le lot. L'historique reste transactionnel par
-    /// commande (coalescence slider préservée) : undo/redo inchangés.
-    /// Retourne 0..=N réponses (aucune si le lot se replie à vide).
+    /// Applies a batch of commands (worker loop) with coalescing
+    /// render: latest-value-wins fallback ([`fold_batch`]), ONE render
+    /// for the whole batch. History stays transactional per
+    /// command (slider coalescing preserved): undo/redo unchanged.
+    /// Returns 0..=N responses (none when the batch folds to empty).
     pub fn apply_batch(&mut self, commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineResponse> {
         let t_total = std::time::Instant::now();
         self.metrics.current_op = "batch";
@@ -553,9 +553,9 @@ impl EngineWorker {
         let mut out = Vec::new();
         let mut max_invalidation = RenderInvalidation::Unchanged;
         let mut changed = false;
-        // Accusés/erreurs collectés à part : ils sont émis APRÈS la
-        // réponse d'état pour avoir le dernier mot côté UI (un
-        // `LayersChanged` efface le statut ; l'accusé doit survivre).
+        // Acks/errors collected separately: they are emitted AFTER the
+        // state response to have the last word UI-side (a
+        // `LayersChanged` clears the status; the ack must survive).
         let mut immediates = Vec::new();
         let t_mutation = std::time::Instant::now();
         for command in folded {
@@ -569,15 +569,15 @@ impl EngineWorker {
         if changed {
             out.push(self.respond(max_invalidation));
         } else if had_commands {
-            // Resynchronisation sans rendu (que des no-ops).
+            // Resync without rendering (only no-ops).
             out.push(self.respond(RenderInvalidation::Unchanged));
         }
         out.extend(immediates);
-        // Miniatures secondaires terminées pendant le lot (Phase 6G.3 §4A) :
-        // re-poll (résultats arrivés PENDANT le composite) puis poussées
-        // APRES la réponse principale pour ne jamais retarder le canvas
-        // (`drain_thumb_extras` saute celles déjà embarquées).
-        // Emprunt disjoint : `out` est local, `self` est emprunté après.
+        // Secondary thumbnails finished during the batch (Phase 6G.3 §4A):
+        // re-poll (results arrived DURING the composite) then pushed
+        // AFTER the main response to never delay the canvas
+        // (`drain_thumb_extras` skips the already-embedded ones).
+        // Disjoint borrow: `out` is local, `self` is borrowed after.
         self.poll_thumb_results();
         let embedded: &[PhotoLayerInfo] = out
             .iter()
@@ -612,17 +612,17 @@ impl EngineWorker {
         out
     }
 
-    /// Corps de [`Self::apply`] (instrumentation dans l'enveloppe).
-    /// Ne rend jamais : applique la mutation, marque le dirty incrémental
-    /// (Phase 6E §1 : centralisé ici, jamais chez les appelants UI) et
-    /// retourne son invalidation (+ réponses immédiates type export/erreur).
-    /// Le rendu éventuel est produit par [`Self::respond`].
+    /// Body of [`Self::apply`] (instrumentation in the wrapper).
+    /// Never renders: applies the mutation, marks the incremental dirty
+    /// (Phase 6E §1: centralized here, never at UI callers) and
+    /// returns its invalidation (+ immediate export/error-type responses).
+    /// Any rendering is produced by [`Self::respond`].
     fn mutate(&mut self, command: PhotoEngineCommand) -> Mutation {
         let mutation = self.mutate_inner(command);
-        // Marquage centralisé : précis si le bras sait (`Region`), repli
-        // global sûr si `Composite` sans précision, rien sinon. Une commande
-        // future oublie au pire de la précision (re-rendu large), jamais de
-        // la correction (pas de tuile périmée).
+        // Centralized marking: precise when the arm knows (`Region`), safe
+        // global fallback on `Composite` without precision, nothing otherwise. A future
+        // command at worst forgets precision (wide re-render), never
+        // correctness (no stale tile).
         let mark = match mutation.dirty {
             DirtyMark::Auto
                 if mutation.changed && mutation.invalidation == RenderInvalidation::Composite =>
@@ -643,7 +643,7 @@ impl EngineWorker {
         mutation
     }
 
-    /// Application brute d'une commande (sans marquage) — voir [`Self::mutate`].
+    /// Raw application of a command (no marking) — see [`Self::mutate`].
     fn mutate_inner(&mut self, command: PhotoEngineCommand) -> Mutation {
         let (_, invalidation) = render_routing(&command);
         match command {
@@ -667,8 +667,8 @@ impl EngineWorker {
                 target,
                 before,
             } => {
-                // Drop hiérarchique avant/après : le moteur déplace le
-                // sous-arbre (même parent ou non — nesting libre).
+                // Hierarchical before/after drop: the engine moves the
+                // subtree (same parent or not — free nesting).
                 if !self.document.can_reorder_before(dragged, target) {
                     return Mutation::unchanged();
                 }
@@ -680,7 +680,7 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::MoveIntoGroup { layer, group } => {
-                // Drop dedans un groupe : insertion en tête des enfants.
+                // Drop inside a group: insert at the head of the children.
                 if !self.document.can_move_into(layer, group) {
                     return Mutation::unchanged();
                 }
@@ -692,8 +692,8 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::ToggleGroupCollapsed(id) => {
-                // Affichage seul : aucun pixel touché (snapshot seul).
-                // Snapshot PRÉ-mutation (jamais après).
+                // Display only: no pixel touched (snapshot only).
+                // PRE-mutation snapshot (never after).
                 if !matches!(
                     self.document.find(id),
                     Some(photo_engine::LayerNode::Group(_))
@@ -709,7 +709,7 @@ impl EngineWorker {
                 if self.document.find(layer).is_none() {
                     return Mutation::unchanged();
                 }
-                // Coalescence : un seul snapshot par geste de slider.
+                // Coalescing: a single snapshot per slider gesture.
                 self.push_history(Some(layer));
                 if let Some(node) = self.document.find_mut(layer) {
                     node.set_opacity(opacity);
@@ -724,7 +724,7 @@ impl EngineWorker {
                 if self.document.find(layer).is_none() {
                     return Mutation::unchanged();
                 }
-                // Choix discret : un snapshot par changement.
+                // Discrete choice: one snapshot per change.
                 self.push_history(None);
                 if let Some(node) = self.document.find_mut(layer) {
                     node.set_blend_mode(mode);
@@ -736,7 +736,7 @@ impl EngineWorker {
                 Mutation::changed(invalidation).with_dirty(dirty)
             }
             PhotoEngineCommand::MoveLayer { layer, dx, dy } => {
-                // Garde-fous : deltas finis et non nuls, calque pixels.
+                // Guards: finite non-zero deltas, pixel layer.
                 if !dx.is_finite() || !dy.is_finite() || (dx == 0.0 && dy == 0.0) {
                     return Mutation::unchanged();
                 }
@@ -744,7 +744,7 @@ impl EngineWorker {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                // Ancienne transform AVANT déplacement (old ∪ new ensuite).
+                // Old transform BEFORE the move (old ∪ new next).
                 let before: Option<(photo_engine::Transform2D, u32, u32)> =
                     match self.document.find(layer) {
                         Some(photo_engine::LayerNode::Pixel(pixels)) => Some((
@@ -755,12 +755,12 @@ impl EngineWorker {
                         _ => None,
                     };
                 if let Some(node) = self.document.find_mut(layer) {
-                    // Groupes/ajustements : no-op (snapshot déjà poussé
-                    // par prudence, état inchangé).
+                    // Groups/adjustments: no-op (snapshot already pushed
+                    // out of caution, state unchanged).
                     node.translate_by(dx, dy);
                 }
-                // Marquage précis : union des empreintes avant/après (+spread
-                // exact). Sans calque pixels : repli global sûr.
+                // Precise marking: union of before/after footprints (+exact
+                // spread). Without a pixel layer: safe global fallback.
                 let dirty = match (before, self.document.find(layer)) {
                     (Some((old_t, w, h)), Some(photo_engine::LayerNode::Pixel(pixels))) => {
                         let spread = photo_engine::tiles::appearance_spread(&pixels.filter_layers);
@@ -822,12 +822,12 @@ impl EngineWorker {
                 color,
                 opacity,
             } => {
-                // Garde-fous : rayon non fini (NaN/infini) ou nul → no-op.
+                // Guards: non-finite (NaN/infinite) or zero radius → no-op.
                 if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
                     return Mutation::unchanged();
                 }
-                // Lissage du geste (1 point/frame) : coins adoucis avant
-                // rastérisation (même bbox conservatrice pour le dirty).
+                // Gesture smoothing (1 point/frame): corners softened before
+                // rasterization (same conservative bbox for the dirty).
                 let points = photo_engine::paint::resample_stroke(&points, radius.max(2.0));
                 let is_pixel = matches!(
                     self.document.find(layer),
@@ -857,7 +857,7 @@ impl EngineWorker {
                 };
                 photo_engine::paint::paint_stroke_rgba(&mut buffer, width, height, &points, &brush);
                 if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
-                    // Re-lecture défensive après le push d'historique.
+                    // Defensive re-read after the history push.
                     if let Some(photo_engine::LayerNode::Pixel(pixels)) =
                         self.document.find_mut(layer)
                     {
@@ -865,13 +865,13 @@ impl EngineWorker {
                         pixels.touch();
                     }
                 }
-                // OBSERVATION tuiles (vertical slice) : plan calculé sur les
-                // entrées validées de la commande, après peinture réussie.
-                // Points en LAYER SPACE → région DOCUMENT SPACE via la
-                // transform du calque + halo des flous actifs (Phase 6B).
-                // Ne touche ni au document ni au renderer : le composite
-                // pleine cadre reste produit comme avant par `respond`.
-                // La rastérisation ci-dessus est inchangée (espace calque).
+                // Tile OBSERVATION (vertical slice): plan computed on the
+                // command's validated inputs, after successful painting.
+                // Points in LAYER SPACE → DOCUMENT SPACE region via the
+                // layer transform + active-blur halo (Phase 6B).
+                // Touches neither the document nor the renderer: the full-frame
+                // composite is still produced as before by `respond`.
+                // Rasterization above is unchanged (layer space).
                 let (layer_transform, layer_w, layer_h, halo) = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => (
                         pixels.transform,
@@ -896,9 +896,9 @@ impl EngineWorker {
                     self.document.height,
                     halo,
                 ));
-                // Marquage précis (validité cache) : empreinte document +
-                // diffusion EXACTE de la chaîne d'apparence (pas le halo
-                // d'observation 6B) — la peinture ne déplace pas le calque.
+                // Precise marking (cache validity): document footprint +
+                // EXACT spread of the appearance chain (not the 6B
+                // observation halo) — painting does not move the layer.
                 let spread = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => {
                         photo_engine::tiles::appearance_spread(&pixels.filter_layers)
@@ -924,7 +924,7 @@ impl EngineWorker {
                 radius,
                 opacity,
             } => {
-                // Mêmes garde-fous + lissage que `PaintStroke`.
+                // Same guards + smoothing as `PaintStroke`.
                 if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
                     return Mutation::unchanged();
                 }
@@ -945,8 +945,8 @@ impl EngineWorker {
                     self.undo.pop();
                     return Mutation::unchanged();
                 }
-                // Marquage global (repli sûr : le dirty précis suit
-                // l'empreinte du calque, le masque partage son espace).
+                // Global marking (safe fallback: the precise dirty follows
+                // the layer footprint, the mask shares its space).
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::OpenImage { path } => match image::open(&path) {
@@ -987,7 +987,7 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::DeleteLayer(id) => {
-                // Jamais de document vide : le dernier calque est conservé.
+                // Never an empty document: the last layer is kept.
                 if self.document.root.len() <= 1 || self.document.find(id).is_none() {
                     return Mutation::unchanged();
                 }
@@ -1049,7 +1049,7 @@ impl EngineWorker {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                // Re-lecture après le push d'historique (emprunt neuf).
+                // Re-read after the history push (fresh borrow).
                 if let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
                 {
                     pixels.filter_layers.push(filter);
@@ -1102,10 +1102,10 @@ impl EngineWorker {
             PhotoEngineCommand::LoadProject { path } => {
                 match photo_engine::project::load(&path) {
                     Ok(loaded) => {
-                        // Remplacement total : nouvelle session d'édition.
-                        // Ni snapshot pré-mutation (l'ancien document
-                        // disparaît), ni caches (ids de calques changés :
-                        // miniatures et tuiles de l'ancien doc invalides).
+                        // Total replacement: new editing session.
+                        // Neither a pre-mutation snapshot (the old document
+                        // goes away), nor caches (changed layer ids:
+                        // old doc thumbnails and tiles invalid).
                         self.document = loaded.document;
                         self.undo.clear();
                         self.redo.clear();
@@ -1130,10 +1130,10 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::AddMask { layer } => {
-                // Validation sans emprunt persistant (le push d'historique
-                // emprunte `self` en mutable : pas de borrow maintenu).
-                // `masks_of_mut` (et non `masks_of`) : les ajustements
-                // exposent une tranche vide mais refusent l'insertion.
+                // Validation without a held borrow (the history push
+                // borrows `self` mutably: no borrow held).
+                // `masks_of_mut` (not `masks_of`): adjustments
+                // expose an empty slice but refuse insertion.
                 if self.document.masks_of_mut(layer).is_none() {
                     return Mutation::unchanged();
                 }
@@ -1188,9 +1188,9 @@ impl EngineWorker {
                 key,
                 value,
             } => {
-                // Geste continu (curseurs) : garde-fous puis coalescence
-                // par filtre (un seul snapshot par geste, comme l'opacité
-                // par calque — `push_history(Some)` clef).
+                // Continuous gesture (sliders): guards then coalescing
+                // per filter (one snapshot per gesture, like opacity
+                // per layer — keyed `push_history(Some)`).
                 if !value.is_finite() || key.is_empty() {
                     return Mutation::unchanged();
                 }
@@ -1234,8 +1234,8 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::MoveFilter { layer, filter, up } => {
-                // `move_filter` mute : valider d'abord via une lecture
-                // immuable (position + bornes), puis historiser, puis muter.
+                // `move_filter` mutates: first validate via an immutable
+                // read (position + bounds), then record history, then mutate.
                 let movable = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => {
                         match pixels.filter_layers.iter().position(|f| f.id == filter) {
@@ -1298,9 +1298,9 @@ impl EngineWorker {
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
             PhotoEngineCommand::SetPreviewClip { clip } => {
-                // Préférence d'affichage : aucun snapshot d'historique.
-                // Pixels inchangés (même R ⇒ même rendu dans les deux modes) :
-                // aucun marquage, la détection de scope couvre le reste.
+                // Display preference: no history snapshot.
+                // Pixels unchanged (same R ⇒ same render in both modes):
+                // no marking, scope detection covers the rest.
                 self.clip_to_doc = clip;
                 Mutation::changed(invalidation).with_dirty(DirtyMark::None)
             }
@@ -1308,9 +1308,9 @@ impl EngineWorker {
     }
 }
 
-/// Invalide l'apparence d'un porteur de masque après mutation de ses
-/// masques (les setters de masques du moteur ne bumpent pas la version
-/// eux-mêmes). Groupes : composition à la volée, rien à invalider.
+/// Invalidates a mask bearer's appearance after mutating its
+/// masks (the engine's mask setters do not bump the version
+/// themselves). Groups: on-the-fly composition, nothing to invalidate.
 fn touch_mask_owner(document: &mut Document, owner: Uuid) {
     if let Some(photo_engine::LayerNode::Pixel(pixels)) = document.find_mut(owner) {
         pixels.touch();
@@ -1321,8 +1321,8 @@ fn touch_mask_owner(document: &mut Document, owner: Uuid) {
     }
 }
 
-/// Applique une commande à un document éphémère (tests, sans
-/// worker persistant ni historique).
+/// Applies one command to an ephemeral document (tests, no
+/// persistent worker or history).
 pub fn apply_command(document: &mut Document, command: PhotoEngineCommand) {
     let mut worker = EngineWorker::new(Document::new(0, 0));
     std::mem::swap(&mut worker.document, document);
@@ -1330,11 +1330,11 @@ pub fn apply_command(document: &mut Document, command: PhotoEngineCommand) {
     std::mem::swap(&mut worker.document, document);
 }
 
-/// Démarre le worker moteur sur un thread background.
+/// Starts the engine worker on a background thread.
 ///
-/// Boucle bloquante `recv` (autorisée hors thread UI) : applique
-/// chaque commande puis répond. La fin du `Sender` côté UI arrête
-/// proprement le thread.
+/// Blocking `recv` loop (allowed off the UI thread): applies
+/// each command then responds. Dropping the UI-side `Sender`
+/// cleanly stops the thread.
 pub fn spawn_photo_engine_worker(
     document: Document,
     commands: Receiver<PhotoEngineCommand>,
@@ -1343,15 +1343,15 @@ pub fn spawn_photo_engine_worker(
     assert_send::<Document>();
     std::thread::spawn(move || {
         let mut worker = EngineWorker::new(document);
-        // Tâche secondaire threadée (Phase 6G.3) : sans cet appel, les
-        // miniatures seraient calculées en inline sur le thread worker,
-        // donc sur le chemin canvas-critical — exactement ce que le
-        // ThumbWorker existe pour éviter.
+        // Threaded secondary task (Phase 6G.3): without this call,
+        // thumbnails would be computed inline on the worker thread,
+        // hence on the canvas-critical path — exactly what
+        // ThumbWorker exists to avoid.
         worker.enable_thumb_thread();
-        // Boucle par lots : la première commande bloque (`recv`), puis
-        // tout ce qui est déjà en attente est coalescé (`try_recv`) et
-        // ne produit qu'UN rendu (latest-value-wins). Les commandes
-        // structurelles restent appliquées une par une, dans l'ordre.
+        // Batch loop: the first command blocks (`recv`), then
+        // everything already queued is coalesced (`try_recv`) and
+        // produces only ONE render (latest-value-wins). Structural
+        // commands still apply one by one, in order.
         'worker: while let Ok(first) = commands.recv() {
             let mut batch = vec![first];
             while let Ok(next) = commands.try_recv() {
@@ -1398,9 +1398,9 @@ mod tests {
 
     #[test]
     fn reorder_nodes_moves_by_ids() {
-        // Affichage [dessus, milieu, fond] ; "dessus" avant "fond"
-        // (ordre racine : juste au-dessus du bas = bas de pile
-        // affiché) : [milieu, fond, dessus].
+        // Display [top, middle, bottom]; "top" before "bottom"
+        // (root order: just above the bottom = bottom of stack
+        // displayed): [middle, bottom, top].
         let mut doc = three_layer_doc();
         let dragged = doc.root[2].id();
         let target = doc.root[0].id();
@@ -1421,8 +1421,8 @@ mod tests {
 
     #[test]
     fn reorder_nodes_bottom_to_top() {
-        // "fond" après "dessus" (ordre racine : au-dessus = tout en
-        // haut affiché) : [fond, dessus, milieu].
+        // "bottom" after "top" (root order: above = very
+        // top displayed): [bottom, top, middle].
         let mut doc = three_layer_doc();
         let dragged = doc.root[0].id();
         let target = doc.root[2].id();
@@ -1443,8 +1443,8 @@ mod tests {
 
     #[test]
     fn reorder_nodes_into_group_and_back() {
-        // Nesting libre : un calque entre dans un groupe puis en sort
-        // (avant un calque racine) — undo/redo suivent.
+        // Free nesting: a layer enters a group then leaves it
+        // (before a root layer) — undo/redo follow.
         use photo_engine::GroupLayer;
         let mut worker = EngineWorker::new({
             let mut doc = Document::new(8, 8);
@@ -1464,7 +1464,7 @@ mod tests {
         let layers = snapshot_layers(&worker.document);
         assert_eq!(layers.len(), 1, "tout est dans le groupe");
         assert_eq!(layers[0].children.len(), 2);
-        // Sortie : "fond" après le groupe (haut de pile racine).
+        // Exit: "bottom" after the group (root top of stack).
         worker.apply(PhotoEngineCommand::ReorderNodes {
             dragged: fond,
             target: groupe,
@@ -1475,7 +1475,7 @@ mod tests {
             .map(|l| l.name.clone())
             .collect();
         assert_eq!(names, ["fond", "groupe"]);
-        // Undo x2 : retour à l'état initial (fond hors groupe).
+        // Undo x2: back to the initial state (bottom outside the group).
         worker.apply(PhotoEngineCommand::Undo);
         worker.apply(PhotoEngineCommand::Undo);
         let names: Vec<String> = snapshot_layers(&worker.document)
@@ -1488,7 +1488,7 @@ mod tests {
 
     #[test]
     fn toggle_collapsed_is_state_only_with_undo() {
-        // Repli : snapshot seul (aucun composite), undo restaure.
+        // Fallback: snapshot only (no composite), undo restores.
         use photo_engine::GroupLayer;
         let mut worker = EngineWorker::new({
             let mut doc = Document::new(8, 8);
@@ -1515,9 +1515,9 @@ mod tests {
         let layers = snapshot_layers(&worker.document);
         assert!(layers[0].collapsed, "groupe replié");
         assert_eq!(flattened_len(&layers), 2, "enfant masqué de la liste");
-        // Id inconnu : no-op.
+        // Unknown id: no-op.
         worker.apply(PhotoEngineCommand::ToggleGroupCollapsed(Uuid::new_v4()));
-        // Undo : déplié à nouveau.
+        // Undo: expanded again.
         worker.apply(PhotoEngineCommand::Undo);
         let layers = snapshot_layers(&worker.document);
         assert!(!layers[0].collapsed);
@@ -1532,7 +1532,7 @@ mod tests {
             &mut doc,
             PhotoEngineCommand::ToggleLayerVisibility(Uuid::new_v4()),
         );
-        // Cible inconnue ou sur soi-même : no-op.
+        // Unknown target or onto itself: no-op.
         apply_command(
             &mut doc,
             PhotoEngineCommand::ReorderNodes {
@@ -1577,7 +1577,7 @@ mod tests {
             Some(BlendMode::Multiply)
         );
         assert_eq!(worker.undo.len(), 1);
-        // Id inconnu : sans effet, sans snapshot.
+        // Unknown id: no effect, no snapshot.
         worker.apply(PhotoEngineCommand::SetBlendMode {
             layer: Uuid::new_v4(),
             mode: BlendMode::Screen,
@@ -1610,7 +1610,7 @@ mod tests {
             opacity: 250.0,
         });
         assert_eq!(worker.document.find(id).expect("present").opacity(), 100.0);
-        // Un seul snapshot malgré 3 appels (coalescence du slider).
+        // A single snapshot despite 3 calls (slider coalescing).
         worker.apply(PhotoEngineCommand::SetOpacity {
             layer: id,
             opacity: 10.0,
@@ -1620,7 +1620,7 @@ mod tests {
             opacity: 20.0,
         });
         assert_eq!(worker.undo.len(), 1);
-        // Undo restaure l'opacité d'origine (100 par défaut moteur).
+        // Undo restores the original opacity (100 engine default).
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(worker.document.find(id).expect("present").opacity(), 100.0);
         let PhotoEngineResponse::LayersChanged { layers, .. } = response else {
@@ -1635,7 +1635,7 @@ mod tests {
     #[test]
     fn undo_redo_cycle() {
         let mut worker = EngineWorker::new(three_layer_doc());
-        // Undo sans historique : état sans rendu (pas de composite).
+        // Undo with no history: state without rendering (no composite).
         let response = worker.apply(PhotoEngineCommand::Undo);
         assert!(matches!(
             response,
@@ -1646,7 +1646,7 @@ mod tests {
             }
         ));
         assert_eq!(worker.metrics.renders, 0);
-        // "dessus" avant "fond" (bas de pile), comme l'ancien (0 -> 3).
+        // "top" before "bottom" (bottom of stack), like the old one (0 -> 3).
         let dragged = worker.document.root[2].id();
         let target = worker.document.root[0].id();
         worker.apply(PhotoEngineCommand::ReorderNodes {
@@ -1703,7 +1703,7 @@ mod tests {
         let (resp_tx, resp_rx) = channel();
         let handle = spawn_photo_engine_worker(doc, cmd_rx, resp_tx);
 
-        // Le thread UI ne bloque jamais : poll immédiat vide…
+        // The UI thread never blocks: immediate empty poll…
         assert!(resp_rx.try_recv().is_err());
         cmd_tx
             .send(PhotoEngineCommand::ReorderNodes {
@@ -1712,7 +1712,7 @@ mod tests {
                 before: true,
             })
             .expect("envoi commande");
-        // …puis réponse du worker (opération lourde hors UI).
+        // …then the worker response (heavy work off-UI).
         let response = resp_rx.recv().expect("reponse worker");
         let PhotoEngineResponse::LayersChanged { layers, .. } = response else {
             panic!("réponse attendue");
@@ -1737,7 +1737,7 @@ mod tests {
             "fond clair"
         );
         assert_eq!(worker.undo.len(), 1);
-        // Vide ou inconnu : no-op sans snapshot.
+        // Empty or unknown: no-op without snapshot.
         worker.apply(PhotoEngineCommand::RenameLayer {
             layer: id,
             name: String::from("   "),
@@ -1751,7 +1751,7 @@ mod tests {
             "fond clair"
         );
         assert_eq!(worker.undo.len(), 1);
-        // Undo restaure le nom d'origine.
+        // Undo restores the original name.
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(worker.document.find(id).expect("present").name(), "fond");
     }
@@ -1765,19 +1765,19 @@ mod tests {
         assert_eq!(masks.len(), 1);
         assert_eq!(masks[0].name, "Masque 1");
         let mask_id = masks[0].id;
-        // Snapshot UI : le masque apparaît dans la HUD.
+        // UI snapshot: the mask shows in the HUD.
         let layers = snapshot_layers(&worker.document);
         let info = layers.iter().find(|l| l.id == id).expect("present");
         assert!(info.has_masks);
         assert_eq!(info.masks.len(), 1);
-        // Bornes : déplacer un masque seul = no-op.
+        // Bounds: moving a lone mask = no-op.
         worker.apply(PhotoEngineCommand::MoveMask {
             owner: id,
             mask: mask_id,
             up: true,
         });
         assert_eq!(worker.document.masks_of(id).expect("masques").len(), 1);
-        // Suppression puis undo.
+        // Delete then undo.
         worker.apply(PhotoEngineCommand::RemoveMask {
             owner: id,
             mask: mask_id,
@@ -1785,7 +1785,7 @@ mod tests {
         assert!(worker.document.masks_of(id).expect("masques").is_empty());
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(worker.document.masks_of(id).expect("masques").len(), 1);
-        // Porteur inconnu : no-op.
+        // Unknown owner: no-op.
         worker.apply(PhotoEngineCommand::AddMask {
             layer: Uuid::new_v4(),
         });
@@ -1800,7 +1800,7 @@ mod tests {
             let filter = photo_engine::new_filter_layer(type_id).expect("filtre connu");
             worker.document.add_filter(id, filter);
         }
-        // Ordre d'application : [brightness, blur] ; monter le premier.
+        // Application order: [brightness, blur]; move the first one up.
         let first = match worker.document.find(id).expect("present") {
             LayerNode::Pixel(pixels) => pixels.filter_layers[0].id,
             _ => panic!("pixels attendus"),
@@ -1819,13 +1819,13 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(order, ["blur", "brightness_contrast"]);
-        // Borne haute : no-op.
+        // Upper bound: no-op.
         worker.apply(PhotoEngineCommand::MoveFilter {
             layer: id,
             filter: first,
             up: true,
         });
-        // Suppression.
+        // Delete.
         worker.apply(PhotoEngineCommand::RemoveFilter {
             layer: id,
             filter: first,
@@ -1854,7 +1854,7 @@ mod tests {
                 .expect("param flottant")
         };
         assert_eq!(param(&worker), 0.0);
-        // Geste continu : 3 ticks coalescés en UN seul pas d'historique.
+        // Continuous gesture: 3 ticks coalesced into ONE history step.
         for value in [10.0, 20.0, 30.0] {
             let response = worker.apply(PhotoEngineCommand::SetFilterParam {
                 layer: id,
@@ -1870,7 +1870,7 @@ mod tests {
         assert_eq!(param(&worker), 30.0);
         assert_eq!(worker.undo.len(), 1, "geste coalescé");
         assert_eq!(worker.undo[0].label, "Réglage du filtre");
-        // Garde-fous : NaN, clé vide, ids inconnus = no-op sans snapshot.
+        // Guards: NaN, empty key, unknown ids = no-op without snapshot.
         worker.apply(PhotoEngineCommand::SetFilterParam {
             layer: id,
             filter: fid,
@@ -1897,7 +1897,7 @@ mod tests {
         });
         assert_eq!(param(&worker), 30.0);
         assert_eq!(worker.undo.len(), 1);
-        // Undo : retour à la valeur d'avant geste.
+        // Undo: back to the pre-gesture value.
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(param(&worker), 0.0);
     }
@@ -1917,7 +1917,7 @@ mod tests {
         };
         assert_eq!((moved.offset_x, moved.offset_y), (12.0, -5.0));
         assert_eq!(worker.undo.len(), 1);
-        // Delta nul ou id inconnu : sans effet, sans snapshot.
+        // Zero delta or unknown id: no effect, no snapshot.
         worker.apply(PhotoEngineCommand::MoveLayer {
             layer: id,
             dx: 0.0,
@@ -1941,7 +1941,7 @@ mod tests {
     fn preview_clip_crops_to_document_without_history() {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
-        // Calque hors cadre : l'aperçu plan infini dépasse le document.
+        // Off-frame layer: the infinite-plane preview extends past the document.
         worker.apply(PhotoEngineCommand::MoveLayer {
             layer: id,
             dx: 6.0,
@@ -1960,7 +1960,7 @@ mod tests {
         assert!(wide.full_width > wide.doc_width, "plan infini plus large");
         assert!((wide.origin_x - 2.0).abs() < 1.0, "origine exacte");
         let undo_len = worker.undo.len();
-        // Rognage : aperçu aux dimensions du document, sans historique.
+        // Clipping: preview at document dimensions, no history.
         worker.apply(PhotoEngineCommand::SetPreviewClip { clip: true });
         assert_eq!(worker.undo.len(), undo_len, "pas de snapshot");
         let clipped = match worker.apply(PhotoEngineCommand::Refresh) {
@@ -1997,7 +1997,7 @@ mod tests {
         use RenderInvalidation::{Composite, StateOnly};
         let id = Uuid::new_v4();
         let other = Uuid::new_v4();
-        // Structurel : invalidation composite totale.
+        // Structural: total composite invalidation.
         assert_eq!(
             render_routing(&PhotoEngineCommand::ReorderNodes {
                 dragged: id,
@@ -2013,18 +2013,18 @@ mod tests {
             }),
             (FullInvalidation, Composite)
         );
-        // Repli : seul l'état change, aucun pixel.
+        // Fallback: only state changes, no pixels.
         assert_eq!(
             render_routing(&PhotoEngineCommand::ToggleGroupCollapsed(id)),
             (NodeInvalidated(id), StateOnly)
         );
-        // Visibilité : affecte le blending global (affects_composite).
+        // Visibility: affects global blending (affects_composite).
         assert_eq!(
             render_routing(&PhotoEngineCommand::ToggleLayerVisibility(id)),
             (FullInvalidation, Composite)
         );
-        // Opacité : nœud isolé au sens RenderEvent, mais le composite
-        // CPU doit être re-blendé → Composite.
+        // Opacity: isolated node in the RenderEvent sense, but the CPU
+        // composite must be re-blended → Composite.
         assert_eq!(
             render_routing(&PhotoEngineCommand::SetOpacity {
                 layer: id,
@@ -2032,7 +2032,7 @@ mod tests {
             }),
             (NodeInvalidated(id), Composite)
         );
-        // Renommage : seul l'état change, aucun pixel.
+        // Rename: only state changes, no pixels.
         assert_eq!(
             render_routing(&PhotoEngineCommand::RenameLayer {
                 layer: id,
@@ -2053,7 +2053,7 @@ mod tests {
             })
             .collect();
         let responses = worker.apply_batch(gestures);
-        // 20 événements intermédiaires → 1 seule réponse, 1 seul rendu.
+        // 20 intermediate events → 1 response, 1 render.
         assert_eq!(responses.len(), 1, "un seul rendu par geste");
         assert_eq!(worker.metrics.renders, 1);
         let revision = match &responses[0] {
@@ -2065,7 +2065,7 @@ mod tests {
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         };
         assert_eq!(revision, RenderRevision(1));
-        // Dernière valeur gagnante, une seule entrée d'historique.
+        // Last value wins, a single history entry.
         assert_eq!(worker.document.find(id).expect("present").opacity(), 80.0);
         assert_eq!(worker.undo.len(), 1);
     }
@@ -2135,7 +2135,7 @@ mod tests {
     fn rename_produces_state_without_render() {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
-        // D'abord un rendu pour fixer la révision à 1.
+        // First one render to pin the revision at 1.
         worker.apply(PhotoEngineCommand::Refresh);
         assert_eq!(worker.metrics.renders, 1);
         let response = worker.apply(PhotoEngineCommand::RenameLayer {
@@ -2178,9 +2178,9 @@ mod tests {
                 opacity: 60.0,
             },
         ]);
-        // État d'abord, accusé ensuite (les accusés ont le dernier
-        // mot : un `LayersChanged` efface le statut), un seul rendu
-        // pour tout le lot (opacités repliées).
+        // State first, ack next (acks have the last
+        // word: a `LayersChanged` clears the status), a single render
+        // for the whole batch (folded opacities).
         assert_eq!(responses.len(), 2);
         assert!(matches!(
             responses[0],
@@ -2267,10 +2267,10 @@ mod fold_batch_tests {
     fn opacity_does_not_fold_across_other_commands() {
         let id = Uuid::new_v4();
         let undo = PhotoEngineCommand::Undo;
-        // Undo interrompt le repli : les trois commandes survivent.
+        // Undo breaks the fold: all three commands survive.
         let folded = fold_batch(vec![opacity(id, 10.0), undo, opacity(id, 30.0)]);
         assert_eq!(folded.len(), 3);
-        // Deux calques différents ne se replient pas non plus.
+        // Two different layers do not fold either.
         let other = Uuid::new_v4();
         let folded = fold_batch(vec![opacity(id, 10.0), opacity(other, 20.0)]);
         assert_eq!(folded.len(), 2);
@@ -2281,7 +2281,7 @@ mod fold_batch_tests {
         let id = Uuid::new_v4();
         let folded = fold_batch(vec![shifted(id, 5.0, 0.0), shifted(id, -2.0, 1.0)]);
         assert_eq!(folded, vec![shifted(id, 3.0, 1.0)]);
-        // Somme nulle : commande supprimée (aucun rendu à produire).
+        // Zero sum: command dropped (no render to produce).
         let folded = fold_batch(vec![shifted(id, 5.0, 0.0), shifted(id, -5.0, 0.0)]);
         assert!(folded.is_empty());
     }
@@ -2289,7 +2289,7 @@ mod fold_batch_tests {
     #[test]
     fn noop_batch_returns_single_state_response() {
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
-        // Que des no-ops : une seule resynchronisation, aucun rendu.
+        // Only no-ops: a single resync, no render.
         let responses = worker.apply_batch(vec![
             PhotoEngineCommand::ToggleLayerVisibility(Uuid::new_v4()),
             PhotoEngineCommand::DeleteLayer(Uuid::new_v4()),
@@ -2306,7 +2306,7 @@ mod fold_batch_tests {
     fn batch_with_undo_inside_preserves_order() {
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let id = worker.document.root[0].id();
-        // Opacité appliquée PUIS annulée dans le même lot : retour à 100.
+        // Opacity applied THEN cancelled in the same batch: back to 100.
         let responses = worker.apply_batch(vec![
             opacity(id, 10.0),
             opacity(id, 20.0),
@@ -2314,7 +2314,7 @@ mod fold_batch_tests {
         ]);
         assert_eq!(responses.len(), 1);
         assert_eq!(worker.document.find(id).expect("present").opacity(), 100.0);
-        // L'historique garde la trace : redo rejoue la valeur repliée.
+        // History keeps the trace: redo replays the folded value.
         worker.apply(PhotoEngineCommand::Redo);
         assert_eq!(worker.document.find(id).expect("present").opacity(), 20.0);
     }
@@ -2356,17 +2356,17 @@ mod single_pass_tests {
             opacity: 50.0,
         });
         let m = worker.metrics.last.as_ref().expect("metriques");
-        // 3 calques → 3 résolutions image, partagées entre les consommateurs :
-        // extents scope (3, Phase 6E) + extents composite (3) + fold (3) +
-        // extents géométrie (3) + contributes (1, sortie précoce au 1er
-        // calque). Le snapshot ne résout PLUS les miniatures ( Phase 6G.3 :
-        // store secondaire) — d'où 13 et non 16.
+        // 3 layers → 3 image resolutions, shared across consumers:
+        // scope extents (3, Phase 6E) + composite extents (3) + fold (3) +
+        // geometry extents (3) + contributes (1, early exit at the 1st
+        // layer). The snapshot no longer resolves thumbnails (Phase 6G.3:
+        // secondary store) — hence 13, not 16.
         assert_eq!(m.appearance_resolves, 3);
         assert_eq!(m.appearance_frame_hits, 13);
-        // Aucun pixel recalculé : ni preview ni thumb reconstruits.
+        // No pixel recomputed: neither preview nor thumb rebuilt.
         assert_eq!(m.preview_rebuilds, 0);
         assert_eq!(m.thumb_rebuilds, 0);
-        // Le composite lui-même reste produit (re-blend, révision +1).
+        // The composite itself is still produced (re-blend, revision +1).
         assert_eq!(worker.metrics.renders, 2);
     }
 
@@ -2384,7 +2384,7 @@ mod single_pass_tests {
             color: [0, 0, 255],
             opacity: 1.0,
         }));
-        // Calque peint : nouvelle version ; les autres : intactes.
+        // Painted layer: new version; the others: intact.
         for layer in &after {
             let old = before
                 .iter()
@@ -2397,17 +2397,17 @@ mod single_pass_tests {
                 assert_eq!(thumb_version(layer), old, "autres calques intacts");
             }
         }
-        // Tâche secondaire (inline ici) : seule la miniature du calque peint
-        // est recalculée — versions live intactes par ailleurs, cadre 6G.3
-        // sans `preview` (6G.2) ni `thumb` synchrone.
+        // Secondary task (inline here): only the painted layer's thumbnail
+        // is recomputed — live versions otherwise intact, 6G.3 frame
+        // without `preview` (6G.2) or synchronous `thumb`.
         let m = worker.metrics.last.as_ref().expect("metriques");
         assert_eq!(m.preview_rebuilds, 0);
         assert_eq!(m.thumb_rebuilds, 0);
         assert_eq!(m.thumbnail_jobs_completed, 1, "seul le calque peint");
     }
 
-    /// Document large (640x480) pour les tests tuiles multi-cases
-    /// (tuiles d'observation : 256 px, niveau 0 unique).
+    /// Large document (640x480) for multi-case tile tests
+    /// (observation tiles: 256 px, single level 0).
     fn wide_doc() -> Document {
         use photo_engine::{LayerNode, PixelLayer};
         use std::sync::Arc;
@@ -2419,7 +2419,7 @@ mod single_pass_tests {
 
     #[test]
     fn paint_stroke_observes_tile_plan() {
-        // Cas 1+5 : petit stroke → région exacte + 1 tuile + plan à 1.
+        // Case 1+5: small stroke → exact region + 1 tile + 1-plan.
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let target = worker.document.root[0].id();
         let points: Vec<(f32, f32)> = (0..4).map(|i| (i as f32, i as f32)).collect();
@@ -2431,14 +2431,14 @@ mod single_pass_tests {
             color: [0, 0, 255],
             opacity: 1.0,
         });
-        // Rendu inchangé : composite produit, révision bumpée comme avant.
+        // Rendering unchanged: composite produced, revision bumped as before.
         match response {
             PhotoEngineResponse::LayersChanged { revision, .. } => {
                 assert_eq!(revision, RenderRevision(1));
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
-        // Observation : bbox [−2,5)² → 49 px², doc 8x8 → tuile (0,0) unique.
+        // Observation: bbox [−2,5)² → 49 px², 8x8 doc → single (0,0) tile.
         let m = worker.metrics.last.as_ref().expect("metriques");
         assert_eq!(m.dirty_region_px, 49);
         assert_eq!(m.dirty_tiles, 1);
@@ -2447,7 +2447,7 @@ mod single_pass_tests {
 
     #[test]
     fn paint_stroke_multi_tile_plan() {
-        // Cas 2 : stroke à cheval sur 2x2 tuiles de 256 px.
+        // Case 2: stroke straddling 2x2 256-px tiles.
         let mut worker = EngineWorker::new(wide_doc());
         let target = worker.document.root[0].id();
         let response = worker.apply(PhotoEngineCommand::PaintStroke {
@@ -2462,7 +2462,7 @@ mod single_pass_tests {
             matches!(response, PhotoEngineResponse::LayersChanged { .. }),
             "rendu produit comme avant"
         );
-        // x ∈ [2,508) → tuiles 0,1 ; y ∈ [2,408) → tuiles 0,1.
+        // x ∈ [2,508) → tiles 0,1; y ∈ [2,408) → tiles 0,1.
         let m = worker.metrics.last.as_ref().expect("metriques");
         assert_eq!(m.dirty_region_px, 506 * 406);
         assert_eq!(m.dirty_tiles, 4);
@@ -2471,8 +2471,8 @@ mod single_pass_tests {
 
     #[test]
     fn stroke_outside_document_marks_no_tiles() {
-        // Cas 3 : région réelle mais hors surface → clipping grille,
-        // aucune tuile invalide (et surtout aucune tuile fantôme).
+        // Case 3: real region but off-surface → grid clipping,
+        // no invalid tiles (and above all no ghost tiles).
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let target = worker.document.root[0].id();
         let response = worker.apply(PhotoEngineCommand::PaintStroke {
@@ -2495,7 +2495,7 @@ mod single_pass_tests {
 
     #[test]
     fn invalid_stroke_observes_nothing() {
-        // Cas 4 : geste inexploitable → no-op, aucun travail tuile.
+        // Case 4: unusable gesture → no-op, no tile work.
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let target = worker.document.root[0].id();
         let response = worker.apply(PhotoEngineCommand::PaintStroke {
@@ -2518,9 +2518,9 @@ mod single_pass_tests {
 
     #[test]
     fn paint_commit_undo_redo_geste_complet() {
-        // Geste complet : UN PaintStroke au MouseUp (tout le drag
-        // coalescé par le canvas) ⇒ UNE entrée d'historique ; Undo
-        // restaure les pixels, Redo rejoue le trait.
+        // Full gesture: ONE PaintStroke at MouseUp (the whole
+        // canvas-coalesced drag) ⇒ ONE history entry; Undo
+        // restores the pixels, Redo replays the stroke.
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let target = worker.document.root[0].id();
         let pixel = |worker: &EngineWorker| {
@@ -2534,7 +2534,7 @@ mod single_pass_tests {
                 .0
         };
         assert_eq!(pixel(&worker)[3], 0, "fond transparent au départ");
-        // Points tels que le canvas les accumule pendant le drag.
+        // Points as the canvas accumulates them during the drag.
         let points: Vec<(f32, f32)> = (0..8).map(|i| (i as f32, i as f32)).collect();
         let response = worker.apply(PhotoEngineCommand::PaintStroke {
             layer: target,
@@ -2568,12 +2568,12 @@ mod single_pass_tests {
         assert_eq!(worker.undo.len(), 1);
     }
 
-    /// Bench 6G.4 : coût miniature AVANT/APRÈS le cache versionné.
-    /// Compteurs exacts (submitted/completed/thumb_us) + murs indicatifs.
-    /// Même bench des deux côtés : phases A (N paints distincts —
-    /// calculs nécessaires), B (cycle filtre add/remove : même Arc
-    /// source, signature restaurée), C (toggle/opacity/undo/redo :
-    /// zéro rebuild attendu). Recommandé en release pour les murs.
+    /// Bench 6G.4: thumbnail cost BEFORE/AFTER the versioned cache.
+    /// Exact counters (submitted/completed/thumb_us) + indicative walls.
+    /// Same bench on both sides: phases A (N distinct paints —
+    /// needed computations), B (add/remove filter cycle: same source
+    /// Arc, restored signature), C (toggle/opacity/undo/redo:
+    /// zero rebuild expected). Release recommended for walls.
     #[test]
     #[ignore = "bench 6G.4 (murs indicatifs, compteurs exacts)"]
     fn bench_thumb_6g4() {
@@ -2592,7 +2592,7 @@ mod single_pass_tests {
             (t.submitted, t.completed, t.thumb_us, t.cache_hits)
         }
         eprintln!("BENCH6G4|phase|doc|n|wall_ms|submitted|completed|cache_hits|thumb_us|renders");
-        // Phase A : paints distincts (tous nécessaires).
+        // Phase A: distinct paints (all needed).
         for (w, h, n) in [
             (640u32, 480u32, 100usize),
             (1920, 1080, 20),
@@ -2627,7 +2627,7 @@ mod single_pass_tests {
                 worker.metrics.renders,
             );
         }
-        // Phase B : cycle filtre (même source, signature restaurée).
+        // Phase B: filter cycle (same source, restored signature).
         {
             let mut worker = EngineWorker::new(blank(640, 480));
             worker.apply(PhotoEngineCommand::Refresh);
@@ -2657,7 +2657,7 @@ mod single_pass_tests {
                 worker.metrics.renders,
             );
         }
-        // Phase C : toggle/opacity/undo/redo (zéro rebuild attendu).
+        // Phase C: toggle/opacity/undo/redo (zero rebuild expected).
         {
             let mut worker = EngineWorker::new(blank(640, 480));
             worker.apply(PhotoEngineCommand::Refresh);
@@ -2695,8 +2695,8 @@ mod single_pass_tests {
     #[test]
     #[ignore = "mesure commit (mur indicatif, jamais asserté)"]
     fn perf_commit_2048() {
-        // Temps du commit au MouseUp sur 2048² : mutation + composite +
-        // miniature secondaire (inline ici). Mur indicatif seulement.
+        // Commit-to-MouseUp time on 2048²: mutation + composite +
+        // secondary thumbnail (inline here). Indicative wall only.
         let mut worker = EngineWorker::new({
             use photo_engine::{LayerNode, PixelLayer};
             use std::sync::Arc;
@@ -2734,9 +2734,9 @@ mod single_pass_tests {
 
     #[test]
     fn paint_commit_chemin_canvas_critical_avant_miniatures() {
-        // Après MouseUp : commit ⇒ DirtyRegion observée + rendu canvas
-        // (révision bumpée, preview présent) + miniatures en secondaire
-        // (1 job, jamais pendant le drag — le drag n'envoie rien).
+        // After MouseUp: commit ⇒ observed DirtyRegion + canvas render
+        // (bumped revision, preview present) + secondary thumbnails
+        // (1 job, never during the drag — the drag sends nothing).
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
         let submitted_before = worker.metrics.thumb.submitted;
@@ -2771,8 +2771,8 @@ mod single_pass_tests {
 
     #[test]
     fn paint_grand_document_1920_reste_borne() {
-        // 1920x1080 : commit d'un petit trait ⇒ dirty région petite
-        // devant le document, tuiles marquées < total, révision +1.
+        // 1920x1080: committing a small stroke ⇒ small dirty region
+        // next to the document, marked tiles < total, revision +1.
         let mut worker = EngineWorker::new({
             use photo_engine::{LayerNode, PixelLayer};
             use std::sync::Arc;
@@ -2801,12 +2801,12 @@ mod single_pass_tests {
         let m = worker.metrics.last.as_ref().expect("metriques");
         let doc_px = 1920u64 * 1080;
         assert!(m.dirty_region_px < doc_px / 10, "région bornée au trait");
-        // Grille 256 px sur 1920x1080 ⇒ 8x5 = 40 tuiles au plus.
+        // 256-px grid over 1920x1080 ⇒ 8x5 = 40 tiles at most.
         assert!(m.dirty_tiles < 40, "tuiles marquées < total");
         assert!(m.dirty_tiles >= 1);
     }
 
-    /// Compteurs miniature cumulés (soumissions, complétions, HIT/MISS).
+    /// Cumulative thumbnail counters (submissions, completions, HIT/MISS).
     fn thumb_counters(worker: &EngineWorker) -> (u64, u64, u64, u64) {
         let t = &worker.metrics.thumb;
         (t.submitted, t.completed, t.cache_hits, t.cache_misses)
@@ -2815,9 +2815,9 @@ mod single_pass_tests {
     #[test]
     fn cache_cycle_filtre_ressert_sans_recalcul() {
         use photo_engine::LayerNode;
-        // 6G.4 : peinture (MISS) → ajout filtre (MISS, même Arc) →
-        // retrait filtre (même Arc + signature restaurée ⇒ HIT).
-        // Octets identiques avant/après le cycle, zéro recalcul.
+        // 6G.4: paint (MISS) → add filter (MISS, same Arc) →
+        // remove filter (same Arc + restored signature ⇒ HIT).
+        // Identical bytes before/after the cycle, zero recompute.
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
         let target = worker.document.root[0].id();
@@ -2875,9 +2875,9 @@ mod single_pass_tests {
     #[test]
     fn cache_hit_perime_rejete() {
         use photo_engine::LayerNode;
-        // 6G.4 + 6G.3 : un HIT du cache taggé d'une version dépassée
-        // est rejeté par la garde (jamais affiché, jamais stocké —
-        // mais compté en HIT : aucun calcul n'a eu lieu).
+        // 6G.4 + 6G.3: a cache HIT tagged with an outdated version
+        // is rejected by the guard (never displayed, never stored —
+        // but counted as HIT: no computation happened).
         use crate::ui::thumb_worker::ThumbDone;
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
@@ -2904,14 +2904,14 @@ mod single_pass_tests {
                 layer.appearance_version,
             )
         };
-        // Nouvelle peinture : version 2, nouvel Arc source.
+        // New paint: version 2, new source Arc.
         paint(&mut worker, 3.0);
         let version2 = match worker.document.find(target).expect("calque") {
             LayerNode::Pixel(p) => p.appearance_version,
             _ => panic!("pixels attendus"),
         };
         assert_ne!(version1, version2);
-        // Rejeu du résultat v1 via le cache (HIT contenu, version périmée).
+        // Replay of the v1 result via the cache (content HIT, stale version).
         let replay = ThumbDone {
             layer: target,
             version: version1,
@@ -2935,9 +2935,9 @@ mod single_pass_tests {
 
     #[test]
     fn dix_paints_distincts_minimum_calculs() {
-        // 6G.4 : 10 états distincts ⇒ 10 calculs nécessaires, ni plus
-        // (pas de re-soumission parasite) ni HIT indu (contenus tous
-        // différents).
+        // 6G.4: 10 distinct states ⇒ 10 needed computations, no more
+        // (no parasitic resubmission) and no undue HIT (all contents
+        // different).
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
         let target = worker.document.root[0].id();
@@ -2961,9 +2961,9 @@ mod single_pass_tests {
 
     #[test]
     fn toggle_opacity_undo_redo_sans_rebuild() {
-        // Préservé 6G.3 : toggle/opacity (version inchangée) puis
-        // undo/redo (versions restaurées, store intact) ⇒ zéro
-        // soumission, zéro calcul, zéro HIT.
+        // Preserved 6G.3: toggle/opacity (unchanged version) then
+        // undo/redo (restored versions, intact store) ⇒ zero
+        // submission, zero computation, zero HIT.
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
         let target = worker.document.root[0].id();
@@ -3034,7 +3034,7 @@ mod single_pass_tests {
             .and_then(|l| l.thumb.clone())
             .expect("miniature");
         assert_ne!(painted_thumb.version, pristine_thumb.version);
-        // Undo : pixels et version d'origine restaurés (rebuild ciblé).
+        // Undo: original pixels and version restored (targeted rebuild).
         let undone = layers_of(&worker.apply(PhotoEngineCommand::Undo));
         let undone_thumb = undone
             .iter()
@@ -3043,7 +3043,7 @@ mod single_pass_tests {
             .expect("miniature");
         assert_eq!(undone_thumb.version, pristine_thumb.version);
         assert_eq!(undone_thumb.rgba, pristine_thumb.rgba);
-        // Redo : retour exact à l'état peint.
+        // Redo: exact return to the painted state.
         let redone = layers_of(&worker.apply(PhotoEngineCommand::Redo));
         let redone_thumb = redone
             .iter()
@@ -3069,7 +3069,7 @@ mod single_pass_tests {
         assert!(matches!(response, PhotoEngineResponse::ExportDone { .. }));
         assert!(path.is_file(), "fichier écrit");
         assert_eq!(worker.metrics.renders, 1, "export sans rendu");
-        // Le refresh suivant bump d'exactement une révision.
+        // The next refresh bumps by exactly one revision.
         match worker.apply(PhotoEngineCommand::Refresh) {
             PhotoEngineResponse::LayersChanged { revision, .. } => {
                 assert_eq!(revision, RenderRevision(2));
@@ -3098,7 +3098,7 @@ mod single_pass_tests {
         assert!(path.is_file(), "fichier écrit");
         assert_eq!(worker.metrics.renders, renders, "sauvegarde sans rendu");
 
-        // Worker vierge : le chargement restaure l'arbre complet.
+        // Fresh worker: loading restores the full tree.
         let mut fresh = EngineWorker::new(Document::new(8, 8));
         let loaded = match fresh.apply(PhotoEngineCommand::LoadProject { path }) {
             PhotoEngineResponse::LayersChanged {
@@ -3155,7 +3155,7 @@ mod single_pass_tests {
         };
         assert_eq!(undo_labels, vec!["Nouveau calque", "Visibilité"]);
         assert!(redo_labels.is_empty());
-        // Un undo : le libellé voyage vers redo.
+        // One undo: the label travels to redo.
         match worker.apply(PhotoEngineCommand::Undo) {
             PhotoEngineResponse::LayersChanged {
                 undo_labels,
@@ -3175,7 +3175,7 @@ mod single_pass_tests {
         worker.apply(PhotoEngineCommand::AddEmptyLayer);
         worker.apply(PhotoEngineCommand::AddEmptyLayer);
         let renders = worker.metrics.renders;
-        // Saut arrière au-delà de la pile : tout annulé, un seul rendu.
+        // Backward jump past the stack: everything undone, one render.
         match worker.apply(PhotoEngineCommand::UndoSteps { steps: 5 }) {
             PhotoEngineResponse::LayersChanged {
                 undo_labels,
@@ -3192,7 +3192,7 @@ mod single_pass_tests {
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
         assert_eq!(worker.metrics.renders, renders + 1);
-        // Saut avant de 1 : réapplique le plus ancien.
+        // Forward jump of 1: reapplies the oldest.
         match worker.apply(PhotoEngineCommand::RedoSteps { steps: 1 }) {
             PhotoEngineResponse::LayersChanged {
                 undo_labels,
@@ -3204,15 +3204,15 @@ mod single_pass_tests {
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
-        // Saut nul : no-op sans rendu.
+        // Zero jump: no-op without rendering.
         assert!(matches!(
             worker.apply(PhotoEngineCommand::UndoSteps { steps: 0 }),
             PhotoEngineResponse::StateChanged { .. }
         ));
     }
 
-    /// Document asymétrique 4×2 : moitié gauche rouge, droite noire
-    /// (miroir/rotation visibles dans l'aperçu).
+    /// Asymmetric 4×2 document: left half red, right half black
+    /// (mirror/rotation visible in the preview).
     fn asymmetric_doc() -> Document {
         use image::{DynamicImage, ImageBuffer, Rgba};
         use std::sync::Arc;
@@ -3252,7 +3252,7 @@ mod single_pass_tests {
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
-        // Undo : pixels d'origine restaurés à l'octet près.
+        // Undo: original pixels restored byte-for-byte.
         let restaure = preview_rgba(&worker.apply(PhotoEngineCommand::Undo));
         assert_eq!(restaure, avant);
     }
@@ -3270,7 +3270,7 @@ mod single_pass_tests {
         }
         let tourne = preview_rgba(&worker.apply(PhotoEngineCommand::Refresh));
         assert_ne!(tourne, avant, "rotation visible");
-        // Groupe : no-op silencieux (comme AddFilter), sans historique.
+        // Group: silent no-op (like AddFilter), no history.
         let mut groupe = Document::new(4, 4);
         groupe.push_layer(photo_engine::LayerNode::Group(
             photo_engine::GroupLayer::new("g", vec![]),
@@ -3291,9 +3291,9 @@ mod single_pass_tests {
         let img = Arc::new(image::DynamicImage::new_rgba8(6, 6));
         doc.push_layer(LayerNode::Pixel(PixelLayer::new("carre", img)));
         let id = doc.root[0].id();
-        // Contenu : no-op (déjà dans le document).
+        // Content: no-op (already in the document).
         assert_eq!(crop_plan(&doc, id), CropPlan::Noop);
-        // Décalé à moitié hors cadre : rect non nul clampé.
+        // Shifted half out of frame: non-null clamped rect.
         doc.set_transform_any(
             id,
             photo_engine::Transform2D {
@@ -3310,7 +3310,7 @@ mod single_pass_tests {
                 h: 6
             }
         );
-        // Complètement hors cadre : erreur propre.
+        // Fully out of frame: clean error.
         doc.set_transform_any(
             id,
             photo_engine::Transform2D {
@@ -3319,7 +3319,7 @@ mod single_pass_tests {
             },
         );
         assert_eq!(crop_plan(&doc, id), CropPlan::Outside);
-        // Rotation : refusé (intersection monde fausse).
+        // Rotation: rejected (wrong world intersection).
         doc.set_transform_any(
             id,
             photo_engine::Transform2D {
@@ -3349,7 +3349,7 @@ mod single_pass_tests {
         let id = pixels.id;
         doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
         let mut worker = EngineWorker::new(doc);
-        // Filtre actif → inactif.
+        // Active filter → inactive.
         match worker.apply(PhotoEngineCommand::ToggleFilter {
             layer: id,
             filter: fid,
@@ -3361,7 +3361,7 @@ mod single_pass_tests {
         }
         let info = worker.test_document().pixel_layer(id).expect("calque");
         assert!(!info.filter_layers[0].enabled);
-        // Masque actif → inactif.
+        // Active mask → inactive.
         worker.apply(PhotoEngineCommand::ToggleMask {
             owner: id,
             mask: mid,
@@ -3374,12 +3374,12 @@ mod single_pass_tests {
                 .masks[0]
                 .enabled
         );
-        // Undo ×2 : les deux sont réactivés.
+        // Undo ×2: both are reactivated.
         worker.apply(PhotoEngineCommand::UndoSteps { steps: 2 });
         let info = worker.test_document().pixel_layer(id).expect("calque");
         assert!(info.filter_layers[0].enabled);
         assert!(info.masks[0].enabled);
-        // Inconnu : no-op.
+        // Unknown: no-op.
         assert!(matches!(
             worker.apply(PhotoEngineCommand::ToggleFilter {
                 layer: id,
@@ -3403,7 +3403,7 @@ mod single_pass_tests {
         let id = pixels.id;
         doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
         let mut worker = EngineWorker::new(doc);
-        // Gomme sur masque blanc : creuse (canal R).
+        // Eraser on white mask: digs (R channel).
         match worker.apply(PhotoEngineCommand::PaintMask {
             owner: id,
             mask: mid,
@@ -3425,7 +3425,7 @@ mod single_pass_tests {
             .image
             .get_pixel(1, 1)[0];
         assert!(valeur < 128, "masque creusé : {valeur}");
-        // Undo : blanc restauré.
+        // Undo: white restored.
         worker.apply(PhotoEngineCommand::Undo);
         let valeur = worker
             .test_document()
@@ -3435,7 +3435,7 @@ mod single_pass_tests {
             .image
             .get_pixel(1, 1)[0];
         assert_eq!(valeur, 255);
-        // Masque inconnu : no-op.
+        // Unknown mask: no-op.
         assert!(matches!(
             worker.apply(PhotoEngineCommand::PaintMask {
                 owner: id,
@@ -3451,8 +3451,8 @@ mod single_pass_tests {
 
     #[test]
     fn hidden_layer_keeps_thumb_and_resolves_once() {
-        // Les calques masqués ne contribuent pas au composite mais
-        // gardent leur miniature (parité avec l'ancien chemin thumb()).
+        // Hidden layers do not contribute to the composite but
+        // keep their thumbnail (parity with the old thumb() path).
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         let hidden = worker.document.root[0].id();
         worker.apply(PhotoEngineCommand::ToggleLayerVisibility(hidden));
@@ -3484,13 +3484,13 @@ mod single_pass_tests {
     }
 
     // ------------------------------------------------------------------
-    // Phase 6E — pipeline incrémental réellement utilisé par le worker.
+    // Phase 6E — incremental pipeline actually used by the worker.
     // ------------------------------------------------------------------
 
     fn painted_doc() -> (Document, Uuid) {
         use photo_engine::{LayerNode, PixelLayer};
-        // Document 64² avec contenu contrasté (bords francs) : fond opaque +
-        // carré décalé.
+        // 64² document with contrasted content (hard edges): opaque background +
+        // offset square.
         let fond = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             64,
             64,
@@ -3513,16 +3513,16 @@ mod single_pass_tests {
 
     #[test]
     fn incremental_preview_matches_legacy_clip_et_infini() {
-        // Les deux modes : incrémental (worker) == legacy (pleine cadre).
+        // Both modes: incremental (worker) == legacy (full frame).
         for clip in [true, false] {
             let (doc, _) = painted_doc();
             let mut worker = EngineWorker::new(doc);
             worker.apply(PhotoEngineCommand::SetPreviewClip { clip });
-            // Référence legacy sur le même état document.
+            // Legacy reference on the same document state.
             let legacy = render_preview(worker.test_document(), clip)
                 .expect("legacy")
                 .rgba;
-            // Forcer le re-rendu incrémental (le clip a déjà rendu une fois).
+            // Force the incremental re-render (the clip already rendered once).
             worker.render_worker.cache_mut().invalidate_all();
             let frame = AppearanceFrameCache::build(worker.test_document());
             let (preview, _, _) = worker.render_preview_incremental(&frame);
@@ -3536,7 +3536,7 @@ mod single_pass_tests {
 
     fn painted_big_doc() -> (Document, Uuid) {
         use photo_engine::{LayerNode, PixelLayer};
-        // Document 300² (4 tuiles à 256 px) : fond identité + carré.
+        // 300² document (4 tiles at 256 px): identity background + square.
         let fond = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             300,
             300,
@@ -3559,8 +3559,8 @@ mod single_pass_tests {
 
     #[test]
     fn incremental_warm_reuse_apres_second_stroke() {
-        // Deuxième peinture loin : tuiles propres réutilisées (hits > 0),
-        // aperçu identique au legacy pleine cadre.
+        // Second paint far away: clean tiles reused (hits > 0),
+        // preview identical to full-frame legacy.
         let (doc, fond) = painted_big_doc();
         let mut worker = EngineWorker::new(doc);
         let stroke = |worker: &mut EngineWorker, points: Vec<(f32, f32)>| {
@@ -3583,7 +3583,7 @@ mod single_pass_tests {
         let legacy = render_preview(worker.test_document(), false)
             .expect("legacy")
             .rgba;
-        // Dernier aperçu incrémental == legacy (via une relecture forcée).
+        // Last incremental preview == legacy (via a forced re-read).
         worker.render_worker.cache_mut().invalidate_all();
         let frame = AppearanceFrameCache::build(worker.test_document());
         let (preview, _, _) = worker.render_preview_incremental(&frame);
@@ -3592,8 +3592,8 @@ mod single_pass_tests {
 
     #[test]
     fn incremental_scope_change_reste_correct() {
-        // Calque déplacé hors document : scope changé ⇒ invalidation totale,
-        // aperçu toujours égal au legacy.
+        // Layer moved out of the document: changed scope ⇒ total invalidation,
+        // preview still equal to legacy.
         let (doc, id) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::MoveLayer {
@@ -3612,8 +3612,8 @@ mod single_pass_tests {
 
     #[test]
     fn surface_pixels_written_partiel_de_bout_en_bout() {
-        // Phase 6G : premier stroke ⇒ surface pleine (300²) ; second loin ⇒
-        // seule la tuile (256,256,44,44) est réécrite.
+        // Phase 6G: first stroke ⇒ full surface (300²); second far away ⇒
+        // only tile (256,256,44,44) is rewritten.
         let (doc, fond) = painted_big_doc();
         let mut worker = EngineWorker::new(doc);
         let stroke = |worker: &mut EngineWorker, points: Vec<(f32, f32)>| {
@@ -3637,9 +3637,9 @@ mod single_pass_tests {
 
     #[test]
     fn appearance_frame_rebuild_seulement_touche() {
-        // §2.7 6G.2/6G.3 : paint A → miniature secondaire de A seule (B hit),
-        // cadre sans preview ni thumb synchrone ; SetOpacity A (source
-        // inchangée) → 0 rebuild. Pixels == legacy dans tous les cas.
+        // §2.7 6G.2/6G.3: paint A → secondary thumbnail of A only (B hit),
+        // frame without preview or synchronous thumb; SetOpacity A (source
+        // unchanged) → 0 rebuilds. Pixels == legacy in all cases.
         let (doc, fond) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
@@ -3663,7 +3663,7 @@ mod single_pass_tests {
         let frame = AppearanceFrameCache::build(worker.test_document());
         let (preview, _, _) = worker.render_preview_incremental(&frame);
         assert_eq!(preview.expect("incrémental").rgba, legacy);
-        // Opacité : la source ne change pas ⇒ hit, aucun rebuild.
+        // Opacity: the source does not change ⇒ hit, no rebuild.
         let carre = worker.test_document().root[1].id();
         worker.apply(PhotoEngineCommand::SetOpacity {
             layer: carre,
@@ -3676,11 +3676,11 @@ mod single_pass_tests {
 
     #[test]
     fn marquage_paint_precis_pas_global() {
-        // La peinture marque une région bornée, pas tout le document.
+        // Painting marks a bounded region, not the whole document.
         let (doc, id) = painted_doc();
         let mut worker = EngineWorker::new(doc);
-        // `mutate` seul (sans `respond`) : le marquage est observable avant
-        // que la détection de scope du premier rendu ne l'absorbe.
+        // `mutate` alone (without `respond`): the marking is observable before
+        // the first render's scope detection absorbs it.
         let _ = worker.mutate(PhotoEngineCommand::PaintStroke {
             layer: id,
             points: vec![(8.0, 8.0)],
@@ -3696,14 +3696,14 @@ mod single_pass_tests {
             (bounds.area()) < (64 * 64),
             "marquage précis, pas global : {bounds:?}"
         );
-        // Empreinte : boîte [5,11]² + offset (20,12) = [25,31]×[17,23].
+        // Footprint: box [5,11]² + offset (20,12) = [25,31]×[17,23].
         assert!(dirty.intersects(TileRegion::new(20, 12, 16, 16)));
         assert!(!dirty.intersects(TileRegion::new(48, 48, 16, 16)));
     }
 
     #[test]
     fn marquage_structurel_global() {
-        // Opération structurelle ⇒ repli global sûr.
+        // Structural operation ⇒ safe global fallback.
         let (doc, _) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         let _ = worker.mutate(PhotoEngineCommand::AddEmptyLayer);
@@ -3732,10 +3732,10 @@ mod single_pass_tests {
 
     #[test]
     fn undo_rewind_ne_sert_jamais_un_thumb_perime() {
-        // Revue §6 : undo restaure (version, Arc) anciens. Le store versionné
-        // ne doit jamais servir la miniature d'un autre contenu, et le
-        // pending ne doit pas rester coincé (pas d'intention obsolète qui
-        // survivrait et polluerait les soumissions suivantes).
+        // §6 review: undo restores the old (version, Arc). The versioned store
+        // must never serve another content's thumbnail, and pending
+        // must not get stuck (no stale intent surviving
+        // and polluting later submissions).
         let (doc, _) = painted_doc();
         let fond = doc.root[0].id();
         let mut worker = EngineWorker::new(doc);
@@ -3749,13 +3749,13 @@ mod single_pass_tests {
                 .is_some_and(|(_, v)| *v == version1),
             "store alimenté en v1 (inline)"
         );
-        // Undo : le vivant redevient l'état d'avant (même Arc).
+        // Undo: the live state becomes the before-state again (same Arc).
         let layers = layers_of(&worker.apply(PhotoEngineCommand::Undo));
         let version0 = live_version(&worker, fond);
         assert_ne!(version0, version1, "version restaurée en arrière");
-        // Après undo, la miniature servie (recalculée inline pour v0, ou
-        // absente) porte TOUJOURS la version live — jamais du contenu v1
-        // estampillé v0.
+        // After undo, the served thumbnail (recomputed inline for v0, or
+        // absent) ALWAYS carries the live version — never v1 content
+        // stamped v0.
         let thumb_apres_undo = layers
             .iter()
             .find(|l| l.id == fond)
@@ -3766,8 +3766,8 @@ mod single_pass_tests {
                 "miniature servie == version live (pas de v1 périmée)"
             );
         }
-        // Nouvelle peinture : nouveau numéro global (jamais de réutilisation),
-        // soumission normale, store à jour, pending vide.
+        // New paint: new global number (never reused),
+        // normal submission, store up to date, pending empty.
         paint_fond(&mut worker, fond, 40.0, 40.0);
         let version2 = live_version(&worker, fond);
         assert_ne!(version2, version1);
@@ -3795,13 +3795,13 @@ mod single_pass_tests {
     }
 
     // ------------------------------------------------------------------
-    // Phase 6G.3 — canvas d'abord, miniatures ensuite (déterministe).
+    // Phase 6G.3 — canvas first, thumbnails next (deterministic).
     // ------------------------------------------------------------------
 
     #[test]
     fn submit_decision_branches() {
-        // Pure : store à jour ⇒ rien ; intention identique ⇒ coalescé ;
-        // sinon ⇒ soumettre.
+        // Pure: store up to date ⇒ nothing; identical intent ⇒ coalesced;
+        // otherwise ⇒ submit.
         assert_eq!(
             EngineWorker::submit_decision(true, None, 7),
             SubmitDecision::Fresh
@@ -3818,7 +3818,7 @@ mod single_pass_tests {
             EngineWorker::submit_decision(false, Some(6), 7),
             SubmitDecision::Submit
         );
-        // Store à jour mais intention résiduelle : la fraîcheur prime.
+        // Store up to date but residual intent: freshness wins.
         assert_eq!(
             EngineWorker::submit_decision(true, Some(7), 7),
             SubmitDecision::Coalesce
@@ -3827,13 +3827,13 @@ mod single_pass_tests {
 
     #[test]
     fn ingest_rejette_perime_ordre_inverse() {
-        // §16 : B calculé puis A (plus ancien) → A rejeté, B conservé.
-        // Aucun thread : résultats synthétisés, garde seule.
+        // §16: B computed then A (older) → A rejected, B kept.
+        // No thread: synthesized results, guard alone.
         use crate::ui::thumb_worker::ThumbDone;
         let (doc, fond) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
-        // Version live après une peinture.
+        // Live version after a paint.
         worker.apply(PhotoEngineCommand::PaintStroke {
             layer: fond,
             points: vec![(8.0, 8.0)],
@@ -3846,14 +3846,14 @@ mod single_pass_tests {
             Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
             _ => panic!("calque"),
         };
-        // (Le mode inline a déjà stocké la miniature fraîche.)
+        // (Inline mode already stored the fresh thumbnail.)
         assert!(
             worker
                 .thumb_store
                 .get(&fond)
                 .is_some_and(|(_, v)| *v == live_version)
         );
-        // Faux "ancien" résultat (version - 1, contenu arbitraire) : rejeté.
+        // Fake "old" result (version - 1, arbitrary content): rejected.
         let stale = ThumbDone {
             layer: fond,
             version: live_version.wrapping_sub(1),
@@ -3864,7 +3864,7 @@ mod single_pass_tests {
             from_cache: false,
         };
         assert!(!worker.ingest_thumb_done(stale), "périmé rejeté");
-        // Le frais est intact.
+        // The fresh one is intact.
         assert!(
             worker
                 .thumb_store
@@ -3875,9 +3875,9 @@ mod single_pass_tests {
 
     #[test]
     fn canvas_first_puis_thumbnail_async() {
-        // §18 : en mode threadé, la réponse canvas part SANS attendre la
-        // miniature (pending observable) ; le résultat finit par arriver et
-        // vaut l'octet du calcul direct.
+        // §18: in threaded mode, the canvas response leaves WITHOUT waiting for
+        // the thumbnail (observable pending); the result eventually arrives and
+        // matches the direct computation byte-for-byte.
         let (doc, fond) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
@@ -3894,8 +3894,8 @@ mod single_pass_tests {
             Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
             _ => panic!("calque"),
         };
-        // La réponse est déjà revenue (canvas) avec l'intention en attente —
-        // déterministe : aucune attente du thread.
+        // The response already came back (canvas) with the intent pending —
+        // deterministic: no thread wait.
         assert!(
             worker
                 .thumb_pending
@@ -3903,8 +3903,8 @@ mod single_pass_tests {
                 .is_some_and(|(v, _)| *v == live_version),
             "intention en attente pendant que le canvas est servi"
         );
-        // Convergence : le résultat finit par arriver (timeout large =
-        // robustesse, pas de race : l'échec signifierait un thread mort).
+        // Convergence: the result eventually arrives (wide timeout =
+        // robustness, not a race: failure would mean a dead thread).
         let start = std::time::Instant::now();
         loop {
             worker.poll_thumb_results();
@@ -3921,7 +3921,7 @@ mod single_pass_tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        // Octets == calcul direct (même fonction, mêmes entrées).
+        // Bytes == direct computation (same function, same inputs).
         let stored = worker.thumb_store.get(&fond).expect("stockée").0.clone();
         let layer = match worker.test_document().find(fond) {
             Some(photo_engine::LayerNode::Pixel(l)) => l.clone(),
@@ -3938,8 +3938,8 @@ mod single_pass_tests {
 
     #[test]
     fn drain_extras_sauf_si_deja_embarquee() {
-        // §4A : une fraîcheur NON embarquée part en extra ; déjà embarquée
-        // ⇒ rien (pas de doublon). Déterministe, sans thread (vraies réponses).
+        // §4A: a NON-embedded freshness goes out as an extra; already embedded
+        // ⇒ nothing (no duplicate). Deterministic, no thread (real responses).
         let (doc, fond) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         let layers = layers_of(&worker.apply(PhotoEngineCommand::Refresh));
@@ -3947,8 +3947,8 @@ mod single_pass_tests {
             layers.iter().any(|l| l.id == fond && l.thumb.is_some()),
             "inline : snapshot embarque les miniatures"
         );
-        // L'inline a déjà marqué les deux calques comme frais : le drain
-        // sans réponse principale les émet tous les deux (cas async).
+        // Inline already marked both layers as fresh: the drain
+        // without a main response emits both (async case).
         let extras = worker.drain_thumb_extras(&[]);
         assert_eq!(extras.len(), 2, "miniatures secondaires après canvas");
         assert!(
@@ -3957,7 +3957,7 @@ mod single_pass_tests {
                 .all(|r| matches!(r, PhotoEngineResponse::ThumbnailUpdated { .. })),
             "que des extras"
         );
-        // Mêmes fraîcheurs, réponse principale les embarquant : rien.
+        // Same freshnesses, main response embedding them: nothing.
         worker.thumb_fresh.push(fond);
         assert!(
             worker.drain_thumb_extras(&layers).is_empty(),
@@ -3966,12 +3966,12 @@ mod single_pass_tests {
     }
 
     // ------------------------------------------------------------------
-    // Phase 6G.1 — profilage end-to-end (diagnostic, aucune optimisation).
+    // Phase 6G.1 — end-to-end profiling (diagnostics, no optimization).
     //
-    // Les tests rapides (512²) verrouillent les VOLUMES (déterministes) ;
-    // les chronos sont rapportés par les benches `#[ignore]` en release.
-    // Règle : jamais d'assert sur un temps (matériel variable), seulement
-    // sur des événements et des volumes de travail.
+    // Fast tests (512²) lock VOLUMES (deterministic);
+    // timings are reported by `#[ignore]` benches in release.
+    // Rule: never assert on a duration (variable hardware), only
+    // on events and work volumes.
     // ------------------------------------------------------------------
 
     fn bench_doc(size: u32) -> (Document, Uuid) {
@@ -4005,7 +4005,7 @@ mod single_pass_tests {
 
     #[test]
     fn profile_volumes_paint_512() {
-        // Volumes déterministes d'une petite peinture sur 512².
+        // Deterministic volumes of a small paint on 512².
         let (doc, fond) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let paint = |worker: &mut EngineWorker, x: f32, y: f32| {
@@ -4032,7 +4032,7 @@ mod single_pass_tests {
 
     #[test]
     fn profile_volumes_toggle_512() {
-        // Toggle ON/OFF : volumes symétriques, pas de surprise.
+        // ON/OFF toggle: symmetric volumes, no surprises.
         let (doc, _) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let id = worker.test_document().root[1].id();
@@ -4041,29 +4041,29 @@ mod single_pass_tests {
         assert_eq!((off.cache_misses, off.cache_hits), (4, 0), "froid complet");
         worker.apply(PhotoEngineCommand::ToggleLayerVisibility(id));
         let on = last_metrics(&worker);
-        // Empreinte 128² en (170,128) : à cheval sur x=256 ⇒ 2 tuiles.
+        // 128² footprint at (170,128): straddling x=256 ⇒ 2 tiles.
         assert_eq!((on.cache_misses, on.cache_hits), (2, 2));
         assert_eq!(on.surface_pixels_written, 2 * 256 * 256);
-        // §2.5/§13 : ni source ni filtres touchés ⇒ aucun rebuild synchrone.
+        // §2.5/§13: neither source nor filters touched ⇒ no synchronous rebuild.
         assert_eq!(on.thumb_rebuilds, 0);
         assert_eq!(on.preview_rebuilds, 0);
-        // §2.5 : la visibilité ne touche ni source ni filtres ⇒ les chaînes
-        // ne rejouent pas (compositing d'état seulement).
+        // §2.5: visibility touches neither source nor filters ⇒ chains
+        // do not replay (state-only compositing).
         assert_eq!(on.thumb_rebuilds, 0, "aucune apparence recalculée");
         assert_eq!(on.preview_rebuilds, 0);
     }
 
     #[test]
     fn profile_volumes_opacity_512() {
-        // Deux réglages : chaque passe recalcule l'empreinte (coalescé historique).
+        // Two settings: each pass recomputes the footprint (history-coalesced).
         let (doc, _) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let id = worker.test_document().root[1].id();
         for opacity in [30.0, 70.0] {
             worker.apply(PhotoEngineCommand::SetOpacity { layer: id, opacity });
         }
-        // Second réglage (coalescé) : seule l'empreinte est réévaluée
-        // (128² à cheval sur x=256 ⇒ 2 tuiles).
+        // Second setting (coalesced): only the footprint is re-evaluated
+        // (128² straddling x=256 ⇒ 2 tiles).
         let m = last_metrics(&worker);
         assert_eq!((m.cache_misses, m.cache_hits), (2, 2));
         assert_eq!(m.surface_pixels_written, 2 * 256 * 256);
@@ -4071,8 +4071,8 @@ mod single_pass_tests {
 
     #[test]
     fn profile_legacy_vs_incremental_512() {
-        // Même document : legacy (pleine cadre) == incrémental (worker), octets
-        // ET dimensions ; chronos muraux relevés (rapport uniquement).
+        // Same document: legacy (full frame) == incremental (worker), bytes
+        // AND dimensions; wall timings recorded (report only).
         let (doc, _) = bench_doc(512);
         let t_legacy = std::time::Instant::now();
         let legacy = render_preview(&doc, false).expect("legacy");
@@ -4093,10 +4093,10 @@ mod single_pass_tests {
 
     #[test]
     fn profile_warm_ecrit_rien() {
-        // §26 : frame chaude (même requête, dirty présenté donc clear) ⇒
-        // 0 rendu + 0 écriture surface. Le `clear_dirty` simule l'étape de
-        // présentation du contrat 6D (aucun appel production ne le fait
-        // aujourd'hui — voir diagnostic_dirty_accumulates).
+        // §26: hot frame (same request, presented dirty hence clear) ⇒
+        // 0 renders + 0 surface writes. `clear_dirty` simulates the 6D
+        // contract's presentation step (no production call does it
+        // today — see diagnostic_dirty_accumulates).
         let (doc, _) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
@@ -4122,9 +4122,9 @@ mod single_pass_tests {
 
     #[test]
     fn dirty_consumed_after_render_stable() {
-        // §1.3 6G.2 (ex-constat 6G.1 corrigé) : paint A → dirty=A → render A
-        // → dirty soldé ; paint B (même tuile) → dirty=A → render A seule.
-        // Plus de dérive monotone : le dirty est consommé après production.
+        // §1.3 6G.2 (ex-6G.1 finding, fixed): paint A → dirty=A → render A
+        // → dirty settled; paint B (same tile) → dirty=A → render A only.
+        // No more monotonic drift: dirty is consumed after production.
         let (doc, fond) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let stroke = |worker: &mut EngineWorker, x: f32, y: f32| {
@@ -4144,8 +4144,8 @@ mod single_pass_tests {
             worker.render_worker.cache().dirty().is_empty(),
             "dirty soldé après rendu"
         );
-        // Premier rendu : l'init de scope vide le cache ET le dirty
-        // (invalidate_all) — rien à solder par tuile.
+        // First render: scope init drains the cache AND the dirty
+        // (invalidate_all) — nothing to settle per tile.
         assert_eq!(first.dirty_tiles_cleared, 0);
         stroke(&mut worker, 24.0, 24.0);
         let second = last_metrics(&worker);
@@ -4171,19 +4171,19 @@ mod single_pass_tests {
 
     #[test]
     fn long_session_no_drift_512() {
-        // §1.4 + §10 (version rapide, 50 mutations) : même zone, 1 rendu par
-        // mutation, dirty vide à la fin. La version 2048²×100 est en bench
-        // release ignoré (bench_long_session_2048).
+        // §1.4 + §10 (fast version, 50 mutations): same zone, 1 render per
+        // mutation, empty dirty at the end. The 2048²×100 version is an ignored
+        // release bench (bench_long_session_2048).
         let (doc, fond) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let id = worker.test_document().root[1].id();
-        // Amorçage froid (scope init : tout est rendu une fois).
+        // Cold start (scope init: everything rendered once).
         worker.apply(PhotoEngineCommand::Refresh);
         let mut total_renders = 0u64;
         for i in 0..50 {
             if i % 10 == 9 {
-                // Opérations variées mais locales : toggle + re-toggle
-                // (empreinte 2 tuiles à cheval sur x=256, dans les deux sens).
+                // Varied but local operations: toggle + re-toggle
+                // (2-tile footprint straddling x=256, both ways).
                 worker.apply(PhotoEngineCommand::ToggleLayerVisibility(id));
                 assert_eq!(last_metrics(&worker).cache_misses, 2);
                 worker.apply(PhotoEngineCommand::ToggleLayerVisibility(id));
@@ -4214,9 +4214,9 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_long_session_2048() {
-        // §10 6G.2 : 100 mutations mixtes sur 2048² — dirty soldé à chaque
-        // frame (pas de dérive), apparences ciblées, previews ciblés.
-        // Recommandé release : ~10-20 s.
+        // §10 6G.2: 100 mixed mutations on 2048² — dirty settled each
+        // frame (no drift), targeted appearances, targeted previews.
+        // Release recommended: ~10-20 s.
         let (doc, fond) = bench_doc(2048);
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
@@ -4270,7 +4270,7 @@ mod single_pass_tests {
         );
     }
 
-    /// Min/médiane/p95 sur des microsecondes (benchmarks release).
+    /// Min/median/p95 over microseconds (release benchmarks).
     fn stats_us(samples: &mut [u128]) -> (u128, u128, u128) {
         samples.sort_unstable();
         let min = samples[0];
@@ -4279,7 +4279,7 @@ mod single_pass_tests {
         (min, median, p95)
     }
 
-    /// Ligne de résultat benchmark (lue avec `--nocapture` en release).
+    /// Benchmark result line (read with `--nocapture` in release).
     fn bench_row(
         op: &str,
         size: u32,
@@ -4352,10 +4352,10 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_512_all() {
-        // Lignes BENCH 512² froid+chaud : paint, toggle, opacity (5 reps).
+        // 512² cold+hot BENCH lines: paint, toggle, opacity (5 reps).
         let (doc, fond) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
-        // Paint froid puis chaud.
+        // Cold paint then hot.
         let cold = vec![bench_paint_apply(&mut worker, fond, 20.0, 20.0)];
         let m_cold = last_metrics(&worker);
         bench_row("paint", 512, "cold", &cold, &m_cold, &worker.metrics.thumb);
@@ -4365,7 +4365,7 @@ mod single_pass_tests {
         }
         let m_warm = last_metrics(&worker);
         bench_row("paint", 512, "warm", &warm, &m_warm, &worker.metrics.thumb);
-        // Toggle froid (carreau neuf) : worker frais pour un vrai froid.
+        // Cold toggle (fresh tile): fresh worker for a true cold start.
         let (doc, _) = bench_doc(512);
         let mut worker = EngineWorker::new(doc);
         let id = worker.test_document().root[1].id();
@@ -4403,8 +4403,8 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_paint_2048() {
-        // Recommandé : `cargo test --release -p photo bench_paint_2048 -- --ignored --nocapture`.
-        // Stroke < 64×64 effectifs sur 2048², froid puis chaud (7 reps).
+        // Recommended: `cargo test --release -p photo bench_paint_2048 -- --ignored --nocapture`.
+        // Sub-64×64 stroke on 2048², cold then hot (7 reps).
         let (doc, fond) = bench_doc(2048);
         let mut worker = EngineWorker::new(doc);
         let mut cold = Vec::new();
@@ -4419,7 +4419,7 @@ mod single_pass_tests {
         let m_cold = last_metrics(&worker);
         let mut warm = Vec::new();
         for _ in 0..7 {
-            // Même zone repeinte : tuile déjà chaude après la 1re.
+            // Same zone repainted: tile already hot after the 1st.
             warm.push(bench_paint_apply(&mut worker, fond, 20.0, 20.0));
         }
         let m_warm = last_metrics(&worker);
@@ -4430,7 +4430,7 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_paint_4096() {
-        // Stroke < 64×64 sur 4096², froid puis chaud (5 reps).
+        // Sub-64×64 stroke on 4096², cold then hot (5 reps).
         let (doc, fond) = bench_doc(4096);
         let mut worker = EngineWorker::new(doc);
         let mut cold = Vec::new();
@@ -4478,7 +4478,7 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_open_2048() {
-        // Fichier PNG réel (généré) : décodage inclus, puis composite.
+        // Real PNG file (generated): decoding included, then composite.
         let dir = std::env::temp_dir().join("cygnus-bench-open");
         std::fs::create_dir_all(&dir).ok();
         let path = dir.join("bench-2048.png");
@@ -4509,8 +4509,8 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_presentation_ui_512() {
-        // Recommandé release : worker paint → réponse → apply_response avec
-        // Context headless. Mesure ColorImage + texture.set + thumbs + total.
+        // Release recommended: worker paint → response → apply_response with
+        // headless Context. Measures ColorImage + texture.set + thumbs + total.
         use crate::state::{PhotoUiState, apply_response};
         let ctx = egui::Context::default();
         let (doc, fond) = bench_doc(512);
@@ -4523,7 +4523,7 @@ mod single_pass_tests {
             color: [0, 0, 255],
             opacity: 1.0,
         });
-        // Rejoue la même réponse N fois sur des états frais (uploads + bytes).
+        // Replays the same response N times on fresh states (uploads + bytes).
         let mut samples = Vec::new();
         for _ in 0..7 {
             let response = worker.apply(PhotoEngineCommand::Refresh);
@@ -4562,7 +4562,7 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_presentation_ui_2048() {
-        // UI 2048² : 3 applies (froid partiel), millis par étape.
+        // 2048² UI: 3 applies (partial cold), millis per step.
         use crate::state::{PhotoUiState, apply_response};
         let ctx = egui::Context::default();
         let (doc, fond) = bench_doc(2048);
@@ -4601,7 +4601,7 @@ mod single_pass_tests {
     #[test]
     #[ignore]
     fn bench_legacy_vs_incremental_2048() {
-        // Legacy pleine cadre vs worker incrémental, même document 2048².
+        // Full-frame legacy vs incremental worker, same 2048² document.
         let (doc, _) = bench_doc(2048);
         let t_legacy = std::time::Instant::now();
         let legacy = render_preview(&doc, false).expect("legacy");

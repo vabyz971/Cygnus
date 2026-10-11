@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Composants configurables du design system.
+//! Configurable design-system components.
 //!
-//! Chaque composant prend le [`CygnusTheme`](crate::theme::CygnusTheme)
-//! en paramètre de `show` : aucune valeur visuelle en dur. Les
-//! variantes passent par des enums ([`ButtonVariant`], [`ButtonSize`]),
-//! jamais par des types spécialisés.
+//! Every component takes the [`CygnusTheme`](crate::theme::CygnusTheme)
+//! as its `show` parameter: no hardcoded visual value. Variants
+//! go through enums ([`ButtonVariant`], [`ButtonSize`]),
+//! never through specialized types.
 
 pub mod button;
 pub mod checkbox;

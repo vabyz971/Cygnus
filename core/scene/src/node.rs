@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœud sémantique : identité, nature, placement, apparence, masques.
+//! Semantic node: identity, nature, placement, appearance, masks.
 //!
-//! Un [`SceneNode`] ne porte QUE du sens document : ni pixels, ni chemins
-//! vectoriels détaillés, ni textures, ni état renderer. Les charges lourdes
-//! restent dans les moteurs de domaine (pixels en `photo-engine`, tracés en
-//! `vector-engine`…) et référencent le nœud par [`SceneNodeId`].
+//! A [`SceneNode`] carries ONLY document meaning: no pixels, no detailed
+//! vector paths, no textures, no renderer state. Heavy payloads
+//! stay in the domain engines (pixels in `photo-engine`, paths in
+//! `vector-engine`…) and reference the node via [`SceneNodeId`].
 //!
-//! Variants couverts : groupes, images raster, formes vectorielles
-//! (marqueur de nature — la géométrie détaillée appartient au moteur
-//! vectoriel), texte, clips vidéo, éléments de mise en page. Pas de
-//! variant audio : l'audio ne fait pas partie de ce graphe.
+//! Covered variants: groups, raster images, vector shapes
+//! (nature marker — detailed geometry belongs to the vector
+//! engine), text, video clips, layout elements. No
+//! audio variant: audio is not part of this graph.
 
 use std::collections::HashMap;
 
@@ -32,53 +32,53 @@ use math_utils::Transform2D;
 
 use crate::{Revision, SceneNodeId};
 
-/// Nature sémantique d'un nœud.
+/// Semantic nature of a node.
 ///
-/// Les variants à charge lourde (`Image`, `Shape`, `Video`) sont des
-/// MARQUEURS : le contenu (pixels, tracés, médias) vit dans le moteur du
-/// domaine et pointe vers le [`SceneNodeId`]. Seul [`NodeKind::Text`]
-/// embarque sa donnée (chaîne + taille), assez légère pour rester ici.
+/// Heavy variants (`Image`, `Shape`, `Video`) are
+/// MARKERS: content (pixels, paths, media) lives in the domain
+/// engine and points to the [`SceneNodeId`]. Only [`NodeKind::Text`]
+/// embeds its data (string + size), light enough to stay here.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
-    /// Conteneur hiérarchique (groupes imbriqués à volonté).
+    /// Hierarchical container (freely nested groups).
     Group,
-    /// Image raster — pixels détenus par le moteur du domaine.
+    /// Raster image — pixels owned by the domain engine.
     Image,
-    /// Forme vectorielle — tracé détaillé détenu par `vector-engine`.
+    /// Vector shape — detailed path owned by `vector-engine`.
     Shape(ShapeKind),
-    /// Texte — donnée légère embarquée.
+    /// Text — embedded lightweight data.
     Text(TextData),
-    /// Clip vidéo — médias et timeline détenus par `video-engine`.
+    /// Video clip — media and timeline owned by `video-engine`.
     Video,
-    /// Élément de mise en page (cadre, page, gabarit) — détails en
-    /// `layout-engine`, qui ne dépendra jamais de `wgpu`.
+    /// Layout element (frame, page, template) — details in
+    /// `layout-engine`, which will never depend on `wgpu`.
     Layout,
 }
 
-/// Nature d'une forme — marqueur uniquement, sans géométrie.
+/// Nature of a shape — marker only, no geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeKind {
-    /// Rectangle (plein ou contour selon le style du moteur vectoriel).
+    /// Rectangle (filled or stroked per the vector engine's style).
     Rectangle,
-    /// Ellipse / cercle.
+    /// Ellipse / circle.
     Ellipse,
-    /// Tracé libre (courbes de Bézier) — défini en `vector-engine`.
+    /// Free path (Bézier curves) — defined in `vector-engine`.
     Path,
 }
 
-/// Donnée texte légère embarquée dans la scène.
+/// Lightweight text data embedded in the scene.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextData {
-    /// Contenu textuel.
+    /// Text content.
     pub text: String,
-    /// Corps en points.
+    /// Size in points.
     pub font_size: f32,
 }
 
 impl TextData {
-    /// Nouveau bloc texte.
+    /// New text block.
     pub fn new(text: impl Into<String>, font_size: f32) -> Self {
         Self {
             text: text.into(),
@@ -87,22 +87,22 @@ impl TextData {
     }
 }
 
-/// Masque sémantique attaché à un nœud : référence + interrupteurs.
+/// Semantic mask attached to a node: reference + switches.
 ///
-/// Comme pour les variants, seule la SÉMANTIQUE vit ici (quoi est masqué,
-/// actif, inversé). La couverture raster reste calculée par les moteurs.
+/// As with the variants, only SEMANTICS live here (what is masked,
+/// active, inverted). Raster coverage stays computed by the engines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Mask {
-    /// Nœud (ou asset) source du masque.
+    /// Node (or asset) sourcing the mask.
     pub id: SceneNodeId,
-    /// Faux = masque ignoré, réglages conservés.
+    /// False = mask ignored, settings kept.
     pub enabled: bool,
-    /// Vrai = couverture inversée.
+    /// True = inverted coverage.
     pub inverted: bool,
 }
 
 impl Mask {
-    /// Masque actif non inversé vers `id`.
+    /// Active non-inverted mask toward `id`.
     pub fn new(id: SceneNodeId) -> Self {
         Self {
             id,
@@ -112,37 +112,37 @@ impl Mask {
     }
 }
 
-/// Nœud de la scène : l'unité sémantique du document visuel.
+/// Scene node: the semantic unit of the visual document.
 ///
-/// Les champs sont publics en lecture ; toute mutation passe par
-/// [`crate::Scene`] afin de maintenir `parent`/`children` cohérents et
-/// d'allouer les [`Revision`] (voir [`crate::revision`]).
+/// Fields are publicly readable; every mutation goes through
+/// [`crate::Scene`] to keep `parent`/`children` consistent and
+/// to allocate [`Revision`]s (see [`crate::revision`]).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SceneNode {
-    /// Identifiant stable (persistance, sélection, historique).
+    /// Stable identifier (persistence, selection, history).
     pub id: SceneNodeId,
-    /// Nature sémantique (fixée à la création).
+    /// Semantic nature (fixed at creation).
     pub kind: NodeKind,
-    /// Parent direct (`None` = racine de la scène).
+    /// Direct parent (`None` = scene root).
     pub parent: Option<SceneNodeId>,
-    /// Enfants directs, dans l'ordre de document (index 0 = dessiné en premier).
+    /// Direct children, in document order (index 0 = drawn first).
     pub children: Vec<SceneNodeId>,
-    /// Transform LOCAL — seule géométrie stockée (voir [`crate::affine`]).
+    /// LOCAL transform — only stored geometry (see [`crate::affine`]).
     pub local: Transform2D,
-    /// Interrupteur de visibilité (combiné par ET avec les ancêtres).
+    /// Visibility switch (AND-combined with ancestors).
     pub visible: bool,
-    /// Opacité `0.0..=100.0` (combinée par produit avec les ancêtres).
+    /// Opacity `0.0..=100.0` (multiplied with ancestors).
     pub opacity: f32,
-    /// Masques sémantiques attachés.
+    /// Attached semantic masks.
     pub masks: Vec<Mask>,
-    /// Métadonnées libres (`titre`, `rôle`, ponts inter-moteurs…).
+    /// Free metadata (`title`, `role`, inter-engine bridges…).
     pub metadata: HashMap<String, String>,
-    /// Dernière révision ayant touché ce nœud ou sa sous-arborescence.
+    /// Last revision having touched this node or its subtree.
     pub revision: Revision,
 }
 
 impl SceneNode {
-    /// Opacité par défaut (pleinement opaque).
+    /// Default opacity (fully opaque).
     pub const FULL_OPACITY: f32 = 100.0;
 
     pub(crate) fn new(id: SceneNodeId, kind: NodeKind, revision: Revision) -> Self {
@@ -160,7 +160,7 @@ impl SceneNode {
         }
     }
 
-    /// Vrai pour [`NodeKind::Group`].
+    /// True for [`NodeKind::Group`].
     #[must_use]
     pub fn is_group(&self) -> bool {
         matches!(self.kind, NodeKind::Group)

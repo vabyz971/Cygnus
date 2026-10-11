@@ -14,23 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Grille de tuilage : conversions rect ↔ tuiles, clipping, invalidation.
+//! Tiling grid: rect ↔ tile conversions, clipping, invalidation.
 //!
-//! [`TileGrid`] décrit une surface (dimensions + taille de tuile + niveaux
-//! mip) ; [`TileGrid::invalidate`] est le point d'entrée
-//! `rect → tuiles affectées` (région élargie du padding, clippée à la
-//! surface) ; [`TileRange`] est le résultat SANS allocation (bornes
-//! inclusives + itérateur paresseux) ; [`TileRange::to_region`] fait le
-//! chemin inverse `tuiles → rectangle`.
+//! [`TileGrid`] describes a surface (dimensions + tile size + mip
+//! levels); [`TileGrid::invalidate`] is the entry point
+//! `rect → affected tiles` (padding-expanded region, clipped to the
+//! surface); [`TileRange`] is the result WITHOUT allocation (inclusive
+//! bounds + lazy iterator); [`TileRange::to_region`] walks the
+//! reverse path `tiles → rectangle`.
 
 use crate::{Padding, TileCoord, TileExtent, TileId, TileRegion};
 
-/// Grille de tuilage d'une surface (un niveau = une grille `taille >> level`).
+/// Tiling grid of a surface (one level = a `size >> level` grid).
 ///
-/// Niveau 0 = pleine résolution ; chaque niveau divise les dimensions par 2
-/// (plancher 1 px). Les tuiles hors surface (coordonnées négatives ou
-/// au-delà) existent pour les contenus débordants mais sont clippées à
-/// l'invalidation.
+/// Level 0 = full resolution; each level halves the dimensions
+/// (1 px floor). Off-surface tiles (negative coordinates or
+/// beyond) exist for overflowing content but are clipped at
+/// invalidation time.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TileGrid {
     extent: TileExtent,
@@ -40,13 +40,13 @@ pub struct TileGrid {
 }
 
 impl TileGrid {
-    /// Nouvelle grille (`levels` borné à ≥ 1 ; taille de tuile ≥ 1).
+    /// New grid (`levels` clamped to ≥ 1; tile size ≥ 1).
     #[must_use]
     pub fn new(tile: u32, width: u32, height: u32, levels: u8) -> Self {
         Self::with_extent(TileExtent::square(tile), width, height, levels)
     }
 
-    /// Grille à tuiles non carrées.
+    /// Non-square-tile grid.
     #[must_use]
     pub fn with_extent(extent: TileExtent, width: u32, height: u32, levels: u8) -> Self {
         Self {
@@ -57,32 +57,32 @@ impl TileGrid {
         }
     }
 
-    /// Taille de tuile (niveau 0).
+    /// Tile size (level 0).
     #[must_use]
     pub fn extent(&self) -> TileExtent {
         self.extent
     }
 
-    /// Dimensions de la surface (niveau 0).
+    /// Surface dimensions (level 0).
     #[must_use]
     pub fn surface(&self) -> (u32, u32) {
         (self.width, self.height)
     }
 
-    /// Nombre de niveaux mip.
+    /// Number of mip levels.
     #[must_use]
     pub fn level_count(&self) -> u8 {
         self.levels
     }
 
-    /// Dimensions au niveau (`>> level`, plancher 1).
+    /// Dimensions at the level (`>> level`, floor of 1).
     #[must_use]
     pub fn level_dims(&self, level: u8) -> (u32, u32) {
         let shift = u32::from(level.min(31));
         ((self.width >> shift).max(1), (self.height >> shift).max(1))
     }
 
-    /// Nombre de tuiles (colonnes, lignes) au niveau (plafond).
+    /// Number of tiles (columns, rows) at the level (ceiling).
     #[must_use]
     pub fn tile_count(&self, level: u8) -> (u32, u32) {
         let (w, h) = self.level_dims(level);
@@ -92,15 +92,15 @@ impl TileGrid {
         )
     }
 
-    /// La tuile couvre-t-elle au moins un pixel de la surface ?
+    /// Does the tile cover at least one surface pixel?
     #[must_use]
     pub fn covers_surface(&self, id: TileId) -> bool {
         let (nx, ny) = self.tile_count(id.level);
         id.level < self.levels && id.x >= 0 && id.y >= 0 && (id.x as u32) < nx && (id.y as u32) < ny
     }
 
-    /// Rectangle de pixels d'une tuile, clippé à la surface du niveau
-    /// (vide si la tuile est entièrement hors surface).
+    /// Pixel rectangle of a tile, clipped to the level's surface
+    /// (empty if the tile is fully off-surface).
     #[must_use]
     pub fn tile_rect(&self, id: TileId) -> TileRegion {
         let (w, h) = self.level_dims(id.level);
@@ -116,8 +116,8 @@ impl TileGrid {
         ))
     }
 
-    /// Rectangle d'une tuile exprimé en pixels niveau 0 (pour comparer au
-    /// viewport, toujours défini au niveau 0).
+    /// Rectangle of a tile expressed in level-0 pixels (to compare with the
+    /// viewport, always defined at level 0).
     #[must_use]
     pub fn tile_rect_l0(&self, id: TileId) -> TileRegion {
         let rect = self.tile_rect(id);
@@ -134,10 +134,10 @@ impl TileGrid {
         ))
     }
 
-    /// Tuiles couvrant `region` (pixels niveau 0) au niveau (clippées,
-    /// sans allocation). Région vide ou niveau inconnu ⇒ plage vide.
-    /// La couverture est conservative : tout pixel de la région touche
-    /// une tuile retournée.
+    /// Tiles covering `region` (level-0 pixels) at the level (clipped,
+    /// no allocation). Empty region or unknown level ⇒ empty range.
+    /// Coverage is conservative: every region pixel touches
+    /// a returned tile.
     #[must_use]
     pub fn tiles_for_rect(&self, region: &TileRegion, level: u8) -> TileRange {
         if region.is_empty() || level >= self.levels {
@@ -159,15 +159,15 @@ impl TileGrid {
         TileRange::new(level, x0, y0, x1, y1)
     }
 
-    /// `invalidate(rect)` : élargit du padding, clippe, convertit en tuiles.
-    /// Point d'entrée du pipeline pinceau → bbox → expansion → tuiles.
+    /// `invalidate(rect)`: expands by padding, clips, converts to tiles.
+    /// Entry point of the brush → bbox → expansion → tiles pipeline.
     #[must_use]
     pub fn invalidate(&self, region: &TileRegion, level: u8, pad: Padding) -> TileRange {
         self.tiles_for_rect(&region.pad(pad), level)
     }
 }
 
-/// Division entière plancher (les coordonnées peuvent être négatives).
+/// Flooring integer division (coordinates may be negative).
 fn div_floor(a: i64, b: i64) -> i32 {
     debug_assert!(b > 0);
     let q = a / b;
@@ -177,7 +177,7 @@ fn div_floor(a: i64, b: i64) -> i32 {
 }
 
 impl TileExtent {
-    /// Max par composante (bornes internes de la grille).
+    /// Per-component max (inner grid bounds).
     fn merge_max(self, other: Self) -> Self {
         Self {
             width: self.width.max(other.width),
@@ -186,27 +186,27 @@ impl TileExtent {
     }
 }
 
-/// Plage de tuiles : bornes INCLUSIVES + niveau, SANS allocation.
+/// Tile range: INCLUSIVE bounds + level, NO allocation.
 ///
-/// Vide ssi `x0 > x1 || y0 > y1`. `iter()` énumère en lignes (déterministe),
-/// `count()` est O(1), `to_region()` fait le chemin inverse vers le
-/// rectangle englobant.
+/// Empty iff `x0 > x1 || y0 > y1`. `iter()` enumerates row-major (deterministic),
+/// `count()` is O(1), `to_region()` walks the reverse path to the
+/// bounding rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TileRange {
-    /// Niveau mip.
+    /// Mip level.
     pub level: u8,
-    /// Colonne min (inclusive).
+    /// Min column (inclusive).
     pub x0: i32,
-    /// Ligne min (inclusive).
+    /// Min row (inclusive).
     pub y0: i32,
-    /// Colonne max (inclusive).
+    /// Max column (inclusive).
     pub x1: i32,
-    /// Ligne max (inclusive).
+    /// Max row (inclusive).
     pub y1: i32,
 }
 
 impl TileRange {
-    /// Plage vide (aucune tuile, niveau conservé pour le typage).
+    /// Empty range (no tiles, level kept for typing).
     #[must_use]
     pub fn empty(level: u8) -> Self {
         Self {
@@ -218,7 +218,7 @@ impl TileRange {
         }
     }
 
-    /// Plage bornée (vide si bornes inversées).
+    /// Bounded range (empty if inverted bounds).
     #[must_use]
     pub fn new(level: u8, x0: i32, y0: i32, x1: i32, y1: i32) -> Self {
         Self {
@@ -230,19 +230,19 @@ impl TileRange {
         }
     }
 
-    /// Une seule tuile.
+    /// A single tile.
     #[must_use]
     pub fn single(id: TileId) -> Self {
         Self::new(id.level, id.x, id.y, id.x, id.y)
     }
 
-    /// Vrai si aucune tuile.
+    /// True if no tiles.
     #[must_use]
     pub fn is_empty(self) -> bool {
         self.x0 > self.x1 || self.y0 > self.y1
     }
 
-    /// Nombre de tuiles (0 si vide).
+    /// Number of tiles (0 if empty).
     #[must_use]
     pub fn count(self) -> u64 {
         if self.is_empty() {
@@ -251,7 +251,7 @@ impl TileRange {
         (self.x1 as i64 - self.x0 as i64 + 1) as u64 * (self.y1 as i64 - self.y0 as i64 + 1) as u64
     }
 
-    /// La plage contient-elle la coordonnée (même niveau requis) ?
+    /// Does the range hold the coordinate (same level required)?
     #[must_use]
     pub fn contains(self, coord: TileCoord, level: u8) -> bool {
         self.level == level
@@ -262,7 +262,7 @@ impl TileRange {
             && coord.y <= self.y1
     }
 
-    /// Itérateur paresseux en lignes (aucune allocation).
+    /// Lazy row-major iterator (no allocation).
     #[must_use]
     pub fn iter(self) -> TileRangeIter {
         TileRangeIter {
@@ -272,7 +272,7 @@ impl TileRange {
         }
     }
 
-    /// Chemin inverse : rectangle englobant des tuiles (pixels niveau 0).
+    /// Reverse path: bounding rectangle of the tiles (level-0 pixels).
     #[must_use]
     pub fn to_region(self, grid: &TileGrid) -> TileRegion {
         if self.is_empty() {
@@ -286,7 +286,7 @@ impl TileRange {
     }
 }
 
-/// Itérateur de [`TileRange`] (lignes, sans allocation).
+/// Iterator over [`TileRange`] (rows, no allocation).
 #[derive(Debug, Clone, Copy)]
 pub struct TileRangeIter {
     range: TileRange,

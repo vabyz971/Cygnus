@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,8 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Miniatures asynchrones de l'[`EngineWorker`](super::worker::EngineWorker) :
-//! méthodes `impl EngineWorker` (store, soumission, ingestion, drainage).
+//! Async thumbnails of [`EngineWorker`](super::worker::EngineWorker):
+//! `impl EngineWorker` methods (store, submission, ingestion, drain).
 
 use super::commands::{
     DirtyMark, Mutation, PhotoEngineCommand, RenderInvalidation, SubmitDecision,
@@ -39,18 +39,18 @@ use std::thread::JoinHandle;
 use uuid::Uuid;
 
 impl EngineWorker {
-    /// Active la tâche secondaire threadée (production ; le worker vit sur
-    /// son propre thread de toute façon). Sans appel : mode inline
-    /// déterministe (tests, `apply_command` éphémère — aucun thread fui).
+    /// Enables the threaded secondary task (production; the worker lives on
+    /// its own thread anyway). Without a call: deterministic inline
+    /// mode (tests, ephemeral `apply_command` — no leaked thread).
     pub fn enable_thumb_thread(&mut self) {
         if !self.thumb_worker.is_threaded() {
             self.thumb_worker = crate::ui::thumb_worker::ThumbWorker::spawned();
         }
     }
 
-    /// Miniature connue d'un calque SI elle correspond à la version live
-    /// (sinon `None` : icône en attendant la tâche secondaire). Source
-    /// unique des miniatures du snapshot — jamais le renderer direct.
+    /// Known thumbnail of a layer IF it matches the live version
+    /// (else `None`: icon while waiting for the secondary task). Sole
+    /// source of snapshot thumbnails — never the renderer directly.
     pub(crate) fn stored_thumb(&self, id: Uuid) -> Option<photo_engine::RgbaBuf> {
         let live = match self.document.find(id) {
             Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
@@ -60,7 +60,7 @@ impl EngineWorker {
         (*version == live).then(|| thumb.clone())
     }
 
-    /// Retire du store les calques disparus (structurel, undo/redo…).
+    /// Evicts gone layers from the store (structural, undo/redo…).
     pub(crate) fn prune_thumb_store(&mut self) {
         let live: std::collections::HashSet<Uuid> =
             self.document.all_pixel_ids().into_iter().collect();
@@ -68,9 +68,9 @@ impl EngineWorker {
         self.thumb_pending.retain(|id, _| live.contains(id));
     }
 
-    /// Décision d'envoi pure (testable) : `Fresh` (rien à faire),
-    /// `Coalesce` (intention identique déjà en attente — absorbée),
-    /// `Submit` (nouvelle intention à transmettre).
+    /// Pure send decision (testable): `Fresh` (nothing to do),
+    /// `Coalesce` (identical intent already pending — absorbed),
+    /// `Submit` (new intent to forward).
     pub(crate) fn submit_decision(known: bool, pending: Option<u64>, live: u64) -> SubmitDecision {
         if pending == Some(live) {
             SubmitDecision::Coalesce
@@ -81,8 +81,8 @@ impl EngineWorker {
         }
     }
 
-    /// État replié courant d'un groupe (faux si `id` n'est pas un
-    /// groupe) : le toggle worker inverse cette valeur.
+    /// Current collapsed state of a group (false when `id` is not a
+    /// group): the worker toggle flips this value.
     pub(crate) fn is_collapsed(&self, id: Uuid) -> bool {
         matches!(
             self.document.find(id),
@@ -90,11 +90,11 @@ impl EngineWorker {
         )
     }
 
-    /// Soumet les miniatures périmées (version live inconnue du store ET non
-    /// déjà en attente à cette version). En mode inline : calcul + ingestion
-    /// immédiats (déterministe). En mode threadé : envoi non bloquant
-    /// (repli inline si le thread est tombé).
-    /// Retourne les versions soumises (diagnostic).
+    /// Submits stale thumbnails (live version unknown to the store AND not
+    /// already pending at that version). Inline mode: immediate compute +
+    /// ingestion (deterministic). Threaded mode: non-blocking send
+    /// (inline fallback when the thread died).
+    /// Returns the submitted versions (diagnostics).
     pub(crate) fn submit_stale_thumbs(&mut self) -> u64 {
         use crate::ui::thumb_worker::ThumbJob;
         self.prune_thumb_store();
@@ -112,7 +112,7 @@ impl EngineWorker {
             let pending = self.thumb_pending.get(&id).map(|(v, _)| *v);
             match Self::submit_decision(known, pending, live_version) {
                 SubmitDecision::Fresh => continue,
-                // Intention redondante absorbée (coalescing émetteur).
+                // Redundant intent absorbed (sender-side coalescing).
                 SubmitDecision::Coalesce => {
                     self.metrics.thumb.coalesced += 1;
                     continue;
@@ -133,8 +133,8 @@ impl EngineWorker {
                 .insert(id, (live_version, Arc::clone(&layer.source_image)));
             if self.thumb_worker.is_threaded() {
                 if !self.thumb_worker.submit(job.clone()) {
-                    // Thread tombé : repli inline sûr (pixels identiques,
-                    // cache 6G.4 partagé de l'instance inline).
+                    // Dead thread: safe inline fallback (identical pixels,
+                    // shared 6G.4 cache of the inline instance).
                     if let Some(done) = self.thumb_worker.compute_cached(&job) {
                         inline_done.push(done);
                     }
@@ -149,16 +149,16 @@ impl EngineWorker {
         submitted
     }
 
-    /// Ingère un résultat (garde §6-§7) : applicable ssi version ET source
-    /// correspondent encore au vivant — le compteur global monotone ne
-    /// réutilise jamais un numéro pour un contenu différent (les snapshots
-    /// préservant les `Arc`), et `ptr_eq` verrouille l'allocation.
-    /// Retourne vrai si stocké (frais). Utilisé par le poll threadé ET le
-    /// mode inline (même code).
+    /// Ingests a result (guard §6-§7): applicable iff version AND source
+    /// still match the live state — the monotonic global counter never
+    /// reuses a number for different content (snapshots
+    /// preserving the `Arc`s), and `ptr_eq` locks the allocation.
+    /// Returns true when stored (fresh). Used by the threaded poll AND
+    /// inline mode (same code).
     pub(crate) fn ingest_thumb_done(&mut self, done: crate::ui::thumb_worker::ThumbDone) -> bool {
-        // Comptage cache 6G.4 (HIT/MISS mesurés ici : couvre inline ET
-        // threadé, frais comme périmés — un HIT périmé reste un calcul
-        // évité, rejeté juste après par la garde).
+        // 6G.4 cache accounting (HIT/MISS measured here: covers inline AND
+        // threaded, fresh or stale — a stale HIT is still an avoided
+        // computation, rejected right after by the guard).
         if done.from_cache {
             self.metrics.thumb.cache_hits += 1;
         } else {
@@ -173,10 +173,10 @@ impl EngineWorker {
         {
             self.thumb_pending.remove(&done.layer);
         }
-        // Double facteur : version (compteur global monotone, jamais réutilisé
-        // pour un contenu différent — les snapshots préservant les `Arc`) ET
-        // identité d'allocation source (conservée à l'envoi ; repli version
-        // seule pour un résultat externe sans trace, p. ex. tests).
+        // Double factor: version (monotonic global counter, never reused
+        // for different content — snapshots preserving the `Arc`s) AND
+        // source allocation identity (kept at send time; version-only
+        // fallback for an untracked external result, e.g. tests).
         let fresh = match self.document.find(done.layer) {
             Some(photo_engine::LayerNode::Pixel(layer)) => {
                 let job_source = pending_source.as_ref().unwrap_or(&layer.source_image);
@@ -204,11 +204,11 @@ impl EngineWorker {
         }
     }
 
-    /// Draine les résultats threadés disponibles (jamais bloquant).
-    /// Retourne le nombre de frais ingérés.
+    /// Drains available threaded results (never blocking).
+    /// Returns the number of freshly ingested ones.
     pub(crate) fn poll_thumb_results(&mut self) -> u64 {
         let mut fresh = 0u64;
-        // Emprunt disjoint : drain d'abord (fin d'emprunt), ingestion ensuite.
+        // Disjoint borrow: drain first (borrow ends), ingestion next.
         let done: Vec<_> = self.thumb_worker.drain_results();
         for d in done {
             if self.ingest_thumb_done(d) {
@@ -218,12 +218,12 @@ impl EngineWorker {
         fresh
     }
 
-    /// Extras `ThumbnailUpdated` pour les miniatures fraîchement stockées
-    /// depuis le dernier drainage (mode lot uniquement — `apply` solo garde
-    /// le contrat 1:1). Saute les couches dont la réponse principale vient
-    /// DÉJÀ d'embarquer la version (cas inline : snapshot synchrone — aucun
-    /// doublon). Chaque extra porte la version calculée ; l'UI ignore tout
-    /// ce qui n'est pas plus récent que son cache (idempotent).
+    /// `ThumbnailUpdated` extras for freshly stored thumbnails
+    /// since the last drain (batch mode only — solo `apply` keeps
+    /// the 1:1 contract). Skips layers whose main response already
+    /// embedded the version (inline case: synchronous snapshot — no
+    /// duplicates). Each extra carries the computed version; the UI ignores
+    /// anything not newer than its cache (idempotent).
     pub(crate) fn drain_thumb_extras(
         &mut self,
         layers: &[PhotoLayerInfo],
@@ -238,8 +238,8 @@ impl EngineWorker {
                 if embedded == Some(*version) {
                     continue;
                 }
-                // Vérifie que le vivant correspond encore (sinon : périmé
-                // entre-temps — le prochain job le recalculera).
+                // Check the live state still matches (else: gone stale
+                // meanwhile — the next job will recompute it).
                 let current = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(l)) => Some(l.appearance_version),
                     _ => None,

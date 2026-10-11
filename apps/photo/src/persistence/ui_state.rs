@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Sauvegarde / restauration JSON du workspace.
+//! Workspace JSON save / restore.
 //!
-//! Les erreurs ne remontent jamais au boot : un JSON corrompu ou
-//! versionné différemment retombe sur le layout par défaut
+//! Errors never surface at boot: a corrupt or
+//! differently-versioned JSON falls back to the default layout
 //! ([`load_workspace_or_default`], [`load_dock_or_default`]).
 
 use crate::layout::dock::{PhotoDockTab, default_tree, ensure_history_tabbed, reconcile_canvases};
@@ -25,69 +25,69 @@ use egui_tiles::Tree;
 use ui_kit::layout::{WorkspaceState, load_workspace, save_workspace};
 use uuid::Uuid;
 
-/// Sérialise le workspace en JSON.
+/// Serializes the workspace to JSON.
 ///
-/// En attente du câblage disque (`preferences`) : phase suivante.
+/// Waiting on disk wiring (`preferences`): next phase.
 ///
 /// # Errors
-/// Retourne l'erreur `serde_json` si la sérialisation échoue.
+/// Returns the `serde_json` error when serialization fails.
 #[allow(dead_code)]
 pub fn save_workspace_state(state: &WorkspaceState) -> Result<String, serde_json::Error> {
     save_workspace(state)
 }
 
-/// Restaure le workspace (erreur si JSON invalide ou version
-/// incompatible — voir [`load_workspace_or_default`]).
+/// Restores the workspace (error on invalid JSON or incompatible
+/// version — see [`load_workspace_or_default`]).
 ///
-/// En attente du câblage disque (`preferences`) : phase suivante.
+/// Waiting on disk wiring (`preferences`): next phase.
 ///
 /// # Errors
-/// Retourne une erreur si le JSON est invalide ou refusé par ui-kit.
+/// Returns an error when the JSON is invalid or rejected by ui-kit.
 #[allow(dead_code)]
 pub fn load_workspace_state(json: &str) -> Result<WorkspaceState, serde_json::Error> {
     load_workspace(json)
 }
 
-/// Restaure le workspace, ou le layout par défaut si le JSON est
-/// absent ou invalide (le boot ne doit jamais échouer pour un
+/// Restores the workspace, or the default layout when the JSON is
+/// missing or invalid (boot must never fail over a
 /// layout).
 pub fn load_workspace_or_default(json: Option<&str>) -> WorkspaceState {
     json.and_then(|raw| load_workspace(raw).ok())
         .unwrap_or_default()
 }
 
-/// Sérialise la disposition des tuiles en JSON.
+/// Serializes the tile arrangement to JSON.
 ///
-/// `egui_tiles` ne persiste que la structure (parts, visibilités),
-/// pas de géométrie infinie : la sauvegarde est valide même avant
-/// le premier layout.
+/// `egui_tiles` persists only structure (shares, visibilities),
+/// no infinite geometry: the save is valid even before
+/// the first layout.
 ///
-/// En attente du câblage disque (`preferences`) : phase suivante.
+/// Waiting on disk wiring (`preferences`): next phase.
 ///
 /// # Errors
-/// Retourne l'erreur `serde_json` si la sérialisation échoue.
+/// Returns the `serde_json` error when serialization fails.
 #[allow(dead_code)]
 pub fn save_tree_state(state: &Tree<PhotoDockTab>) -> Result<String, serde_json::Error> {
     serde_json::to_string(state)
 }
 
-/// Restaure la disposition des tuiles (erreur si JSON invalide —
-/// voir [`load_tree_or_default`]).
+/// Restores the tile arrangement (error on invalid JSON —
+/// see [`load_tree_or_default`]).
 ///
-/// En attente du câblage disque (`preferences`) : phase suivante.
+/// Waiting on disk wiring (`preferences`): next phase.
 ///
 /// # Errors
-/// Retourne une erreur si le JSON est invalide.
+/// Returns an error when the JSON is invalid.
 #[allow(dead_code)]
 pub fn load_tree_state(json: &str) -> Result<Tree<PhotoDockTab>, serde_json::Error> {
     serde_json::from_str(json)
 }
 
-/// Restaure la disposition des tuiles, ou le layout par défaut si le
-/// JSON est absent ou invalide. Les ids de documents changent à
-/// chaque lancement : les canevas restaurés sont réconciliés avec
-/// `ids` (orphelins retirés, manquants ajoutés). Les JSON antérieurs
-/// à l'onglet Historique le reçoivent en onglet des Calques.
+/// Restores the tile arrangement, or the default layout when the
+/// JSON is missing or invalid. Document ids change on
+/// every launch: restored canvases are reconciled with
+/// `ids` (orphans removed, missing ones added). JSON predating
+/// the History tab gains it as a Layers tab.
 pub fn load_tree_or_default(json: Option<&str>, ids: &[Uuid]) -> Tree<PhotoDockTab> {
     let mut state = json
         .and_then(|raw| load_tree_state(raw).ok())

@@ -14,43 +14,42 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Catalogue de traductions (anglais / français).
+//! Translation catalog (English / French).
 //!
-//! Tables statiques (`match`), zéro allocation : `get` retourne un
-//! `&'static str`. Le dispatch se fait vers [`super::en`] ou
-//! [`super::fr`] ; ajouter une langue = un fichier + une variante
-//! de [`Language`].
+//! Static tables (`match`), zero allocation: `get` returns a
+//! `&'static str`. Dispatch goes to [`super::en`] or [`super::fr`];
+//! adding a language = one file + one [`Language`] variant.
 
 use super::{en, fr, key::TextKey};
 
-/// Langue d'affichage.
+/// Display language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Language {
-    /// Anglais (défaut, langue de repli).
+    /// English (default, fallback language).
     #[default]
     En,
-    /// Français.
+    /// French.
     Fr,
 }
 
-/// Catalogue lié à une langue.
+/// Catalog bound to a language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Catalog {
     lang: Language,
 }
 
 impl Catalog {
-    /// Catalogue pour la langue `lang`.
+    /// Catalog for language `lang`.
     pub fn new(lang: Language) -> Self {
         Self { lang }
     }
 
-    /// Langue du catalogue.
+    /// Catalog's language.
     pub fn language(self) -> Language {
         self.lang
     }
 
-    /// Traduit `key` dans la langue du catalogue.
+    /// Translates `key` into the catalog's language.
     pub fn get(self, key: TextKey) -> &'static str {
         match self.lang {
             Language::En => en::translate(key),
@@ -60,7 +59,7 @@ impl Catalog {
 }
 
 impl Default for Catalog {
-    /// Catalogue anglais par défaut.
+    /// Default English catalog.
     fn default() -> Self {
         Self::new(Language::En)
     }

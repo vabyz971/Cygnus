@@ -14,39 +14,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Phase 6A : identité sémantique des tuiles (sans exécution).
+//! Phase 6A: semantic tile identity (no execution).
 //!
-//! Trois types, aucun pixel touché, aucun rendu piloté :
+//! Three types, no pixels touched, no render driven:
 //!
-//! - [`TileContentSignature`] : hash du contenu sémantique qui détermine les
-//!   pixels (arbre des calques, filtres, masques, sources, géométrie).
-//! - [`BackendTag`] : quel backend a produit (ou produirait) les pixels.
-//! - [`TileCacheKey`] : clé complète (tuile + contenu + backend + grille +
-//!   halo + flags).
+//! - [`TileContentSignature`]: hash of the semantic content determining
+//!   pixels (layer tree, filters, masks, sources, geometry).
+//! - [`BackendTag`]: which backend produced (or would produce) pixels.
+//! - [`TileCacheKey`]: full key (tile + content + backend + grid + halo
+//!   + flags).
 //!
-//! Invariants (testés ci-dessous) :
+//! Invariants (tested below):
 //!
-//! - même clé ⇒ mêmes pixels sémantiques (correction) ;
-//! - backend / kernel / version / flags / halo / grille différents ⇒ clés
-//!   différentes (pas de faux hit inter-backends) ;
-//! - [`RenderRevision`](crate::command::RenderRevision),
-//!   `appearance_version`, [`ids::Revision`](ids::Revision) et les compteurs
-//!   ne sont JAMAIS de l'identité pixel ;
-//! - undo `A→B→A` restaure la même signature (les snapshots partagent les
-//!   `Arc` sources, donc l'identité de pointeur est préservée).
+//! - same key ⇒ same semantic pixels (correctness);
+//! - different backend / kernel / version / flags / halo / grid ⇒ different
+//!   keys (no cross-backend false hits);
+//! - [`RenderRevision`](crate::command::RenderRevision`),
+//!   `appearance_version`, [`ids::Revision`](ids::Revision) and counters
+//!   are NEVER pixel identity;
+//! - undo `A→B→A` restores the same signature (snapshots share source
+//!   `Arc`s, so pointer identity is preserved).
 //!
-//! Modèle « state-only » préservé : un réglage UI (zoom/pan) ne touche pas
-//! ces types ; seule une mutation sémantique change la signature.
+//! "state-only" model preserved: a UI setting (zoom/pan) never touches
+//! these types; only a semantic mutation changes the signature.
 //!
-//! Limites assumées :
+//! Accepted limits:
 //!
-//! - l'identité source est l'adresse de l'`Arc` (pas un hash des octets) :
-//!   réallouer des pixels identiques donne une signature différente (MISS
-//!   sain, jamais de faux HIT) ; le cache est mémoire vive, non persisté ;
-//! - CPU (`image::blur` gaussien) et GPU (compute BoxBlur, rayon clampé
-//!   1..=50) DIVERGENT au pixel près — d'où des [`BackendTag`] distincts ;
-//! - seuil GPU partagé : `< 65536 px` ⇒ CPU même si un adaptateur existe
-//!   (cf. `gpu.rs`), reflété par [`BackendTag::select`].
+//! - source identity is the `Arc` address (not a byte hash): reallocating
+//!   identical pixels yields a different signature (healthy MISS, never a
+//!   false HIT); the cache is RAM-only, not persisted;
+//! - CPU (gaussian `image::blur`) and GPU (BoxBlur compute, clamped
+//!   1..=50 radius) DIVERGE pixel-wise — hence distinct [`BackendTag`]s;
+//! - shared GPU threshold: `< 65536 px` ⇒ CPU even if an adapter exists
+//!   (see `gpu.rs`), mirrored by [`BackendTag::select`].
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -59,33 +59,33 @@ use tiles::{Padding, TileGrid, TileId};
 use crate::document::{AdjustmentLayer, Document, FilterNode, GroupLayer, LayerNode, PixelLayer};
 use crate::renderer::filters_signature;
 
-/// Version du noyau CPU (à incrémenter si `image::*` / rayon / fusion change).
+/// CPU kernel version (bump if `image::*` / rayon / blend changes).
 pub const CPU_KERNEL_VERSION: u16 = 1;
-/// Version du noyau GPU (à incrémenter si un shader WGSL change).
+/// GPU kernel version (bump if a WGSL shader changes).
 pub const GPU_KERNEL_VERSION: u16 = 1;
-/// Seuil partagé avec `gpu.rs` : en dessous, tout reste CPU (overhead GPU).
+/// Threshold shared with `gpu.rs`: below it, all stays CPU (GPU overhead).
 pub const GPU_PIXEL_THRESHOLD: u64 = 65_536;
-/// Flags par défaut (aucune option).
+/// Default flags (no option).
 pub const TILE_FLAGS_NONE: u32 = 0;
 
-/// Hash opaque du contenu sémantique d'un cadre (identique pour toutes les
-/// tuiles du même cadre ; la localisation vient de [`TileId`] dans la clé).
+/// Opaque hash of a frame's semantic content (identical for all tiles of
+/// the same frame; localization comes from [`TileId`] in the key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileContentSignature(pub u64);
 
 impl TileContentSignature {
-    /// Valeur brute (diagnostics, persistance mémoire uniquement).
+    /// Raw value (diagnostics, in-memory persistence only).
     #[must_use]
     pub fn get(self) -> u64 {
         self.0
     }
 }
 
-/// Backend d'exécution ayant produit les pixels.
+/// Execution backend that produced the pixels.
 ///
-/// CPU et GPU divergent (gaussien vs BoxBlur, arrondis float) : ils ne
-/// partagent JAMAIS une clé. `version` permet de faire tourner les noyaux
-/// sans changer le type.
+/// CPU and GPU diverge (gaussian vs BoxBlur, float rounding): they NEVER
+/// share a key. `version` allows rotating kernels without changing the
+/// type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BackendTag {
     Cpu { version: u16 },
@@ -93,7 +93,7 @@ pub enum BackendTag {
 }
 
 impl BackendTag {
-    /// Tag CPU courant.
+    /// Current CPU tag.
     #[must_use]
     pub fn cpu() -> Self {
         Self::Cpu {
@@ -101,7 +101,7 @@ impl BackendTag {
         }
     }
 
-    /// Tag GPU courant.
+    /// Current GPU tag.
     #[must_use]
     pub fn gpu() -> Self {
         Self::Gpu {
@@ -109,8 +109,8 @@ impl BackendTag {
         }
     }
 
-    /// Backend RÉELLEMENT emprunté : CPU si pas de GPU ou sous le seuil
-    /// (miroir de la garde `width * height < 65536` de `gpu.rs`).
+    /// Backend ACTUALLY taken: CPU if no GPU or below the threshold
+    /// (mirror of the `width * height < 65536` guard in `gpu.rs`).
     #[must_use]
     pub fn select(gpu_available: bool, pixel_count: u64) -> Self {
         if gpu_available && pixel_count >= GPU_PIXEL_THRESHOLD {
@@ -121,11 +121,11 @@ impl BackendTag {
     }
 }
 
-/// Clé complète de cache tuile : même clé ⇒ mêmes pixels sémantiques.
+/// Full tile cache key: same key ⇒ same semantic pixels.
 ///
-/// `grid` = [`grid_signature`] (taille de tuile + dimensions + niveaux) ;
-/// `halo` = marge d'effet en px ([`Padding`]) ; `flags` = options de rendu
-/// (réservé, `0` par défaut — toute option pixellisée DOIT y figurer).
+/// `grid` = [`grid_signature`] (tile size + dimensions + levels);
+/// `halo` = effect margin in px ([`Padding`]); `flags` = render options
+/// (reserved, `0` by default — any pixel-affecting option MUST appear).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileCacheKey {
     pub tile: TileId,
@@ -137,7 +137,7 @@ pub struct TileCacheKey {
 }
 
 impl TileCacheKey {
-    /// Nouvelle clé (aucune normalisation : chaque champ discriminant compte).
+    /// New key (no normalization: every discriminant field counts).
     #[must_use]
     pub fn new(
         tile: TileId,
@@ -158,13 +158,13 @@ impl TileCacheKey {
     }
 }
 
-/// Signature sémantique du cadre entier (ordre bas → haut significatif).
+/// Semantic signature of the whole frame (bottom → top order significant).
 ///
-/// Couvre : dimensions document, pour chaque nœud (récursif) id, type,
-/// visibilité, opacité, fusion, transform, identité source (`Arc` + dims),
-/// chaînes de filtres (via [`filters_signature`]) et masques (id + état +
-/// version — la peinture touche la version). Exclut : noms, `appearance_version`,
-/// révisions, compteurs.
+/// Covers: document dimensions, per node (recursive) id, type, visibility,
+/// opacity, blend, transform, source identity (`Arc` + dims), filter
+/// chains (via [`filters_signature`]) and masks (id + state + version —
+/// paint touches the version). Excludes: names, `appearance_version`,
+/// revisions, counters.
 #[must_use]
 pub fn tile_content_signature(doc: &Document) -> TileContentSignature {
     let mut h = DefaultHasher::new();
@@ -177,8 +177,8 @@ pub fn tile_content_signature(doc: &Document) -> TileContentSignature {
     TileContentSignature(h.finish())
 }
 
-/// Empreinte de grille : taille de tuile + surface + niveaux.
-/// Deux grilles différentes ⇒ clés différentes (même contenu, même tuile).
+/// Grid fingerprint: tile size + area + levels. Different grids ⇒
+/// different keys (same content, same tile).
 #[must_use]
 pub fn grid_signature(grid: &TileGrid) -> u64 {
     let mut h = DefaultHasher::new();
@@ -192,7 +192,7 @@ pub fn grid_signature(grid: &TileGrid) -> u64 {
     h.finish()
 }
 
-/// Construit la clé complète d'une tuile (sucre sur [`TileCacheKey::new`]).
+/// Builds a tile's full key (sugar over [`TileCacheKey::new`]).
 #[must_use]
 pub fn tile_cache_key(
     tile: TileId,
@@ -231,8 +231,8 @@ fn hash_pixel_layer(h: &mut DefaultHasher, l: &PixelLayer) {
     hash_source(h, &l.source_image);
     h.write_u64(filters_signature(&l.filter_layers));
     h.write_u64(crate::renderer::mask_signature(&l.masks));
-    // Enfants clippés : empreinte hiérarchique récursive (toute mutation
-    // imbriquée invalide le parent, sans toucher aux frères).
+    // Clipped children: recursive hierarchical fingerprint (any nested
+    // mutation invalidates the parent, untouched siblings).
     h.write_usize(l.children.len());
     for child in &l.children {
         hash_layer_node(h, child);
@@ -260,8 +260,8 @@ fn hash_adjustment_layer(h: &mut DefaultHasher, a: &AdjustmentLayer) {
     h.write_u64(crate::renderer::mask_signature(&a.masks));
 }
 
-/// Identité source : adresse de l'`Arc` (partagée par les snapshots, donc
-/// stable sur undo) + dimensions (garde-fou). Voir l'en-tête du module.
+/// Source identity: the `Arc` address (shared by snapshots, hence stable
+/// across undo) + dimensions (guard rail). See the module header.
 fn hash_source(h: &mut DefaultHasher, source: &Arc<DynamicImage>) {
     h.write_usize(Arc::as_ptr(source) as usize);
     let (w, hh) = source.dimensions();
@@ -283,10 +283,10 @@ fn hash_transform(h: &mut DefaultHasher, t: &crate::document::Transform2D) {
     }
 }
 
-/// Signature d'une chaîne d'ajustement ([`FilterNode`]) : même recette que
-/// [`filters_signature`] (id, type, état, params triés), sans attributs de
-/// sous-calque (l'opacité vit au niveau du calque d'ajustement, hashée
-/// séparément).
+/// An adjustment chain's ([`FilterNode`]) signature: same recipe as
+/// [`filters_signature`] (id, type, state, sorted params), without
+/// sub-layer attributes (opacity lives at the adjustment layer level,
+/// hashed separately).
 fn adjustment_signature(filters: &[FilterNode]) -> u64 {
     let mut h = DefaultHasher::new();
     h.write_usize(filters.len());
@@ -385,15 +385,15 @@ mod tests {
         let s1 = tile_content_signature(&doc);
         let s2 = tile_content_signature(&doc);
         assert_eq!(s1, s2);
-        // Clone structurel (Arcs partagés, comme un snapshot) : stable.
+        // Structural clone (shared Arcs, like a snapshot): stable.
         let clone = Document::new(doc.width, doc.height);
         let _ = clone;
         let snap = doc_single();
         let _ = snap;
         let doc2 = doc_single();
-        // Deux docs aux pixels/logiques identiques mais allocations
-        // distinctes : MISS sain (adresses d'Arc différentes), jamais de
-        // faux HIT — documenté dans l'en-tête.
+        // Two docs with identical pixels/logic but distinct allocations: healthy
+        // MISS (different Arc addresses), never a false HIT — documented in
+        // the header.
         assert_ne!(
             s1,
             tile_content_signature(&doc2),
@@ -403,12 +403,12 @@ mod tests {
 
     #[test]
     fn a_clone_structurel_meme_signature() {
-        // Le cas qui compte pour le cache : clone avec les MÊMES Arcs.
+        // The case that matters for the cache: clone with the SAME Arcs.
         let mut doc = Document::new(64, 64);
         let src = solid(100);
         doc.push_layer(LayerNode::Pixel(PixelLayer::new("c", Arc::clone(&src))));
         let s1 = tile_content_signature(&doc);
-        // Snapshot : clone() partage les Arcs sources.
+        // Snapshot: clone() shares source Arcs.
         let mut snap_root = Vec::new();
         for node in &doc.root {
             snap_root.push(node.clone());
@@ -437,7 +437,7 @@ mod tests {
     fn c_ordre_filtres_change_signature() {
         let mut d1 = doc_single();
         let mut d2 = doc_single();
-        // Mêmes Arcs sources pour isoler l'ordre (sinon l'adresse domine).
+        // Same source Arcs to isolate order (else the address dominates).
         let src = solid(100);
         for d in [&mut d1, &mut d2] {
             if let Some(LayerNode::Pixel(l)) = d.root.first_mut() {
@@ -454,8 +454,8 @@ mod tests {
         if let Some(LayerNode::Pixel(l)) = d2.root.first_mut() {
             l.filter_layers = vec![bc, blur];
         }
-        // Les ids de sous-calques diffèrent ici (neutral() frais) ; on
-        // aligne les ids pour ne tester QUE l'ordre.
+        // Sub-layer ids differ here (fresh neutral()); align ids to test
+        // order ONLY.
         let ids: Vec<uuid::Uuid> = if let Some(LayerNode::Pixel(l)) = d1.root.first() {
             l.filter_layers.iter().map(|f| f.id).collect()
         } else {
@@ -493,7 +493,7 @@ mod tests {
         assert_ne!(s0, tile_content_signature(&hidden));
     }
 
-    /// Clone structurel de `base` (Arcs partagés) + mutation pixel ciblée.
+    /// Structural clone of `base` (shared Arcs) + targeted pixel mutation.
     fn base_snapshot_with(base: &Document, f: impl FnOnce(&mut PixelLayer)) -> Document {
         let mut out = Document::new(base.width, base.height);
         out.root = base.root.clone();
@@ -524,7 +524,7 @@ mod tests {
         let mut enabled = base_snapshot_with(&base, |l| {
             l.masks.push(LayerMask::full(8, 8));
         });
-        // Aligne les ids/versions pour isoler le bit enabled.
+        // Align ids/versions to isolate the enabled bit.
         if let (Some(LayerNode::Pixel(a)), Some(LayerNode::Pixel(b))) =
             (toggled.root.first_mut(), enabled.root.first_mut())
         {
@@ -558,7 +558,7 @@ mod tests {
             l.name = String::from("autre nom");
             l.filter_layers.push(brightness_filter(5.0));
         });
-        // Aligne les ids de sous-calques (frais) pour isoler le nom.
+        // Align (fresh) sub-layer ids to isolate the name.
         let fid = if let Some(LayerNode::Pixel(l)) = renamed.root.first() {
             l.filter_layers[0].id
         } else {
@@ -579,10 +579,10 @@ mod tests {
     fn g_versions_et_compteurs_ne_changent_pas_signature() {
         let base = doc_single();
         let s0 = tile_content_signature(&base);
-        // `touch()` ne fait que bumper appearance_version : pas pixelisé.
+        // `touch()` only bumps appearance_version: not pixel-affecting.
         let touched = base_snapshot_with(&base, |l| l.touch());
         assert_eq!(s0, tile_content_signature(&touched));
-        // RenderRevision : compteur d'orchestration, jamais hashé.
+        // RenderRevision: orchestration counter, never hashed.
         let mut rev = crate::command::RenderRevision::default();
         rev.bump();
         rev.bump();
@@ -612,7 +612,7 @@ mod tests {
             TILE_FLAGS_NONE,
         );
         assert_ne!(cpu, gpu);
-        // Version de noyau différente ⇒ clé différente.
+        // Different kernel version ⇒ different key.
         let gpu_v2 = TileCacheKey::new(
             tile,
             content,
@@ -648,7 +648,7 @@ mod tests {
             TILE_FLAGS_NONE,
         );
         assert_ne!(k1, k2);
-        // Même grille, tuiles voisines ⇒ clés différentes.
+        // Same grid, neighboring tiles ⇒ different keys.
         let ka = tile_cache_key(
             TileId::new(0, 0, 0),
             content,
@@ -666,7 +666,7 @@ mod tests {
             TILE_FLAGS_NONE,
         );
         assert_ne!(ka, kb);
-        // Dimensions document différentes ⇒ contenu différent.
+        // Different document dimensions ⇒ different content.
         let mut wide = Document::new(128, 64);
         wide.root = doc.root.clone();
         assert_ne!(content, tile_content_signature(&wide));
@@ -708,7 +708,7 @@ mod tests {
 
     #[test]
     fn k_undo_restaure_meme_signature() {
-        // A (snapshot partagé) → B (param modifié) → A (restauré).
+        // A (shared snapshot) → B (modified param) → A (restored).
         let doc_a = doc_single();
         let mut with_filter = base_snapshot_with(&doc_a, |l| {
             l.filter_layers.push(brightness_filter(10.0));
@@ -728,22 +728,22 @@ mod tests {
 
     #[test]
     fn critique_cpu_gpu_seuil_et_divergence() {
-        // Sous le seuil : CPU même avec GPU dispo (miroir de gpu.rs).
+        // Below threshold: CPU even with GPU available (mirror of gpu.rs).
         assert_eq!(
             BackendTag::select(true, GPU_PIXEL_THRESHOLD - 1),
             BackendTag::cpu()
         );
         assert_eq!(BackendTag::select(true, 32 * 32), BackendTag::cpu());
-        // Au seuil et au-delà avec GPU : GPU.
+        // At and above threshold with GPU: GPU.
         assert_eq!(
             BackendTag::select(true, GPU_PIXEL_THRESHOLD),
             BackendTag::gpu()
         );
         assert_eq!(BackendTag::select(true, 1024 * 1024), BackendTag::gpu());
-        // Sans GPU : toujours CPU.
+        // Without GPU: always CPU.
         assert_eq!(BackendTag::select(false, 1024 * 1024), BackendTag::cpu());
-        // Les clés divergent (noyaux différents : gaussien CPU vs BoxBlur
-        // GPU, rayon clampé 1..=50 côté GPU) : jamais de hit croisé.
+        // Keys diverge (different kernels: CPU gaussian vs GPU BoxBlur,
+        // GPU-side clamped 1..=50 radius): never a cross hit.
         let doc = doc_single();
         let _ = key_of(&doc);
         let grid = TileGrid::new(256, doc.width, doc.height, 1);

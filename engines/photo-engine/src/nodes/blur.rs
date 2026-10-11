@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Effet Flou gaussien (GPU compute + fallback CPU `image::blur`)
+//! Gaussian Blur effect (GPU compute + CPU `image::blur` fallback)
 
 use super::{Effect, NodeCtx};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};

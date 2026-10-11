@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Pool rayon DÉDIÉ et PLAFONNÉ pour les calculs d'image lourds.
+//! DEDICATED, CAPPED rayon pool for heavy image computation.
 //!
-//! Invariant RENDERING.md #4 : le compositing n'utilise JAMAIS le pool
-//! rayon global — non plafonné, il saturerait tous les cœurs et gèlerait
-//! le thread UI même quand le calcul tourne dans `spawn_blocking`.
-//! [`run_parallel`] confine tous les `par_iter`/`par_bridge` imbriqués au
-//! pool nommé ici (≤ 4 threads), laissant du CPU au reste du système.
+//! RENDERING.md invariant #4: compositing NEVER uses the global rayon
+//! pool — uncapped, it would saturate all cores and freeze the UI thread
+//! even when the computation runs in `spawn_blocking`. [`run_parallel`]
+//! confines all nested `par_iter`/`par_bridge` to the pool named here (≤ 4
+//! threads), leaving CPU for the rest of the system.
 
 use std::sync::OnceLock;
 
@@ -34,15 +34,15 @@ impl RenderExecutor {
     }
 }
 
-/// Pool borné unique du moteur. `None` seulement si l'OS refuse de créer
-/// les threads (état pathologique du système) — on dégrade alors en
-/// exécution inline plutôt que de faire tomber l'app.
+/// The engine's single bounded pool. `None` only if the OS refuses to
+/// create threads (pathological system state) — then degrade to inline
+/// execution rather than crashing the app.
 static EXECUTOR: OnceLock<Option<RenderExecutor>> = OnceLock::new();
 
 fn executor() -> &'static Option<RenderExecutor> {
     EXECUTOR.get_or_init(|| {
-        // Bornage volontaire : au-delà de 4 threads le blend est memory-bound
-        // et le gain est marginal — tandis que la contention avec l'UI grandit.
+        // Deliberate cap: past 4 threads blending is memory-bound and gains are
+        // marginal — while contention with the UI grows.
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(2)
@@ -56,10 +56,10 @@ fn executor() -> &'static Option<RenderExecutor> {
     })
 }
 
-/// Exécute `f` sur le pool de rendu dédié. Les appels `par_*` faits depuis
-/// `f` (directement ou dans les sous-fonctions) s'exécutent sur CE pool,
-/// pas sur le pool global. Si `f` est déjà sur le pool (install imbriquée),
-/// rayon l'exécute directement — pas de risque de réentrance.
+/// Runs `f` on the dedicated render pool. `par_*` calls made from `f`
+/// (directly or in sub-functions) run on THIS pool, not the global one.
+/// If `f` is already on the pool (nested install), rayon runs it
+/// directly — no reentrancy risk.
 pub fn run_parallel<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     match executor().as_ref() {
         Some(ex) => ex.pool.install(f),

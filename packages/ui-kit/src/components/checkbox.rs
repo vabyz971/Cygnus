@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Case à cocher labellisée, calibrée sur le thème.
+//! Labeled checkbox, calibrated on the theme.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::Checkbox;
 //! # use ui_kit::theme::CygnusTheme;
@@ -29,19 +29,19 @@
 
 use crate::theme::CygnusTheme;
 
-/// Case à cocher via API builder.
+/// Checkbox via builder API.
 #[derive(Debug, Clone)]
 pub struct Checkbox<'a> {
     label: &'a str,
 }
 
 impl<'a> Checkbox<'a> {
-    /// Crée une case avec libellé.
+    /// Creates a checkbox with label.
     pub fn new(label: &'a str) -> Self {
         Self { label }
     }
 
-    /// Affiche la case, met à jour `checked`, retourne la réponse egui.
+    /// Displays the checkbox, updates `checked`, returns the egui response.
     pub fn show(
         self,
         ui: &mut egui::Ui,

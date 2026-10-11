@@ -14,49 +14,49 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Surface de preview persistante (Phase 6G) : conserver l'image produite,
-//! n'écrire que les régions nécessaires.
+//! Persistent preview surface (Phase 6G): keep the produced image, only
+//! write the needed regions.
 //!
-//! [`PreviewSurface`] détient UN buffer RGBA8 (dimensions du périmètre de
-//! rendu) qui survit d'une frame à l'autre. Le worker y blitte les tuiles
-//! nouvellement rendues ([`PreviewSurface::update_tile`]) ; les zones
-//! propres ne sont jamais réécrites. Rôle strict (règle 6G §1) : la surface
-//! ne connaît ni dirty ni scope — elle écrit ce qu'on lui donne, borné à
-//! ses dimensions (aucune coordonnée écran, tout en document/buffer-space).
+//! [`PreviewSurface`] holds ONE RGBA8 buffer (render perimeter dimensions)
+//! surviving across frames. The worker blits newly rendered tiles into
+//! it ([`PreviewSurface::update_tile`]); clean zones are never
+//! rewritten. Strict role (6G rule §1): the surface knows neither dirty
+//! nor scope — it writes what it is given, bounded to its dimensions
+//! (no screen coordinates, all in document/buffer-space).
 //!
-//! Reconstruction complète explicite UNIQUEMENT sur : première
-//! initialisation, changement de périmètre ([`PreviewSurface::ensure`]),
-//! `clear` + repeuplement, reset. Partout ailleurs : mises à jour locales.
+//! Explicit full rebuild ONLY on: first initialization, perimeter
+//! change ([`PreviewSurface::ensure`]), `clear` + repopulation, reset.
+//! Everywhere else: local updates.
 //!
-//! Compromis assumé (§25 6G) : les hits du `TileCache` sont recopiés vers la
-//! surface (pas encore d'`Arc` partagé) — 6G élimine la réécriture inutile,
-//! pas toutes les copies.
+//! Accepted trade-off (§25 6G): `TileCache` hits are copied to the
+//! surface (no shared `Arc` yet) — 6G removes useless rewrites,
+//! not all copies.
 
 use image::{DynamicImage, ImageBuffer, Rgba};
 
 use super::tree::RegionalComposite;
 
-/// Statistiques de la surface (§7 6G + §6 6G.1) : compteurs et chronos
-/// cumulés, sans effet sur le rendu.
+/// Surface statistics (§7 6G + §6 6G.1): counters and timers, cumulative,
+/// no render effect.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PreviewSurfaceStats {
-    /// (Ré)allocations du buffer (init, resize, reset explicite).
+    /// Buffer (re)allocations (init, resize, explicit reset).
     pub full_updates: u64,
-    /// Appels `update_tiles` ayant écrit au moins une tuile.
+    /// `update_tiles` calls having written at least one tile.
     pub partial_updates: u64,
-    /// Tuiles appliquées au total.
+    /// Tiles applied in total.
     pub tiles_applied: u64,
-    /// Pixels écrits au total (blits, hors lecture de découpe).
+    /// Pixels written in total (blits, excluding crop reads).
     pub pixels_written: u64,
-    /// Temps cumulé des (ré)allocations (µs, Phase 6G.1).
+    /// Cumulative (re)allocation time (µs, Phase 6G.1).
     pub ensure_us: u128,
-    /// Temps cumulé des `clear` (µs, Phase 6G.1).
+    /// Cumulative `clear` time (µs, Phase 6G.1).
     pub clear_us: u128,
-    /// Temps cumulé des `update_tiles` (µs, Phase 6G.1).
+    /// Cumulative `update_tiles` time (µs, Phase 6G.1).
     pub update_us: u128,
 }
 
-/// Image de preview persistante (buffer + dimensions + compteurs).
+/// Persistent preview image (buffer + dimensions + counters).
 #[derive(Debug, Clone)]
 pub struct PreviewSurface {
     buf: ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -64,8 +64,8 @@ pub struct PreviewSurface {
 }
 
 impl PreviewSurface {
-    /// Nouvelle surface vide (`width`/`height` ramenées à ≥ 1).
-    /// Compte une `full_updates` (allocation initiale explicite).
+    /// New empty surface (`width`/`height` clamped to ≥ 1). Counts one
+    /// `full_updates` (explicit initial allocation).
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
         let mut surface = Self {
@@ -76,23 +76,23 @@ impl PreviewSurface {
         surface
     }
 
-    /// Dimensions actuelles.
+    /// Current dimensions.
     #[must_use]
     pub fn dimensions(&self) -> (u32, u32) {
         (self.buf.width(), self.buf.height())
     }
 
-    /// Vrai si vide (jamais après `new`, que du transitoire interne).
+    /// True if empty (never after `new`, only internal transient).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buf.width() == 0 || self.buf.height() == 0
     }
 
-    /// Garantit les dimensions : réalloue (zéros + `full_updates`) si
-    /// différentes, sinon ne touche à rien. Retourne vrai si recréée.
-    /// Seul chemin de reconstruction complète avec `clear`.
+    /// Ensures dimensions: reallocates (zeros + `full_updates`) if
+    /// different, else touches nothing. Returns true if recreated. The
+    /// only full-rebuild path with `clear`.
     pub fn ensure(&mut self, width: u32, height: u32) -> bool {
-        // Instrumentation 6G.1 : chrono d'allocation (aucun effet).
+        // 6G.1 instrumentation: allocation timer (no effect).
         let t = std::time::Instant::now();
         let (width, height) = (width.max(1), height.max(1));
         if self.buf.width() == width && self.buf.height() == height {
@@ -104,10 +104,10 @@ impl PreviewSurface {
         true
     }
 
-    /// Efface le contenu (zéros, dimensions conservées) : point de départ
-    /// d'un repeuplement depuis le cache, sans réallocation.
+    /// Clears the content (zeros, dimensions kept): starting point for a
+    /// repopulation from cache, without reallocation.
     pub fn clear(&mut self) {
-        // Instrumentation 6G.1 (aucun effet).
+        // 6G.1 instrumentation (no effect).
         let t = std::time::Instant::now();
         for px in self.buf.pixels_mut() {
             *px = Rgba([0, 0, 0, 0]);
@@ -115,16 +115,16 @@ impl PreviewSurface {
         self.stats.clear_us += t.elapsed().as_micros();
     }
 
-    /// Écrit une tuile à son origine buffer, clippée à la surface.
-    /// Les franges hors surface sont ignorées (jamais d'offset écran).
+    /// Writes a tile at its buffer origin, clipped to the surface. Out-of-
+    /// surface fringes are ignored (never a screen offset).
     pub fn update_tile(&mut self, tile: &RegionalComposite) {
         self.update_tiles(std::slice::from_ref(tile));
     }
 
-    /// Écrit plusieurs tuiles ; compte UN `partial_updates` si au moins une
-    /// tuile a écrit ≥ 1 pixel (appel vide ou totalement hors champ : rien).
+    /// Writes several tiles; counts ONE `partial_updates` if at least one
+    /// tile wrote ≥ 1 pixel (empty or fully out-of-view call: nothing).
     pub fn update_tiles(&mut self, tiles: &[RegionalComposite]) {
-        // Instrumentation 6G.1 (aucun effet).
+        // 6G.1 instrumentation (no effect).
         let t = std::time::Instant::now();
         let mut wrote = false;
         for tile in tiles {
@@ -136,8 +136,8 @@ impl PreviewSurface {
         self.stats.update_us += t.elapsed().as_micros();
     }
 
-    /// Blit une tuile ; vrai si ≥ 1 pixel écrit (`pixels_written` compte
-    /// l'exact (franges clippées exclues), pas l'aire de la tuile).
+    /// Blits a tile; true if ≥ 1 pixel written (`pixels_written` counts the
+    /// exact count (clipped fringes excluded), not the tile area).
     fn blit(&mut self, tile: &RegionalComposite) -> bool {
         let buf = match tile.image.as_rgba8() {
             Some(b) => b.clone(),
@@ -160,19 +160,19 @@ impl PreviewSurface {
         written > 0
     }
 
-    /// Vue de la surface (emprunt, zéro copie).
+    /// Surface view (borrow, zero copy).
     #[must_use]
     pub fn image(&self) -> &ImageBuffer<Rgba<u8>, Vec<u8>> {
         &self.buf
     }
 
-    /// Image possédée (découpe ou clone pour la présentation).
+    /// Owned image (crop or clone for presentation).
     #[must_use]
     pub fn to_image(&self) -> DynamicImage {
         DynamicImage::ImageRgba8(self.buf.clone())
     }
 
-    /// Compteurs cumulés.
+    /// Cumulative counters.
     #[must_use]
     pub fn stats(&self) -> PreviewSurfaceStats {
         self.stats
@@ -196,7 +196,7 @@ mod tests {
         let mut s = PreviewSurface::new(512, 512);
         assert_eq!(s.dimensions(), (512, 512));
         assert_eq!(s.stats().full_updates, 1);
-        // Remplissage initial : 4 tuiles 256² = 262144 px écrits.
+        // Initial fill: four 256² tiles = 262144 px written.
         s.update_tiles(&[
             tile(0, 0, 256, 256, 10),
             tile(256, 0, 256, 256, 20),
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(s.stats().pixels_written, 512 * 512);
         assert_eq!(s.image().get_pixel(0, 0)[0], 10);
         assert_eq!(s.image().get_pixel(511, 511)[0], 40);
-        // Mise à jour partielle : 1 tuile, le reste intact.
+        // Partial update: 1 tile, the rest intact.
         let before = s.image().clone();
         s.update_tile(&tile(0, 0, 256, 256, 99));
         assert_eq!(s.stats().partial_updates, 2);
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(s.stats().pixels_written, 512 * 512 + 256 * 256);
         assert_eq!(s.image().get_pixel(0, 0)[0], 99);
         assert_eq!(s.image().get_pixel(511, 511)[0], 40);
-        // Hors de la zone commune avec `before` : inchangé.
+        // Outside the overlap with `before`: unchanged.
         for (a, b) in before.enumerate_pixels().zip(s.image().enumerate_pixels()) {
             let ((x, _, _), (_, _, _)) = (a, b);
             if x >= 256 {
@@ -241,8 +241,8 @@ mod tests {
             "hors champ : rien"
         );
         assert_eq!(after_oob.pixels_written, n.pixels_written);
-        // Note 6G.1 : les chronos eux-mêmes avancent à chaque appel (même
-        // vide) — la mesure a un coût, les compteurs d'événements non.
+        // 6G.1 note: timers themselves advance on every call (even empty) —
+        // measuring has a cost, event counters do not.
     }
 
     #[test]
@@ -262,8 +262,8 @@ mod tests {
 
     #[test]
     fn tuile_partielle_bord() {
-        // Tuile débordant à droite/bas : seuls les pixels dedans sont écrits
-        // ET comptés (10×10, pas 256²).
+        // Tile overflowing right/bottom: only pixels inside are written AND
+        // counted (10×10, not 256²).
         let mut s = PreviewSurface::new(100, 100);
         s.update_tile(&tile(90, 90, 256, 256, 7));
         assert_eq!(s.image().get_pixel(99, 99)[0], 7);

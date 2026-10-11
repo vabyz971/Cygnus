@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,24 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Les réexports conservent les chemins publics de l'ancien module
-// unique (dont ceux utilisés par les tests) : certains ne servent
-// qu'en `#[cfg(test)]`, d'où la tolérance ciblée.
+// Re-exports keep the old single module's public paths
+// (including test-used ones): some only serve
+// under `#[cfg(test)]`, hence the targeted tolerance.
 #![allow(unused_imports)]
 
-//! Pont non bloquant vers le worker `photo-engine` (pattern v2 §3.4).
+//! Non-blocking bridge to the `photo-engine` worker (pattern v2 §3.4).
 //!
-//! La boucle egui ne touche JAMAIS au `Document` : elle envoie des
-//! [`PhotoEngineCommand`](commands::PhotoEngineCommand) via `Sender` et poll les
-//! [`PhotoEngineResponse`](responses::PhotoEngineResponse) via `try_recv` à chaque frame.
+//! The egui loop NEVER touches the `Document`: it sends
+//! [`PhotoEngineCommand`](commands::PhotoEngineCommand) via `Sender` and polls
+//! [`PhotoEngineResponse`](responses::PhotoEngineResponse) via `try_recv` each frame.
 //!
-//! Découpage (déplacement pur, zéro changement de logique) :
-//! - [`commands`] : commandes, routage de rendu, coalescence de lots ;
-//! - [`responses`] : réponses du worker vers l'UI ;
-//! - [`metrics`] : métriques et timings ;
-//! - [`preview`] : aperçus composites (legacy + incrémental) ;
-//! - [`thumbs`] : miniatures asynchrones de l'`EngineWorker` ;
-//! - [`worker`] : worker (document vivant, historique, application).
+//! Breakdown (pure move, zero logic change):
+//! - [`commands`]: commands, render routing, batch coalescing;
+//! - [`responses`]: worker-to-UI responses;
+//! - [`metrics`]: metrics and timings;
+//! - [`preview`]: composite previews (legacy + incremental);
+//! - [`thumbs`]: async thumbnails of the `EngineWorker`;
+//! - [`worker`]: worker (live document, history, application).
 
 pub(crate) fn assert_send<T: Send>() {}
 

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Viewport photo : composition autour du viewport générique.
+//! Photo viewport: composition around the generic viewport.
 //!
-//! Couches séparées, de bas en haut :
+//! Separate layers, bottom to top:
 //!
-//! - [`canvas`] : `PhotoCanvas` (texture moteur + outils, pan/zoom
-//!   state-only), sans aucun envoi worker ;
-//! - [`overlays`] : marqueur photo (origine) via les helpers
-//!   agnostiques ui-kit.
+//! - [`canvas`]: `PhotoCanvas` (engine texture + tools, pan/zoom
+//!   state-only), with no worker send;
+//! - [`overlays`]: photo marker (origin) via the
+//!   agnostic ui-kit helpers.
 //!
-//! La caméra générique vit dans ui-kit ; le rendu et la sélection
-//! photo restent ici, sans logique métier moteur.
+//! The generic camera lives in ui-kit; photo rendering and selection
+//! stay here, with no engine domain logic.
 
 pub mod canvas;
 pub mod overlays;

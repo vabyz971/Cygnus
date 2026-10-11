@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Fonctionnalité Calques : panneau position-indépendant.
+//! Layers feature: position-independent panel.
 //!
-//! Types de snapshot (`types`), ligne HUD (`layer_item`), liste
-//! réordonnable (`layer_list`), panneau (`panel`) et conversion vers
+//! Snapshot types (`types`), HUD row (`layer_item`), reorderable
+//! list (`layer_list`), panel (`panel`) and conversion to
 //! [`PhotoAction`](crate::commands::PhotoAction) (`actions`).
-//! Seuls les symboles consommés hors feature sont réexportés ; les
-//! échanges internes passent par des chemins explicites.
+//! Only symbols consumed outside the feature are re-exported; internal
+//! exchanges go through explicit paths.
 
 pub mod actions;
 pub mod layer_item;

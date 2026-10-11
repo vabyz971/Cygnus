@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Barre d'outils standard Cygnus.
+//! Standard Cygnus toolbar.
 //!
-//! Bandeau haut non redimensionnable avec ligne de séparation. Les apps
-//! y placent des [`icon_button`](crate::icons::icon_button)
-//! et des groupes séparés par `ui.separator()` — jamais de style en dur.
+//! Non-resizable top strip with a separator line. Apps place
+//! [`icon_button`](crate::icons::icon_button) widgets there and
+//! groups split by `ui.separator()` — never hardcoded styling.
 
-/// Barre d'outils standard Cygnus.
+/// Standard Cygnus toolbar.
 ///
-/// # Exemple
+/// # Example
 /// ```rust,no_run
 /// # use ui_kit::containers::Toolbar;
 /// # use ui_kit::icons::{Icon, icon_button};
@@ -41,12 +41,12 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
-    /// Crée une barre d'outils (identifiant globalement unique).
+    /// Creates a toolbar (globally unique id).
     pub fn new(id: &'static str) -> Self {
         Self { id }
     }
 
-    /// Affiche la barre en haut et exécute le contenu.
+    /// Displays the bar on top and runs the content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

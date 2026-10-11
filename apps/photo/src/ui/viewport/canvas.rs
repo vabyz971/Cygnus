@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,39 +16,39 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Canvas PHOTO : viewport générique + outils photo par-dessus.
+//! PHOTO canvas: generic viewport + photo tools on top.
 //!
-//! Widget métier : affiche la texture du `photo-engine` via
-//! `ui_kit::Viewport`, mappe les outils photo (main, loupe, pinceau,
-//! gomme, déplacement) et accumule les traits de dessin. À la fin
-//! d'un trait (relâchement), la requête est RETOURNÉE dans
-//! [`PhotoCanvasOutcome::paint`] : c'est l'app qui l'envoie au worker
-//! (via [`PhotoAction`](crate::commands::PhotoAction)), jamais le
-//! canvas. Pan/zoom restent 100% locaux (state-only).
+//! Domain widget: displays the `photo-engine` texture via
+//! `ui_kit::Viewport`, maps the photo tools (hand, zoom, brush,
+//! eraser, move) and accumulates drawing strokes. At the end
+//! of a stroke (release), the request is RETURNED in
+//! [`PhotoCanvasOutcome::paint`]: the app sends it to the worker
+//! (via [`PhotoAction`](crate::commands::PhotoAction)), never the
+//! canvas. Pan/zoom stay 100% local (state-only).
 
 use ui_kit::viewport::{Viewport, ViewportAction, ViewportState, ViewportTool};
 use uuid::Uuid;
 
-/// Outil actif du canvas photo (egui-side, sans dépendance iced).
+/// Active photo canvas tool (egui-side, no iced dependency).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PhotoCanvasTool {
-    /// Déplacement / sélection.
+    /// Move / select.
     #[default]
     Move,
-    /// Main : le drag déplace la vue.
+    /// Hand: dragging moves the view.
     Pan,
-    /// Loupe : clic = zoom avant, clic droit = arrière.
+    /// Zoom: click = zoom in, right-click = out.
     Zoom,
-    /// Pinceau : le drag accumule un trait envoyé au moteur.
+    /// Brush: dragging accumulates a stroke sent to the engine.
     Brush,
-    /// Gomme : comme le pinceau, en mode effacement.
+    /// Eraser: like the brush, in erase mode.
     Eraser,
-    /// Pipette : le clic échantillonne la couleur (aperçu composite).
+    /// Eyedropper: clicking samples the color (composite preview).
     Eyedropper,
 }
 
 impl PhotoCanvasTool {
-    /// Outil viewport générique correspondant.
+    /// Matching generic viewport tool.
     pub fn viewport_tool(self) -> ViewportTool {
         match self {
             Self::Move => ViewportTool::Move,
@@ -58,12 +58,12 @@ impl PhotoCanvasTool {
         }
     }
 
-    /// Vrai pour les outils accumulant un trait (pinceau, gomme).
+    /// True for stroke-accumulating tools (brush, eraser).
     pub fn is_painting(self) -> bool {
         matches!(self, Self::Brush | Self::Eraser)
     }
 
-    /// Aide contextuelle affichée dans la barre de statut (façon Affinity).
+    /// Contextual help shown in the status bar (Affinity-style).
     pub fn hint(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
         use crate::i18n::PhotoTextKey;
         match self {
@@ -77,14 +77,14 @@ impl PhotoCanvasTool {
     }
 }
 
-/// Réglages du pinceau/gomme (détenus par l'app).
+/// Brush/eraser settings (owned by the app).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PhotoBrushSettings {
-    /// Rayon en pixels image.
+    /// Radius in image pixels.
     pub radius: f32,
-    /// Couleur RGB (ignorée en mode gomme).
+    /// RGB color (ignored in eraser mode).
     pub color: [u8; 3],
-    /// Opacité 0..=1.
+    /// Opacity 0..=1.
     pub opacity: f32,
 }
 
@@ -98,51 +98,51 @@ impl Default for PhotoBrushSettings {
     }
 }
 
-/// Requête de commit d'un trait (retournée à l'app, envoyée au
+/// Stroke commit request (returned to the app, sent to the
 /// worker via `PhotoAction::CommitStroke`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaintRequest {
-    /// Calque pixels cible.
+    /// Target pixel layer.
     pub layer: Uuid,
-    /// Polyligne du trait (pixels image).
+    /// Stroke polyline (image pixels).
     pub points: Vec<(f32, f32)>,
-    /// Vrai = gomme (réduit l'alpha), faux = pinceau.
+    /// True = eraser (lowers alpha), false = brush.
     pub eraser: bool,
-    /// Rayon en pixels image.
+    /// Radius in image pixels.
     pub radius: f32,
-    /// Couleur RGB (ignorée en mode gomme).
+    /// RGB color (ignored in eraser mode).
     pub color: [u8; 3],
-    /// Opacité du trait 0..=1.
+    /// Stroke opacity 0..=1.
     pub opacity: f32,
 }
 
-/// Déplacement d'un calque commis au relâchement du drag (outil
-/// sélection, retourné à l'app puis envoyé au worker via
+/// Layer move committed on drag release (select
+/// tool, returned to the app then sent to the worker via
 /// `PhotoAction::MoveLayer`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MoveRequest {
-    /// Calque pixels cible.
+    /// Target pixel layer.
     pub layer: Uuid,
-    /// Décalage horizontal en pixels image.
+    /// Horizontal offset in image pixels.
     pub dx: f32,
-    /// Décalage vertical en pixels image.
+    /// Vertical offset in image pixels.
     pub dy: f32,
 }
 
-/// Correspondance miniature→pixels document pour un aperçu du plan
-/// infini : la miniature affichée peut être plus grande que le
-/// document (calque déplacé hors cadre) et réduite (plafond 1600 px).
-/// Sans mapping (défaut), la miniature vaut le document (identité).
+/// Thumbnail→document-pixel mapping for an infinite-plane
+/// preview: the displayed thumbnail may be bigger than the
+/// document (layer moved out of frame) and downscaled (1600 px cap).
+/// Without a mapping (default), the thumbnail equals the document (identity).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CanvasMapping {
-    /// Coin haut-gauche du document en pixels miniature.
+    /// Document top-left corner in thumbnail pixels.
     pub origin: egui::Vec2,
-    /// Facteur miniature→pixels document (miniature uniforme).
+    /// Thumbnail→document-pixel factor (uniform thumbnail).
     pub thumb_to_doc: f32,
 }
 
 impl CanvasMapping {
-    /// Mapping identité (miniature = document).
+    /// Identity mapping (thumbnail = document).
     pub fn identity() -> Self {
         Self {
             origin: egui::Vec2::ZERO,
@@ -150,7 +150,7 @@ impl CanvasMapping {
         }
     }
 
-    /// Convertit un point miniature en pixels document.
+    /// Converts a thumbnail point to document pixels.
     fn to_doc(self, thumb: egui::Vec2) -> egui::Vec2 {
         let k = if self.thumb_to_doc > 0.0 && self.thumb_to_doc.is_finite() {
             self.thumb_to_doc
@@ -160,8 +160,8 @@ impl CanvasMapping {
         egui::vec2((thumb.x - self.origin.x) * k, (thumb.y - self.origin.y) * k)
     }
 
-    /// Convertit un delta miniature en delta document (l'origine
-    /// s'annule sur les différences).
+    /// Converts a thumbnail delta to a document delta (origin
+    /// cancels out on differences).
     fn delta_to_doc(self, delta_thumb: egui::Vec2) -> egui::Vec2 {
         let k = if self.thumb_to_doc > 0.0 && self.thumb_to_doc.is_finite() {
             self.thumb_to_doc
@@ -172,11 +172,11 @@ impl CanvasMapping {
     }
 }
 
-/// Canvas photo (builder) : texture moteur + outils par-dessus.
+/// Photo canvas (builder): engine texture + tools on top.
 ///
-/// `stroke` accumule les positions du geste en cours (trait de
-/// pinceau ou drag de déplacement, en pixels image), détenu par
-/// l'app et vidé à chaque commit.
+/// `stroke` accumulates the in-progress gesture positions (brush
+/// stroke or move drag, in image pixels), owned by
+/// the app and drained on each commit.
 pub struct PhotoCanvas<'a> {
     texture: Option<(egui::TextureId, egui::Vec2)>,
     tool: PhotoCanvasTool,
@@ -188,7 +188,7 @@ pub struct PhotoCanvas<'a> {
 }
 
 impl<'a> PhotoCanvas<'a> {
-    /// Crée un canvas photo (trait détenu par l'app).
+    /// Creates a photo canvas (app-owned stroke).
     pub fn new(stroke: &'a mut Vec<egui::Vec2>) -> Self {
         Self {
             texture: None,
@@ -201,58 +201,58 @@ impl<'a> PhotoCanvas<'a> {
         }
     }
 
-    /// Texture moteur + taille image (pixels). `None` = état vide.
+    /// Engine texture + image size (pixels). `None` = empty state.
     #[must_use]
     pub fn texture(mut self, texture: Option<(egui::TextureId, egui::Vec2)>) -> Self {
         self.texture = texture;
         self
     }
 
-    /// Outil actif.
+    /// Active tool.
     #[must_use]
     pub fn tool(mut self, tool: PhotoCanvasTool) -> Self {
         self.tool = tool;
         self
     }
 
-    /// Affiche/masque la grille.
+    /// Shows/hides the grid.
     #[must_use]
     pub fn show_grid(mut self, show: bool) -> Self {
         self.show_grid = show;
         self
     }
 
-    /// Calque pixels recevant les traits (`None` = dessin désactivé).
+    /// Pixel layer receiving strokes (`None` = drawing disabled).
     #[must_use]
     pub fn active_layer(mut self, layer: Option<Uuid>) -> Self {
         self.active_layer = layer;
         self
     }
 
-    /// Réglages pinceau/gomme.
+    /// Brush/eraser settings.
     #[must_use]
     pub fn brush(mut self, brush: PhotoBrushSettings) -> Self {
         self.brush = brush;
         self
     }
 
-    /// Correspondance miniature→pixels document (plan infini +
-    /// miniature plafonnée). Identité par défaut.
+    /// Thumbnail→document-pixel mapping (infinite plane +
+    /// capped thumbnail). Identity by default.
     #[must_use]
     pub fn mapping(mut self, mapping: CanvasMapping) -> Self {
         self.mapping = mapping;
         self
     }
 
-    /// Affiche le canvas, applique pan/zoom, accumule puis commet les
-    /// traits (pinceau/gomme) ou les déplacements (sélection). Les
-    /// positions rapportées sont en PIXELS IMAGE (prise en compte de
-    /// l'ajustement, du zoom et du pan via `dest_rect`) — directement
-    /// exploitables par le worker (transform identité).
+    /// Shows the canvas, applies pan/zoom, accumulates then commits
+    /// strokes (brush/eraser) or moves (select). Reported
+    /// positions are in IMAGE PIXELS (accounting for fit,
+    /// zoom, and pan via `dest_rect`) — directly
+    /// usable by the worker (identity transform).
     pub fn show(self, ui: &mut egui::Ui, state: &mut ViewportState) -> PhotoCanvasOutcome {
         let (texture_id, image_size) = self.texture.unzip();
-        // Rectangle de destination AVANT interaction (même géométrie
-        // que le dessin : disponible courant + zoom/pan).
+        // Destination rect BEFORE interaction (same geometry
+        // as drawing: current available + zoom/pan).
         let dest = image_size.and_then(|size| {
             (size.x > 0.0 && size.y > 0.0).then(|| {
                 Viewport::fit_dest(
@@ -277,9 +277,9 @@ impl<'a> PhotoCanvas<'a> {
             hover_pos: response.response.hover_pos(),
             ..Default::default()
         };
-        // Écran → miniature → pixels document (origine du plan infini
-        // + échelle de la miniature inversées). Sans image (dest None),
-        // les positions sont ignorées.
+        // Screen → thumbnail → document pixels (infinite-plane origin
+        // + thumbnail scale inverted). Without an image (dest None),
+        // positions are ignored.
         if let Some(dest) = dest {
             let scale = dest.width() / image_size.map_or(1.0, |size| size.x.max(1.0));
             if scale > 0.0 {
@@ -295,8 +295,8 @@ impl<'a> PhotoCanvas<'a> {
                 }
             }
         }
-        // Outil déplacement : accumule le drag en pixels image et
-        // commet le décalage total au relâchement.
+        // Move tool: accumulates the drag in image pixels and
+        // commits the total offset on release.
         if self.tool == PhotoCanvasTool::Move {
             self.stroke.extend(outcome.pointer_world.iter().copied());
             if response.response.drag_stopped() && !self.stroke.is_empty() {
@@ -315,14 +315,14 @@ impl<'a> PhotoCanvas<'a> {
             return outcome;
         }
         if !self.tool.is_painting() {
-            // Changement d'outil en cours de geste : abandon propre.
-            // (La pipette rapporte juste la position.)
+            // Mid-gesture tool switch: clean abort.
+            // (The eyedropper just reports the position.)
             self.stroke.clear();
             return outcome;
         }
-        // Phase 6G.3P : le geste est rapporté en incrémental pour
-        // l'overlay transitoire (l'app alimente `InteractionOverlay`,
-        // jamais le worker avant commit — voir `PhotoCanvasOutcome`).
+        // Phase 6G.3P: the gesture is reported incrementally for
+        // the transient overlay (the app feeds `InteractionOverlay`,
+        // never the worker before commit — see `PhotoCanvasOutcome`).
         outcome.ink_gesture_started = self.stroke.is_empty() && !outcome.pointer_world.is_empty();
         outcome.ink_points = outcome.pointer_world.clone();
         outcome.ink_dragging = response.response.dragged_by(egui::PointerButton::Primary);
@@ -345,31 +345,31 @@ impl<'a> PhotoCanvas<'a> {
     }
 }
 
-/// Résultat de [`PhotoCanvas::show`].
+/// Result of [`PhotoCanvas::show`].
 #[derive(Debug, Clone, Default)]
 pub struct PhotoCanvasOutcome {
-    /// Trait à commettre (`None` = rien ce frame ; l'app l'envoie).
+    /// Stroke to commit (`None` = nothing this frame; the app sends it).
     pub paint: Option<PaintRequest>,
-    /// Déplacement à commettre (`None` = rien ce frame ; l'app l'envoie).
+    /// Move to commit (`None` = nothing this frame; the app sends it).
     pub move_layer: Option<MoveRequest>,
-    /// Positions en pixels image du pointeur (clic/drag outil actif).
+    /// Pointer positions in image pixels (active-tool click/drag).
     pub pointer_world: Vec<egui::Vec2>,
-    /// Phase 6G.3P : points ajoutés CE frame pour l'overlay transitoire
-    /// (== `pointer_world` pour les outils de peinture, vide sinon).
-    /// L'app les verse dans `InteractionOverlay` ; le worker ne voit
-    /// que le commit (`paint`, inchangé).
+    /// Phase 6G.3P: points added THIS frame for the transient overlay
+    /// (== `pointer_world` for paint tools, empty otherwise).
+    /// The app pours them into `InteractionOverlay`; the worker only sees
+    /// the commit (`paint`, unchanged).
     pub ink_points: Vec<egui::Vec2>,
-    /// Vrai si un drag primaire est en cours (geste non commité).
+    /// True while a primary drag is in progress (uncommitted gesture).
     pub ink_dragging: bool,
-    /// Vrai si le geste commence ce frame (`stroke` vide + points).
+    /// True when the gesture starts this frame (empty `stroke` + points).
     pub ink_gesture_started: bool,
-    /// Rectangle écran du document (`None` = pas d'image).
+    /// Document screen rect (`None` = no image).
     pub dest_rect: Option<egui::Rect>,
-    /// Taille image en pixels (zéro = pas d'image).
+    /// Image size in pixels (zero = no image).
     pub image_size: egui::Vec2,
-    /// Position écran du curseur (`None` = hors canvas).
+    /// Cursor screen position (`None` = off-canvas).
     pub hover_pos: Option<egui::Pos2>,
-    /// Réponse egui du viewport (menus contextuels, survol).
+    /// Viewport egui response (context menus, hover).
     pub response: Option<egui::Response>,
 }
 
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn canvas_mapping_miniature_vers_document() {
-        // Miniature 2x (plan infini réduit) avec origine (20, 10) px miniature.
+        // 2x thumbnail (downscaled infinite plane) with a (20, 10) thumbnail-px origin.
         let mapping = CanvasMapping {
             origin: egui::vec2(20.0, 10.0),
             thumb_to_doc: 2.0,
@@ -388,11 +388,11 @@ mod tests {
         let doc = mapping.to_doc(egui::vec2(24.0, 15.0));
         assert!((doc.x - 8.0).abs() < 1e-4);
         assert!((doc.y - 10.0).abs() < 1e-4);
-        // Les deltas ignorent l'origine.
+        // Deltas ignore the origin.
         let delta = mapping.delta_to_doc(egui::vec2(3.0, -4.0));
         assert!((delta.x - 6.0).abs() < 1e-4);
         assert!((delta.y + 8.0).abs() < 1e-4);
-        // Identité par défaut.
+        // Identity by default.
         let id = CanvasMapping::identity();
         let same = id.to_doc(egui::vec2(5.0, 7.0));
         assert!((same.x - 5.0).abs() < 1e-4);
@@ -420,9 +420,9 @@ mod tests {
 
     #[test]
     fn drag_rapporte_ink_avant_commit_puis_commit_au_relachement() {
-        // Contrat MouseMove→MouseUp : pendant le drag, `paint` est None
-        // (AUCUN commit, AUCUN worker) et `ink_points` est non vide
-        // (feedback live) ; au relâchement, `paint` porte tout le geste.
+        // MouseMove→MouseUp contract: during the drag, `paint` is None
+        // (NO commit, NO worker) and `ink_points` is non-empty
+        // (live feedback); on release, `paint` carries the whole gesture.
         use std::cell::{Cell, RefCell};
 
         let ctx = egui::Context::default();
@@ -454,7 +454,7 @@ mod tests {
             last.borrow().clone()
         };
 
-        // Frame 0 : sans interaction — géométrie apprise, rien d'autre.
+        // Frame 0: no interaction — geometry learned, nothing else.
         let out = frame(vec![]);
         assert!(out.paint.is_none());
         assert!(out.ink_points.is_empty());
@@ -462,7 +462,7 @@ mod tests {
             center.set(dest.center());
         }
         let c = center.get();
-        // Frames 1..=4 : pressé puis déplacé — feedback, jamais de commit.
+        // Frames 1..=4: pressed then moved — feedback, never a commit.
         let moved = |p: egui::Pos2| egui::Event::PointerMoved(p);
         let press = |p: egui::Pos2| egui::Event::PointerButton {
             pos: p,
@@ -494,7 +494,7 @@ mod tests {
             }
         }
         assert!(saw_ink, "feedback visible AVANT le MouseUp");
-        // Relâchement : le geste complet est commis en UNE fois.
+        // Release: the full gesture is committed in ONE go.
         let out = frame(vec![moved(pts[3]), release(pts[3])]);
         let paint = out.paint.expect("commit au MouseUp");
         assert_eq!(paint.layer, layer);
@@ -519,7 +519,7 @@ mod tests {
             let mut stroke = Vec::new();
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    // Avec texture factice puis état vide.
+                    // With a dummy texture then empty state.
                     let outcome = PhotoCanvas::new(&mut stroke)
                         .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 600.0))))
                         .tool(tool)
@@ -569,9 +569,9 @@ mod tests {
             .expect("calque present")
             .source_image
             .to_rgba8();
-        // Le centre du trait diagonal est repeint en bleu opaque.
+        // The diagonal stroke center is repainted opaque blue.
         assert_eq!(painted.get_pixel(4, 4).0[0..3], [0, 0, 255]);
-        // Les coins hors trait sont intacts.
+        // Off-stroke corners are intact.
         assert_eq!(painted.get_pixel(0, 7).0[0..3], [200, 40, 40]);
     }
 
@@ -588,7 +588,7 @@ mod tests {
             "fond",
             Arc::new(image::DynamicImage::ImageRgba8(red)),
         )));
-        // Id inconnu, rayon nul, aucun point : aucun panic, aucun changement.
+        // Unknown id, zero radius, no points: no panic, no change.
         apply_command(
             &mut doc,
             PhotoEngineCommand::PaintStroke {

@@ -14,123 +14,122 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Correspondance interne entre les icônes sémantiques et Material Symbols.
+//! Internal mapping between semantic icons and Material Symbols.
 //!
-//! SEUL fichier du workspace autorisé à importer
-//! `egui_material_icons::icons`. Si on change de lib d'icônes un jour,
-//! seul ce fichier est modifié : c'est la garantie anti-régression du
-//! système d'icônes.
+//! ONLY workspace file allowed to import `egui_material_icons::icons`.
+//! Switching icon libs one day touches this file alone: the icon
+//! system's anti-regression guarantee.
 //!
-//! RÈGLE ABSOLUE : aucun emoji, aucun glyphe unicode, aucun codepoint
-//! en dur hors d'ici. Tout le code passe par [`CygnusIcon`], exposé
-//! publiquement sous le nom [`Icon`](super::icon::Icon) via le registre.
+//! ABSOLUTE RULE: no emoji, no unicode glyph, no hardcoded
+//! codepoint outside this file. All code goes through [`CygnusIcon`],
+//! exposed publicly as [`Icon`](super::icon::Icon) via the registry.
 
 use egui_material_icons::icons::*;
 
-/// Icône interne (résolution Material Symbols).
+/// Internal icon (Material Symbols resolution).
 ///
-/// Chaque variante correspond à un usage métier (et non à un dessin
-/// précis) : le mapping vers Material Symbols est encapsulé dans
-/// [`CygnusIcon::glyph`]. Les apps utilisent
-/// [`Icon`](super::icon::Icon) ; ce type reste `pub(crate)`.
+/// Each variant maps to a domain usage (not a specific drawing):
+/// the mapping to Material Symbols is encapsulated in
+/// [`CygnusIcon::glyph`]. Apps use [`Icon`](super::icon::Icon);
+/// this type stays `pub(crate)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CygnusIcon {
-    /// Ajouter un élément.
+    /// Add an item.
     Add,
-    /// Supprimer un élément.
+    /// Remove an item.
     Remove,
-    /// Calque visible.
+    /// Visible layer.
     Visibility,
-    /// Calque masqué.
+    /// Hidden layer.
     VisibilityOff,
-    /// Panneau / liste des calques.
+    /// Layers panel / list.
     Layers,
-    /// Ajouter un calque.
+    /// Add a layer.
     LayerAdd,
-    /// Pinceau.
+    /// Brush.
     Brush,
-    /// Gomme.
+    /// Eraser.
     Eraser,
-    /// Outil main (pan).
+    /// Hand tool (pan).
     Hand,
-    /// Outil déplacement.
+    /// Move tool.
     MoveTool,
-    /// Zoom avant.
+    /// Zoom in.
     ZoomIn,
-    /// Zoom arrière.
+    /// Zoom out.
     ZoomOut,
-    /// Annuler.
+    /// Undo.
     Undo,
-    /// Rétablir.
+    /// Redo.
     Redo,
-    /// Enregistrer.
+    /// Save.
     Save,
-    /// Exporter / télécharger.
+    /// Export / download.
     Export,
-    /// Paramètres.
+    /// Settings.
     Settings,
-    /// Fermer.
+    /// Close.
     Close,
-    /// Poignée de drag.
+    /// Drag handle.
     DragHandle,
-    /// Ouvrir un dossier.
+    /// Open a folder.
     FolderOpen,
-    /// Calque image.
+    /// Image layer.
     ImageIcon,
-    /// Masque / texture.
+    /// Mask / texture.
     Mask,
-    /// Calque texte.
+    /// Text layer.
     Text,
-    /// Calque forme vectorielle.
+    /// Vector-shape layer.
     Shape,
-    /// Couper (video).
+    /// Cut (video).
     Cut,
-    /// Scinder un clip (video).
+    /// Split a clip (video).
     Split,
-    /// Rogner un clip (video, icône crop de la lib).
+    /// Trim a clip (video, lib crop icon).
     Trim,
-    /// Média film (video).
+    /// Film media (video).
     Film,
-    /// Lecture.
+    /// Play.
     Play,
     /// Pause.
     Pause,
     /// Stop.
     Stop,
-    /// Enregistrement (audio).
+    /// Record (audio).
     Record,
-    /// Note de musique (audio).
+    /// Music note (audio).
     MusicNote,
     /// Piano (audio).
     Piano,
-    /// Dupliquer (photo).
+    /// Duplicate (photo).
     Duplicate,
-    /// Filtre (photo).
+    /// Filter (photo).
     Filter,
-    /// Supprimer.
+    /// Delete.
     Delete,
-    /// Pipette.
+    /// Eyedropper.
     Eyedropper,
-    /// Loupe / recherche (outil zoom).
+    /// Magnifier / search (zoom tool).
     Search,
-    /// Micro (audio).
+    /// Mic (audio).
     Mic,
-    /// Succès / validation.
+    /// Success / validation.
     Check,
-    /// Avertissement.
+    /// Warning.
     Warning,
-    /// Erreur.
+    /// Error.
     Error,
     /// Information.
     Info,
-    /// Déplier (chevron bas).
+    /// Expand (chevron down).
     ExpandMore,
-    /// Replier (chevron haut).
+    /// Collapse (chevron up).
     ExpandLess,
 }
 
 impl CygnusIcon {
-    /// Icône brute de la lib (noms Material Symbols en SCREAMING_SNAKE_CASE).
+    /// Raw lib icon (Material Symbols names in SCREAMING_SNAKE_CASE).
     pub(crate) fn glyph(self) -> egui_material_icons::MaterialIcon {
         match self {
             Self::Add => ICON_ADD,
@@ -182,18 +181,18 @@ impl CygnusIcon {
         }
     }
 
-    /// Codepoint brut (pour les tests anti-tofu uniquement).
+    /// Raw codepoint (for anti-tofu tests only).
     #[cfg(test)]
     pub(crate) fn codepoint(self) -> &'static str {
         self.glyph().codepoint
     }
 
-    /// RichText prêt à afficher (taille par défaut du thème).
+    /// Display-ready RichText (theme default size).
     pub(crate) fn text(self) -> egui::RichText {
         egui_material_icons::icon_text(self.glyph())
     }
 
-    /// RichText à la taille demandée.
+    /// RichText at the requested size.
     pub(crate) fn sized(self, size: f32) -> egui::RichText {
         self.text().size(size)
     }

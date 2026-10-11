@@ -14,34 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Géométrie vectorielle : tracés Bézier et bornes.
+//! Vector geometry: Bézier paths and bounds.
 //!
-//! [`Path`] est une suite de verbes (move/line/quad/cubic/close) en
-//! `datatypes::Vec2`. [`Path::bounds`] retourne l'englobant des points de
-//! contrôle : CONSERVATIF et exact en pratique (une courbe de Bézier tient
-//! dans l'enveloppe convexe de ses contrôles — le backend affine au
-//! tessellage).
+//! [`Path`] is a sequence of verbs (move/line/quad/cubic/close) in
+//! `datatypes::Vec2`. [`Path::bounds`] returns the bounding box of the
+//! control points: CONSERVATIVE and exact in practice (a Bézier curve lies
+//! within the convex hull of its controls — the backend refines at
+//! tessellation).
 
 use datatypes::{Rect, Vec2};
 
-/// Un verbe de tracé (coordonnées espace dessin).
+/// A path verb (drawing-space coordinates).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathVerb {
-    /// Déplace le point courant (débute un sous-tracé).
+    /// Moves the current point (starts a subpath).
     MoveTo(Vec2),
-    /// Segment droit vers le point.
+    /// Straight segment to the point.
     LineTo(Vec2),
-    /// Bézier quadratique (contrôle, arrivée).
+    /// Quadratic Bézier (control, endpoint).
     QuadTo(Vec2, Vec2),
-    /// Bézier cubique (contrôle 1, contrôle 2, arrivée).
+    /// Cubic Bézier (control 1, control 2, endpoint).
     CubicTo(Vec2, Vec2, Vec2),
-    /// Ferme le sous-tracé courant.
+    /// Closes the current subpath.
     Close,
 }
 
 impl PathVerb {
-    /// Points de contrôle du verbe (pour bornes et aplats futurs).
+    /// Control points of the verb (for future bounds and flattening).
     #[must_use]
     pub fn points(self) -> Vec<Vec2> {
         match self {
@@ -53,44 +53,44 @@ impl PathVerb {
     }
 }
 
-/// Tracé vectoriel : suite ordonnée de verbes.
+/// Vector path: ordered sequence of verbs.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Path {
     verbs: Vec<PathVerb>,
 }
 
 impl Path {
-    /// Tracé vide.
+    /// Empty path.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de verbes.
+    /// Number of verbs.
     #[must_use]
     pub fn len(&self) -> usize {
         self.verbs.len()
     }
 
-    /// Vrai si aucun verbe.
+    /// True if no verbs.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.verbs.is_empty()
     }
 
-    /// Verbes dans l'ordre.
+    /// Verbs in order.
     #[must_use]
     pub fn verbs(&self) -> &[PathVerb] {
         &self.verbs
     }
 
-    /// Ajoute un verbe (constructeur chaînable).
+    /// Adds a verb (chainable constructor).
     pub fn push(&mut self, verb: PathVerb) {
         self.verbs.push(verb);
     }
 
-    /// Englobant des points de contrôle (un point seul donne un rectangle
-    /// dégénéré — vide — positionné sur le point ; vide si aucun point).
+    /// Bounding box of the control points (a lone point yields a degenerate
+    /// — empty — rectangle positioned at the point; empty if no points).
     #[must_use]
     pub fn bounds(&self) -> Rect {
         let mut min_x = f32::INFINITY;
@@ -132,14 +132,14 @@ mod tests {
 
     #[test]
     fn bornes_courbes_conservatives() {
-        // Cubique montant à y=7.5 max mais contrôles à y=30 : l'englobant
-        // des contrôles couvre la courbe (propriété d'enveloppe convexe).
+        // Cubic rising to y=7.5 max but controls at y=30: the controls'
+        // bounding box covers the curve (convex-hull property).
         let mut path = Path::new();
         path.push(PathVerb::MoveTo(v(0.0, 0.0)));
         path.push(PathVerb::CubicTo(v(0.0, 30.0), v(10.0, 30.0), v(10.0, 0.0)));
         let bounds = path.bounds();
         assert_eq!((bounds.x0, bounds.y1), (0.0, 30.0));
-        // La courbe réelle (échantillonnée) tient dedans.
+        // The real (sampled) curve fits inside.
         for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let mt = 1.0 - t;
             let y = 3.0 * mt * mt * t * 30.0 + 3.0 * mt * t * t * 30.0;

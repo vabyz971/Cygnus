@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Graphe DSP : nœuds métier câblés sur le graphe de dépendances partagé.
+//! DSP graph: business nodes wired onto the shared dependency graph.
 //!
-//! [`AudioGraph`] possède les [`AudioNode`] et miroite leurs dépendances
-//! dans `graph::Graph` : propagation dirty, révisions, ordre topo et
-//! DÉTECTION DE CYCLES (une boucle de feedback non retardée est rejetée à
-//! l'insertion — le DSP l'exige). Les nœuds désactivés restent câblés
-//! (bypass décidé par le backend, pas par le graphe).
+//! [`AudioGraph`] owns the [`AudioNode`]s and mirrors their dependencies
+//! in `graph::Graph`: dirty propagation, revisions, topo order and
+//! CYCLE DETECTION (a non-delayed feedback loop is rejected at
+//! insertion — DSP requires it). Disabled nodes stay wired
+//! (bypass decided by the backend, not by the graph).
 
 use std::collections::HashMap;
 
@@ -29,7 +29,7 @@ use ids::Revision;
 
 use crate::{AudioId, AudioNode};
 
-/// Graphe audio : métier + dépendances partagées.
+/// Audio graph: business + shared dependencies.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AudioGraph {
     inner: DepGraph,
@@ -37,55 +37,55 @@ pub struct AudioGraph {
 }
 
 impl AudioGraph {
-    /// Graphe vide.
+    /// Empty graph.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de nœuds.
+    /// Number of nodes.
     #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
-    /// Vrai si suivi.
+    /// True if tracked.
     #[must_use]
     pub fn contains(&self, id: AudioId) -> bool {
         self.nodes.contains_key(&id)
     }
 
-    /// Nœud en lecture seule.
+    /// Read-only node.
     #[must_use]
     pub fn find(&self, id: AudioId) -> Option<&AudioNode> {
         self.nodes.get(&id)
     }
 
-    /// Dernière révision émise.
+    /// Last emitted revision.
     #[must_use]
     pub fn tree_revision(&self) -> Revision {
         self.inner.tree_revision()
     }
 
-    /// Révision d'un nœud (`None` si inconnu).
+    /// Revision of a node (`None` if unknown).
     #[must_use]
     pub fn node_revision(&self, id: AudioId) -> Option<Revision> {
         self.inner.node_revision(graph_id(id))
     }
 
-    /// Saleté d'un nœud (`None` si inconnu).
+    /// Dirtiness of a node (`None` if unknown).
     #[must_use]
     pub fn is_dirty(&self, id: AudioId) -> Option<bool> {
         self.inner.is_dirty(graph_id(id))
     }
 
-    /// Ajoute un nœud (propre) et retourne son id.
+    /// Adds a (clean) node and returns its id.
     pub fn add_node(&mut self, node: AudioNode) -> AudioId {
         let id = node.id;
         self.inner.insert(graph_id(id));
@@ -93,7 +93,7 @@ impl AudioGraph {
         id
     }
 
-    /// Retire un nœud et ses arêtes (faux si inconnu).
+    /// Removes a node and its edges (false if unknown).
     pub fn remove_node(&mut self, id: AudioId) -> bool {
         if self.nodes.remove(&id).is_none() {
             return false;
@@ -102,23 +102,23 @@ impl AudioGraph {
         true
     }
 
-    /// Câble `from → to` (`to` dépend de `from`). Cycles, boucles et
-    /// inconnus rejetés ([`GraphError`], graphe inchangé — les ids des
-    /// erreurs sont les miroirs internes, même entité).
+    /// Wires `from → to` (`to` depends on `from`). Cycles, loops and
+    /// unknown ids rejected ([`GraphError`], graph unchanged — the ids of
+    /// errors are the internal mirrors, same entity).
     ///
     /// # Errors
     ///
-    /// Retourne [`GraphError`] si l'arête est rejetée.
+    /// Returns [`GraphError`] if the edge is rejected.
     pub fn connect(&mut self, from: AudioId, to: AudioId) -> Result<Revision, GraphError> {
         self.inner.add_edge(graph_id(from), graph_id(to))
     }
 
-    /// Déconnecte (faux si arête absente).
+    /// Disconnects (false if edge absent).
     pub fn disconnect(&mut self, from: AudioId, to: AudioId) -> bool {
         self.inner.remove_edge(graph_id(from), graph_id(to))
     }
 
-    /// Dépendances directes de `to` (`None` si inconnu).
+    /// Direct dependencies of `to` (`None` if unknown).
     #[must_use]
     pub fn dependencies(&self, to: AudioId) -> Option<Vec<AudioId>> {
         self.inner.dependencies(graph_id(to)).map(|deps| {
@@ -128,7 +128,7 @@ impl AudioGraph {
         })
     }
 
-    /// Ordre de traitement (amont d'abord — le driver DSP suit cet ordre).
+    /// Processing order (upstream first — the DSP driver follows this order).
     #[must_use]
     pub fn process_order(&self) -> Vec<AudioId> {
         self.inner
@@ -141,18 +141,18 @@ impl AudioGraph {
             .collect()
     }
 
-    /// Salit un nœud et son aval (paramètre modifié).
+    /// Marks a node and its downstream dirty (modified parameter).
     pub fn mark_dirty(&mut self, id: AudioId) -> Option<Revision> {
         self.inner.mark_dirty(graph_id(id))
     }
 
-    /// Marque un nœud recalculé (sans bump — voir `graph`).
+    /// Marks a node recomputed (no bump — see `graph`).
     pub fn clear_dirty(&mut self, id: AudioId) -> Option<bool> {
         self.inner.clear_dirty(graph_id(id))
     }
 }
 
-/// Projection `AudioId → graph::NodeId` (même entité, autre monde).
+/// Projection `AudioId → graph::NodeId` (same entity, other world).
 fn graph_id(id: AudioId) -> GraphNodeId {
     GraphNodeId::from_entity(id.entity())
 }
@@ -191,7 +191,7 @@ mod tests {
             graph.connect(src, src),
             Err(GraphError::SelfLoop(_))
         ));
-        // Graphe intact : l'ordre couvre toujours tout.
+        // Graph intact: the order still covers everything.
         assert_eq!(graph.process_order().len(), 3);
     }
 

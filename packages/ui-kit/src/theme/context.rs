@@ -14,62 +14,62 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Thème via le contexte egui : installation et lecture.
+//! Theme via the egui context: install and read.
 //!
-//! [`install_theme`] stocke le [`CygnusTheme`] dans le
-//! `egui::Context` (donnée temporaire sous un [`egui::Id`] dédié) ;
-//! [`UiThemeExt::cygnus_theme`] le relit depuis n'importe quel `Ui` ou
-//! `Context`, en retombant sur [`CygnusTheme::dark`] si rien n'est
-//! installé (les tests sans installation continuent de marcher).
+//! [`install_theme`] stores the [`CygnusTheme`] in the
+//! `egui::Context` (temporary data under a dedicated [`egui::Id`]);
+//! [`UiThemeExt::cygnus_theme`] re-reads it from any `Ui` or
+//! `Context`, falling back to [`CygnusTheme::dark`] when nothing is
+//! installed (tests without installation keep working).
 //!
-//! Règle : aucun widget hors `theme/` n'appelle
-//! `CygnusTheme::dark()` — il lit `ui.cygnus_theme()` ou
+//! Rule: no widget outside `theme/` calls
+//! `CygnusTheme::dark()` — it reads `ui.cygnus_theme()` or
 //! `ctx.cygnus_theme()`.
 
 use super::theme::CygnusTheme;
 
-/// Identifiant dédié (et constant) du thème dans `ctx.data_mut`.
+/// Dedicated (constant) id of the theme in `ctx.data_mut`.
 pub const THEME_DATA_ID: &str = "cygnus_theme";
 
-/// Id egui correspondant à [`THEME_DATA_ID`].
+/// egui id matching [`THEME_DATA_ID`].
 fn theme_id() -> egui::Id {
     egui::Id::new(THEME_DATA_ID)
 }
 
-/// Installe le thème dans le contexte egui (à appeler au démarrage
-/// de chaque app, via [`apply_cygnus_theme`](super::visuals::apply_cygnus_theme)).
+/// Installs the theme in the egui context (call at each
+/// app's startup, via [`apply_cygnus_theme`](super::visuals::apply_cygnus_theme)).
 pub fn install_theme(ctx: &egui::Context, theme: CygnusTheme) {
     ctx.data_mut(|data| {
         data.insert_temp(theme_id(), theme);
     });
 }
 
-/// Lit le thème installé dans le contexte egui (repli sombre).
+/// Reads the theme installed in the egui context (dark fallback).
 fn installed_or_dark(ctx: &egui::Context) -> CygnusTheme {
     ctx.data(|data| data.get_temp::<CygnusTheme>(theme_id()))
         .unwrap_or_else(CygnusTheme::dark)
 }
 
-/// Accès au [`CygnusTheme`] depuis egui (`Ui` ou `Context`).
+/// Access to the [`CygnusTheme`] from egui (`Ui` or `Context`).
 ///
-/// Nommé `cygnus_theme` (et non `theme`) car egui 0.36 fournit déjà
-/// des méthodes natives `theme()` (retournant `egui::Theme`) :
-/// une méthode de trait homonyme serait masquée par la méthode
-/// native et rendrait l'appel ambigu.
+/// Named `cygnus_theme` (not `theme`) because egui 0.36 already provides
+/// native `theme()` methods (returning `egui::Theme`):
+/// a homonymous trait method would be shadowed by the native
+/// method and make the call ambiguous.
 pub trait UiThemeExt {
-    /// Thème installé, ou [`CygnusTheme::dark`] par défaut.
+    /// Installed theme, or [`CygnusTheme::dark`] by default.
     fn cygnus_theme(&self) -> CygnusTheme;
 }
 
 impl UiThemeExt for egui::Ui {
-    /// Lit le thème du contexte parent.
+    /// Reads the parent context's theme.
     fn cygnus_theme(&self) -> CygnusTheme {
         installed_or_dark(self.ctx())
     }
 }
 
 impl UiThemeExt for egui::Context {
-    /// Lit le thème installé sur ce contexte.
+    /// Reads the theme installed on this context.
     fn cygnus_theme(&self) -> CygnusTheme {
         installed_or_dark(self)
     }

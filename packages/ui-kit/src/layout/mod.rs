@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Workspace : état du layout partagé par les 3 apps.
+//! Workspace: layout state shared by the 3 apps.
 //!
-//! [`PanelId`] stables, [`PanelState`] (visibilité + dimension),
-//! [`WorkspaceState`] (régions gauche / droite / basse + vue
-//! centrale) et [`persistence`] JSON (restauration via
-//! `packages/preferences`). Pas de docking dans cette phase.
+//! Stable [`PanelId`], [`PanelState`] (visibility + size),
+//! [`WorkspaceState`] (left / right / bottom regions + central
+//! view) and JSON [`persistence`] (restored via
+//! `packages/preferences`). No docking in this phase.
 
 pub mod panel_id;
 pub mod panel_state;

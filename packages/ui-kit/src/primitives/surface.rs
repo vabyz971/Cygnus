@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Surface : fond calibré (carte, encart, zone de contenu).
+//! Surface: calibrated background (card, inset, content area).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::primitives::Surface;
 //! # use ui_kit::theme::CygnusTheme;
@@ -30,7 +30,7 @@
 
 use crate::theme::CygnusTheme;
 
-/// Surface au style du thème (fond, rayon, padding, bordure).
+/// Theme-styled surface (background, radius, padding, border).
 #[derive(Debug, Clone, Copy)]
 pub struct Surface {
     fill: egui::Color32,
@@ -40,7 +40,7 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Surface standard : fond secondaire, rayon et padding du thème.
+    /// Standard surface: theme background, radius and padding.
     pub fn new(theme: &CygnusTheme) -> Self {
         Self {
             fill: theme.colors.bg_secondary,
@@ -50,35 +50,35 @@ impl Surface {
         }
     }
 
-    /// Couleur de fond (préférer un token `theme.colors.*`).
+    /// Background color (prefer a `theme.colors.*` token).
     #[must_use]
     pub fn fill(mut self, fill: egui::Color32) -> Self {
         self.fill = fill;
         self
     }
 
-    /// Rayon des coins (préférer un token `theme.radius.*`).
+    /// Corner radius (prefer a `theme.radius.*` token).
     #[must_use]
     pub fn radius(mut self, radius: f32) -> Self {
         self.radius = radius;
         self
     }
 
-    /// Marge intérieure (préférer un token `theme.spacing.*`).
+    /// Inner margin (prefer a `theme.spacing.*` token).
     #[must_use]
     pub fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
         self
     }
 
-    /// Bordure optionnelle (couleur : `theme.colors.border`).
+    /// Optional border (color: `theme.colors.border`).
     #[must_use]
     pub fn border(mut self, stroke: egui::Stroke) -> Self {
         self.border = Some(stroke);
         self
     }
 
-    /// Affiche la surface et son contenu.
+    /// Displays the surface and its content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

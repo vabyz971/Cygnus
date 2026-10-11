@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Registre nodal audio LEGACY (bibliothèque de nœuds UI).
+//! LEGACY audio node registry (UI node library).
 //!
-//! Conservé tel quel : il alimente l'éditeur nodal générique (`datatypes`)
-//! pendant que le graphe DSP ([`AudioGraph`](crate::AudioGraph)) grandit à
-//! côté. Les deux coexistent — aucune suppression, migration douce.
+//! Kept as is: it feeds the generic node editor (`datatypes`)
+//! while the DSP graph ([`AudioGraph`](crate::AudioGraph)) grows
+//! alongside. Both coexist — no deletion, gentle migration.
 
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
 
-/// Définitions nodales audio (inchangé — voir `node`/`graph` pour le DSP).
+/// Audio node definitions (unchanged — see `node`/`graph` for DSP).
 #[must_use]
 pub fn all_definitions() -> Vec<NodeDefinition> {
     vec![

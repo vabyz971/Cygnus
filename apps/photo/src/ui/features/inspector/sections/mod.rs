@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Sections de l'inspecteur (une par domaine du calque).
+//! Inspector sections (one per layer domain).
 //!
-//! Aujourd'hui : `attachment` (pièce jointe focalisée depuis
-//! l'arbre des calques : nom, type, on/off). Les futures sections
-//! (`transform`, `blend`, `effects`) suivront le même contrat :
+//! Today: `attachment` (focused attachment from
+//! the layer tree: name, type, on/off). Future sections
+//! (`transform`, `blend`, `effects`) will follow the same contract:
 //! `(ui, ctx, …) -> Vec<InspectorAction>`.
 //!
-//! Visibilité / opacité / fusion vivent dans le panneau Calques
-//! (en-tête de sélection) : jamais dupliquées ici.
+//! Visibility / opacity / blend live in the Layers panel
+//! (selection header): never duplicated here.
 
 pub mod attachment;
 

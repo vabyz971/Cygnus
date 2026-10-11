@@ -1,11 +1,9 @@
-//! UI Kit — packageless `use` pour apps.
+//! UI Kit — packageless `use` for apps.
 //!
-//! Qu'une seule app ait besoin de la suite de composants
-//! et styles definis dans ui-kit (par exemple, bouton
-//! generique, curseur principal, panneau glissant,
-//! catalogue de traduction) se fasse via un seul
-//! `use ui_kit::prelude::*`. Aucun module metier
-//! exporte dans ui-kit.
+//! When a single app needs the component and style suite defined in
+//! ui-kit (e.g. generic button, main slider, sliding panel,
+//! translation catalog), it goes through a single
+//! `use ui_kit::prelude::*`. No domain module is exported in ui-kit.
 
 pub use crate::components::{
     Button, Checkbox, IconButton, NumberInput, Select, Slider, Tabs, reorderable_list,

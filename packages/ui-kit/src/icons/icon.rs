@@ -14,110 +14,110 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Icônes sémantiques du design system.
+//! Design-system semantic icons.
 //!
-//! [`Icon`] est un enum stable et indépendant du domaine : les apps
-//! Photo, Video et Audio l'utilisent sans jamais importer une
-//! bibliothèque d'icônes. La résolution vers le dessin réel passe par
-//! [`IconRegistry`](super::registry::IconRegistry), qui délègue au
-//! module interne [`glyph`](super::glyph) — SEUL contact du workspace
-//! avec `egui_material_icons::icons`.
+//! [`Icon`] is a stable, domain-independent enum: the Photo, Video
+//! and Audio apps use it without ever importing an icon library.
+//! Resolution to the actual drawing goes through
+//! [`IconRegistry`](super::registry::IconRegistry), which delegates
+//! to the internal [`glyph`](super::glyph) module — the workspace's
+//! ONLY contact with `egui_material_icons::icons`.
 
-/// Icône sémantique (usage métier, pas un dessin précis).
+/// Semantic icon (domain usage, not a specific drawing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Icon {
-    /// Enregistrer.
+    /// Save.
     Save,
-    /// Ouvrir.
+    /// Open.
     Open,
-    /// Annuler.
+    /// Undo.
     Undo,
-    /// Rétablir.
+    /// Redo.
     Redo,
-    /// Fermer.
+    /// Close.
     Close,
-    /// Zoom avant.
+    /// Zoom in.
     ZoomIn,
-    /// Zoom arrière.
+    /// Zoom out.
     ZoomOut,
-    /// Supprimer.
+    /// Delete.
     Delete,
-    /// Ajouter.
+    /// Add.
     Add,
-    /// Dupliquer.
+    /// Duplicate.
     Duplicate,
-    /// Exporter.
+    /// Export.
     Export,
-    /// Paramètres.
+    /// Settings.
     Settings,
-    /// Lecture.
+    /// Play.
     Play,
     /// Pause.
     Pause,
-    /// Recherche / loupe.
+    /// Search / magnifier.
     Search,
-    /// Validation / succès.
+    /// Validation / success.
     Check,
     /// Information.
     Info,
-    /// Dossier ouvert.
+    /// Open folder.
     Folder,
-    /// Calque visible.
+    /// Visible layer.
     Visibility,
-    /// Calque masqué.
+    /// Hidden layer.
     VisibilityOff,
-    /// Panneau / liste des calques.
+    /// Layers panel / list.
     Layers,
-    /// Icône image (calque pixel).
+    /// Image icon (pixel layer).
     ImageIcon,
-    /// Pinceau (outil peinture).
+    /// Brush (paint tool).
     Brush,
-    /// Gomme (outil).
+    /// Eraser (tool).
     Eraser,
-    /// Main (outil pan).
+    /// Hand (pan tool).
     Hand,
-    /// Déplacement / sélection.
+    /// Move / select.
     MoveTool,
-    /// Déplier (chevron bas).
+    /// Expand (chevron down).
     ExpandMore,
-    /// Replier (chevron haut).
+    /// Collapse (chevron up).
     ExpandLess,
-    /// Pipette (détection couleur).
+    /// Eyedropper (color picking).
     Eyedropper,
-    /// Filtre (liste filtres).
+    /// Filter (filter list).
     Filter,
-    /// Masque / texture.
+    /// Mask / texture.
     Mask,
-    /// Poignée de glisser-déposer.
+    /// Drag-and-drop handle.
     DragHandle,
-    /// Texte (calque).
+    /// Text (layer).
     Text,
-    /// Forme vectorielle.
+    /// Vector shape.
     Shape,
-    /// Couper.
+    /// Cut.
     Cut,
-    /// Diverger (video).
+    /// Split (video).
     Split,
-    /// Rougeigner (video).
+    /// Trim (video).
     Trim,
-    /// Film (vidéo).
+    /// Film (video).
     Film,
-    /// Arrêt.
+    /// Stop.
     Stop,
-    /// Enregistrement (audio).
+    /// Record (audio).
     Record,
-    /// Note musicale (audio).
+    /// Music note (audio).
     MusicNote,
     /// Piano (audio).
     Piano,
-    /// Micro (audio).
+    /// Mic (audio).
     Mic,
-    /// Avertissement.
+    /// Warning.
     Warning,
-    /// Erreur.
+    /// Error.
     Error,
-    /// Supprimer un élément.
+    /// Remove an item.
     Remove,
-    /// Ajouter un calque.
+    /// Add a layer.
     LayerAdd,
 }

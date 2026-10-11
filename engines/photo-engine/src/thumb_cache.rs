@@ -14,29 +14,29 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Cache clé pour miniatures de calques (Phase 6G.4).
+//! Key cache for layer thumbnails (Phase 6G.4).
 //!
-//! Une clé stable identifie un état d'apparence de calque :
-//! source + filtres + masques + redimensionnement.
-//! Un HIT du cache évite tout calcul.
+//! A stable key identifies a layer appearance state:
+//! source + filters + masks + resize. A cache HIT avoids any
+//! computation.
 
 use std::sync::Arc;
 
-/// Clé de cache miniature (versionnée, comparable).
+/// Thumbnail cache key (versioned, comparable).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThumbnailKey {
-    /// Hash du fichier source (ou `Arc::as_ptr` pour images vides).
+    /// Source file hash (or `Arc::as_ptr` for empty images).
     pub source_ptr: u64,
-    /// Signature des filtres appliqués (hash u64).
+    /// Applied-filter signature (u64 hash).
     pub filter_signature: u64,
-    /// Nombre de masques (0 si pas de masque).
+    /// Mask count (0 if no mask).
     pub mask_count: usize,
-    /// Redimensionnement cible (largeur, hauteur).
+    /// Target resize (width, height).
     pub dimensions: (u16, u16),
 }
 
 impl ThumbnailKey {
-    /// Crée une clé pour le calque donné.
+    /// Creates a key for the given layer.
     pub fn for_layer(layer: &crate::PixelLayer) -> Self {
         let source_ptr = Arc::as_ptr(&layer.source_image) as *const () as u64;
         let filter_signature = crate::filters_signature(&layer.filter_layers);
@@ -50,22 +50,22 @@ impl ThumbnailKey {
     }
 }
 
-/// Statistiques de cache miniature.
+/// Thumbnail cache statistics.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ThumbCacheStats {
-    /// Hits (état déjà en cache).
+    /// Hits (state already cached).
     pub hits: u64,
-    /// Misses (calcul nécessaire).
+    /// Misses (computation needed).
     pub misses: u64,
 }
 
 impl ThumbCacheStats {
-    /// Retourne le nombre total de requêtes.
+    /// Returns the total request count.
     pub fn total(&self) -> u64 {
         self.hits + self.misses
     }
 
-    /// Retourne le taux de hits (0.0 si pas de requêtes).
+    /// Returns the hit rate (0.0 if no requests).
     #[must_use]
     pub fn hit_rate(&self) -> f32 {
         if self.total() == 0 {

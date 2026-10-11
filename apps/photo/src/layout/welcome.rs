@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Écran d'accueil : aucun document ouvert.
+//! Welcome screen: no open document.
 //!
-//! Propose de créer un document (fenêtre de création) ou d'ouvrir
-//! une image. Affiché à la place de l'arbre tant que `docs` est vide.
+//! Offers creating a document (creation window) or opening
+//! an image. Shown instead of the tree while `docs` is empty.
 
 use crate::commands::PhotoAction;
 use ui_kit::components::{Button, ButtonVariant};
 use ui_kit::theme::typography::{body_text, heading_text};
 
-/// Dessine l'accueil et retourne les actions (création / ouverture).
+/// Draws the welcome screen and returns the actions (create / open).
 pub fn show(ui: &mut egui::Ui, ctx: &crate::commands::PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     let theme = ctx.shared.theme();

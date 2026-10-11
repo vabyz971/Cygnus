@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœud source : fournit l'image originale à la chaîne
+//! Source node: feeds the original image into the chain
 
 use super::{Effect, NodeCtx};
 use datatypes::{NodeCategory, NodeDefinition, SocketDef, SocketType};
@@ -28,7 +28,7 @@ pub fn definition() -> NodeDefinition {
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
-    // Tête de chaîne : transmet l'entrée si elle existe, sinon l'originale.
+    // Chain head: forwards the input if any, otherwise the original.
     ctx.input().cloned().or_else(|| Some(ctx.original.clone()))
 }
 

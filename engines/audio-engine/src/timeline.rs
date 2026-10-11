@@ -14,61 +14,61 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Timeline audio : régions de sources, décision temporelle.
+//! Audio timeline: source regions, time decisions.
 //!
-//! [`AudioTimeline::active_at`] répond « quelles sources jouent au temps
-//! `t` ? » — purement éditorial, sans échantillons (le graphe DSP et son
-//! backend produisent le son). Propre à l'audio : pas de `Scene`, pas de
-//! pixels, pas de temps partagé avec la vidéo (deux domaines, deux
-//! horloges — documenté, pas factorisé en douce).
+//! [`AudioTimeline::active_at`] answers "which sources play at time
+//! `t`?" — purely editorial, no samples (the DSP graph and its
+//! backend produce the sound). Audio-specific: no `Scene`, no
+//! pixels, no time shared with video (two domains, two
+//! clocks — documented, not silently factored).
 
 use crate::AudioId;
 
-/// Région : une source audible sur `[start, start + duration)`.
+/// Region: an audible source over `[start, start + duration)`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Region {
-    /// Nœud source joué.
+    /// Source node played.
     pub source: AudioId,
-    /// Début (secondes).
+    /// Start (seconds).
     pub start: f32,
-    /// Durée (secondes).
+    /// Duration (seconds).
     pub duration: f32,
 }
 
 impl Region {
-    /// La région couvre-t-elle `t` (début inclus, fin exclue) ?
+    /// Does the region cover `t` (start inclusive, end exclusive)?
     #[must_use]
     pub fn covers(&self, t: f32) -> bool {
         t.is_finite() && t >= self.start && t < self.start + self.duration
     }
 }
 
-/// Timeline : régions dans l'ordre d'ajout (index élevé = dessus de mix).
+/// Timeline: regions in insertion order (high index = mix top).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AudioTimeline {
     regions: Vec<Region>,
 }
 
 impl AudioTimeline {
-    /// Timeline vide.
+    /// Empty timeline.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.regions.is_empty()
     }
 
-    /// Nombre de régions.
+    /// Number of regions.
     #[must_use]
     pub fn len(&self) -> usize {
         self.regions.len()
     }
 
-    /// Ajoute une région (durée ≤ 0 ou début infini : ignorée, faux).
+    /// Adds a region (duration ≤ 0 or infinite start: ignored, false).
     pub fn add_region(&mut self, source: AudioId, start: f32, duration: f32) -> bool {
         if !start.is_finite() || duration <= 0.0 {
             return false;
@@ -81,7 +81,7 @@ impl AudioTimeline {
         true
     }
 
-    /// Sources audibles à `t`, dans l'ordre des régions.
+    /// Audible sources at `t`, in region order.
     #[must_use]
     pub fn active_at(&self, t: f32) -> Vec<AudioId> {
         self.regions

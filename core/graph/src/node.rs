@@ -14,28 +14,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Briques du graphe : [`Node`] (état), [`Edge`] (dépendance) et
-//! [`GraphError`] (rejets d'insertion).
+//! Graph building blocks: [`Node`] (state), [`Edge`] (dependency) and
+//! [`GraphError`] (insertion rejections).
 //!
-//! Ni [`Node`] ni [`Edge`] ne portent de charge utile de domaine : le
-//! graphe suit l'identité, la révision et la saleté ; les pixels,
-//! échantillons audio ou paramètres d'effets restent dans les moteurs.
+//! Neither [`Node`] nor [`Edge`] carries a domain payload: the
+//! graph tracks identity, revision and dirtiness; pixels,
+//! audio samples and effect parameters stay in the engines.
 
 use ids::Revision;
 
 use crate::NodeId;
 
-/// Nœud suivi par le graphe : identité + révision + saleté.
+/// Node tracked by the graph: identity + revision + dirtiness.
 ///
-/// `Copy` (aucune allocation) : les instantanés d'état se font par valeur,
-/// sans clones de structures.
+/// `Copy` (no allocation): state snapshots are taken by value,
+/// with no structure clones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Node {
-    /// Identifiant stable.
+    /// Stable identifier.
     pub id: NodeId,
-    /// Dernière révision (création, arête incidente, salissure).
+    /// Last revision (creation, incident edge, dirtying).
     pub revision: Revision,
-    /// Vrai si le nœud (ou un amont) a changé depuis son dernier calcul.
+    /// True if the node (or an upstream) changed since its last computation.
     pub dirty: bool,
 }
 
@@ -48,48 +48,48 @@ impl Node {
         }
     }
 
-    /// Vrai si le nœud attend un recalcul.
+    /// True if the node awaits recomputation.
     #[must_use]
     pub fn is_dirty(self) -> bool {
         self.dirty
     }
 }
 
-/// Dépendance directionnelle `from → to` : « `to` dépend de `from` ».
+/// Directional dependency `from → to`: "`to` depends on `from`".
 ///
-/// Les données circulent de `from` vers `to` ; invalider `from` salit `to`
-/// (et transitivement tout l'aval). `Copy` : les arêtes se comparent et se
-/// stockent par valeur.
+/// Data flows from `from` to `to`; invalidating `from` dirties `to`
+/// (and transitively all downstream). `Copy`: edges compare and store
+/// by value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
-    /// Amont : la source de la dépendance.
+    /// Upstream: the source of the dependency.
     pub from: NodeId,
-    /// Aval : le dépendant.
+    /// Downstream: the dependent.
     pub to: NodeId,
 }
 
 impl Edge {
-    /// Déclare que `to` dépend de `from` (données `from → to`).
+    /// Declares that `to` depends on `from` (data `from → to`).
     pub fn new(from: NodeId, to: NodeId) -> Self {
         Self { from, to }
     }
 }
 
-/// Rejet d'insertion d'arête — le graphe reste inchangé sur erreur.
+/// Edge-insertion rejection — the graph stays unchanged on error.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GraphError {
-    /// Au moins une extrémité est inconnue du graphe.
+    /// At least one endpoint is unknown to the graph.
     #[error("unknown node: {0}")]
     UnknownNode(NodeId),
-    /// Dépendance d'un nœud envers lui-même.
+    /// Self-dependency of a node.
     #[error("self-dependency is forbidden: {0}")]
     SelfLoop(NodeId),
-    /// L'arête fermerait un cycle (`from` déjà atteignable depuis `to`).
+    /// The edge would close a cycle (`from` already reachable from `to`).
     #[error("edge {from} -> {to} would create a cycle")]
     Cycle {
-        /// Amont demandé.
+        /// Requested upstream.
         from: NodeId,
-        /// Aval demandé.
+        /// Requested downstream.
         to: NodeId,
     },
 }

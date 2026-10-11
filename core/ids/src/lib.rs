@@ -14,36 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Primitifs d'identité et de révision partagés par la suite.
+//! Identity and revision primitives shared by the suite.
 //!
-//! [`EntityId`] est l'identifiant stable générique (pixels, nœuds de scène,
-//! nœuds de graphe, clips…) : `Uuid` v4, donc globalement unique, persistant
-//! entre sessions, léger (`Copy`, 16 octets), comparable et hashable. Les
-//! domaines exposent leurs propres newtypes ([`scene::SceneNodeId`](https://docs.rs/scene),
-//! `graph::NodeId`) enveloppant [`EntityId`] pour empêcher tout mélange
-//! d'identifiants entre mondes.
+//! [`EntityId`] is the generic stable identifier (pixels, scene nodes,
+//! graph nodes, clips…): `Uuid` v4, hence globally unique, persistent
+//! across sessions, lightweight (`Copy`, 16 bytes), comparable and hashable.
+//! Domains expose their own newtypes ([`scene::SceneNodeId`](https://docs.rs/scene),
+//! `graph::NodeId`) wrapping [`EntityId`] to prevent any mixing
+//! of identifiers across worlds.
 //!
-//! [`Revision`] est le compteur monotone partagé : détection de changement,
-//! invalidation et comparaison par simples entiers, sans clones ni caches.
-//! Chaque graphe/scène alloue ses révisions depuis SON compteur — les
-//! valeurs ne sont comparables qu'au sein du même propriétaire.
+//! [`Revision`] is the shared monotonic counter: change detection,
+//! invalidation and comparison with plain integers, no clones or caches.
+//! Each graph/scene allocates its revisions from ITS OWN counter —
+//! values are only comparable within the same owner.
 //!
-//! Cette crate ne dépend de rien d'autre que `serde` + `uuid` : CPU pur,
-//! utilisable par `core`, `engines` et `apps` sans tirer `wgpu`, `egui`
-//! ni aucun moteur de domaine.
+//! This crate depends on nothing but `serde` + `uuid`: pure CPU,
+//! usable by `core`, `engines` and `apps` without pulling in `wgpu`, `egui`
+//! or any domain engine.
 //!
-//! Distinct de `datatypes::NodeId` (`u32`, index du registre nodal
-//! générique) : cet index local n'est ni globalement unique ni persistant,
-//! il ne convient pas comme identité runtime — les deux systèmes
-//! coexistent, sans collision de type possible.
+//! Distinct from `datatypes::NodeId` (`u32`, generic node-registry
+//! index): this local index is neither globally unique nor persistent,
+//! it is unsuitable as a runtime identity — both systems
+//! coexist, with no possible type collision.
 
 use uuid::Uuid;
 
-/// Identifiant d'entité stable et globalement unique.
+/// Stable globally-unique entity identifier.
 ///
-/// Enveloppe [`Uuid`] v4 : attribué une fois, conservé tel quel par la
-/// persistance (formats projet), les snapshots d'historique et les ponts
-/// inter-moteurs.
+/// Wraps [`Uuid`] v4: assigned once, kept as is by
+/// persistence (project formats), history snapshots and
+/// inter-engine bridges.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -51,27 +51,27 @@ use uuid::Uuid;
 pub struct EntityId(Uuid);
 
 impl EntityId {
-    /// Nouvel identifiant aléatoire (v4).
+    /// New random (v4) identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
-    /// Identifiant nul — sentinelle explicite (tests, valeurs manquantes),
-    /// jamais attribué par les graphes/scènes.
+    /// Null identifier — explicit sentinel (tests, missing values),
+    /// never assigned by graphs/scenes.
     #[must_use]
     pub fn nil() -> Self {
         Self(Uuid::nil())
     }
 
-    /// L'`Uuid` sous-jacent (persistance, ponts inter-moteurs).
+    /// The underlying `Uuid` (persistence, inter-engine bridges).
     #[must_use]
     pub fn as_uuid(self) -> Uuid {
         self.0
     }
 
-    /// Reconstruit depuis un `Uuid` existant (chargement, migration depuis
-    /// les `Uuid` de `photo-engine`).
+    /// Rebuilt from an existing `Uuid` (loading, migration from
+    /// `photo-engine` `Uuid`s).
     #[must_use]
     pub fn from_uuid(id: Uuid) -> Self {
         Self(id)
@@ -79,7 +79,7 @@ impl EntityId {
 }
 
 impl Default for EntityId {
-    /// Identifiant nul — même valeur que [`EntityId::nil`].
+    /// Null identifier — same value as [`EntityId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -91,11 +91,11 @@ impl std::fmt::Display for EntityId {
     }
 }
 
-/// Révision monotone allouée par un propriétaire (`Scene`, `Graph`…).
+/// Monotonic revision allocated by an owner (`Scene`, `Graph`…).
 ///
-/// `0` ([`Revision::NONE`]) signifie « aucune révision émise » et n'est
-/// jamais attribuée à un nœud. Les valeurs ne sont comparables qu'au sein
-/// du même propriétaire (compteurs indépendants).
+/// `0` ([`Revision::NONE`]) means "no revision emitted" and is
+/// never assigned to a node. Values are only comparable within
+/// the same owner (independent counters).
 #[derive(
     Debug,
     Clone,
@@ -113,16 +113,16 @@ impl std::fmt::Display for EntityId {
 pub struct Revision(pub u64);
 
 impl Revision {
-    /// Aucune révision — valeur initiale des compteurs propriétaires.
+    /// No revision — initial value of owner counters.
     pub const NONE: Self = Self(0);
 
-    /// Compteur brut (persistance, diagnostics).
+    /// Raw counter (persistence, diagnostics).
     #[must_use]
     pub fn get(self) -> u64 {
         self.0
     }
 
-    /// Vrai si `self` est strictement plus récente que `other`.
+    /// True if `self` is strictly newer than `other`.
     #[must_use]
     pub fn is_newer_than(self, other: Self) -> bool {
         self > other

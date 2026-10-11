@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur vidéo : clips, timeline éditoriale, transitions, décodage.
+//! Video engine: clips, editorial timeline, transitions, decoding.
 //!
-//! Pipeline visé (pas de lecteur complet ici) :
+//! Target pipeline (no full reader here):
 //!
 //! ```text
 //! Video Clip → Decoder → Frame → Raster pipeline → Effects → Composite
 //! ```
 //!
-//! Ce moteur possède la LOGIQUE ÉDITORIALE (clips, timeline, transitions)
-//! et décrit le compositing (`CompositeDesc` avec le [`BlendMode`] PARTAGÉ
-//! de `datatypes` — mêmes modes que la photo, exécutés plus tard par le
-//! backend raster commun). Aucun pixel, aucun `wgpu` : les décodeurs réels
-//! implémenteront [`FrameDecoder`] hors de ce crate.
+//! This engine owns the EDITORIAL LOGIC (clips, timeline, transitions)
+//! and describes compositing (`CompositeDesc` with the SHARED [`BlendMode`]
+//! from `datatypes` — same modes as photo, executed later by the
+//! shared raster backend). No pixels, no `wgpu`: real decoders
+//! will implement [`FrameDecoder`] outside this crate.
 
 pub mod clip;
 pub mod composite;

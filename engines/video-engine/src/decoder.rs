@@ -14,25 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Décodage : le trait que les lecteurs réels implémenteront.
+//! Decoding: the trait real readers will implement.
 //!
-//! Le moteur ne décode RIEN lui-même (pas de lecteur complet ici) : il
-//! adresse des images ([`FrameDescriptor`]) et laisse le backend les
-//! produire. [`NullDecoder`] répond synthétiquement (tests, maquettes).
+//! The engine decodes NOTHING itself (no full reader here): it
+//! addresses frames ([`FrameDescriptor`]) and lets the backend
+//! produce them. [`NullDecoder`] answers synthetically (tests, mockups).
 
 use crate::{Clip, FrameDescriptor};
 
-/// Décodeur d'images : adresse temporelle → descripteur prêt à produire.
-/// L'implémentation réelle vit hors de ce crate (ffmpeg/GStreamer…).
+/// Frame decoder: time address → descriptor ready to produce.
+/// The real implementation lives outside this crate (ffmpeg/GStreamer…).
 pub trait FrameDecoder {
-    /// Descripteur de l'image au temps `pts` (relatif au clip),
-    /// `None` si hors clip. Ne décode aucun pixel : le backend demande
-    /// les pixels ensuite, par descripteur.
+    /// Descriptor of the frame at time `pts` (relative to the clip),
+    /// `None` if outside the clip. Decodes no pixels: the backend requests
+    /// pixels afterwards, per descriptor.
     fn frame_at(&self, clip: &Clip, pts: f32) -> Option<FrameDescriptor>;
 }
 
-/// Décodeur nul : descripteurs synthétiques calés sur le clip
-/// (dimensions recopiées, index calculé — aucun pixel).
+/// Null decoder: synthetic descriptors aligned to the clip
+/// (dimensions copied, index computed — no pixels).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NullDecoder;
 

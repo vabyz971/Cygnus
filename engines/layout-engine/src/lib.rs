@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur de mise en page : cadres, contraintes, pages, placement.
+//! Layout engine: frames, constraints, pages, placement.
 //!
-//! Ce moteur possède la LOGIQUE MÉTIER layout (boîtes, contraintes,
-//! empilements ligne/colonne, alignement, pagination) — jamais le dessin :
-//! aucun `wgpu`, aucun `egui`, aucun renderer. Le résultat alimente le
-//! Scene Graph ([`apply_to_scene`]) ; la mesure du texte est déléguée au
-//! trait [`TextMeasurer`] (le façonnage vit dans `text-engine`, jamais ici).
+//! This engine owns the layout BUSINESS LOGIC (boxes, constraints,
+//! row/column stacks, alignment, pagination) — never drawing:
+//! no `wgpu`, no `egui`, no renderer. The result feeds the
+//! Scene Graph ([`apply_to_scene`]); text measurement is delegated to the
+//! [`TextMeasurer`] trait (shaping lives in `text-engine`, never here).
 
 pub mod layout;
 pub mod measure;

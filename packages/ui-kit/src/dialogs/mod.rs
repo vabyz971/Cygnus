@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Dialogues standard partagés par les 3 apps.
+//! Standard dialogs shared by the 3 apps.
 //!
-//! Modales génériques ([`modal`]), sélecteurs de fichiers non
-//! bloquants ([`file_picker`], via `rfd` sur thread background) et
-//! dialogue de progression pour les exports ([`progress_dialog`]).
+//! Generic modals ([`modal`]), non-blocking file pickers
+//! ([`file_picker`], via `rfd` on a background thread) and
+//! progress dialog for exports ([`progress_dialog`]).
 
 pub mod file_picker;
 pub mod modal;

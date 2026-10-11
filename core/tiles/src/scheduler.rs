@@ -14,49 +14,49 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tile Scheduler : ordre progressif d'exécution des tuiles sales.
+//! Tile Scheduler: progressive execution order of dirty tiles.
 //!
-//! Priorités (dans cet ordre) :
+//! Priorities (in this order):
 //!
-//! 1. tuiles visibles ;
-//! 2. proches du point d'interaction (focus) ;
-//! 3. basse résolution (mips grossiers d'abord — aperçu rapide) ;
-//! 4. haute résolution (raffinement) ;
-//! 5. hors écran (en dernier).
+//! 1. visible tiles;
+//! 2. near the interaction point (focus);
+//! 3. low resolution (coarse mips first — fast preview);
+//! 4. high resolution (refinement);
+//! 5. off-screen (last).
 //!
-//! Le scheduler est APATRIDE et pur : il trie les sales dans le `Vec` de
-//! l'appelant ([`TileScheduler::plan_into`], allocation réutilisée entre
-//! frames) puis tronque au budget. L'exécution progressive appartient à
-//! l'appelant : planifier → exécuter → nettoyer les faites → recommencer
-//! jusqu'à ensemble vide.
+//! The scheduler is STATELESS and pure: it sorts dirty tiles into the caller's
+//! `Vec` ([`TileScheduler::plan_into`], allocation reused across
+//! frames) then truncates to the budget. Progressive execution belongs to
+//! the caller: schedule → execute → clean the done ones → repeat
+//! until the set is empty.
 
 use crate::{DirtyTiles, TileGrid, TileId, TileRegion};
 
-/// Fenêtre d'intérêt : zone visible + point d'interaction, en pixels
-/// niveau 0 (même espace que la surface).
+/// Window of interest: visible area + interaction point, in level-0
+/// pixels (same space as the surface).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Viewport {
-    /// Zone visible (pixels niveau 0).
+    /// Visible area (level-0 pixels).
     pub visible: TileRegion,
-    /// Point d'interaction (curseur, centre du geste — pixels niveau 0).
+    /// Interaction point (cursor, gesture center — level-0 pixels).
     pub focus: (i32, i32),
 }
 
 impl Viewport {
-    /// Nouvelle fenêtre.
+    /// New window.
     #[must_use]
     pub fn new(visible: TileRegion, focus: (i32, i32)) -> Self {
         Self { visible, focus }
     }
 }
 
-/// Ordonnanceur de tuiles sales (pur, sans état).
+/// Dirty-tile scheduler (pure, stateless).
 pub struct TileScheduler;
 
 impl TileScheduler {
-    /// Trie les sales dans `out` (vidé d'abord) puis tronque au budget
-    /// (`None` = tout). Le `Vec` est réutilisé d'un appel à l'autre :
-    /// aucune allocation par frame en régime établi.
+    /// Sorts dirty tiles into `out` (cleared first) then truncates to the budget
+    /// (`None` = all). The `Vec` is reused across calls:
+    /// no per-frame allocation at steady state.
     pub fn plan_into(
         &self,
         dirty: &DirtyTiles,
@@ -73,7 +73,7 @@ impl TileScheduler {
         }
     }
 
-    /// Plan neuf (alloue — préférer `plan_into` en boucle de rendu).
+    /// Fresh plan (allocates — prefer `plan_into` in the render loop).
     #[must_use]
     pub fn plan(
         &self,
@@ -87,7 +87,7 @@ impl TileScheduler {
         out
     }
 
-    /// Comparateur de priorités (visible, proche, grossier d'abord).
+    /// Priority comparator (visible, near, coarse first).
     fn compare(grid: &TileGrid, view: &Viewport, a: TileId, b: TileId) -> std::cmp::Ordering {
         let rect_a = grid.tile_rect_l0(a);
         let rect_b = grid.tile_rect_l0(b);
@@ -101,12 +101,12 @@ impl TileScheduler {
     }
 }
 
-/// Deux régions se recouvrent-elles (vides = jamais) ?
+/// Do two regions overlap (empty ones = never)?
 fn overlaps(a: &TileRegion, b: &TileRegion) -> bool {
     !a.intersect(*b).is_empty()
 }
 
-/// Distance² (entière, sans NaN) du centre du rectangle au focus.
+/// Squared distance (integer, no NaN) from the rectangle center to the focus.
 fn dist2(rect: TileRegion, focus: (i32, i32)) -> i64 {
     let cx = i64::from(rect.x) + i64::from(rect.width) / 2;
     let cy = i64::from(rect.y) + i64::from(rect.height) / 2;

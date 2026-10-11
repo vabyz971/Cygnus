@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Contenu de l'onglet dock « Outils » : rail compact 32 px.
+//! "Tools" dock tab content: compact 32 px rail.
 //!
-//! Position-indépendant : le placement (taille, split, grille)
-//! est géré par l'arbre `egui_tiles` (voir `super::dock`). Le choix d'outil remonte en
-//! [`PhotoAction::SetTool`](crate::commands::PhotoAction) ; la
-//! couleur est un état UI local (mutation directe, aucun moteur).
+//! Position-independent: placement (size, split, grid)
+//! is managed by the `egui_tiles` tree (see `super::dock`). The tool choice bubbles up as
+//! [`PhotoAction::SetTool`](crate::commands::PhotoAction); the
+//! color is local UI state (direct mutation, no engine).
 
 use crate::commands::PhotoAction;
 use crate::state::OpenDocument;
 use crate::ui::draw_tool_rail;
 use ui_kit::theme::CygnusTheme;
 
-/// Rail d'outils compact (contenu de l'onglet, sans `Panel`).
+/// Compact tool rail (tab content, no `Panel`).
 pub fn draw_tools_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,

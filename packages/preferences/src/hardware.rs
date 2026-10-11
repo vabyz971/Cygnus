@@ -14,36 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Détection matérielle : CPU, RAM (best-effort) et adaptateurs GPU réels
-//! énumérés via wgpu — les mêmes backends que ceux utilisés au rendu.
+//! Hardware detection: CPU, RAM (best-effort) and real GPU adapters
+//! enumerated via wgpu — the same backends used for rendering.
 
 use serde::{Deserialize, Serialize};
 
-/// Un GPU détecté.
+/// A detected GPU.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
     pub name: String,
     pub vendor: String,
     pub driver: String,
-    /// Backend wgpu (« Vulkan », « Metal », « Dx12 »…)
+    /// wgpu backend ("Vulkan", "Metal", "Dx12"…)
     pub api: String,
     pub is_discrete: bool,
 }
 
-/// Informations CPU.
+/// CPU information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuInfo {
     pub name: String,
     pub cores: usize,
 }
 
-/// Informations mémoire (best-effort ; 0 = inconnu).
+/// Memory information (best-effort; 0 = unknown).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RamInfo {
     pub total_mb: u64,
 }
 
-/// Rapport matériel complet.
+/// Full hardware report.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HardwareReport {
     pub cpu: Option<CpuInfo>,
@@ -52,12 +52,12 @@ pub struct HardwareReport {
 }
 
 impl HardwareReport {
-    /// Détection synchrone — BLOQUANTE (`Instance::new` +
+    /// Synchronous detection — BLOCKING (`Instance::new` +
     /// `pollster::block_on(enumerate_adapters)`).
-    /// À appeler UNIQUEMENT dans `tokio::task::spawn_blocking` (pool
-    /// bloquant dédié). Ne JAMAIS l'appeler directement dans un
-    /// `Task::perform` : ce serait sur l'executor Tokio partagé et
-    /// affamerait décodage / export / composite.
+    /// Call ONLY inside `tokio::task::spawn_blocking` (dedicated
+    /// blocking pool). NEVER call it directly inside a
+    /// `Task::perform`: that would run on the shared Tokio executor and
+    /// starve decoding / export / compositing.
     #[must_use]
     pub fn detect_sync() -> Self {
         let cpu = Some(CpuInfo {
@@ -72,13 +72,13 @@ impl HardwareReport {
         };
 
         let mut gpus = Vec::new();
-        // Même pattern d'instance que photo-engine/src/gpu.rs (headless-safe)
+        // Same instance pattern as photo-engine/src/gpu.rs (headless-safe)
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgpu::Backends::all();
         let instance = wgpu::Instance::new(desc);
 
-        // enumerate_adapters est async en wgpu 30 : blocage ponctuel via
-        // pollster, appel prévu depuis une tâche de fond (jamais l'UI).
+        // enumerate_adapters is async in wgpu 30: one-off blocking via
+        // pollster, call expected from a background task (never the UI).
         let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
         for adapter in adapters {
             let info = adapter.get_info();
@@ -99,18 +99,18 @@ impl HardwareReport {
         Self { cpu, ram, gpus }
     }
 
-    /// Variante async (convention mission) — ATTENTION : le corps reste
-    /// bloquant (`pollster::block_on`). Préférer `spawn_blocking(detect_sync)`
-    /// dans tout `Task::perform` ; cette variante n'existe que pour les
-    /// contextes déjà hors executor (tests, CLI).
+    /// Async variant (mission convention) — WARNING: the body stays
+    /// blocking (`pollster::block_on`). Prefer `spawn_blocking(detect_sync)`
+    /// inside any `Task::perform`; this variant only exists for
+    /// contexts already off-executor (tests, CLI).
     pub async fn detect() -> Self {
         Self::detect_sync()
     }
 }
 
-/// RAM totale en Mo — lecture best-effort de /proc/meminfo sous Linux,
-/// `sysinfo` non embarqué volontairement (dépendance lourde pour une
-/// ligne d'information). Retourne 0 si indéterminé.
+/// Total RAM in MB — best-effort read of /proc/meminfo on Linux,
+/// `sysinfo` deliberately not vendored (heavy dependency for a
+/// single information line). Returns 0 when undetermined.
 fn detect_ram_mb() -> u64 {
     #[cfg(target_os = "linux")]
     {
@@ -135,8 +135,8 @@ mod tests {
 
     #[test]
     fn detection_ne_panique_jamais_et_renvoie_le_cpu() {
-        // Sur machine CI headless : zéro GPU possible, CPU toujours présent,
-        // et surtout AUCUN panic — contrat du rapport matériel.
+        // On headless CI machines: zero GPUs possible, CPU always present,
+        // and above all NO panic — the hardware report's contract.
         let report = HardwareReport::detect_sync();
         let cpu = report.cpu.expect("cpu info");
         assert!(cpu.cores >= 1);

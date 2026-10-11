@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Panneau Calques : contenu métier, indépendant de sa position.
+//! Layers panel: domain content, position-independent.
 //!
-//! `LayersPanel` ne sait pas où il est affiché : le workspace
-//! (`crate::layout`, onglet dock titré « Calques ») décide du
-//! placement, sans chrome `Panel`. La liste vient de
-//! [`super::layer_list`], la barre de boutons est en bas. Aucun
-//! envoi worker : tout remonte en [`LayerPanelAction`], converti en
-//! [`PhotoAction`](crate::commands::PhotoAction) (voir
+//! `LayersPanel` does not know where it is displayed: the workspace
+//! (`crate::layout`, "Layers" dock tab) decides placement,
+//! with no `Panel` chrome. The list comes from
+//! [`super::layer_list`], the button bar sits at the bottom. No
+//! worker send: everything bubbles as [`LayerPanelAction`], converted to
+//! [`PhotoAction`](crate::commands::PhotoAction) (see
 //! [`super::actions`])).
 
 use super::layer_item::{LayerItemAction, LayerRenameState};
@@ -40,112 +40,112 @@ use ui_kit::theme::CygnusTheme;
 use ui_kit::utils::{DropPosition, ReorderDragState};
 use uuid::Uuid;
 
-/// Action du panneau calques : barre d'outils + interactions HUD.
+/// Layers panel action: toolbar + HUD interactions.
 ///
-/// Routée par `PhotoApp` (sélection locale, renommage et mutations
-/// via le worker) après conversion (voir [`super::actions`]).
+/// Routed by `PhotoApp` (local selection, rename and mutations
+/// via the worker) after conversion (see [`super::actions`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LayerPanelAction {
-    /// Ajouter une image (file picker).
+    /// Add an image (file picker).
     AddImage,
-    /// Nouveau calque vide.
+    /// New empty layer.
     AddEmpty,
-    /// Dupliquer la sélection.
+    /// Duplicate the selection.
     Duplicate,
-    /// Ajouter un filtre live au calque sélectionné (menu contextuel
-    /// du bouton, catalogue du registre moteur).
+    /// Add a live filter to the selected layer (button context
+    /// menu, engine-registry catalog).
     AddFilter {
-        /// Calque porteur.
+        /// Owning layer.
         layer: Uuid,
-        /// `type_id` du registre (ex. `"blur"`).
+        /// Registry `type_id` (e.g. `"blur"`).
         filter_type: String,
     },
-    /// Ajouter un masque au calque sélectionné.
+    /// Add a mask to the selected layer.
     AddMask,
-    /// Supprimer la sélection.
+    /// Delete the selection.
     Delete,
-    /// Sélectionner un calque (clic sur sa rangée).
+    /// Select a layer (click on its row).
     Select(Uuid),
-    /// Focaliser une pièce jointe (clic sur sa rangée d'arbre) :
-    /// le porteur devient la sélection principale.
+    /// Focus an attachment (click on its tree row):
+    /// the owner becomes the primary selection.
     SelectAttachment {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
-        /// Filtre ou masque visé.
+        /// Targeted filter or mask.
         id: Uuid,
     },
-    /// Activer/désactiver un filtre (œil de sa rangée).
+    /// Enable/disable a filter (its row eye).
     ToggleFilter {
-        /// Calque porteur.
+        /// Owning layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
     },
-    /// Activer/désactiver un masque (œil de sa rangée).
+    /// Enable/disable a mask (its row eye).
     ToggleMask {
-        /// Porteur.
+        /// Owner.
         owner: Uuid,
-        /// Masque visé.
+        /// Targeted mask.
         mask: Uuid,
     },
-    /// Valider le renommage d'un calque.
+    /// Confirm a layer rename.
     RenameCommit { layer: Uuid, name: String },
-    /// Réordonner par drag & drop hiérarchique : `dragged` avant ou
-    /// après `target` (même parent ou non — nesting libre moteur).
+    /// Reorder via hierarchical drag & drop: `dragged` before or
+    /// after `target` (same parent or not — free engine nesting).
     ReorderNodes {
-        /// Calque déplacé.
+        /// Moved layer.
         dragged: Uuid,
-        /// Calque cible.
+        /// Target layer.
         target: Uuid,
-        /// Vrai = avant la cible, faux = après.
+        /// True = before the target, false = after.
         before: bool,
     },
-    /// Imbriquer un calque en tête d'un groupe (drop dedans).
+    /// Nest a layer at a group's head (drop inside).
     MoveIntoGroup {
-        /// Calque déplacé.
+        /// Moved layer.
         layer: Uuid,
-        /// Groupe d'accueil.
+        /// Host group.
         group: Uuid,
     },
-    /// Replier / déplier un groupe (sans re-rendu).
+    /// Collapse / expand a group (no re-render).
     ToggleCollapsed(Uuid),
-    /// Basculer la visibilité d'un calque (œil).
+    /// Toggle a layer's visibility (eye).
     ToggleVisibility(Uuid),
-    /// Supprimer un calque (croix de la rangée).
+    /// Delete a layer (row cross).
     DeleteLayer(Uuid),
-    /// Dupliquer un calque (menu contextuel de la rangée).
+    /// Duplicate a layer (row context menu).
     DuplicateLayer(Uuid),
-    /// Miroir horizontal (sous-menu Transformations de la rangée).
+    /// Horizontal mirror (row Transformations submenu).
     FlipHorizontalSelected,
-    /// Miroir vertical (idem).
+    /// Vertical mirror (same).
     FlipVerticalSelected,
-    /// Rotation 90° horaire (idem).
+    /// 90° clockwise rotation (same).
     RotateClockwiseSelected,
-    /// Rotation 90° antihoraire (idem).
+    /// 90° counterclockwise rotation (same).
     RotateCounterclockwiseSelected,
-    /// Rogner au document (idem).
+    /// Crop to document (same).
     CropSelectedToDocument,
-    /// Déplacer un filtre dans sa pile.
+    /// Move a filter within its stack.
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Déplacer un masque dans sa pile.
+    /// Move a mask within its stack.
     MoveMask { owner: Uuid, mask: Uuid, up: bool },
-    /// Supprimer un filtre.
+    /// Delete a filter.
     RemoveFilter { layer: Uuid, filter: Uuid },
-    /// Supprimer un masque.
+    /// Delete a mask.
     RemoveMask { owner: Uuid, mask: Uuid },
-    /// Régler l'opacité du calque sélectionné (unités 0..=100).
+    /// Set the selected layer's opacity (units 0..=100).
     SetOpacity { layer: Uuid, opacity: f32 },
-    /// Régler le mode de fusion du calque sélectionné.
+    /// Set the selected layer's blend mode.
     SetBlendMode { layer: Uuid, mode: BlendMode },
 }
 
-/// Panneau Calques (contenu direct : liste + barre de boutons en
-/// bas, sans chrome).
+/// Layers panel (direct content: list + bottom button bar,
+/// no chrome).
 pub struct LayersPanel;
 
 impl LayersPanel {
-    /// Dessine le contenu (liste, barre de boutons bas) et retourne
-    /// les actions.
+    /// Draws the content (list, bottom button bar) and returns
+    /// the actions.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
@@ -169,10 +169,10 @@ impl LayersPanel {
     }
 }
 
-/// En-tête façon Affinity : opacité (slider coalescé côté worker) +
-/// mode de fusion de la sélection. Sans sélection, les contrôles sont
-/// désactivés (jamais d'adoption implicite du calque du dessus) ; la
-/// visibilité se règle à l'œil de chaque rangée, jamais ici.
+/// Affinity-style header: opacity (worker-coalesced slider) +
+/// the selection's blend mode. Without a selection, controls are
+/// disabled (never implicitly adopting the layer above); visibility
+/// is set at each row's eye, never here.
 fn draw_selection_header(
     ui: &mut egui::Ui,
     theme: &CygnusTheme,
@@ -186,7 +186,7 @@ fn draw_selection_header(
         if layers.is_empty() {
             Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
         } else {
-            // Contrôles inertes mais visibles (pas de calque visé).
+            // Inert but visible controls (no targeted layer).
             ui.add_enabled_ui(false, |ui| {
                 let mut opacity = 100.0;
                 Slider::new(
@@ -206,7 +206,7 @@ fn draw_selection_header(
         ui.separator();
         return actions;
     };
-    // Unités moteur 0..=100 (comme l'inspecteur).
+    // Engine units 0..=100 (like the inspector).
     let mut opacity = layer.opacity;
     Slider::new(
         texts.get(crate::i18n::PhotoTextKey::OpacityLabel),
@@ -241,12 +241,12 @@ fn draw_selection_header(
     actions
 }
 
-/// Convertit un drop hiérarchique en action panneau : avant/après
-/// entre calques ⇒ `ReorderNodes` (même parent ou non), dedans un
-/// groupe déplié ⇒ `MoveIntoGroup`. Les pièces jointes ne se
-/// déplacent pas par DnD (`None` : leur ordre se règle aux boutons
-/// de leur ligne), pas plus qu'un dépôt dedans un non-groupe
-/// (garde-fou : `can_nest` l'interdit déjà côté liste).
+/// Converts a hierarchical drop into a panel action: before/after
+/// between layers ⇒ `ReorderNodes` (same parent or not), inside an
+/// expanded group ⇒ `MoveIntoGroup`. Attachments do not
+/// move via DnD (`None`: their order is set with their row
+/// buttons), nor does a drop inside a non-group
+/// (guard: `can_nest` already forbids it list-side).
 fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanelAction> {
     if drop.dragged.kind != FlatRowKind::Layer {
         return None;
@@ -275,7 +275,7 @@ fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanel
     }
 }
 
-/// En-tête + liste bornée (réserve la barre de boutons) + barre bas.
+/// Header + bounded list (reserves the button bar) + bottom bar.
 fn draw_layers_panel(
     ui: &mut egui::Ui,
     ctx: &PhotoUiContext,
@@ -295,7 +295,7 @@ fn draw_layers_panel(
     let texts = t.texts;
     let mut actions = Vec::new();
     actions.extend(draw_selection_header(ui, theme, t, layers, sel.selected));
-    // Liste bornée : réserve l'en-tête et la barre de boutons.
+    // Bounded list: reserves the header and button bar.
     let bar_height = theme.sizes.bar_height;
     let list_height = (ui.available_height() - bar_height).max(80.0);
     let (item_actions, drop) = ui
@@ -303,7 +303,7 @@ fn draw_layers_panel(
             egui::vec2(ui.available_width(), list_height),
             egui::Layout::top_down(egui::Align::LEFT),
             |ui| {
-                // Le renommage en cours sur un calque disparu : annuler.
+                // In-progress rename on a vanished layer: cancel.
                 if rename
                     .editing
                     .is_some_and(|id| !layers.iter().any(|layer| layer.id == id))
@@ -373,8 +373,8 @@ fn draw_layers_panel(
     {
         actions.push(action);
     }
-    // Barre de boutons bas : ajouter image, calque vide, dupliquer,
-    // masque, filtre (menu contextuel du catalogue), supprimer.
+    // Bottom button bar: add image, empty layer, duplicate,
+    // mask, filter (catalog context menu), delete.
     ui.horizontal(|ui| {
         if IconButton::new(Icon::ImageIcon)
             .tooltip(texts.get(crate::i18n::PhotoTextKey::LayerFromImage))
@@ -405,8 +405,8 @@ fn draw_layers_panel(
             {
                 actions.push(LayerPanelAction::AddMask);
             }
-            // Menu contextuel d'ajout de filtre (façon Affinity : pas
-            // de modale, le catalogue s'ouvre au bouton).
+            // Filter-add context menu (Affinity-style: no
+            // modal, the catalog opens at the button).
             let filter_resp = IconButton::new(Icon::Settings)
                 .tooltip(texts.get(crate::i18n::PhotoTextKey::FilterList))
                 .show(ui, theme);
@@ -554,7 +554,7 @@ mod tests {
         use ui_kit::utils::DropPosition;
         let dragged = Uuid::new_v4();
         let target = Uuid::new_v4();
-        // Avant / après entre calques (même parent ou non).
+        // Before / after between layers (same parent or not).
         for (position, before) in [(DropPosition::Before, true), (DropPosition::After, false)] {
             let action = convert_drop(
                 &[],
@@ -573,7 +573,7 @@ mod tests {
                 })
             );
         }
-        // Dedans un groupe déplié du snapshot : imbrication.
+        // Inside an expanded snapshot group: nesting.
         let mut doc = photo_engine::Document::new(8, 8);
         let inner = photo_engine::LayerNode::Pixel(photo_engine::PixelLayer::new(
             "d",
@@ -599,7 +599,7 @@ mod tests {
                 group: group_id,
             })
         );
-        // Dedans un calque pixels : refusé (garde-fou).
+        // Inside a pixel layer: refused (guard).
         let pixel_id = layers[0].children[0].id;
         assert_eq!(
             convert_drop(
@@ -612,7 +612,7 @@ mod tests {
             ),
             None
         );
-        // Pièce jointe déplacée : refusée (ordre aux boutons).
+        // Moved attachment: refused (order via buttons).
         assert_eq!(
             convert_drop(
                 &layers,

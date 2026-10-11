@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœuds métier audio : sources, gains, EQ, compresseur, reverb, mixeur.
+//! Audio business nodes: sources, gains, EQ, compressor, reverb, mixer.
 //!
-//! Données pures et validées (bornes à la construction) : le DSP vit dans
-//! [`DspBackend`](crate::DspBackend), jamais ici. Aucun type visuel
-//! (`Scene`, `Transform2D`, pixels) ne franchit cette frontière.
+//! Pure validated data (bounds at construction): DSP lives in
+//! [`DspBackend`](crate::DspBackend), never here. No visual type
+//! (`Scene`, `Transform2D`, pixels) crosses this boundary.
 
 use ids::EntityId;
 
-/// Identifiant stable d'un [`AudioNode`].
+/// Stable identifier of an [`AudioNode`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -30,25 +30,25 @@ use ids::EntityId;
 pub struct AudioId(EntityId);
 
 impl AudioId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul (sentinelle, jamais attribué).
+    /// Null identifier (sentinel, never assigned).
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente.
+    /// The underlying entity.
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante.
+    /// Wraps an existing entity.
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -56,7 +56,7 @@ impl AudioId {
 }
 
 impl Default for AudioId {
-    /// Identifiant nul — même valeur que [`AudioId::nil`].
+    /// Null identifier — same value as [`AudioId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -68,91 +68,91 @@ impl std::fmt::Display for AudioId {
     }
 }
 
-/// Forme d'onde d'un oscillateur.
+/// Oscillator waveform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Wave {
-    /// Sinusoïdale.
+    /// Sine.
     Sine,
-    /// Carrée.
+    /// Square.
     Square,
-    /// Dent de scie.
+    /// Sawtooth.
     Saw,
-    /// Triangulaire.
+    /// Triangle.
     Triangle,
 }
 
-/// Source sonore.
+/// Sound source.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
-    /// Échantillon nommé (chargé par le backend).
+    /// Named sample (loaded by the backend).
     Sample {
-        /// Nom/chemin logique.
+        /// Logical name/path.
         name: String,
     },
-    /// Oscillateur.
+    /// Oscillator.
     Oscillator {
-        /// Fréquence Hz (> 0).
+        /// Frequency in Hz (> 0).
         freq: f32,
-        /// Forme.
+        /// Waveform.
         wave: Wave,
     },
 }
 
-/// Nœud métier : nature + paramètres validés.
+/// Business node: kind + validated parameters.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioNodeKind {
-    /// Source (échantillon ou oscillateur).
+    /// Source (sample or oscillator).
     Source(SourceKind),
-    /// Gain en dB (−60..=+12).
+    /// Gain in dB (−60..=+12).
     Gain {
-        /// Décibels.
+        /// Decibels.
         db: f32,
     },
-    /// Égaliseur 3 bandes (gains dB −24..=+24).
+    /// 3-band equalizer (dB gains −24..=+24).
     Eq {
-        /// Graves.
+        /// Lows.
         low: f32,
-        /// Médiums.
+        /// Mids.
         mid: f32,
-        /// Aigus.
+        /// Highs.
         high: f32,
     },
-    /// Compresseur (seuil dB + ratio).
+    /// Compressor (dB threshold + ratio).
     Compressor {
-        /// Seuil en dB (−60..=0).
+        /// Threshold in dB (−60..=0).
         threshold_db: f32,
         /// Ratio (≥ 1).
         ratio: f32,
     },
-    /// Réverbération (mix 0..=1, déclin ≥ 0).
+    /// Reverb (mix 0..=1, decay ≥ 0).
     Reverb {
-        /// Dosage effet.
+        /// Effect amount.
         mix: f32,
-        /// Temps de déclin (s).
+        /// Decay time (s).
         decay: f32,
     },
-    /// Mixeur (somme des entrées).
+    /// Mixer (sum of inputs).
     Mixer,
 }
 
-/// Nœud audio : identité + nature + interrupteur.
+/// Audio node: identity + kind + switch.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AudioNode {
-    /// Identifiant stable.
+    /// Stable identifier.
     pub id: AudioId,
-    /// Nom d'affichage.
+    /// Display name.
     pub name: String,
-    /// Nature et paramètres.
+    /// Kind and parameters.
     pub kind: AudioNodeKind,
-    /// Faux = bypassé (réglages conservés).
+    /// False = bypassed (settings kept).
     pub enabled: bool,
 }
 
 impl AudioNode {
-    /// Gain validé (−60..=+12 dB).
+    /// Validated gain (−60..=+12 dB).
     #[must_use]
     pub fn gain(name: impl Into<String>, db: f32) -> Self {
         Self::named(
@@ -163,7 +163,7 @@ impl AudioNode {
         )
     }
 
-    /// Égaliseur validé (±24 dB par bande).
+    /// Validated equalizer (±24 dB per band).
     #[must_use]
     pub fn eq(name: impl Into<String>, low: f32, mid: f32, high: f32) -> Self {
         let clamp = |v: f32| v.clamp(-24.0, 24.0);
@@ -177,7 +177,7 @@ impl AudioNode {
         )
     }
 
-    /// Compresseur validé (seuil −60..=0 dB, ratio ≥ 1).
+    /// Validated compressor (−60..=0 dB threshold, ratio ≥ 1).
     #[must_use]
     pub fn compressor(name: impl Into<String>, threshold_db: f32, ratio: f32) -> Self {
         Self::named(
@@ -189,7 +189,7 @@ impl AudioNode {
         )
     }
 
-    /// Réverbération validée (mix 0..=1, déclin ≥ 0).
+    /// Validated reverb (mix 0..=1, decay ≥ 0).
     #[must_use]
     pub fn reverb(name: impl Into<String>, mix: f32, decay: f32) -> Self {
         Self::named(
@@ -201,13 +201,13 @@ impl AudioNode {
         )
     }
 
-    /// Mixeur.
+    /// Mixer.
     #[must_use]
     pub fn mixer(name: impl Into<String>) -> Self {
         Self::named(name, AudioNodeKind::Mixer)
     }
 
-    /// Source échantillon.
+    /// Sample source.
     #[must_use]
     pub fn sample(name: impl Into<String>, sample: impl Into<String>) -> Self {
         Self::named(
@@ -218,7 +218,7 @@ impl AudioNode {
         )
     }
 
-    /// Oscillateur (fréquence > 0).
+    /// Oscillator (frequency > 0).
     #[must_use]
     pub fn oscillator(name: impl Into<String>, freq: f32, wave: Wave) -> Self {
         Self::named(

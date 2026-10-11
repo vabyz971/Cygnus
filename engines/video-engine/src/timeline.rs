@@ -14,30 +14,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Timeline éditoriale : pistes, régions, décision d'images.
+//! Editorial timeline: tracks, regions, frame decisions.
 //!
-//! [`Timeline::active_at`] répond à la seule question éditoriale qui compte
-//! ici : « quels clips couvrent le temps `t`, et à quel temps clip ? »
-//! (vitesse incluse). Ni décodage ni compositing — le backend demandera les
-//! images aux décodeurs puis les pliera selon [`CompositeDesc`](crate::CompositeDesc).
+//! [`Timeline::active_at`] answers the only editorial question that matters
+//! here: "which clips cover time `t`, and at which clip time?"
+//! (speed included). Neither decoding nor compositing — the backend will request
+//! frames from the decoders then fold them per [`CompositeDesc`](crate::CompositeDesc).
 
 use crate::ClipId;
 
-/// Région de clip sur une piste : placement + vitesse de lecture.
+/// Clip region on a track: placement + playback speed.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimelineClip {
-    /// Clip source.
+    /// Source clip.
     pub clip: ClipId,
-    /// Début sur la timeline (secondes).
+    /// Start on the timeline (seconds).
     pub start: f32,
-    /// Durée prélevée (secondes de timeline).
+    /// Taken duration (timeline seconds).
     pub duration: f32,
-    /// Vitesse (1 = normal, 0.5 = ralenti… ; ≤ 0 = figé sur la première image).
+    /// Speed (1 = normal, 0.5 = slow motion…; ≤ 0 = frozen on the first frame).
     pub speed: f32,
 }
 
 impl TimelineClip {
-    /// Temps clip pour un temps timeline (`None` si hors région).
+    /// Clip time for a timeline time (`None` if outside the region).
     #[must_use]
     pub fn clip_pts_at(&self, t: f32) -> Option<f32> {
         if !t.is_finite() || t < self.start || t >= self.start + self.duration {
@@ -50,52 +50,52 @@ impl TimelineClip {
     }
 }
 
-/// Piste : régions ordonnées (index 0 = dessous de pile).
+/// Track: ordered regions (index 0 = bottom of stack).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Track {
-    /// Nom d'affichage.
+    /// Display name.
     pub name: String,
-    /// Régions.
+    /// Regions.
     pub clips: Vec<TimelineClip>,
 }
 
-/// Clip actif à un temps : piste + temps clip.
+/// Active clip at a time: track + clip time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveClip {
-    /// Index de piste (0 = dessous).
+    /// Track index (0 = bottom).
     pub track: usize,
-    /// Clip source.
+    /// Source clip.
     pub clip: ClipId,
-    /// Temps dans le clip (secondes).
+    /// Time within the clip (seconds).
     pub clip_pts: f32,
 }
 
-/// Timeline : pistes empilées (index élevé = dessus).
+/// Timeline: stacked tracks (high index = top).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Timeline {
     tracks: Vec<Track>,
 }
 
 impl Timeline {
-    /// Timeline vide.
+    /// Empty timeline.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de pistes.
+    /// Number of tracks.
     #[must_use]
     pub fn len(&self) -> usize {
         self.tracks.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()
     }
 
-    /// Ajoute une piste (dessus de pile) et retourne son index.
+    /// Adds a track (top of stack) and returns its index.
     pub fn add_track(&mut self, name: impl Into<String>) -> usize {
         self.tracks.push(Track {
             name: name.into(),
@@ -104,7 +104,7 @@ impl Timeline {
         self.tracks.len() - 1
     }
 
-    /// Place une région sur une piste (faux si piste inconnue).
+    /// Places a region on a track (false if unknown track).
     pub fn place(&mut self, track: usize, clip: TimelineClip) -> bool {
         match self.tracks.get_mut(track) {
             Some(slot) => {
@@ -115,8 +115,8 @@ impl Timeline {
         }
     }
 
-    /// Clips couvrant `t`, pistes dans l'ordre (dessous → dessus),
-    /// régions dans l'ordre de placement.
+    /// Clips covering `t`, tracks in order (bottom → top),
+    /// regions in placement order.
     #[must_use]
     pub fn active_at(&self, t: f32) -> Vec<ActiveClip> {
         let mut active = Vec::new();
@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(both.len(), 2);
         assert_eq!((both[0].track, both[1].track), (0, 1));
         assert!(timeline.active_at(20.0).is_empty());
-        // Bornes : début inclus, fin exclusive.
+        // Bounds: start inclusive, end exclusive.
         assert_eq!(timeline.active_at(0.0).len(), 1);
         assert_eq!(timeline.active_at(8.0).len(), 0);
     }

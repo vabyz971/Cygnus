@@ -14,23 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur texte : modèle → layout → glyph runs → (render graph).
+//! Text engine: model → layout → glyph runs → (render graph).
 //!
-//! Séparation conceptuelle (aucun façonnage réel sans fontes — les métriques
-//! viennent du trait [`FontProvider`], implémenté pour de vrai plus tard) :
+//! Conceptual separation (no real shaping without fonts — metrics
+//! come from the [`FontProvider`] trait, implemented for real later):
 //!
 //! ```text
-//! TextModel (spans stylés) ──layout()──▶ LaidOutText (lignes)
+//! TextModel (styled spans) ──layout()──▶ LaidOutText (lines)
 //!     │                                       │
 //!     │ glyph_runs()                           ▼ bounds (datatypes::Rect)
 //!     ▼
-//! GlyphRun (span, avances, offsets — consommés par le render graph)
+//! GlyphRun (span, advances, offsets — consumed by the render graph)
 //! ```
 //!
-//! Le texte n'est JAMAIS dessiné dans `layout-engine` : celui-ci ne reçoit
-//! que des extensions via son `TextMeasurer` (voir
-//! `text_engine::measurer_for`), et les runs alimenteront le Render Graph
-//! (effet texte) sans passer par le layout.
+//! Text is NEVER drawn in `layout-engine`: it only receives
+//! extents via its `TextMeasurer` (see
+//! `text_engine::measurer_for`), and the runs will feed the Render Graph
+//! (text effect) without going through layout.
 
 pub mod layout;
 pub mod model;

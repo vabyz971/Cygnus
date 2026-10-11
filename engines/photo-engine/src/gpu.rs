@@ -1,6 +1,6 @@
 // Cygnus — Suite créative professionnelle open source
-// TODO chantier 5: shaders WGSL inline à externaliser en `shaders/*.wgsl` via
-// include_str! (à fusionner avec le futur v2 GPU des masques).
+// TODO workstream 5: externalize inline WGSL shaders to `shaders/*.wgsl` via
+// include_str! (to merge with the future GPU v2 of masks).
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! GPU via WGPU 30 - Compute shaders pour nœuds + détection
-//! Rendu UI déjà WGPU via iced_wgpu, ce module ajoute le TRAITEMENT GPU
+//! GPU via WGPU 30 — compute shaders for nodes + detection
+//! UI rendering already WGPU via iced_wgpu; this module adds GPU PROCESSING
 
 use image::DynamicImage;
 use std::mem::{align_of, size_of};
@@ -25,7 +25,7 @@ use std::sync::{Arc, OnceLock};
 use wgpu::util::DeviceExt;
 
 // ---------------------------------------------------------------------------
-// Contexte GPU partagé (intégré au canvas principal via wgpu Instance partagée)
+// Shared GPU context (integrated into the main canvas via shared wgpu Instance)
 // ---------------------------------------------------------------------------
 
 pub struct GpuContext {
@@ -87,7 +87,7 @@ impl GpuContext {
         let pipeline_blur = Self::create_pipeline(&device, SHADER_BLUR, "blur");
         let pipeline_blend = Self::create_pipeline(&device, SHADER_BLEND, "blend");
 
-        // Chemin texture -> texture (zéro readback) : module + pipeline + uniform persistant
+        // Texture -> texture path (zero readback): persistent module + pipeline + uniform
         let module_bc_tex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bc_tex"),
             source: wgpu::ShaderSource::Wgsl(SHADER_BC_TEX.into()),
@@ -134,11 +134,11 @@ impl GpuContext {
 }
 
 // ---------------------------------------------------------------------------
-// Détection pour UI — BLOQUANT au premier appel (init wgpu +
-// compilation shaders via `pollster::block_on`). Appeler UNIQUEMENT
-// dans `tokio::task::spawn_blocking` côté app, jamais directement
-// dans un `Task::perform` ni dans `update()`. Les appels suivants
-// (OnceLock initialisé) sont bon marché.
+// Detection for UI — BLOCKING on first call (wgpu init +
+// shader compilation via `pollster::block_on`). Call ONLY
+// in app-side `tokio::task::spawn_blocking`, never directly in
+// a `Task::perform` or in `update()`. Later calls (initialized
+// OnceLock) are cheap.
 // ---------------------------------------------------------------------------
 
 pub fn detect_gpu_info_sync() -> String {
@@ -156,7 +156,7 @@ pub fn detect_gpu_info_sync() -> String {
             .map(|n| n.get())
             .unwrap_or(4);
         s.push_str(&format!("CPU cores: {} (rayon global pool)\n", cores));
-        // Force rayon pool à utiliser tous les cœurs
+        // Force the rayon pool to use all cores
         s.push_str(&format!(
             "Rayon threads: {} (actifs)\n",
             rayon::current_num_threads()
@@ -176,14 +176,14 @@ pub fn detect_gpu_info_sync() -> String {
         s
     }
 }
-/// Variante async conservée pour compat — le corps reste bloquant :
-/// préférer `spawn_blocking(detect_gpu_info_sync)` dans tout `Task::perform`.
+/// Async variant kept for compat — the body stays blocking: prefer
+/// `spawn_blocking(detect_gpu_info_sync)` in any `Task::perform`.
 pub async fn detect_gpu_info() -> String {
     detect_gpu_info_sync()
 }
 
 // ---------------------------------------------------------------------------
-// Helpers GPU
+// GPU helpers
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
@@ -250,12 +250,12 @@ fn run_compute(
 ) -> Option<Vec<f32>> {
     let count = (w * h) as usize;
     let src_size = (count * 4 * 4) as u64; // vec4<f32> per pixel
-    // Garde-fou : respecter les DEUX limites wgpu
-    // - max_buffer_size (création du buffer, 256 Mo par défaut)
-    // - max_buffer_binding_size (binding dans le shader, 128 Mo par défaut)
+    // Guard rail: respect BOTH wgpu limits
+    // - max_buffer_size (buffer creation, 256 MB by default)
+    // - max_buffer_binding_size (shader binding, 128 MB by default)
     let limits = gpu.device.limits();
     if src_size > limits.max_storage_buffer_binding_size || src_size > limits.max_buffer_size {
-        return None; // -> fallback CPU (ou bandes via run_compute_banded)
+        return None; // -> CPU fallback (or bands via run_compute_banded)
     }
     // src buffer
     let src_buf = gpu
@@ -346,7 +346,7 @@ fn run_compute(
     drop(mapped);
     readback.unmap();
     let floats: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
-    // s'assurer que la taille correspond
+    // make sure the size matches
     if floats.len() != src_floats.len() {
         return None;
     }
@@ -354,15 +354,15 @@ fn run_compute(
 }
 
 // ---------------------------------------------------------------------------
-// API publique - tente GPU, retourne None si indisponible -> fallback CPU
+// Public API — tries GPU, returns None when unavailable -> CPU fallback
 // ---------------------------------------------------------------------------
 
-/// Budget par bande de lignes : reste sous max_storage_buffer_binding_size
-/// tout en gardant de bonnes performances.
+/// Per-row-band budget: stays under max_storage_buffer_binding_size while
+/// keeping good performance.
 const BAND_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Exécute un compute en BANDES de lignes : chaque buffer/binding reste sous
-/// les limites wgpu même sur de très grandes images (opérations ponctuelles exactes).
+/// Runs a compute in row BANDS: each buffer/binding stays under wgpu
+/// limits even on very large images (exact point-wise ops).
 fn run_compute_banded(
     gpu: &GpuContext,
     pipeline: &wgpu::ComputePipeline,
@@ -371,7 +371,7 @@ fn run_compute_banded(
     h: u32,
     make_params: impl Fn(u32, u32) -> Vec<u8>,
 ) -> Option<Vec<f32>> {
-    let row_bytes = (w as u64) * 16; // vec4<f32> par pixel
+    let row_bytes = (w as u64) * 16; // vec4<f32> per pixel
     if row_bytes == 0 {
         return None;
     }
@@ -407,20 +407,20 @@ pub fn apply_brightness_contrast_gpu(
     contrast: f32,
 ) -> Option<DynamicImage> {
     let gpu = GpuContext::get()?;
-    // Optimisation : petites images < 256x256 restent CPU (overhead GPU)
+    // Optimization: small images < 256x256 stay CPU (GPU overhead)
     if img.width() * img.height() < 65536 {
         return None;
     }
     let (floats, w, h) = image_to_floats(img);
-    // Convertit brightness/contrast CPU -> GPU
-    // CPU: b = brightness*2.55, contrast_factor = 1+contrast/100 ou 1+contrast/50
+    // Converts CPU brightness/contrast -> GPU
+    // CPU: b = brightness*2.55, contrast_factor = 1+contrast/100 or 1+contrast/50
     let contrast_factor = if contrast < 0.0 {
         1.0 + contrast / 100.0
     } else {
         1.0 + contrast / 50.0
     };
     let brightness_norm = brightness * 0.01; // 2.55/255 =0.01
-    // Bandes de lignes : supporte les très grandes résolutions sans dépasser les limites wgpu
+    // Row bands: supports very large resolutions without exceeding wgpu limits
     let out = run_compute_banded(&gpu, &gpu.pipeline_bc, &floats, w, h, |bw, bh| {
         bytemuck::bytes_of(&ParamsBc {
             width: bw,
@@ -453,8 +453,8 @@ pub fn apply_saturation_gpu(img: &DynamicImage, sat: f32) -> Option<DynamicImage
 }
 
 pub fn apply_mix_gpu(a: &DynamicImage, b: &DynamicImage, factor: f32) -> Option<DynamicImage> {
-    // Mix 2 entrées : pas de shader dédié (le nœud Calque couvre ce besoin via SHADER_BLEND)
-    // → fallback CPU direct, sans dispatch GPU inutile.
+    // 2-input mix: no dedicated shader (the Layer node covers this via SHADER_BLEND)
+    // → direct CPU fallback, no useless GPU dispatch.
     let _ = (a, b, factor);
     None
 }
@@ -487,10 +487,10 @@ pub fn apply_blur_gpu(img: &DynamicImage, radius: f32) -> Option<DynamicImage> {
 }
 
 // ---------------------------------------------------------------------------
-// Fusion de calques (GPU) — deux entrées, opacité + mode
+// Layer blending (GPU) — two inputs, opacity + mode
 // ---------------------------------------------------------------------------
 
-/// Exécute un pipeline à DEUX sources en bandes de lignes.
+/// Runs a TWO-source pipeline in row bands.
 /// Layout bindings : 0=srcA(read) 1=srcB(read) 2=dst(rw) 3=params(uniform)
 fn run_compute2(
     gpu: &GpuContext,
@@ -628,7 +628,7 @@ pub fn apply_blend_gpu(
     offset_x: f32,
     offset_y: f32,
 ) -> Option<DynamicImage> {
-    // Déplacement non nul : fallback CPU (shader offset bandé complexe)
+    // Non-zero offset: CPU fallback (complex banded offset shader)
     if offset_x != 0.0 || offset_y != 0.0 {
         return None;
     }
@@ -639,8 +639,8 @@ pub fn apply_blend_gpu(
     let (a_floats, w, h) = image_to_floats(base);
     let (mut b_floats, w2, h2) = image_to_floats(top);
     if w != w2 || h != h2 {
-        // resize_exact : `resize` préserve le ratio et donnerait une taille
-        // différente de w×h → slices hors bornes plus bas (crash).
+        // resize_exact: `resize` preserves the ratio and would give a
+        // different size than w×h → out-of-bounds slices below (crash).
         let t_img = floats_to_image(&b_floats, w2, h2).resize_exact(
             w,
             h,
@@ -696,7 +696,7 @@ fn limits_min(gpu: &GpuContext) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Shaders WGSL
+// WGSL shaders
 // ---------------------------------------------------------------------------
 
 const SHADER_BC: &str = include_str!("shaders/shader_bc.wgsl");
@@ -707,31 +707,31 @@ const SHADER_BLUR: &str = include_str!("shaders/shader_blur.wgsl");
 
 const SHADER_BLEND: &str = include_str!("shaders/shader_blend.wgsl");
 
-/// Brightness/contrast en cheminement TEXTURE -> STORAGE TEXTURE : les pixels
-/// ne quittent jamais la VRAM (aucun readback CPU). Les dimensions sont lues
-/// directement depuis la texture d'entrée (pas de désynchronisation possible).
-/// NB : pas d'affectation par swizzle multiple (`c.rgb = …`) — non supportée
-/// par naga ; on passe par une variable intermédiaire.
+/// Brightness/contrast over the TEXTURE -> STORAGE TEXTURE path: pixels
+/// never leave VRAM (no CPU readback). Dimensions are read directly
+/// from the input texture (no possible desync).
+/// NB: no multiple-swizzle assignment (`c.rgb = …`) — unsupported by
+/// naga; go through an intermediate variable.
 const SHADER_BC_TEX: &str = include_str!("shaders/shader_bc_tex.wgsl");
 
 // ---------------------------------------------------------------------------
-// Filtre texture -> texture (zéro readback)
+// Texture -> texture filter (zero readback)
 //
-// Contrairement au chemin storage-buffer ci-dessus (aller-retour CPU <-> GPU),
-// ce pipeline lit une texture et écrit dans une autre : les pixels ne quittent
-// JAMAIS la VRAM. Compatible modèle « state-only » : changer un réglage se
-// réduit à queue.write_buffer + rediffusion, sans ré-upload des pixels.
+// Unlike the storage-buffer path above (CPU <-> GPU round trip), this
+// pipeline reads one texture and writes to another: pixels NEVER leave
+// VRAM. Compatible with the "state-only" model: changing a setting comes
+// down to queue.write_buffer + redispatch, with no pixel re-upload.
 // ---------------------------------------------------------------------------
 
-/// Format commun aux textures d'entrée/sortie du filtre.
+/// Common format for the filter's input/output textures.
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-/// Taille du workgroup du filtre : 16x16 pixels par groupe de travail.
+/// Filter workgroup size: 16x16 pixels per workgroup.
 pub const WORKGROUP_SIZE: u32 = 16;
 
-/// Paramètres du filtre, envoyés tels quels via un uniform buffer.
+/// Filter parameters, sent as is via a uniform buffer.
 ///
-/// Plages applicatives : `brightness` dans [-1.0 ; 1.0], `contrast` dans [0.0 ; 4.0].
+/// Application ranges: `brightness` in [-1.0 ; 1.0], `contrast` in [0.0 ; 4.0].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
@@ -740,7 +740,7 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    /// Crée des paramètres bornés : brightness [-1.0 ; 1.0], contrast [0.0 ; 4.0].
+    /// Creates bounded parameters: brightness [-1.0 ; 1.0], contrast [0.0 ; 4.0].
     #[must_use]
     pub fn new(brightness: f32, contrast: f32) -> Self {
         Self {
@@ -751,7 +751,7 @@ impl Uniforms {
 }
 
 impl Default for Uniforms {
-    /// Réglage neutre : aucune transformation.
+    /// Neutral setting: no transformation.
     fn default() -> Self {
         Self {
             brightness: 0.0,
@@ -760,11 +760,11 @@ impl Default for Uniforms {
     }
 }
 
-// Verrous de compilation : le layout mémoire doit refléter le struct WGSL à l'octet
+// Compile-time locks: the memory layout must mirror the WGSL struct byte-for-byte
 const _: () = assert!(size_of::<Uniforms>() == 8);
 const _: () = assert!(align_of::<Uniforms>() == 4);
 
-/// Nombre de workgroups nécessaire pour couvrir `width x height` pixels.
+/// Number of workgroups needed to cover `width x height` pixels.
 #[must_use]
 pub fn workgroup_count(width: u32, height: u32) -> (u32, u32) {
     (
@@ -773,7 +773,7 @@ pub fn workgroup_count(width: u32, height: u32) -> (u32, u32) {
     )
 }
 
-/// Construit le pipeline de calcul à partir d'un module déjà compilé.
+/// Builds the compute pipeline from an already compiled module.
 #[must_use]
 pub fn create_pipeline(
     device: &wgpu::Device,
@@ -789,8 +789,8 @@ pub fn create_pipeline(
     })
 }
 
-/// Assemble le bind group : texture d'entrée (lecture), texture de sortie
-/// (écriture storage), uniform buffer de réglages.
+/// Assembles the bind group: input texture (read), output texture
+/// (storage write), settings uniform buffer.
 #[must_use]
 pub fn create_bind_group(
     device: &wgpu::Device,
@@ -819,8 +819,8 @@ pub fn create_bind_group(
     })
 }
 
-/// Enregistre la diffusion du filtre dans `encoder` (aucune soumission ici :
-/// l'appelant garde la main sur le batching de ses passes).
+/// Records the filter dispatch into `encoder` (no submission here: the
+/// caller keeps control over its pass batching).
 pub fn dispatch_filter(
     encoder: &mut wgpu::CommandEncoder,
     pipeline: &wgpu::ComputePipeline,
@@ -838,15 +838,15 @@ pub fn dispatch_filter(
     pass.dispatch_workgroups(wx, wy, 1);
 }
 
-/// Pas d'une ligne une fois alignée sur COPY_BYTES_PER_ROW_ALIGNMENT (256 octets),
-/// exigence de wgpu pour write_texture/copy_texture_to_texture.
+/// Row pitch once aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256 bytes),
+/// a wgpu requirement for write_texture/copy_texture_to_texture.
 fn row_pitch(width: u32) -> u32 {
     let raw = width * 4;
     raw.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT
 }
 
 impl GpuContext {
-    /// Crée une texture RGBA8 prête à recevoir un upload CPU (usage échantillonnage + copie).
+    /// Creates an RGBA8 texture ready to receive a CPU upload (sampling + copy usage).
     #[must_use]
     pub fn create_input_texture(&self, width: u32, height: u32) -> wgpu::Texture {
         self.device.create_texture(&wgpu::TextureDescriptor {
@@ -865,8 +865,8 @@ impl GpuContext {
         })
     }
 
-    /// Convertit `img` en RGBA8 puis la charge dans une texture GPU.
-    /// Unique passage par la RAM système ; ensuite tout reste en VRAM.
+    /// Converts `img` to RGBA8 then loads it into a GPU texture. Single pass
+    /// through system RAM; afterwards everything stays in VRAM.
     #[must_use]
     pub fn upload_image(&self, img: &DynamicImage) -> wgpu::Texture {
         let rgba = img.to_rgba8();
@@ -875,10 +875,10 @@ impl GpuContext {
         texture
     }
 
-    /// Écrit des pixels RGBA8 dans `texture` en gérant le rembourrage de lignes
-    /// imposé par wgpu (pitch aligné 256 octets).
+    /// Writes RGBA8 pixels into `texture`, handling wgpu-imposed row
+    /// padding (256-byte aligned pitch). Returns `false` if `rgba` holds
     ///
-    /// Retourne `false` si `rgba` ne contient pas exactement largeur x hauteur x 4 octets.
+    /// anything but exactly width x height x 4 bytes.
     pub fn upload_rgba8(&self, texture: &wgpu::Texture, rgba: &[u8]) -> bool {
         let size = texture.size();
         let expected = size.width as usize * size.height as usize * 4;
@@ -892,7 +892,7 @@ impl GpuContext {
             rows_per_image: None,
         };
         if pitch == size.width * 4 {
-            // Lignes déjà alignées : copie directe zéro transformation
+            // Already aligned rows: direct copy, zero transformation
             self.queue
                 .write_texture(texture.as_image_copy(), rgba, layout, size);
         } else {
@@ -910,14 +910,14 @@ impl GpuContext {
         true
     }
 
-    /// Applique luminosité/contraste : lit `input`, retourne une NOUVELLE texture.
+    /// Applies brightness/contrast: reads `input`, returns a NEW texture.
     ///
-    /// ZÉRO readback : les pixels restent en VRAM, la sortie est directement
-    /// chaînable vers un autre filtre ou un render pass.
+    /// ZERO readback: pixels stay in VRAM, the output is directly
+    /// chainable to another filter or a render pass. The setting is pushed
     ///
-    /// Le réglage est poussé dans l'uniform buffer persistant du contexte ;
-    /// l'ordre des opérations de file garantit que chaque diffusion lit bien la
-    /// valeur écrite juste avant elle.
+    /// into the context's persistent uniform buffer; queue op ordering
+    /// guarantees each dispatch reads the value
+    /// written just before it.
     ///
     /// # Examples
     ///
@@ -930,12 +930,12 @@ impl GpuContext {
     ///     let output = gpu
     ///         .apply_brightness_contrast_texture(&input, Uniforms::new(0.1, 1.2))
     ///         .ok_or("dimensions invalides")?;
-    ///     // `output` reste en VRAM : prête pour un autre filtre ou l'affichage.
+    ///     // `output` stays in VRAM: ready for another filter or display.
     ///     Ok(())
     /// }
     /// ```
     ///
-    /// Retourne `None` si les dimensions sont nulles ou si le contexte est indisponible.
+    /// Returns `None` if dimensions are zero or the context is unavailable.
     pub fn apply_brightness_contrast_texture(
         &self,
         input: &wgpu::Texture,
@@ -983,7 +983,7 @@ impl GpuContext {
     }
 }
 
-// Pour compat avec ancien code qui appelle evaluate_gpu_available
+// For compat with old code calling evaluate_gpu_available
 pub fn evaluate_gpu_available() -> bool {
     GpuContext::is_available()
 }
@@ -1032,11 +1032,11 @@ mod tests {
 
     #[test]
     fn pas_de_ligne_aligne_sur_256_octets() {
-        // 64 px * 4 = 256 octets : déjà multiple de 256
+        // 64 px * 4 = 256 bytes: already a multiple of 256
         assert_eq!(row_pitch(64), 256);
-        // 640 px * 4 = 2560 octets : déjà multiple de 256
+        // 640 px * 4 = 2560 bytes: already a multiple of 256
         assert_eq!(row_pitch(640), 2560);
-        // 800 px * 4 = 3200 octets : arrondi au multiple de 256 supérieur
+        // 800 px * 4 = 3200 bytes: rounded up to the next multiple of 256
         assert_eq!(row_pitch(800), 3328);
         assert_eq!(row_pitch(1), 256);
     }

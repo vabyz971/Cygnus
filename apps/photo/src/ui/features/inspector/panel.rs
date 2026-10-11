@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Panneau Inspecteur : propriétés de la pièce jointe focalisée.
+//! Inspector panel: focused attachment properties.
 //!
-//! Position-indépendant (le workspace décide du placement, titre
-//! porté par l'onglet dock). La sélection d'un calque SEUL laisse le
-//! panneau vide (aucun duplicata de visibilité/opacité/fusion, qui
-//! vivent dans le panneau Calques) ; seule une pièce jointe
-//! focalisée (filtre live ou masque, clic sur sa rangée d'arbre)
-//! affiche sa section de réglages. `None` = état vide explicite.
-//! Aucun envoi worker : tout remonte en [`InspectorAction`].
+//! Position-independent (the workspace decides placement, title
+//! carried by the dock tab). Selecting a layer ALONE leaves the
+//! panel empty (no visibility/opacity/blend duplicates, which
+//! live in the Layers panel); only a focused
+//! attachment (live filter or mask, click on its tree row)
+//! shows its settings section. `None` = explicit empty state.
+//! No worker send: everything bubbles as [`InspectorAction`].
 
 use super::sections::draw_attachment_section;
 use crate::commands::PhotoUiContext;
@@ -31,38 +31,38 @@ use crate::ui::features::layers::types::{AttachmentRef, find_attachment_in};
 use ui_kit::primitives::Text;
 use uuid::Uuid;
 
-/// Action émise par l'inspecteur (routée au worker par l'app, voir
+/// Action emitted by the inspector (routed to the worker by the app, see
 /// [`super::actions`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InspectorAction {
-    /// Activer/désactiver la pièce jointe focalisée.
+    /// Enable/disable the focused attachment.
     ToggleAttachment {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
-        /// Filtre ou masque visé.
+        /// Targeted filter or mask.
         id: Uuid,
-        /// Vrai = filtre live, faux = masque.
+        /// True = live filter, false = mask.
         is_filter: bool,
     },
-    /// Régler un paramètre flottant du filtre focalisé (curseurs).
+    /// Set a float parameter of the focused filter (sliders).
     SetFilterParam {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         id: Uuid,
-        /// Clé du paramètre (ex. `"brightness"`).
+        /// Parameter key (e.g. `"brightness"`).
         key: String,
-        /// Nouvelle valeur.
+        /// New value.
         value: f32,
     },
 }
 
-/// Panneau Inspecteur (contenu direct, sans chrome : le titre est
-/// porté par l'onglet dock).
+/// Inspector panel (direct content, no chrome: the title is
+/// carried by the dock tab).
 pub struct InspectorPanel;
 
 impl InspectorPanel {
-    /// Dessine le contenu et retourne les actions.
+    /// Draws the content and returns the actions.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
@@ -75,9 +75,9 @@ impl InspectorPanel {
             Text::body(theme, texts.get(crate::i18n::PhotoTextKey::NoLayerSelected)).show(ui);
             return Vec::new();
         };
-        // Calque seul : panneau vide (les réglages du calque vivent
-        // dans le panneau Calques). Seule une pièce jointe focalisée
-        // (porteur = sélection, id existant) affiche sa section.
+        // Lone layer: empty panel (layer settings live
+        // in the Layers panel). Only a focused attachment
+        // (owner = selection, existing id) shows its section.
         let Some(focus) = focused else {
             return Vec::new();
         };

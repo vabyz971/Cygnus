@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Panneau titré en surface (bloc de studio avec chrome).
+//! Titled surface panel (studio block with chrome).
 //!
-//! Contrairement à [`Section`](super::section::Section) (sans fond),
-//! le panneau dessine une surface bordée avec en-tête. Le placement
-//! dans le layout (gauche / droite / bas) reste propre à chaque app.
+//! Unlike [`Section`](super::section::Section) (background-free),
+//! the panel draws a bordered surface with a header. Placement
+//! in the layout (left / right / bottom) stays per-app.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::containers::Panel;
 //! # use ui_kit::theme::CygnusTheme;
@@ -35,19 +35,19 @@
 use crate::primitives::{Surface, Text, divider};
 use crate::theme::CygnusTheme;
 
-/// Panneau titré via API builder.
+/// Titled panel via builder API.
 #[derive(Debug, Clone)]
 pub struct Panel<'a> {
     title: &'a str,
 }
 
 impl<'a> Panel<'a> {
-    /// Crée un panneau avec titre.
+    /// Creates a panel with title.
     pub fn new(title: &'a str) -> Self {
         Self { title }
     }
 
-    /// Affiche le panneau et son contenu.
+    /// Displays the panel and its content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

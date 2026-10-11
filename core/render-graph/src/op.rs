@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Vocabulaire d'opérations : nœuds, ports, arêtes typées.
+//! Operation vocabulary: nodes, ports, typed edges.
 //!
-//! Minimaliste et sans charge utile : un [`RenderNode`] dit QUOI faire
-//! (opcode) et D'OÙ il vient (nœud de scène), jamais COMMENT (pixels,
-//! shaders — affaire du [`crate::Backend`]).
+//! Minimalist with no payload: a [`RenderNode`] says WHAT to do
+//! (opcode) and WHERE it comes from (scene node), never HOW (pixels,
+//! shaders — the [`crate::Backend`]'s business).
 
 use ids::EntityId;
 
 use crate::SceneNodeId;
 
-/// Identifiant stable d'un [`RenderNode`].
+/// Stable identifier of a [`RenderNode`].
 ///
-/// Frais à chaque (re)construction de portée — l'identité inter-`sync` des
-/// portées intactes est préservée (leurs nœuds ne sont jamais touchés).
+/// Fresh at each scope (re)build — the inter-`sync` identity of intact
+/// scopes is preserved (their nodes are never touched).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -35,25 +35,25 @@ use crate::SceneNodeId;
 pub struct RenderNodeId(EntityId);
 
 impl RenderNodeId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul — sentinelle explicite, jamais attribué.
+    /// Null identifier — explicit sentinel, never assigned.
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente.
+    /// The underlying entity.
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante.
+    /// Wraps an existing entity.
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -69,7 +69,7 @@ impl RenderNodeId {
 }
 
 impl Default for RenderNodeId {
-    /// Identifiant nul — même valeur que [`RenderNodeId::nil`].
+    /// Null identifier — same value as [`RenderNodeId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -81,86 +81,86 @@ impl std::fmt::Display for RenderNodeId {
     }
 }
 
-/// Clé d'effet nommée, fournie par le moteur du domaine via l'overlay
-/// ([`crate::EffectOverlay`]) : `"brightness_contrast"`, `"blur"`…
-/// Le Render Graph ne connaît ni les paramètres ni l'implémentation —
-/// seulement l'identité ordonnée, suffisante pour dériver et invalider.
+/// Named effect key, provided by the domain engine via the overlay
+/// ([`crate::EffectOverlay`]): `"brightness_contrast"`, `"blur"`…
+/// The Render Graph knows neither parameters nor implementation —
+/// only the ordered identity, enough to derive and invalidate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct EffectKey(pub String);
 
 impl EffectKey {
-    /// Nouvelle clé depuis un nom d'effet du domaine.
+    /// New key from a domain effect name.
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 }
 
-/// Opération dérivée — le « quoi faire » d'un [`RenderNode`].
+/// Derived operation — the "what to do" of a [`RenderNode`].
 ///
-/// Une feuille de scène dérive `Source → Transform → [Effect…] → [Mask] →
-/// Blend` ; un groupe dérive un `Blend` qui plie ses enfants ; les racines
-/// se plient en chaîne et alimentent l'unique `Output`.
+/// A scene leaf derives `Source → Transform → [Effect…] → [Mask] →
+/// `Blend`; a group derives a `Blend` folding its children; roots
+/// fold into a chain feeding the single `Output`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderOp {
-    /// Fournit le contenu d'une feuille (pixels lus par le backend).
+    /// Provides a leaf's content (pixels read by the backend).
     Source,
-    /// Place le contenu (le backend lit le transform local de la scène).
+    /// Places the content (the backend reads the scene's local transform).
     Transform,
-    /// Applique un effet nommé du domaine (chaîne overlay, dans l'ordre).
+    /// Applies a named domain effect (overlay chain, in order).
     Effect(EffectKey),
-    /// Applique la couverture combinée des masques sémantiques.
+    /// Applies the combined coverage of semantic masks.
     Mask,
-    /// Composite le premier plan sur le fond (ports [`RenderPort`]).
+    /// Composites the foreground over the background (ports [`RenderPort`]).
     Blend,
-    /// Puits final unique (présentation / export).
+    /// Single final sink (presentation / export).
     Output,
 }
 
-/// Port d'entrée d'une arête : le `Blend` distingue le fond (accumulé) du
-/// premier plan (contenu du calque). Les autres opcodes n'acceptent que
-/// [`RenderPort::Foreground`] (chaîne linéaire).
+/// Input port of an edge: `Blend` tells the (accumulated) background from the
+/// foreground (layer content). Other opcodes only accept
+/// [`RenderPort::Foreground`] (linear chain).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderPort {
-    /// Contenu principal (chaîne de la feuille, dernier top précédent…).
+    /// Main content (leaf chain, previous last top…).
     Foreground,
-    /// Accumulé à recouvrir (fond du `Blend`).
+    /// Accumulation to cover (the `Blend`'s background).
     Background,
 }
 
-/// Arête typée `from → to` sur `port` : « `to` lit `from` via `port` ».
-/// Miroir exact (ports inclus) de l'arête interne du graphe de dépendances.
+/// Typed edge `from → to` on `port`: "`to` reads `from` via `port`".
+/// Exact mirror (ports included) of the dependency graph's inner edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RenderEdge {
-    /// Nœud lu (amont).
+    /// Read node (upstream).
     pub from: RenderNodeId,
-    /// Nœud lecteur (aval).
+    /// Reader node (downstream).
     pub to: RenderNodeId,
-    /// Port de lecture de `to`.
+    /// Read port of `to`.
     pub port: RenderPort,
 }
 
 impl RenderEdge {
-    /// Nouvelle arête typée.
+    /// New typed edge.
     pub fn new(from: RenderNodeId, to: RenderNodeId, port: RenderPort) -> Self {
         Self { from, to, port }
     }
 }
 
-/// Nœud d'opération : opcode + origine scène.
+/// Operation node: opcode + scene origin.
 ///
-/// Ni révision stockée (voir [`graph::Graph::node_revision`], source unique
-/// des révisions), ni pixels : le backend résout le contenu via
+/// No stored revision (see [`graph::Graph::node_revision`], single source
+/// of revisions), no pixels: the backend resolves content via
 /// [`RenderNode::scene`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RenderNode {
-    /// Identifiant stable (à portée intacte préservée).
+    /// Stable identifier (intact scope preserved).
     pub id: RenderNodeId,
-    /// Opération à exécuter.
+    /// Operation to execute.
     pub op: RenderOp,
-    /// Nœud de scène d'origine (`None` = puits `Output` synthétique).
+    /// Origin scene node (`None` = synthetic `Output` sink).
     pub scene: Option<SceneNodeId>,
 }
 

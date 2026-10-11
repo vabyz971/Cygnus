@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Photo Engine — logique métier Photo extraite de apps/photo
-//! PUR : aucune dépendance UI (les buffers sont convertis côté app).
-//! Utilise datatypes + math-utils, exposé aux apps
+//! Photo Engine — Photo business logic extracted from apps/photo. PURE:
+//! no UI dependency (buffers are converted app-side). Uses datatypes +
+//! math-utils, exposed to apps.
 
 pub mod command;
 pub mod document;

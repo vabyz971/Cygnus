@@ -14,61 +14,61 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Cache de tuiles : emplacements versionnés, handles opaques.
+//! Tile cache: versioned slots, opaque handles.
 //!
-//! [`TileCache<H>`] associe `TileId → (révision, handle)` : hit ssi la
-//! révision stockée ÉGALE la demandée ([`TileKey`] conceptuel). Le type de
-//! handle `H` sépare STRICTEMENT les mondes :
+//! [`TileCache<H>`] maps `TileId → (revision, handle)`: hit iff the
+//! stored revision EQUALS the requested one (conceptual [`TileKey`]). The
+//! handle type `H` STRICTLY separates the worlds:
 //!
-//! - [`CpuTile`] (pixels partagés `Arc<[u8]>`) — [`CpuTileCache`] ;
-//! - [`GpuTile`] (jeton opaque `token`, résolu en texture par le backend)
+//! - [`CpuTile`] (shared `Arc<[u8]>` pixels) — [`CpuTileCache`];
+//! - [`GpuTile`] (opaque `token`, resolved into a texture by the backend)
 //!   — [`GpuTileCache`].
 //!
-//! Aucun pixel ne transite ici vers le GPU et aucun readback n'en revient :
-//! le backend possède la table `jeton → texture` et libère ses textures
-//! quand `insert` lui rend un handle évincé (valeur de retour — pas de
-//! rappel, pas de synchronisation implicite).
+//! No pixel transits here toward the GPU and no readback comes back:
+//! the backend owns the `token → texture` table and frees its textures
+//! when `insert` hands it an evicted handle back (return value — no
+//! callback, no implicit synchronization).
 //!
-//! Éviction LRU bornée (compteur monotone + balayage du minimum) :
-//! fondation volontairement simple — les caches backend affinés feront
-//! mieux, avec la même interface `get/insert/invalidate`.
+//! Bounded LRU eviction (monotonic counter + minimum scan):
+//! deliberately simple foundation — refined backend caches will do
+//! better, with the same `get/insert/invalidate` interface.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{TileId, TileRevision};
 
-/// Tuile CPU : pixels partagés (zéro copie vers les lecteurs).
+/// CPU tile: shared pixels (zero copy to readers).
 #[derive(Debug, Clone)]
 pub struct CpuTile {
-    /// Pixels RGBA8 partagés (lignes majeures).
+    /// Shared row-major RGBA8 pixels.
     pub data: Arc<[u8]>,
-    /// Largeur en pixels.
+    /// Width in pixels.
     pub width: u32,
-    /// Hauteur en pixels.
+    /// Height in pixels.
     pub height: u32,
 }
 
-/// Cache de tuiles CPU.
+/// CPU tile cache.
 pub type CpuTileCache = TileCache<CpuTile>;
 
-/// Poignée GPU opaque : le backend seul sait la résoudre en texture.
+/// Opaque GPU handle: only the backend can resolve it into a texture.
 ///
-/// `token` est attribué par le backend à la création ; `generation`
-/// change à chaque ré-upload (permet de détecter les jetons périmés sans
-/// toucher au GPU).
+/// `token` is assigned by the backend at creation; `generation`
+/// changes on each re-upload (detects stale tokens without
+/// touching the GPU).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GpuTile {
-    /// Jeton attribué par le backend.
+    /// Token assigned by the backend.
     pub token: u64,
-    /// Génération du contenu téléversé.
+    /// Generation of the uploaded content.
     pub generation: u64,
 }
 
-/// Cache de tuiles GPU (jetons — textures chez le backend).
+/// GPU tile cache (tokens — textures live with the backend).
 pub type GpuTileCache = TileCache<GpuTile>;
 
-/// Entrée versionnée (révision + handle + récence LRU).
+/// Versioned entry (revision + handle + LRU recency).
 #[derive(Debug, Clone)]
 struct CacheEntry<H> {
     revision: TileRevision,
@@ -76,25 +76,25 @@ struct CacheEntry<H> {
     last_used: u64,
 }
 
-/// Statistiques du cache (observabilité, sans effet).
+/// Cache statistics (observability, no effect).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CacheStats {
-    /// Entrées stockées.
+    /// Stored entries.
     pub len: usize,
-    /// Capacité configurée.
+    /// Configured capacity.
     pub capacity: usize,
-    /// Lectures réussies (même révision).
+    /// Successful reads (same revision).
     pub hits: u64,
-    /// Lectures ratées (absent ou révision différente).
+    /// Failed reads (absent or different revision).
     pub misses: u64,
-    /// Handles évincés (rendus à l'appelant via `insert`).
+    /// Evicted handles (handed back to the caller via `insert`).
     pub evicted: u64,
 }
 
-/// Cache LRU borné de tuiles versionnées, paramétré par le handle.
+/// Bounded LRU cache of versioned tiles, parameterized by handle.
 ///
-/// `H` n'est jamais inspecté ici (stockage opaque) : CPU et GPU ne se
-/// mélangent pas — ce sont deux instances de types distincts.
+/// `H` is never inspected here (opaque storage): CPU and GPU never
+/// mix — they are two instances of distinct types.
 #[derive(Debug, Clone)]
 pub struct TileCache<H> {
     capacity: usize,
@@ -106,7 +106,7 @@ pub struct TileCache<H> {
 }
 
 impl<H> TileCache<H> {
-    /// Nouveau cache (`capacity` = entrées max ; 0 = ne stocke rien).
+    /// New cache (`capacity` = max entries; 0 = stores nothing).
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -119,25 +119,25 @@ impl<H> TileCache<H> {
         }
     }
 
-    /// Capacité configurée.
+    /// Configured capacity.
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// Entrées stockées.
+    /// Stored entries.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Statistiques cumulées.
+    /// Cumulative statistics.
     #[must_use]
     pub fn stats(&self) -> CacheStats {
         CacheStats {
@@ -149,8 +149,8 @@ impl<H> TileCache<H> {
         }
     }
 
-    /// Lecture : hit ssi l'entrée existe ET sa révision égale `revision`.
-    /// Marque la récence LRU (d'où `&mut`).
+    /// Read: hit iff the entry exists AND its revision equals `revision`.
+    /// Marks LRU recency (hence `&mut`).
     #[must_use]
     pub fn get(&mut self, id: TileId, revision: TileRevision) -> Option<&H> {
         self.clock = self.clock.wrapping_add(1);
@@ -168,16 +168,16 @@ impl<H> TileCache<H> {
         }
     }
 
-    /// Révision stockée pour l'emplacement (`None` si absent).
+    /// Stored revision for the slot (`None` if absent).
     #[must_use]
     pub fn revision_of(&self, id: TileId) -> Option<TileRevision> {
         self.entries.get(&id).map(|e| e.revision)
     }
 
-    /// Stocke (ou remplace) un handle. Si le cache est plein et l'id est
-    /// nouveau, le handle le MOINS récemment utilisé est rendu à
-    /// l'appelant (le backend y libère sa texture — aucune fuite
-    /// silencieuse). Capacité 0 : rend immédiatement `handle`.
+    /// Stores (or replaces) a handle. If the cache is full and the id is
+    /// new, the LEAST recently used handle is handed back to
+    /// the caller (the backend frees its texture there — no silent
+    /// leak). Capacity 0: immediately hands `handle` back.
     pub fn insert(&mut self, id: TileId, revision: TileRevision, handle: H) -> Option<H> {
         self.clock = self.clock.wrapping_add(1);
         let tick = self.clock;
@@ -209,13 +209,13 @@ impl<H> TileCache<H> {
         evicted
     }
 
-    /// Retire un emplacement et rend son handle (`None` si absent — le
-    /// backend n'a alors rien à libérer).
+    /// Removes a slot and hands its handle back (`None` if absent — the
+    /// backend then has nothing to free).
     pub fn invalidate(&mut self, id: TileId) -> Option<H> {
         self.entries.remove(&id).map(|e| e.handle)
     }
 
-    /// Vide le cache et rend tous les handles (l'appelant les libère).
+    /// Drains the cache and hands all handles back (the caller frees them).
     pub fn invalidate_all(&mut self) -> Vec<H> {
         self.entries
             .drain()
@@ -223,7 +223,7 @@ impl<H> TileCache<H> {
             .collect()
     }
 
-    /// Évince le moins récemment utilisé (interne — le handle remonte).
+    /// Evicts the least recently used (internal — the handle bubbles up).
     fn evict_lru(&mut self) -> Option<H> {
         let victim = self
             .entries

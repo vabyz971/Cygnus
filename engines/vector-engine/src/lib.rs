@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur vectoriel : paths Bézier, formes, remplissages, contours.
+//! Vector engine: Bézier paths, shapes, fills, strokes.
 //!
-//! Ce moteur possède la LOGIQUE MÉTIER vectorielle (géométrie, styles,
-//! opérations booléennes comme données) — jamais le dessin : aucun `wgpu`,
-//! aucun `egui`, aucune dépendance Vello. Le rendu passe par le trait
-//! [`VectorBackend`] (un futur adaptateur Vello l'implémentera avec ses
-//! propres types, sans que ce modèle ne connaisse Vello).
+//! This engine owns the vector BUSINESS LOGIC (geometry, styles,
+//! boolean operations as data) — never drawing: no `wgpu`,
+//! no `egui`, no Vello dependency. Rendering goes through the
+//! [`VectorBackend`] trait (a future Vello adapter will implement it with its
+//! own types, without this model knowing Vello).
 //!
-//! Fondations partagées réutilisées : `datatypes::Vec2`/`Rect` (géométrie),
-//! `math-utils::Transform2D` (placement), `ids::EntityId` (identités).
+//! Reused shared foundations: `datatypes::Vec2`/`Rect` (geometry),
+//! `math-utils::Transform2D` (placement), `ids::EntityId` (identities).
 
 pub mod backend;
 pub mod document;

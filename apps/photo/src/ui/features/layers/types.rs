@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,12 +16,12 @@
 
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
-//! Types d'affichage des calques photo (vue UI dérivée du moteur).
+//! Photo layer display types (UI view derived from the engine).
 //!
-//! L'app convertit les `LayerNode` de `photo-engine` en
-//! [`PhotoLayerInfo`] avant d'appeler les widgets. Seul le niveau
-//! racine est exposé en Phase 3 (les enfants de groupes restent
-//! repliés).
+//! The app converts `photo-engine`'s `LayerNode`s into
+//! [`PhotoLayerInfo`] before calling the widgets. Only the root
+//! level is exposed in Phase 3 (group children stay
+//! collapsed).
 
 use photo_engine::{BlendMode, Document, LayerNode};
 use std::collections::HashMap;
@@ -29,18 +29,18 @@ use ui_kit::icons::Icon;
 use ui_kit::utils::DropPosition;
 use uuid::Uuid;
 
-/// Type sémantique d'un calque photo (miroir des `LayerNode` moteur).
+/// Semantic type of a photo layer (mirror of engine `LayerNode`s).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhotoLayerKind {
-    /// Calque pixels.
+    /// Pixel layer.
     Pixel,
-    /// Groupe de calques.
+    /// Layer group.
     Group,
-    /// Calque d'ajustement.
+    /// Adjustment layer.
     Adjustment,
 }
 
-/// Toutes les variantes, pour les tests d'exhaustivité.
+/// Every variant, for exhaustiveness tests.
 pub const ALL_PHOTO_LAYER_KINDS: &[PhotoLayerKind] = &[
     PhotoLayerKind::Pixel,
     PhotoLayerKind::Group,
@@ -48,7 +48,7 @@ pub const ALL_PHOTO_LAYER_KINDS: &[PhotoLayerKind] = &[
 ];
 
 impl PhotoLayerKind {
-    /// Icône sémantique (via `Icon` de ui-kit uniquement).
+    /// Semantic icon (via ui-kit's `Icon` only).
     pub fn icon(self) -> Icon {
         match self {
             Self::Pixel => Icon::ImageIcon,
@@ -57,7 +57,7 @@ impl PhotoLayerKind {
         }
     }
 
-    /// Libellé du type (via le catalogue photo).
+    /// Type label (via the photo catalog).
     pub fn icon_label(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
         match self {
             Self::Pixel => texts.get(crate::i18n::PhotoTextKey::LayerKindPixel),
@@ -66,7 +66,7 @@ impl PhotoLayerKind {
         }
     }
 
-    /// Dérive le type d'affichage d'un nœud moteur.
+    /// Derives the display type of an engine node.
     pub fn from_node(node: &LayerNode) -> Self {
         match node {
             LayerNode::Pixel(_) => Self::Pixel,
@@ -76,135 +76,135 @@ impl PhotoLayerKind {
     }
 }
 
-/// Sous-calque affiché (filtre live ou masque) sous son porteur.
+/// Displayed sub-layer (live filter or mask) under its owner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhotoSubLayerInfo {
-    /// Identifiant moteur (filtre ou masque).
+    /// Engine id (filter or mask).
     pub id: Uuid,
-    /// Nom affiché.
+    /// Displayed name.
     pub name: String,
-    /// Vrai = filtre live, faux = masque.
+    /// True = live filter, false = mask.
     pub is_filter: bool,
-    /// Effet actif (œil de la ligne).
+    /// Effect enabled (row eye).
     pub enabled: bool,
-    /// `type_id` du registre d'effets (filtres uniquement, ex.
-    /// `"brightness_contrast"` ; vide pour les masques) : l'inspecteur
-    /// en déduit les curseurs de réglage.
+    /// Effect-registry `type_id` (filters only, e.g.
+    /// `"brightness_contrast"`; empty for masks): the inspector
+    /// derives the setting sliders from it.
     pub filter_type: String,
-    /// Paramètres flottants courants du filtre (curseurs) ; vide pour
-    /// les masques. Seuls les `Float` voyagent (les `Enum`/`Text` du
-    /// registre ne sont pas éditables au curseur).
+    /// Current float parameters of the filter (sliders); empty for
+    /// masks. Only `Float`s travel (the registry's `Enum`/`Text`
+    /// are not slider-editable).
     pub params: HashMap<String, f32>,
 }
 
-/// Désignation d'une pièce jointe focalisée (sélection secondaire
-/// du panneau Calques : le porteur reste la sélection principale).
+/// Designation of a focused attachment (secondary selection
+/// of the Layers panel: the owner stays the primary selection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttachmentRef {
-    /// Calque porteur.
+    /// Owning layer.
     pub owner: Uuid,
-    /// Filtre ou masque visé.
+    /// Targeted filter or mask.
     pub id: Uuid,
 }
 
-/// Sélection de l'arbre des calques : calque principal + pièce
-/// jointe focalisée (regroupées pour limiter l'arité des draws).
+/// Layer-tree selection: primary layer + focused
+/// attachment (grouped to limit draw arity).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LayerTreeSelection {
-    /// Calque sélectionné.
+    /// Selected layer.
     pub selected: Option<Uuid>,
-    /// Pièce jointe focalisée.
+    /// Focused attachment.
     pub focused: Option<AttachmentRef>,
 }
 
-/// Catalogues de traduction du panneau Calques (générique ui-kit +
-/// spécifique photo), construits une fois par frame.
+/// Layers panel translation catalogs (generic ui-kit +
+/// photo-specific), built once per frame.
 #[derive(Debug, Clone, Copy)]
 pub struct LayerTexts {
-    /// Libellés génériques (Renommer, Supprimer…).
+    /// Generic labels (Rename, Delete…).
     pub catalog: ui_kit::i18n::Catalog,
-    /// Chaînes métier de Photo.
+    /// Photo domain strings.
     pub texts: crate::i18n::PhotoCatalog,
 }
 
-/// Miniature d'un calque pour le panneau (buffer pur, converti en
-/// texture côté app et mis en cache par `appearance_version`).
+/// Layer thumbnail for the panel (pure buffer, converted to a
+/// texture app-side and cached by `appearance_version`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhotoLayerThumb {
-    /// Largeur en pixels (environ 48).
+    /// Width in pixels (about 48).
     pub width: u32,
-    /// Hauteur en pixels (environ 32, ratio préservé).
+    /// Height in pixels (about 32, ratio preserved).
     pub height: u32,
-    /// Pixels RGBA8 ligne par ligne.
+    /// RGBA8 pixels row by row.
     pub rgba: Vec<u8>,
-    /// Version d'apparence : l'UI ne re-téléverse que si elle change.
+    /// Appearance version: the UI re-uploads only on change.
     pub version: u64,
 }
 
-/// Miniature téléversée d'un calque, pour la ligne du panneau
-/// (construite par l'app depuis son cache de textures).
+/// Uploaded thumbnail of a layer, for the panel row
+/// (built by the app from its texture cache).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayerThumbView {
-    /// Texture GPU de la miniature.
+    /// Thumbnail GPU texture.
     pub texture_id: egui::TextureId,
-    /// Dimensions de la miniature en pixels.
+    /// Thumbnail dimensions in pixels.
     pub size: egui::Vec2,
 }
 
-/// Données d'affichage d'un calque photo (vue UI, détenue par l'app).
+/// Display data of a photo layer (UI view, owned by the app).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhotoLayerInfo {
-    /// Identifiant moteur (`Uuid` de `photo-engine`).
+    /// Engine id (`photo-engine` `Uuid`).
     pub id: Uuid,
-    /// Nom affiché.
+    /// Displayed name.
     pub name: String,
-    /// Type sémantique.
+    /// Semantic type.
     pub kind: PhotoLayerKind,
-    /// Visibilité (œil).
+    /// Visibility (eye).
     pub visible: bool,
-    /// Opacité (unités moteur 0..=100).
+    /// Opacity (engine units 0..=100).
     pub opacity: f32,
-    /// Mode de fusion du calque.
+    /// Layer blend mode.
     pub blend_mode: BlendMode,
-    /// Le calque porte des filtres live (badge FX).
+    /// The layer carries live filters (FX badge).
     pub has_filters: bool,
-    /// Le calque porte des masques (badge).
+    /// The layer carries masks (badge).
     pub has_masks: bool,
-    /// Filtres live du calque (ordre d'application), pour la HUD.
+    /// Layer live filters (application order), for the HUD.
     pub filters: Vec<PhotoSubLayerInfo>,
-    /// Masques du calque, pour la HUD.
+    /// Layer masks, for the HUD.
     pub masks: Vec<PhotoSubLayerInfo>,
-    /// Enfants directs (groupes uniquement, récursif) : l'UI les
-    /// affiche indentés sous leur parent, repliés si `collapsed`.
-    /// N'importe quel calque peut être enfant d'un groupe (nesting
-    /// libre côté moteur : `reorder_before` / `move_into`).
+    /// Direct children (groups only, recursive): the UI shows
+    /// them indented under their parent, collapsed when `collapsed`.
+    /// Any layer may be a child of a group (free
+    /// engine-side nesting: `reorder_before` / `move_into`).
     pub children: Vec<PhotoLayerInfo>,
-    /// Groupe replié (état moteur) : l'UI masque `children`.
+    /// Collapsed group (engine state): the UI hides `children`.
     pub collapsed: bool,
-    /// Miniature pixels (`None` = groupes/ajustements : icône de type).
+    /// Pixel thumbnail (`None` = groups/adjustments: type icon).
     pub thumb: Option<PhotoLayerThumb>,
-    /// Sélection courante (état UI).
+    /// Current selection (UI state).
     pub selected: bool,
-    /// Feedback interactif affichable en overlay pendant un drag (Phase
-    /// 6G.3P) : vrai ssi la transform du calque est plaçable à l'écran
-    /// (identité/translation/échelle — calculé côté moteur, jamais deviné
-    /// par l'UI). Faux pour rotation/skew (présentation désactivée, moteur
-    /// et commit exacts quand même).
+    /// Interactive feedback displayable as an overlay during a drag (Phase
+    /// 6G.3P): true iff the layer transform is placeable on screen
+    /// (identity/translation/scale — computed engine-side, never guessed
+    /// by the UI). False for rotation/skew (presentation disabled, engine
+    /// and commit still exact).
     pub overlay_live: bool,
-    /// Transform du calque (identité pour groupes/ajustements) : placement
-    /// écran de l'overlay (calque→document), translation/échelle seulement
-    /// quand `overlay_live` est vrai.
+    /// Layer transform (identity for groups/adjustments): overlay
+    /// screen placement (layer→document), translation/scale only
+    /// when `overlay_live` is true.
     pub transform: photo_engine::Transform2D,
 }
 
 impl PhotoLayerInfo {
-    /// Dérive une entrée d'affichage d'un nœud moteur.
+    /// Derives a display entry from an engine node.
     pub fn from_node(document: &Document, node: &LayerNode) -> Self {
         Self::from_node_with_lookup(node, &|id| document.thumb(id))
     }
 
-    /// Dérive une entrée d'affichage avec une miniature déjà résolue
-    /// (partage inter-passes : aucune nouvelle résolution d'apparence).
+    /// Derives a display entry with an already-resolved thumbnail
+    /// (inter-pass sharing: no new appearance resolution).
     pub fn from_node_with_thumb(node: &LayerNode, thumb: Option<photo_engine::RgbaBuf>) -> Self {
         let id = node.id();
         Self::from_node_with_lookup(node, &|query| {
@@ -212,8 +212,8 @@ impl PhotoLayerInfo {
         })
     }
 
-    /// Dérive une entrée d'affichage avec résolveur de miniatures
-    /// (récursif : les enfants de groupes sont exposés indentés).
+    /// Derives a display entry with a thumbnail resolver
+    /// (recursive: group children are exposed indented).
     pub fn from_node_with_lookup(
         node: &LayerNode,
         lookup: &dyn Fn(Uuid) -> Option<photo_engine::RgbaBuf>,
@@ -268,8 +268,8 @@ impl PhotoLayerInfo {
         };
         let has_filters = !filters.is_empty();
         let has_masks = !masks.is_empty();
-        // Miniature servie par le résolveur (zéro recalcul à chaud) :
-        // seuls les pixels en ont une.
+        // Thumbnail served by the resolver (zero hot recompute):
+        // only pixels have one.
         let thumb = match node {
             LayerNode::Pixel(pixels) => lookup(node.id()).map(|buf| PhotoLayerThumb {
                 width: buf.width,
@@ -321,21 +321,21 @@ impl PhotoLayerInfo {
     }
 }
 
-/// Drop hiérarchique résolu en lignes : ce qui est déplacé, sur
-/// quoi, et où (avant / dedans / après). Le panneau le convertit en
-/// commandes worker (`ReorderNodes`, `MoveIntoGroup`) ; les pièces
-/// jointes ne se déplacent pas par DnD (no-op documenté).
+/// Hierarchical drop resolved to rows: what is moved, onto
+/// what, and where (before / inside / after). The panel converts it to
+/// worker commands (`ReorderNodes`, `MoveIntoGroup`); attachments
+/// do not move via DnD (documented no-op).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerDrop {
-    /// Ligne déplacée.
+    /// Moved row.
     pub dragged: FlatRow,
-    /// Ligne cible.
+    /// Target row.
     pub target: FlatRow,
-    /// Position par rapport à la cible.
+    /// Position relative to the target.
     pub position: DropPosition,
 }
 
-/// Retrouve un calque par id dans la hiérarchie (récursif).
+/// Finds a layer by id in the hierarchy (recursive).
 pub fn find_layer_in(layers: &[PhotoLayerInfo], id: Uuid) -> Option<&PhotoLayerInfo> {
     for layer in layers {
         if layer.id == id {
@@ -348,8 +348,8 @@ pub fn find_layer_in(layers: &[PhotoLayerInfo], id: Uuid) -> Option<&PhotoLayerI
     None
 }
 
-/// Retrouve un calque mutable par id (mise à jour optimiste des
-/// réglages avant confirmation worker).
+/// Finds a mutable layer by id (optimistic settings
+/// update before worker confirmation).
 pub fn find_layer_in_mut(layers: &mut [PhotoLayerInfo], id: Uuid) -> Option<&mut PhotoLayerInfo> {
     for layer in layers {
         if layer.id == id {
@@ -362,7 +362,7 @@ pub fn find_layer_in_mut(layers: &mut [PhotoLayerInfo], id: Uuid) -> Option<&mut
     None
 }
 
-/// Retrouve une pièce jointe `(info, is_filter)` par `(owner, id)`.
+/// Finds an attachment `(info, is_filter)` by `(owner, id)`.
 pub fn find_attachment_in(
     layers: &[PhotoLayerInfo],
     owner: Uuid,
@@ -379,7 +379,7 @@ pub fn find_attachment_in(
         .map(|masque| (masque, false))
 }
 
-/// Nom affiché d'une ligne aplatie (fantôme de drag).
+/// Displayed name of a flattened row (drag ghost).
 pub fn flat_row_name(layers: &[PhotoLayerInfo], row: &FlatRow) -> String {
     match row.kind {
         FlatRowKind::Layer => find_layer_in(layers, row.id)
@@ -393,9 +393,9 @@ pub fn flat_row_name(layers: &[PhotoLayerInfo], row: &FlatRow) -> String {
     }
 }
 
-/// Photographie l'état du niveau racine pour l'UI, **haut de pile
-/// d'abord** (index 0 = calque du dessus, comme affiché), hiérarchie
-/// récursive incluse (`children`).
+/// Snapshots the root-level state for the UI, **top of stack
+/// first** (index 0 = top layer, as displayed), recursive
+/// hierarchy included (`children`).
 pub fn snapshot_layers(document: &Document) -> Vec<PhotoLayerInfo> {
     document
         .root
@@ -405,11 +405,11 @@ pub fn snapshot_layers(document: &Document) -> Vec<PhotoLayerInfo> {
         .collect()
 }
 
-/// Variante de [`snapshot_layers`] avec miniatures déjà résolues :
-/// `lookup` fournit le `RgbaBuf` miniature d'un calque pixels (issu
-/// du partage inter-passes), sans nouvelle résolution d'apparence.
-/// La hiérarchie est exposée récursivement (`children`, haut de pile
-/// d'abord à chaque niveau).
+/// [`snapshot_layers`] variant with already-resolved thumbnails:
+/// `lookup` provides a pixel layer's thumbnail `RgbaBuf` (from
+/// inter-pass sharing), with no new appearance resolution.
+/// The hierarchy is exposed recursively (`children`, top of stack
+/// first at each level).
 pub fn snapshot_layers_with(
     document: &Document,
     lookup: &dyn Fn(Uuid) -> Option<photo_engine::RgbaBuf>,
@@ -422,41 +422,41 @@ pub fn snapshot_layers_with(
         .collect()
 }
 
-/// Ligne aplatie de la liste des calques : un calque, un filtre ou
-/// un masque, avec sa profondeur d'indentation. Partagée par le rendu
-/// (`layer_list`) et la résolution des drops hiérarchiques.
+/// Flattened layer-list row: a layer, filter, or
+/// mask, with its indent depth. Shared by rendering
+/// (`layer_list`) and hierarchical drop resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlatRowKind {
-    /// Calque (pixels, groupe, ajustement).
+    /// Layer (pixels, group, adjustment).
     Layer,
-    /// Filtre live porté par `owner`.
+    /// Live filter owned by `owner`.
     Filter {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
     },
-    /// Masque porté par `owner`.
+    /// Mask owned by `owner`.
     Mask {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
     },
 }
 
-/// Une ligne affichée du panneau Calques.
+/// One displayed Layers panel row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlatRow {
-    /// Id de la ligne (calque, filtre ou masque).
+    /// Row id (layer, filter, or mask).
     pub id: Uuid,
-    /// Nature de la ligne.
+    /// Row kind.
     pub kind: FlatRowKind,
-    /// Profondeur d'indentation (0 = racine).
+    /// Indent depth (0 = root).
     pub depth: usize,
-    /// Vrai si un calque peut être déposé DEDANS (groupes dépliés).
+    /// True when a layer may be dropped INSIDE (expanded groups).
     pub nestable: bool,
 }
 
-/// Aplatit la hiérarchie pour l'affichage : chaque calque puis, s'il
-/// est déplié, ses enfants récursifs, ses filtres et ses masques
-/// (lignes à part entière, indentées). Haut de pile d'abord.
+/// Flattens the hierarchy for display: each layer then, when
+/// expanded, its recursive children, its filters and its masks
+/// (full rows, indented). Top of stack first.
 pub fn flatten_layers(layers: &[PhotoLayerInfo]) -> Vec<FlatRow> {
     let mut out = Vec::new();
     for layer in layers {
@@ -465,7 +465,7 @@ pub fn flatten_layers(layers: &[PhotoLayerInfo]) -> Vec<FlatRow> {
     out
 }
 
-/// Nombre de lignes affichées pour `layers` (sans les construire).
+/// Number of displayed rows for `layers` (without building them).
 pub fn flattened_len(layers: &[PhotoLayerInfo]) -> usize {
     flatten_layers(layers).len()
 }
@@ -540,7 +540,7 @@ mod tests {
             .expect("snapshot present");
         assert!(!fond.visible);
         assert_eq!(fond.kind, PhotoLayerKind::Pixel);
-        // Vérifier que l'icône peut être résolue via le registre.
+        // Check the icon resolves via the registry.
         let _ = ui_kit::icons::IconRegistry::new().text(fond.kind.icon());
     }
 
@@ -580,7 +580,7 @@ mod tests {
     fn flatten_shows_children_indented_and_collapse_hides_them() {
         let (mut doc, group_id, inner_id) = grouped_doc();
         let rows = flatten_layers(&snapshot_layers(&doc));
-        // dessus : groupe, enfant, fond.
+        // top: group, child, bottom.
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].id, group_id);
         assert_eq!(rows[0].depth, 0);
@@ -590,7 +590,7 @@ mod tests {
         assert!(!rows[1].nestable);
         assert_eq!(rows[2].depth, 0);
         assert_eq!(flattened_len(&snapshot_layers(&doc)), 3);
-        // Replié : l'enfant disparaît, le groupe reste non-nestable.
+        // Collapsed: the child disappears, the group stays non-nestable.
         doc.set_collapsed(group_id, true);
         let layers = snapshot_layers(&doc);
         assert!(

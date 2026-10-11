@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Internationalisation : clés stables + catalogue.
+//! Internationalization: stable keys + catalog.
 //!
-//! Les composants prennent des `&str` déjà traduits ou des
-//! [`TextKey`] : jamais de chaînes métier en dur dans ui-kit.
-//! Une langue = un fichier (`en`, `fr`, …), le [`Catalog`]
-//! dispatche vers la table.
+//! Components take already-translated `&str` or [`TextKey`]:
+//! never hardcoded domain strings in ui-kit. One language =
+//! one file (`en`, `fr`, …), the [`Catalog`] dispatches to
+//! the table.
 
 pub mod catalog;
 pub mod en;

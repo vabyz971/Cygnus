@@ -14,30 +14,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Layout texte : coupure de lignes + runs façonnés (avances).
+//! Text layout: line breaking + shaped runs (advances).
 //!
-//! Le façonnage RÉEL (kernings, ligatures, scriptes complexes) appartient à
-//! un futur façonneur branché sur [`FontProvider`] ; ce module fait le
-//! travail HONNÊTEMENT faisable sans fontes : découpage par span, césure
-//! gloutonne aux espaces dans `max_width`, avances cumulées. Les [`GlyphRun`]
-//! portent caractères + avances + offsets — le render graph les consommera
-//! sans repasser par le layout.
+//! REAL shaping (kerning, ligatures, complex scripts) belongs to a
+//! future shaper plugged into [`FontProvider`]; this module does the work
+//! HONESTLY doable without fonts: per-span splitting, greedy
+//! space-based breaking within `max_width`, cumulative advances. [`GlyphRun`]s
+//! carry characters + advances + offsets — the render graph will consume them
+//! without going back through layout.
 
 use datatypes::Rect;
 
 use crate::{Span, TextModel};
 
-/// Métriques de fonte : avances et interlignes (implémenté pour de vrai
-/// plus tard — HarfBuzz/fontations derrière ce trait, modèle inchangé).
+/// Font metrics: advances and line heights (implemented for real
+/// later — HarfBuzz/fontations behind this trait, model unchanged).
 pub trait FontProvider {
-    /// Avance d'un caractère au corps donné.
+    /// Advance of a character at the given size.
     fn advance(&self, ch: char, size: f32) -> f32;
-    /// Hauteur de ligne au corps donné.
+    /// Line height at the given size.
     fn line_height(&self, size: f32) -> f32;
 }
 
-/// Fonte fixe déterministe (tests, maquettes) : avance `0.6 × corps`
-/// (espace : `0.3 × corps`), interligne `1.2 × corps`.
+/// Deterministic fixed font (tests, mockups): `0.6 × size`
+/// advance (space: `0.3 × size`), `1.2 × size` leading.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FixedFontProvider;
 
@@ -52,62 +52,62 @@ impl FontProvider for FixedFontProvider {
     }
 }
 
-/// Glyphe façonné : caractère + avance + offset dans son run.
+/// Shaped glyph: character + advance + offset within its run.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShapedGlyph {
-    /// Caractère source.
+    /// Source character.
     pub ch: char,
-    /// Avance (unités dessin).
+    /// Advance (drawing units).
     pub advance: f32,
-    /// Offset X depuis le début du run.
+    /// X offset from the start of the run.
     pub x: f32,
 }
 
-/// Run de glyphes : fragment d'un span sur une ligne (même fonte/taille).
+/// Glyph run: fragment of a span on one line (same font/size).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GlyphRun {
-    /// Index du span source dans le modèle.
+    /// Index of the source span in the model.
     pub span: usize,
-    /// Famille (recopiée pour le backend).
+    /// Family (copied for the backend).
     pub family: String,
-    /// Corps (recopié).
+    /// Size (copied).
     pub size: f32,
-    /// Offset X du run dans la ligne.
+    /// X offset of the run within the line.
     pub x: f32,
-    /// Glyphes dans l'ordre.
+    /// Glyphs in order.
     pub glyphs: Vec<ShapedGlyph>,
 }
 
 impl GlyphRun {
-    /// Largeur (somme des avances).
+    /// Width (sum of advances).
     #[must_use]
     pub fn width(&self) -> f32 {
         self.glyphs.iter().map(|g| g.advance).sum()
     }
 }
 
-/// Ligne composée : runs + métriques.
+/// Composed line: runs + metrics.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LaidOutLine {
-    /// Runs dans l'ordre.
+    /// Runs in order.
     pub runs: Vec<GlyphRun>,
-    /// Largeur totale.
+    /// Total width.
     pub width: f32,
-    /// Hauteur (max des interlignes).
+    /// Height (max of line heights).
     pub height: f32,
 }
 
-/// Texte composé : lignes + bornes.
+/// Composed text: lines + bounds.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LaidOutText {
-    /// Lignes dans l'ordre.
+    /// Lines in order.
     pub lines: Vec<LaidOutLine>,
-    /// Englobant (origine 0,0).
+    /// Bounding box (origin 0,0).
     pub bounds: Rect,
 }
 
 impl LaidOutText {
-    /// Vide.
+    /// Empty.
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -116,21 +116,21 @@ impl LaidOutText {
         }
     }
 
-    /// Nombre de lignes.
+    /// Number of lines.
     #[must_use]
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 
-    /// Tous les runs dans l'ordre (lignes puis runs).
+    /// All runs in order (lines then runs).
     #[must_use]
     pub fn glyph_runs(&self) -> Vec<&GlyphRun> {
         self.lines.iter().flat_map(|l| l.runs.iter()).collect()
     }
 }
 
-/// Compose le modèle dans `max_width` (≤ 0 = une ligne par `\n`, sans
-/// césure). Coupure gloutonne aux espaces, spans jamais fusionnés.
+/// Lays out the model within `max_width` (≤ 0 = one line per `\n`, no
+/// breaking). Greedy space-based breaking, spans never merged.
 #[must_use]
 pub fn layout_text(model: &TextModel, provider: &dyn FontProvider, max_width: f32) -> LaidOutText {
     let wrap_at = if max_width > 0.0 {
@@ -150,8 +150,8 @@ pub fn layout_text(model: &TextModel, provider: &dyn FontProvider, max_width: f3
         height: 0.0,
     };
     for (span_index, span) in model.spans.iter().enumerate() {
-        // `split` émet N+1 segments pour N `\n` : chaque segment est façonné,
-        // chaque `\n` termine la ligne (segments vides = lignes vides).
+        // `split` emits N+1 segments for N `\n`s: each segment is shaped,
+        // each `\n` ends the line (empty segments = empty lines).
         let parts: Vec<&str> = span.text.split('\n').collect();
         for (i, hard) in parts.iter().enumerate() {
             shape_segment(
@@ -183,7 +183,7 @@ pub fn layout_text(model: &TextModel, provider: &dyn FontProvider, max_width: f3
     }
 }
 
-/// Façonne un segment sans `\n` : découpe aux espaces si dépassement.
+/// Shapes a `\n`-free segment: splits at spaces on overflow.
 #[allow(clippy::too_many_arguments)]
 fn shape_segment(
     provider: &dyn FontProvider,
@@ -194,8 +194,8 @@ fn shape_segment(
     wrap_at: f32,
     lines: &mut Vec<LaidOutLine>,
 ) {
-    // Découpe en mots en conservant les espaces (les espaces de tête d'une
-    // ligne fraîche sont écrasés — pas d'indentation parasite au wrap).
+    // Splits into words keeping spaces (leading spaces of a
+    // fresh line are dropped — no stray indentation on wrap).
     let mut words: Vec<&str> = Vec::new();
     let mut start = 0;
     let bytes = segment.as_bytes();
@@ -235,7 +235,7 @@ fn shape_segment(
             lines.push(finished);
         }
         push_word(provider, current, span_index, span, word);
-        // Espace de fin de ligne consommé : la ligne suivante repart propre.
+        // End-of-line space consumed: the next line starts clean.
         if word == " " && current.width >= wrap_at && words.peek().is_some() {
             let finished = std::mem::replace(
                 current,
@@ -250,8 +250,8 @@ fn shape_segment(
     }
 }
 
-/// Retire les espaces de fin de ligne (la largeur d'une ligne ne compte
-/// pas son espace traînant — le mot suivant repart sur une ligne propre).
+/// Trims end-of-line spaces (a line's width ignores
+/// its trailing space — the next word starts on a clean line).
 fn trim_trailing_spaces(current: &mut LaidOutLine) {
     while let Some(run) = current.runs.last_mut() {
         let trailing = run.glyphs.iter().rev().take_while(|g| g.ch == ' ').count();
@@ -270,7 +270,7 @@ fn trim_trailing_spaces(current: &mut LaidOutLine) {
     current.width = current.width.max(0.0);
 }
 
-/// Ajoute un mot au run courant (fusionné si même span).
+/// Appends a word to the current run (merged if same span).
 fn push_word(
     provider: &dyn FontProvider,
     current: &mut LaidOutLine,
@@ -305,8 +305,8 @@ fn push_word(
     }
 }
 
-/// Mesure compatible `layout-engine` : `(largeur, hauteur)` via ce moteur
-/// (le layout ne façonne jamais lui-même — il délègue ici).
+/// `layout-engine`-compatible measurement: `(width, height)` via this engine
+/// (layout never shapes itself — it delegates here).
 #[must_use]
 pub fn measure_text(model: &TextModel, provider: &dyn FontProvider, max_width: f32) -> (f32, f32) {
     let laid = layout_text(model, provider, max_width);
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn césure_aux_espaces() {
-        // "aa bb" : 2×12 + espace 3 = 27 ; wrap à 20 ⇒ "aa" / "bb".
+        // "aa bb": 2×12 + space 3 = 27; wrap at 20 ⇒ "aa" / "bb".
         let laid = layout_text(&modele("aa bb"), &FixedFontProvider, 20.0);
         assert_eq!(laid.line_count(), 2);
         assert!((laid.bounds.width() - 12.0).abs() < 0.001);

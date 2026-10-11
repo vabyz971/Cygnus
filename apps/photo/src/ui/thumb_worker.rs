@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,39 +14,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tâche secondaire de miniatures (Phase 6G.3) : le canvas d'abord.
+//! Secondary thumbnail task (Phase 6G.3): canvas first.
 //!
-//! Le chemin canvas-critical (`PreviewSurface` → `PreviewImage`) ne doit
-//! jamais attendre la génération des miniatures de calques (`thumb_buf` ≈
-//! 16 ms à 2048², mesuré 6G.3.1). Ce module isole ce travail secondaire :
+//! The canvas-critical path (`PreviewSurface` → `PreviewImage`) must
+//! never wait for layer thumbnail generation (`thumb_buf` ≈
+//! 16 ms at 2048², measured 6G.3.1). This module isolates that secondary work:
 //!
-//! NOTE D'ÉTUDE §9-§10 : pas de miniature incrémentale. Un resample partiel
-//! exigerait de rejouer la comptabilité halo/voisinage de la chaîne
-//! d'apparence par tuile de miniature — risque correctness pour un gain
-//! incertain, alors que le coût restant (resample complet) est DÉJÀ hors
-//! chemin critique. Réévaluer uniquement sur mesures futures l'exigeant.
+//! STUDY NOTE §9-§10: no incremental thumbnails. A partial resample
+//! would require replaying the appearance chain's halo/neighborhood
+//! accounting per thumbnail tile — a correctness risk for an uncertain
+//! gain, while the remaining cost (full resample) is ALREADY off the
+//! critical path. Revisit only on future measurements demanding it.
 //!
 //! ```text
-//! EngineWorker (thread principal)
-//!   │ submit ThumbJob (légers : Arc + params clonés, jamais de Document)
+//! EngineWorker (main thread)
+//!   │ submit ThumbJob (light: cloned Arc + params, never a Document)
 //!   ▼
-//! ThumbWorker — inline (tests, déterministe) ou thread dédié (production)
-//!   │ compute : Renderer frais + appearance_frame (MÊME fonction que le
-//!   │   chemin cadre → octets bit-identiques par construction)
+//! ThumbWorker — inline (tests, deterministic) or dedicated thread (production)
+//!   │ compute: fresh Renderer + appearance_frame (SAME function as the
+//!   │   frame path → bit-identical bytes by construction)
 //!   ▼
-//! ThumbDone ──► ingestion versionnée (stale rejeté, jamais affiché)
+//! ThumbDone ──► versioned ingestion (stale rejected, never displayed)
 //! ```
 //!
-//! Règles (spec 6G.3 §5-§8) :
+//! Rules (spec 6G.3 §5-§8):
 //!
-//! - le thread principal reste SEUL propriétaire du `Document` (aucun
-//!   partage mutable) : seuls transitent des `Arc` immuables et params ;
-//! - coalescing structurel : file d'intentions `BTreeMap` par calque (la
-//!   plus récente gagne) + drain-remplace côté thread (les états
-//!   intermédiaires supplantés ne sont jamais calculés) ;
-//! - AUCUN résultat obsolète affiché : garde `(version, source Arc)` ;
-//! - AUCUN nouveau cache d'apparences : le store applicatif réutilise la
-//!   validité existante (`appearance_version`), le calcul réutilise
+//! - the main thread stays the SOLE owner of the `Document` (no
+//!   mutable sharing): only immutable `Arc`s and params transit;
+//! - structural coalescing: per-layer intent queue `BTreeMap` (newest
+//!   wins) + drain-replace thread-side (superseded intermediate
+//!   states are never computed);
+//! - NO stale result displayed: `(version, source Arc)` guard;
+//! - NO new appearance cache: the app store reuses the existing
+//!   validity (`appearance_version`), computation reuses
 //!   `Renderer::appearance_frame`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -58,43 +58,43 @@ use uuid::Uuid;
 
 use photo_engine::{FilterLayer, LayerMask, RgbaBuf, ThumbnailKey};
 
-/// Demande de miniature : tout le nécessaire pour dériver image + miniature,
-/// cloné depuis le calque vivant (léger : `Arc` + params, jamais de pixels
-/// copiés, jamais de `Document`).
+/// Thumbnail request: everything needed to derive image + thumbnail,
+/// cloned from the live layer (light: `Arc` + params, never copied
+/// pixels, never a `Document`).
 #[derive(Debug, Clone)]
 pub struct ThumbJob {
-    /// Calque cible.
+    /// Target layer.
     pub layer: Uuid,
-    /// `appearance_version` capturée (garde de fraîcheur).
+    /// Captured `appearance_version` (freshness guard).
     pub version: u64,
-    /// Image source (partagée, immuable).
+    /// Source image (shared, immutable).
     pub source: Arc<DynamicImage>,
-    /// Chaîne de filtres (params clonés).
+    /// Filter chain (cloned params).
     pub filters: Vec<FilterLayer>,
-    /// Masques (couvertures partagées).
+    /// Masks (shared coverages).
     pub masks: Vec<LayerMask>,
-    /// Clé de cache unique (source + filtres + masques).
+    /// Unique cache key (source + filters + masks).
     pub key: ThumbnailKey,
 }
 
-/// Miniature calculée + coûts mesurés côté calcul.
+/// Computed thumbnail + compute-side measured costs.
 #[derive(Clone)]
 pub struct ThumbDone {
-    /// Calque cible.
+    /// Target layer.
     pub layer: Uuid,
-    /// Version calculée (à comparer au vivant).
+    /// Computed version (to compare against the live one).
     pub version: u64,
-    /// Miniature (48×32, mêmes octets que le chemin cadre).
+    /// Thumbnail (48×32, same bytes as the frame path).
     pub thumb: RgbaBuf,
-    /// Image d'apparence : payload diagnostic vérifié par les tests
-    /// (jamais stockée ni affichée — seule `thumb` part en réponse).
+    /// Appearance image: diagnostic payload checked by tests
+    /// (never stored or displayed — only `thumb` goes into the response).
     #[allow(dead_code)]
     pub image: Arc<DynamicImage>,
-    /// Temps chaîne + bake (µs).
+    /// Chain + bake time (µs).
     pub render_us: u128,
-    /// Temps resample seul (µs).
+    /// Resample-only time (µs).
     pub thumb_us: u128,
-    /// `true` si le résultat vient du cache (Phase 6G.4).
+    /// `true` when the result comes from the cache (Phase 6G.4).
     pub from_cache: bool,
 }
 
@@ -111,32 +111,32 @@ impl std::fmt::Debug for ThumbDone {
     }
 }
 
-/// Compteurs cumulés (§14 6G.3).
+/// Cumulative counters (§14 6G.3).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ThumbStats {
-    /// Demandes transmises (file ou inline).
+    /// Submitted requests (queue or inline).
     pub submitted: u64,
-    /// Demandes ignorées car version déjà en attente (coalescing émetteur).
+    /// Requests skipped as already pending (sender-side coalescing).
     pub coalesced: u64,
-    /// Résultats appliqués (frais).
+    /// Applied results (fresh).
     pub completed: u64,
-    /// Résultats rejetés (périmés).
+    /// Rejected results (stale).
     pub discarded: u64,
-    /// Temps de calcul cumulé des résultats appliqués (µs).
+    /// Cumulative compute time of applied results (µs).
     pub thumb_us: u128,
-    /// Hits cache (résultat servi depuis le cache sans calcul).
+    /// Cache hits (result served from cache without computing).
     pub cache_hits: u64,
-    /// Misses cache (calcul nécessaire).
+    /// Cache misses (computation needed).
     pub cache_misses: u64,
-    /// Temps de recalcul évité par les hits (µs).
+    /// Recompute time avoided by hits (µs).
     #[allow(dead_code)]
     pub cache_us_saved: u128,
 }
 
-/// Calcule (image, miniature) depuis les pièces clonées — MÊME fonction que
-/// le chemin cadre (`Renderer::appearance_frame` sur calque reconstruit) :
-/// octets bit-identiques par construction (même code, mêmes entrées).
-/// `None` si dimensions nulles (garde-fou, jamais en pratique).
+/// Computes (image, thumbnail) from the cloned parts — SAME function as
+/// the frame path (`Renderer::appearance_frame` on a rebuilt layer):
+/// bit-identical bytes by construction (same code, same inputs).
+/// `None` on zero dimensions (guard, never in practice).
 pub fn compute_thumb(job: &ThumbJob) -> Option<(Arc<DynamicImage>, RgbaBuf, u128, u128)> {
     let mut layer = photo_engine::PixelLayer::new("thumb-job", Arc::clone(&job.source));
     layer.id = job.layer;
@@ -146,16 +146,16 @@ pub fn compute_thumb(job: &ThumbJob) -> Option<(Arc<DynamicImage>, RgbaBuf, u128
     let t_render = std::time::Instant::now();
     let (image, _) = renderer.appearance_frame(&layer)?;
     let render_us = t_render.elapsed().as_micros();
-    // Resample isolé mesuré séparément (§1 : il domine) — mêmes entrées,
-    // même fonction que le chemin cadre.
+    // Resample isolated and measured separately (§1: it dominates) — same inputs,
+    // same function as the frame path.
     let t_thumb = std::time::Instant::now();
     let thumb = photo_engine::document::compositing::thumb_buf(&image);
     let thumb_us = t_thumb.elapsed().as_micros();
     Some((image, thumb, render_us, thumb_us))
 }
 
-/// File d'intentions : une entrée par calque, la plus récente gagne.
-/// Pure et déterministe (testée) : 10 peintures rapides ⇒ 1 calcul.
+/// Intent queue: one entry per layer, newest wins.
+/// Pure and deterministic (tested): 10 fast paints ⇒ 1 computation.
 pub fn select_latest(jobs: Vec<ThumbJob>) -> BTreeMap<Uuid, ThumbJob> {
     let mut pending = BTreeMap::new();
     for job in jobs {
@@ -164,21 +164,21 @@ pub fn select_latest(jobs: Vec<ThumbJob>) -> BTreeMap<Uuid, ThumbJob> {
     pending
 }
 
-/// Tâche secondaire : inline (tests, appels directs déterministes) ou thread
-/// dédié (production, drain-remplace + calculs).
+/// Secondary task: inline (tests, deterministic direct calls) or dedicated
+/// thread (production, drain-replace + computations).
 pub struct ThumbWorker {
     tx: Option<mpsc::Sender<ThumbJob>>,
     rx: Option<mpsc::Receiver<ThumbDone>>,
-    // `None` en mode inline. Non joint à la destruction (même pattern que le
-    // worker moteur : le thread sort seul quand l'émetteur est lâché).
+    // `None` in inline mode. Not joined on drop (same pattern as the
+    // engine worker: the thread exits alone when the sender is dropped).
     _handle: Option<JoinHandle<()>>,
-    /// Cache miniature : clé (source + filtres + masques) → miniature.
+    /// Thumbnail cache: key (source + filters + masks) → thumbnail.
     cache: HashMap<ThumbnailKey, RgbaBuf>,
 }
 
 impl ThumbWorker {
-    /// Mode inline : `submit` calcule immédiatement (déterministe, sans
-    /// thread — tests et `apply_command` éphémère).
+    /// Inline mode: `submit` computes immediately (deterministic, no
+    /// thread — tests and ephemeral `apply_command`).
     #[must_use]
     pub fn inline_() -> Self {
         Self {
@@ -189,7 +189,7 @@ impl ThumbWorker {
         }
     }
 
-    /// Mode threadé (production) : un thread dédié, file drain-remplace.
+    /// Threaded mode (production): a dedicated thread, drain-replace queue.
     #[must_use]
     pub fn spawned() -> Self {
         let (job_tx, job_rx) = mpsc::channel::<ThumbJob>();
@@ -206,15 +206,15 @@ impl ThumbWorker {
         }
     }
 
-    /// Vrai si un thread dédié tourne.
+    /// True when a dedicated thread runs.
     #[must_use]
     pub fn is_threaded(&self) -> bool {
         self.tx.is_some()
     }
 
-    /// Transmet une demande (sans bloquer). En mode threadé, le calcul peut
-    /// être supplanté avant démarrage (coalescing). Retourne faux si le
-    /// thread est tombé (l'appelant dégrade en inline sûr).
+    /// Submits a request (non-blocking). In threaded mode, computation may
+    /// be superseded before starting (coalescing). Returns false when the
+    /// thread died (the caller degrades to safe inline).
     pub fn submit(&self, job: ThumbJob) -> bool {
         match &self.tx {
             Some(tx) => tx.send(job).is_ok(),
@@ -222,8 +222,8 @@ impl ThumbWorker {
         }
     }
 
-    /// Calcule immédiatement (mode inline ET repli synchrone).
-    /// Retourne le résultat complet (à ingérer via la garde de version).
+    /// Computes immediately (inline mode AND synchronous fallback).
+    /// Returns the full result (to ingest via the version guard).
     #[must_use]
     pub fn compute_now(job: &ThumbJob) -> Option<ThumbDone> {
         let (image, thumb, render_us, thumb_us) = compute_thumb(job)?;
@@ -238,13 +238,13 @@ impl ThumbWorker {
         })
     }
 
-    /// Calcule ou récupère du cache (Phase 6G.4) — inline uniquement.
-    /// Si la clé est en cache : renvoie la miniature stockée (HIT).
-    /// Sinon : calcule, stocke en cache, renvoie (MISS).
+    /// Computes or fetches from cache (Phase 6G.4) — inline only.
+    /// On a cache key hit: returns the stored thumbnail (HIT).
+    /// Else: computes, stores in cache, returns (MISS).
     #[must_use]
     pub fn compute_cached(&mut self, job: &ThumbJob) -> Option<ThumbDone> {
         if let Some(thumb) = self.cache.get(&job.key) {
-            // HIT : on re-construit le ThumbDone minimal (sans recalcul).
+            // HIT: rebuild the minimal ThumbDone (no recompute).
             Some(ThumbDone {
                 layer: job.layer,
                 version: job.version,
@@ -255,7 +255,7 @@ impl ThumbWorker {
                 from_cache: true,
             })
         } else {
-            // MISS : calcul complet + stockage.
+            // MISS: full computation + store.
             let (image, thumb, render_us, thumb_us) = compute_thumb(job)?;
             self.cache.insert(job.key.clone(), thumb.clone());
             Some(ThumbDone {
@@ -270,7 +270,7 @@ impl ThumbWorker {
         }
     }
 
-    /// Draine les résultats disponibles (jamais bloquant).
+    /// Drains available results (never blocking).
     pub fn drain_results(&mut self) -> Vec<ThumbDone> {
         let mut out = Vec::new();
         if let Some(rx) = &self.rx {
@@ -281,10 +281,10 @@ impl ThumbWorker {
         out
     }
 
-    /// Boucle du thread dédié : bloque sur la première demande, draine le
-    /// reste via [`select_latest`] (les versions intermédiaires supplantées
-    /// ne sont JAMAIS calculées), traite la plus récente par calque (ordre
-    /// des ids, déterministe), publie. Sortie propre à la déconnexion.
+    /// Dedicated thread loop: blocks on the first request, drains the
+    /// rest via [`select_latest`] (superseded intermediate versions
+    /// are NEVER computed), processes the newest per layer (id
+    /// order, deterministic), publishes. Clean exit on disconnect.
     fn thread_loop(job_rx: mpsc::Receiver<ThumbJob>, done_tx: mpsc::Sender<ThumbDone>) {
         while let Ok(first) = job_rx.recv() {
             let mut batch = vec![first];
@@ -308,10 +308,10 @@ impl ThumbWorker {
     }
 }
 
-/// Garde de fraîcheur (§6-§7) : le résultat n'est applicable que si le
-/// calque vivant porte encore EXACTEMENT cette version ET cette source
-/// (`Arc::ptr_eq` : même allocation = mêmes pixels, les snapshots
-/// d'historique préservant les `Arc`). Sinon : rejet (jamais affiché).
+/// Freshness guard (§6-§7): the result only applies when the live
+/// layer still carries EXACTLY this version AND this source
+/// (`Arc::ptr_eq`: same allocation = same pixels, history
+/// snapshots preserving the `Arc`s). Else: reject (never displayed).
 #[must_use]
 pub fn is_fresh(
     done: &ThumbDone,
@@ -346,8 +346,8 @@ mod tests {
     }
     #[test]
     fn calcul_egale_chemin_cadre() {
-        // Même fonction, mêmes entrées : le job produit EXACTEMENT ce que le
-        // chemin cadre produirait (pixels + miniature).
+        // Same function, same inputs: the job produces EXACTLY what the
+        // frame path would produce (pixels + thumbnail).
         let job = solid_job(77, 3);
         let done = ThumbWorker::compute_now(&job).expect("calcul");
         assert_eq!(done.version, 3);
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn coalescing_ne_garde_que_le_dernier() {
-        // 10 versions rapides du même calque ⇒ 1 seule intention.
+        // 10 fast versions of the same layer ⇒ 1 intent.
         let id = Uuid::new_v4();
         let jobs: Vec<ThumbJob> = (0..10)
             .map(|v| ThumbJob {
@@ -389,11 +389,11 @@ mod tests {
     fn garde_rejette_perime() {
         let job = solid_job(5, 10);
         let done = ThumbWorker::compute_now(&job).expect("calcul");
-        // Vivant identique : frais.
+        // Identical live state: fresh.
         assert!(is_fresh(&done, 10, &job.source, &job.source));
-        // Version avancée : périmé.
+        // Advanced version: stale.
         assert!(!is_fresh(&done, 11, &job.source, &job.source));
-        // Source remplacée (même version théorique) : périmé.
+        // Replaced source (same theoretical version): stale.
         let other = solid_job(5, 10);
         assert!(!is_fresh(&done, 10, &other.source, &job.source));
     }
@@ -403,7 +403,7 @@ mod tests {
         let worker = ThumbWorker::inline_();
         assert!(!worker.is_threaded());
         let job = solid_job(9, 1);
-        // Sans thread : pas d'envoi possible → repli inline par l'appelant.
+        // Without a thread: no sending possible → inline fallback by the caller.
         assert!(!worker.submit(job));
     }
 }

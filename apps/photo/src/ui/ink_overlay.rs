@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,34 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Overlay transitoire de trait (Phase 6G.3P) : helpers PURS côté app.
+//! Transient stroke overlay (Phase 6G.3P): PURE app-side helpers.
 //!
-//! Le geste (pinceau/gomme) peint DEUX fois avec les MÊMES points et les
-//! MÊMES paramètres : une fois en transitoire dans
-//! [`photo_engine::interaction::InteractionOverlay`] (présenté chaque frame
-//! du drag), une fois au commit via `PaintRequest` → worker (chemin
-//! historique inchangé). Les deux passent par le même `resample_stroke`
-//! (subdivision + Chaikin) : le transitoire montre les mêmes courbes que
-//! le commit, seul l'ancrage des jonctions inter-paquets diffère (écart
-//! borné aux disques de jonction, remplacé au `MouseUp` — voir
-//! `transient_proche_du_commit_avec_lissage`). Ce module garantit aussi
-//! que les paramètres sont identiques : [`ink_brush_params`] construit
-//! EXACTEMENT les paramètres du worker (cf. `engine_bridge`, bras
-//! `PaintStroke` — même rayon, même couleur, même opacité, même mode),
-//! et [`ink_overlay_screen_rect`] place la région overlay à l'écran via
-//! la transform snapshotée du calque.
+//! The gesture (brush/eraser) paints TWICE with the SAME points and the
+//! SAME parameters: once transiently in
+//! [`photo_engine::interaction::InteractionOverlay`] (presented each frame
+//! of the drag), once at commit via `PaintRequest` → worker (unchanged
+//! historical path). Both go through the same `resample_stroke`
+//! (subdivision + Chaikin): the transient shows the same curves as
+//! the commit, only the inter-packet junction anchoring differs (gap
+//! bounded to junction discs, replaced at `MouseUp` — see
+//! `transient_proche_du_commit_avec_lissage`). This module also guarantees
+//! identical parameters: [`ink_brush_params`] builds
+//! EXACTLY the worker's parameters (see `engine_bridge`, `PaintStroke`
+//! arm — same radius, same color, same opacity, same mode),
+//! and [`ink_overlay_screen_rect`] places the overlay region on screen via
+//! the layer's snapshotted transform.
 //!
-//! Aucun envoi worker ici : pendant le drag, l'app ne pousse AUCUNE action
-//! (zéro trafic, miniatures différées au commit). `clear_ink` vide l'état
-//! transitoire (commit, annulation Échap, changement d'outil).
+//! No worker send here: during the drag, the app pushes NO action
+//! (zero traffic, thumbnails deferred to commit). `clear_ink` drains the
+//! transient state (commit, Escape cancel, tool switch).
 
 use crate::state::PhotoUiState;
 use crate::ui::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 
-/// Paramètres pinceau pour l'overlay : IDENTIQUES à ceux du commit worker
-/// (`engine_bridge`, bras `PaintStroke` — même rayon, même couleur, même
-/// opacité, même mode). Toute divergence casserait l'équivalence
-/// transitoire == commit (test `params_identiques_au_commit`).
+/// Brush parameters for the overlay: IDENTICAL to the worker commit's
+/// (`engine_bridge`, `PaintStroke` arm — same radius, same color, same
+/// opacity, same mode). Any divergence would break the
+/// transient == commit equivalence (`params_identiques_au_commit` test).
 #[must_use]
 pub fn ink_brush_params(
     brush: &PhotoBrushSettings,
@@ -59,17 +59,17 @@ pub fn ink_brush_params(
     }
 }
 
-/// Vrai si l'outil peint (overlay pertinent : pinceau/gomme uniquement,
-/// jamais déplacement ni pipette).
+/// True when the tool paints (relevant overlay: brush/eraser only,
+/// never move or eyedropper).
 #[must_use]
 pub fn ink_tool_active(tool: PhotoCanvasTool) -> bool {
     matches!(tool, PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser)
 }
 
-/// Calque → document (translation/échelle UNIQUEMENT, cf.
-/// [`photo_engine::interaction::overlay_displayable`]) : `None` si la
-/// transform n'est pas plaçable (rotation/skew — présentation refusée,
-/// moteur et commit exacts quand même).
+/// Layer → document (translation/scale ONLY, see
+/// [`photo_engine::interaction::overlay_displayable`]): `None` when the
+/// transform is not placeable (rotation/skew — presentation refused,
+/// engine and commit still exact).
 #[must_use]
 pub fn ink_layer_to_doc(
     x: f32,
@@ -86,13 +86,13 @@ pub fn ink_layer_to_doc(
     (x.is_finite() && y.is_finite()).then_some((x, y))
 }
 
-/// Rectangle écran d'une frame overlay : région calque → document (via
-/// `transform` snapshotée) → miniature (`origin`, `thumb_to_doc`) → écran
-/// (`dest`, conventions identiques au canvas : la miniature occupe `dest`
-/// en entier, donc `écran = dest.min + miniature * dest.width() /
-/// thumb_size_x`, avec `miniature = doc / thumb_to_doc + origin` —
-/// `origin` est en pixels miniature, `doc` en pixels document).
-/// `None` = non plaçable (transform refusée ou géométrie dégénérée).
+/// Screen rect of an overlay frame: layer region → document (via
+/// snapshotted `transform`) → thumbnail (`origin`, `thumb_to_doc`) → screen
+/// (`dest`, same conventions as the canvas: the thumbnail fills `dest`
+/// entirely, so `screen = dest.min + thumbnail * dest.width() /
+/// thumb_size_x`, with `thumbnail = doc / thumb_to_doc + origin` —
+/// `origin` in thumbnail pixels, `doc` in document pixels).
+/// `None` = not placeable (rejected transform or degenerate geometry).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn ink_overlay_screen_rect(
@@ -116,8 +116,8 @@ pub fn ink_overlay_screen_rect(
     )
 }
 
-/// Même placement depuis une géométrie stockée (redraw persistant sans
-/// re-rendre : seul `dest` change au zoom/pan — state-only).
+/// Same placement from stored geometry (persistent redraw without
+/// re-rendering: only `dest` changes on zoom/pan — state-only).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn ink_geom_screen_rect(
@@ -145,9 +145,9 @@ pub fn ink_geom_screen_rect(
     }
     let (x0, y0) = ink_layer_to_doc(x as f32, y as f32, transform)?;
     let (x1, y1) = ink_layer_to_doc(x as f32 + w as f32, y as f32 + h as f32, transform)?;
-    // Unités : `origin` en px miniature, `(x0,y0)` en px document.
-    // miniature = doc / k + origin, écran = dest.min + miniature *
-    // (dest.width() / thumb_size_x). Jamais de soustraction mixte.
+    // Units: `origin` in thumbnail px, `(x0,y0)` in document px.
+    // thumbnail = doc / k + origin, screen = dest.min + thumbnail *
+    // (dest.width() / thumb_size_x). Never a mixed subtraction.
     let screen_per_thumb = dest.width() / thumb_size_x;
     let to_screen = screen_per_thumb / thumb_to_doc;
     let screen = |dx: f32, dy: f32| {
@@ -165,59 +165,59 @@ pub fn ink_geom_screen_rect(
     })
 }
 
-/// Géométrie de la frame overlay mise en cache avec sa texture : le
-/// redraw persistant replace la même image à chaque frame (zoom/pan
-/// state-only) sans re-rendre ni re-téléverser.
+/// Overlay frame geometry cached with its texture: the
+/// persistent redraw re-places the same image each frame (zoom/pan
+/// state-only) without re-rendering or re-uploading.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InkFrameGeom {
-    /// Origine région en coords calque absolues.
+    /// Region origin in absolute layer coords.
     pub x: i32,
-    /// Origine région en coords calque absolues.
+    /// Region origin in absolute layer coords.
     pub y: i32,
-    /// Largeur région (px).
+    /// Region width (px).
     pub w: u32,
-    /// Hauteur région (px).
+    /// Region height (px).
     pub h: u32,
-    /// Génération du geste (`is_current` : rejet périmé).
+    /// Gesture generation (`is_current`: stale rejection).
     pub generation: u64,
-    /// Transform calque→document snapshotée au rendu.
+    /// Layer→document transform snapshotted at render.
     pub transform: photo_engine::Transform2D,
 }
 
-/// Entrée d'une frame d'encre (un paquet de points du drag courant).
+/// Ink frame input (one packet of points from the current drag).
 pub struct InkFrameInput<'a> {
-    /// Points de CE frame en pixels document (mêmes valeurs qu'au commit).
+    /// THIS frame's points in document pixels (same values as at commit).
     pub points: &'a [(f32, f32)],
-    /// Vrai si le geste commence ce frame (`stroke` vide + points).
+    /// True when the gesture starts this frame (empty `stroke` + points).
     pub gesture_started: bool,
-    /// Vrai = gomme, faux = pinceau.
+    /// True = eraser, false = brush.
     pub eraser: bool,
-    /// Réglages pinceau/gomme de l'app.
+    /// App brush/eraser settings.
     pub brush: PhotoBrushSettings,
-    /// Transform du calque cible (snapshot panneau).
+    /// Target layer transform (panel snapshot).
     pub transform: photo_engine::Transform2D,
-    /// Feedback affichable (transform plaçable — snapshot moteur).
+    /// Displayable feedback (placeable transform — engine snapshot).
     pub overlay_live: bool,
-    /// Rectangle écran de la miniature (`None` = pas d'image).
+    /// Thumbnail screen rect (`None` = no image).
     pub dest: Option<egui::Rect>,
-    /// Coin haut-gauche du document en pixels miniature.
+    /// Document top-left corner in thumbnail pixels.
     pub origin: egui::Vec2,
-    /// Facteur miniature→pixels document.
+    /// Thumbnail→document-pixel factor.
     pub thumb_to_doc: f32,
-    /// Largeur miniature en pixels.
+    /// Thumbnail width in pixels.
     pub thumb_w: f32,
 }
 
-/// Alimente l'overlay avec les points de CE frame et affiche le trait
-/// transitoire : `begin_stroke` à l'ouverture du geste, `add_points` +
-/// `render` à chaque paquet, téléversement (mise à jour en place à
-/// dimensions égales, recréation à la croissance) puis dessin immédiat.
-/// Retourne le rectangle écran dessiné (`None` = rien à afficher ce
-/// frame — le redraw persistant prend le relais).
+/// Feeds the overlay with THIS frame's points and displays the transient
+/// stroke: `begin_stroke` when the gesture opens, `add_points` +
+/// `render` per packet, upload (in-place update at equal
+/// dimensions, recreate on growth) then immediate draw.
+/// Returns the drawn screen rect (`None` = nothing to show this
+/// frame — the persistent redraw takes over).
 ///
-/// AUCUN envoi worker ici : le worker ne voit que le commit au `MouseUp`.
-/// Ne re-rend jamais le document complet (région bornée au trait) et ne
-/// touche jamais à la texture du composite (zoom/pan state-only intacts).
+/// NO worker send here: the worker only sees the commit at `MouseUp`.
+/// Never re-renders the full document (stroke-bounded region) and never
+/// touches the composite texture (zoom/pan state-only intact).
 pub fn feed_ink_frame(
     ui: &mut egui::Ui,
     state: &mut PhotoUiState,
@@ -230,7 +230,7 @@ pub fn feed_ink_frame(
         state
             .ink_overlay
             .begin_stroke(ink_brush_params(&input.brush, input.eraser));
-        // Nouvelle génération : l'ancienne texture ne doit jamais resservir.
+        // New generation: the old texture must never be reused.
         state.ink_texture = None;
         state.ink_frame = None;
     }
@@ -240,8 +240,8 @@ pub fn feed_ink_frame(
     state.ink_overlay.add_points(input.points);
     let frame = state.ink_overlay.render()?;
     state.ink_metrics = state.ink_overlay.metrics();
-    // Rejet périmé : une frame d'une génération antérieure (geste
-    // annulé/commis entre-temps) ne s'affiche jamais.
+    // Stale rejection: a frame from an earlier generation (gesture
+    // cancelled/committed meanwhile) never displays.
     if !state.ink_overlay.is_current(frame.generation) {
         return None;
     }
@@ -258,8 +258,8 @@ pub fn feed_ink_frame(
         [frame.width as usize, frame.height as usize],
         &frame.rgba,
     );
-    // Même dimensions : mise à jour en place (id stable, zéro realloc
-    // GPU) ; croissance de la région : recréation propre.
+    // Same dimensions: in-place update (stable id, zero GPU
+    // realloc); region growth: clean recreate.
     let same_size = state
         .ink_frame
         .is_some_and(|g| g.w == frame.width && g.h == frame.height);
@@ -293,10 +293,10 @@ pub fn feed_ink_frame(
     Some(rect)
 }
 
-/// Redessine l'overlay en cache SANS nouveau point ni re-rendu : même
-/// texture, rectangle replacé au `dest` courant (paliers du drag,
-/// zoom/pan en cours de geste — state-only). Retourne faux si rien
-/// n'est affichable (pas de geste en vol, génération périmée).
+/// Redraws the cached overlay WITHOUT new points or re-render: same
+/// texture, rect re-placed at the current `dest` (drag plateaus,
+/// mid-gesture zoom/pan — state-only). Returns false when nothing
+/// is displayable (no gesture in flight, stale generation).
 pub fn draw_cached_ink(
     ui: &mut egui::Ui,
     state: &PhotoUiState,
@@ -335,9 +335,9 @@ pub fn draw_cached_ink(
     true
 }
 
-/// Vide l'état transitoire (commit, annulation, changement d'outil) :
-/// overlay moteur + texture + géométrie + points en vol. Idempotent,
-/// jamais vers le worker (le commit est routé séparément, inchangé).
+/// Drains the transient state (commit, cancel, tool switch):
+/// engine overlay + texture + geometry + in-flight points. Idempotent,
+/// never to the worker (the commit is routed separately, unchanged).
 pub fn clear_ink(ui: &mut PhotoUiState) {
     ui.ink_overlay.clear();
     ui.ink_texture = None;
@@ -371,9 +371,9 @@ mod tests {
 
     #[test]
     fn params_identiques_au_commit() {
-        // Mêmes entrées que `PaintRequest` → mêmes `BrushParams` que le
-        // worker (bras `PaintStroke`) : l'overlay et le commit peignent
-        // pareil, par construction.
+        // Same inputs as `PaintRequest` → same `BrushParams` as the
+        // worker (`PaintStroke` arm): overlay and commit paint
+        // alike, by construction.
         let brush = PhotoBrushSettings {
             radius: 7.0,
             color: [10, 20, 30],
@@ -386,7 +386,7 @@ mod tests {
         assert!(matches!(paint.mode, photo_engine::paint::StrokeMode::Paint));
         let erase = ink_brush_params(&brush, true);
         assert!(matches!(erase.mode, photo_engine::paint::StrokeMode::Erase));
-        // Clamp identique au worker (hors 0..=1 ramené dedans).
+        // Same clamp as the worker (out-of-0..=1 brought inside).
         let wild = PhotoBrushSettings {
             radius: 3.0,
             color: [0, 0, 0],
@@ -438,7 +438,7 @@ mod tests {
             thumb_w,
         )
         .expect("translation/échelle plaçable");
-        // doc : (10*2+5, 20*2+7) = (25, 47) → écran dest.min + doc.
+        // doc: (10*2+5, 20*2+7) = (25, 47) → screen dest.min + doc.
         assert_eq!(rect.min, egui::pos2(125.0, 97.0));
         assert_eq!(rect.max, egui::pos2(133.0, 109.0));
     }
@@ -495,8 +495,8 @@ mod tests {
 
     #[test]
     fn metrics_remontent_dans_l_etat() {
-        // Même séquence que `central_view` : les métriques stockées dans
-        // l'état reflètent le geste (rapport §13, jamais affichées).
+        // Same sequence as `central_view`: the metrics stored in
+        // state reflect the gesture (§13 report, never displayed).
         let mut ui = PhotoUiState::default();
         ui.ink_overlay
             .begin_stroke(ink_brush_params(&PhotoBrushSettings::default(), false));
@@ -528,8 +528,8 @@ mod tests {
         assert!(ui.ink_frame.is_none(), "géométrie larguée");
     }
 
-    /// Contexte de feed headless : dest + miniature identité (pas de
-    /// worker, pas de document — même contrat que `central_view`).
+    /// Headless feed context: dest + identity thumbnail (no
+    /// worker, no document — same contract as `central_view`).
     fn feed_input<'a>(
         points: &'a [(f32, f32)],
         gesture_started: bool,
@@ -555,9 +555,9 @@ mod tests {
 
     #[test]
     fn rect_origine_non_nulle_et_miniature_reduite() {
-        // Plan infini + miniature plafonnée : l'origine (px miniature) ne
-        // se soustrait JAMAIS aux coords document — régression de la
-        // formule mixte `(doc - origin)`.
+        // Infinite plane + capped thumbnail: the origin (thumbnail px) is
+        // NEVER subtracted from document coords — regression of the
+        // mixed `(doc - origin)` formula.
         let dest = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
         let origin = egui::vec2(20.0, 10.0);
         let rect = ink_overlay_screen_rect(
@@ -569,18 +569,18 @@ mod tests {
             100.0,
         )
         .expect("plaçable");
-        // miniature = doc/2 + origin : (10/2+20, 20/2+10) = (25, 20) ;
-        // écran = miniature * 2 => (50, 40)..(80, 80).
+        // thumbnail = doc/2 + origin: (10/2+20, 20/2+10) = (25, 20);
+        // screen = thumbnail * 2 => (50, 40)..(80, 80).
         assert_eq!(rect.min, egui::pos2(50.0, 40.0));
         assert_eq!(rect.max, egui::pos2(80.0, 80.0));
     }
 
     #[test]
     fn feed_donne_feedback_avant_commit_en_paquets() {
-        // Contrat central : 3 paquets (3 frames de drag) ⇒ texture
-        // visible AVANT tout MouseUp, sans worker (aucune action
-        // produite ici par construction — `feed_ink_frame` ne retourne
-        // qu'un rectangle, jamais de commande).
+        // Core contract: 3 packets (3 drag frames) ⇒ texture
+        // visible BEFORE any MouseUp, no worker (no action
+        // produced here by construction — `feed_ink_frame` only returns
+        // a rect, never a command).
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();
@@ -610,8 +610,8 @@ mod tests {
 
     #[test]
     fn redraw_persistant_sans_nouveau_point_et_id_stable() {
-        // Palier du drag (bouton tenu, aucun point ce frame) : la texture
-        // en cache se redessine, même id (zéro realloc GPU).
+        // Drag plateau (button held, no points this frame): the cached
+        // texture redraws, same id (zero GPU realloc).
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();
@@ -623,15 +623,15 @@ mod tests {
                     feed_input(&[(10.0, 10.0), (40.0, 40.0)], true, Some(dest)),
                 )
                 .expect("premier paquet");
-                // Second paquet entièrement coalescé (doublon) : aucun
-                // nouveau pixel, mais la frame reste affichable.
+                // Second packet fully coalesced (duplicate): no
+                // new pixels, but the frame stays displayable.
                 let _ = feed_ink_frame(
                     ui,
                     &mut state,
                     feed_input(&[(40.0, 40.0), (40.0, 40.0)], false, Some(dest)),
                 );
                 assert_eq!(state.ink_metrics.points_coalesced, 2);
-                // Palier : aucun point, redraw persistant.
+                // Plateau: no points, persistent redraw.
                 assert!(
                     draw_cached_ink(ui, &state, Some(dest), egui::Vec2::ZERO, 1.0, 200.0),
                     "overlay persistant sans nouveau point"
@@ -640,7 +640,7 @@ mod tests {
         })
         .drop_without_applying_deltas();
         let id = state.ink_texture.as_ref().expect("texture").id();
-        // Autre frame, même geste : l'id ne bouge pas (update en place).
+        // Other frame, same gesture: the id does not move (in-place update).
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert!(draw_cached_ink(
@@ -659,9 +659,9 @@ mod tests {
 
     #[test]
     fn zoom_pan_ne_regenere_rien_meme_texture() {
-        // State-only : 3 placements (zoom x2, pan) de la MÊME frame ⇒
-        // même id de texture, rectangles mis à l'échelle/décalés, zéro
-        // re-rendu (submissions inchangées).
+        // State-only: 3 placements (zoom x2, pan) of the SAME frame ⇒
+        // same texture id, scaled/shifted rects, zero
+        // re-render (unchanged submissions).
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();
@@ -679,7 +679,7 @@ mod tests {
         let submissions = state.ink_metrics.submissions;
         let id = state.ink_texture.as_ref().expect("texture").id();
         let geom = state.ink_frame.expect("géométrie");
-        // Zoom x2 : dest deux fois plus large, même miniature.
+        // Zoom x2: dest twice as wide, same thumbnail.
         let zoomed = egui::Rect::from_min_size(dest.min, dest.size() * 2.0);
         let plain = super::ink_geom_screen_rect(
             geom.x,
@@ -707,7 +707,7 @@ mod tests {
         .expect("rect zoomé");
         assert!((scaled.width() - plain.width() * 2.0).abs() < 1e-3);
         assert!((scaled.height() - plain.height() * 2.0).abs() < 1e-3);
-        // Pan : dest décalée, rectangle décalé d'autant.
+        // Pan: shifted dest, rect shifted by as much.
         let panned = dest.translate(egui::vec2(30.0, -12.0));
         let moved = super::ink_geom_screen_rect(
             geom.x,
@@ -729,9 +729,9 @@ mod tests {
 
     #[test]
     fn gate_overlay_live_et_cancel() {
-        // Calque non plaçable (rotation) : aucun feedback, aucune
-        // texture — et le commit reste possible par ailleurs (moteur
-        // exact, présentation seule refusée).
+        // Unplaceable layer (rotation): no feedback, no
+        // texture — and commit stays possible otherwise (exact
+        // engine, presentation alone refused).
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();
@@ -745,8 +745,8 @@ mod tests {
         .drop_without_applying_deltas();
         assert!(state.ink_texture.is_none());
         assert!(state.ink_frame.is_none());
-        // Cancel après un vrai geste : tout est vidé, le redraw ne
-        // ressuscite rien (génération conservée, contenu vide).
+        // Cancel after a real gesture: everything drained, the redraw
+        // revives nothing (generation kept, empty content).
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let _ = feed_ink_frame(
@@ -771,10 +771,10 @@ mod tests {
 
     #[test]
     fn mesures_geste_scripte_dix_frames() {
-        // Compteurs déterministes d'un drag scripté (10 frames x 8 pts,
-        // avec doublons volontaires) : frames interactives, points
-        // coalescés, pixels écrits. Aucun mur asserté (matériel variable ;
-        // voir les tests `perf_*` ignorés pour les murs).
+        // Deterministic counters of a scripted drag (10 frames x 8 pts,
+        // with deliberate duplicates): interactive frames, coalesced
+        // points, written pixels. No asserted walls (variable hardware;
+        // see the ignored `perf_*` tests for walls).
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();
@@ -785,7 +785,7 @@ mod tests {
                     let mut packet: Vec<(f32, f32)> = (0..8)
                         .map(|i| (t0 + i as f32 * 3.0, 260.0 + i as f32))
                         .collect();
-                    // Doublon coalescé chaque frame paire.
+                    // Coalesced duplicate each even frame.
                     if frame % 2 == 0 {
                         packet.push(packet[7]);
                     }
@@ -812,8 +812,8 @@ mod tests {
 
     #[test]
     fn feed_emet_des_primitives_dessinees() {
-        // Le trait transitoire produit VRAIMENT des formes egui (pas
-        // seulement un état interne) : shapes non vides sur la frame.
+        // The transient stroke REALLY produces egui shapes (not
+        // just internal state): non-empty shapes on the frame.
         let ctx = egui::Context::default();
         let mut state = PhotoUiState::default();
         let dest = feed_dest();

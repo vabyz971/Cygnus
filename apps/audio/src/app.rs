@@ -14,24 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! App Audio minimale : placeholder en attendant `audio-engine`.
+//! Minimal Audio app: placeholder while `audio-engine` is pending.
 
 use ui_kit::theme::UiThemeExt;
 use ui_kit::theme::typography::{body_text, heading_text};
 
-/// App Audio (base minimale).
+/// Audio app (minimal base).
 #[derive(Default)]
 pub struct AudioApp {
     _private: (),
 }
 
 impl AudioApp {
-    /// Crée l'app.
+    /// Creates the app.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Dessine le placeholder central.
+    /// Draws the central placeholder.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let theme = ui.cygnus_theme();
         egui::CentralPanel::default().show(ui, |ui| {

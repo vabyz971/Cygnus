@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,227 +14,227 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Textes propres à l'app Photo (barre de menus…).
+//! Photo-specific strings (menu bar…).
 //!
-//! Même principe que [`ui_kit::i18n`] : clés stables
-//! ([`PhotoTextKey`]) + tables fr/en (`&'static str`, zéro
-//! allocation) via [`PhotoCatalog`]. Les libellés génériques
-//! (Fichier, Annuler…) restent dans ui-kit ; ici vivent UNIQUEMENT
-//! les chaînes métier de Photo. ui-kit ne reçoit aucun texte métier.
+//! Same principle as [`ui_kit::i18n`]: stable keys
+//! ([`PhotoTextKey`]) + fr/en tables (`&'static str`, zero
+//! allocation) via [`PhotoCatalog`]. Generic labels
+//! (File, Undo…) stay in ui-kit; ONLY Photo's
+//! domain strings live here. ui-kit receives no domain text.
 
 use ui_kit::i18n::Language;
 
-/// Clé de texte stable propre à Photo.
+/// Stable text key specific to Photo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhotoTextKey {
-    /// Fermer le document actif.
+    /// Close the active document.
     CloseDocument,
-    /// Ouvrir un projet `.cygp` (nouvel onglet).
+    /// Open a `.cygp` project (new tab).
     OpenProject,
-    /// Enregistrer sous (projet `.cygp`).
+    /// Save as (`.cygp` project).
     SaveAs,
-    /// Nouveau calque vide.
+    /// New empty layer.
     NewEmptyLayer,
-    /// Calque depuis une image.
+    /// Layer from an image.
     LayerFromImage,
-    /// Dupliquer le calque.
+    /// Duplicate the layer.
     DuplicateLayer,
-    /// Miroir horizontal (O004).
+    /// Horizontal mirror (O004).
     FlipHorizontal,
-    /// Miroir vertical (O004).
+    /// Vertical mirror (O004).
     FlipVertical,
-    /// Rotation 90° horaire (O004).
+    /// 90° clockwise rotation (O004).
     RotateClockwise,
-    /// Rotation 90° antihoraire (O004).
+    /// 90° counterclockwise rotation (O004).
     RotateCounterclockwise,
-    /// Rogner le calque au document (O004).
+    /// Crop the layer to the document (O004).
     CropToDocument,
-    /// Sous-menu des transformations (miroir, rotation, crop).
+    /// Transformations submenu (mirror, rotate, crop).
     Transform,
-    /// Déplier un groupe (chevron de l'arbre).
+    /// Expand a group (tree chevron).
     ExpandGroup,
-    /// Replier un groupe.
+    /// Collapse a group.
     CollapseGroup,
-    /// Déplier les pièces jointes d'un calque.
+    /// Expand a layer's attachments.
     ExpandAttachments,
-    /// Replier les pièces jointes.
+    /// Collapse the attachments.
     CollapseAttachments,
-    /// Activer / désactiver le filtre (œil).
+    /// Enable / disable the filter (eye).
     ToggleFilterEnabled,
-    /// Activer / désactiver le masque (œil).
+    /// Enable / disable the mask (eye).
     ToggleMaskEnabled,
-    /// Monter le filtre.
+    /// Move the filter up.
     MoveFilterUp,
-    /// Descendre le filtre.
+    /// Move the filter down.
     MoveFilterDown,
-    /// Supprimer le filtre.
+    /// Delete the filter.
     DeleteFilter,
-    /// Monter le masque.
+    /// Move the mask up.
     MoveMaskUp,
-    /// Descendre le masque.
+    /// Move the mask down.
     MoveMaskDown,
-    /// Supprimer le masque.
+    /// Delete the mask.
     DeleteMask,
-    /// Afficher / masquer (œil du calque).
+    /// Show / hide (layer eye).
     ShowHideLayer,
-    /// Liste vide (en-tête calques).
+    /// Empty list (layers header).
     NoLayers,
-    /// Aucun calque sélectionné (inspecteur).
+    /// No layer selected (inspector).
     NoLayerSelected,
-    /// Libellé « Filtre live » (inspecteur).
+    /// "Live filter" label (inspector).
     FilterLiveLabel,
-    /// Libellé « Masque » (inspecteur).
+    /// "Mask" label (inspector).
     MaskLabel,
-    /// Interrupteur « Filtre actif ».
+    /// "Filter enabled" switch.
     FilterActive,
-    /// Interrupteur « Masque actif ».
+    /// "Mask enabled" switch.
     MaskActive,
-    /// Curseur « Luminosité » (filtre).
+    /// "Brightness" slider (filter).
     FilterParamBrightness,
-    /// Curseur « Contraste » (filtre).
+    /// "Contrast" slider (filter).
     FilterParamContrast,
-    /// Curseur « Rayon » (filtre).
+    /// "Radius" slider (filter).
     FilterParamRadius,
-    /// Curseur « Saturation » (filtre).
+    /// "Saturation" slider (filter).
     FilterParamSaturation,
-    /// Curseur « Teinte » (filtre).
+    /// "Hue" slider (filter).
     FilterParamHue,
-    /// Label « Opacité ».
+    /// "Opacity" label.
     OpacityLabel,
-    /// Label « Fusion ».
+    /// "Blend" label.
     BlendLabel,
-    /// Infobulle « Liste des filtres ».
+    /// "Filter list" tooltip.
     FilterList,
-    /// Bouton « Ouvrir une image… ».
+    /// "Open an image…" button.
     OpenImageFile,
-    /// Titre de l'outil Déplacement.
+    /// Move tool title.
     MoveHint,
-    /// Titre de l'outil Main.
+    /// Hand tool title.
     PanHint,
-    /// Titre de l'outil Loupe.
+    /// Zoom tool title.
     ZoomHint,
-    /// Titre de l'outil Pinceau.
+    /// Brush tool title.
     BrushHint,
-    /// Titre de l'outil Gomme.
+    /// Eraser tool title.
     EraserHint,
-    /// Titre de l'outil Pipette.
+    /// Eyedropper tool title.
     EyedropperHint,
-    /// Aide contextuelle Déplacement (barre de statut).
+    /// Move contextual help (status bar).
     MoveHintText,
-    /// Aide contextuelle Main.
+    /// Hand contextual help.
     PanHintText,
-    /// Aide contextuelle Loupe.
+    /// Zoom contextual help.
     ZoomHintText,
-    /// Aide contextuelle Pinceau.
+    /// Brush contextual help.
     BrushHintText,
-    /// Aide contextuelle Gomme.
+    /// Eraser contextual help.
     EraserHintText,
-    /// Aide contextuelle Pipette.
+    /// Eyedropper contextual help.
     EyedropperHintText,
-    /// Label « Taille ».
+    /// "Size" label.
     SizeLabel,
-    /// Label « Couleur ».
+    /// "Color" label.
     ColorLabel,
-    /// Titre « Déplacement » (barre d'options).
+    /// "Move" title (options bar).
     MoveTitle,
-    /// Label « Grille ».
+    /// "Grid" label.
     GridLabel,
-    /// Écran d'accueil : aucun document.
+    /// Welcome screen: no document.
     NoDocumentOpen,
-    /// Écran d'accueil : texte d'invitation.
+    /// Welcome screen: invitation text.
     WelcomeBody,
-    /// Panneau dock vide.
+    /// Empty dock panel.
     NoDocument,
-    /// Titre « Créer un document ».
+    /// "Create document" title.
     CreateDocumentTitle,
-    /// Onglet « Impression ».
+    /// "Print" tab.
     PrintTab,
-    /// Onglet « Numérique ».
+    /// "Digital" tab.
     DigitalTab,
-    /// Label « Unité ».
+    /// "Unit" label.
     UnitLabel,
-    /// Label « Largeur ».
+    /// "Width" label.
     WidthLabel,
-    /// Label « Hauteur ».
+    /// "Height" label.
     HeightLabel,
-    /// Label « Orientation ».
+    /// "Orientation" label.
     OrientationLabel,
-    /// Bouton « Portrait ».
+    /// "Portrait" button.
     PortraitLabel,
-    /// Bouton « Paysage ».
+    /// "Landscape" button.
     LandscapeLabel,
-    /// Préset « A4 Portrait ».
+    /// "A4 Portrait" preset.
     PresetA4Portrait,
-    /// Préset « A4 Paysage ».
+    /// "A4 Landscape" preset.
     PresetA4Landscape,
-    /// Préset « Lettre Portrait ».
+    /// "Letter Portrait" preset.
     PresetLetterPortrait,
-    /// Préset « Lettre Paysage ».
+    /// "Letter Landscape" preset.
     PresetLetterLandscape,
-    /// Préset « Carré ».
+    /// "Square" preset.
     PresetSquare,
-    /// Préset « 4K UHD » (invariable).
+    /// "4K UHD" preset (invariant).
     Preset4kUhd,
-    /// Préset « 8K UHD » (invariable).
+    /// "8K UHD" preset (invariant).
     Preset8kUhd,
-    /// Préset « 16:9 Full HD » (invariable).
+    /// "16:9 Full HD" preset (invariant).
     Preset16by9FullHd,
-    /// Titre « Exportation ».
+    /// "Export" title.
     ExportTitle,
-    /// Label « Dossier ».
+    /// "Folder" label.
     FolderLabel,
-    /// Placeholder « Dossier d'exportation ».
+    /// "Export folder" placeholder.
     FolderPlaceholder,
-    /// Label « Nom ».
+    /// "Name" label.
     NameLabel,
-    /// Placeholder « Nom du fichier ».
+    /// "File name" placeholder.
     FileNamePlaceholder,
-    /// Label « Format ».
+    /// "Format" label.
     FormatLabel,
-    /// Label « Qualité ».
+    /// "Quality" label.
     QualityLabel,
-    /// Préfixe « Destination : ».
+    /// "Destination:" prefix.
     DestinationLabel,
-    /// Titre « Aide de Photo ».
+    /// "Photo help" title.
     HelpTitle,
-    /// Aide : paragraphe outils.
+    /// Help: tools paragraph.
     HelpToolsText,
-    /// Aide : paragraphe calques.
+    /// Help: layers paragraph.
     HelpLayersText,
-    /// Type « Pixels » (inspecteur).
+    /// "Pixels" kind (inspector).
     LayerKindPixel,
-    /// Type « Groupe ».
+    /// "Group" kind.
     LayerKindGroup,
-    /// Type « Ajustement ».
+    /// "Adjustment" kind.
     LayerKindAdjustment,
-    /// Aide : paragraphe fichier/export.
+    /// Help: file/export paragraph.
     HelpFileText,
-    /// Ajouter un masque.
+    /// Add a mask.
     AddMask,
-    /// Supprimer le calque.
+    /// Delete the layer.
     DeleteLayer,
-    /// Rogner l'aperçu au document (coche `[x]`/`[ ]` ajoutée par l'appelant).
+    /// Clip the preview to the document (`[x]`/`[ ]` check added by the caller).
     CropPreviewToDocument,
-    /// Zoom 100 %.
+    /// Zoom 100%.
     Zoom100,
-    /// Réinitialiser la disposition des docks.
+    /// Reset the dock layout.
     ResetLayout,
-    /// Panneau Historique vide.
+    /// Empty History panel.
     HistoryEmpty,
-    /// Rangée de l'état d'ouverture (tout annuler).
+    /// Opening-state row (undo everything).
     HistoryInitial,
-    /// À propos.
+    /// About.
     About,
 }
 
-/// Catalogue photo lié à une langue.
+/// Photo catalog bound to a language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhotoCatalog {
     lang: Language,
 }
 
-/// Toutes les clés (mettre à jour à chaque ajout : le test
-/// `all_keys_translated` l'exige non vide dans les 2 langues).
+/// Every key (update on each addition: the
+/// `all_keys_translated` test requires it non-empty in both languages).
 #[cfg(test)]
 pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::CloseDocument,
@@ -339,12 +339,12 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
 ];
 
 impl PhotoCatalog {
-    /// Catalogue pour la langue `lang`.
+    /// Catalog for language `lang`.
     pub fn new(lang: Language) -> Self {
         Self { lang }
     }
 
-    /// Traduit `key` dans la langue du catalogue.
+    /// Translates `key` into the catalog language.
     pub fn get(self, key: PhotoTextKey) -> &'static str {
         match self.lang {
             Language::En => translate_en(key),
@@ -353,7 +353,7 @@ impl PhotoCatalog {
     }
 }
 
-/// Table française (rendu historique, inchangé).
+/// French table (historical rendering, unchanged).
 fn translate_fr(key: PhotoTextKey) -> &'static str {
     match key {
         PhotoTextKey::CloseDocument => "Fermer le document",
@@ -464,7 +464,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
     }
 }
 
-/// Table anglaise.
+/// English table.
 fn translate_en(key: PhotoTextKey) -> &'static str {
     match key {
         PhotoTextKey::CloseDocument => "Close document",
@@ -577,8 +577,8 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
 mod tests {
     use super::*;
 
-    /// Le français garde le rendu historique au caractère près
-    /// (y compris `apercu` sans accent et l'espace de `100 %`).
+    /// French keeps the historical rendering character-for-character
+    /// (including accent-less `apercu` and the `100 %` space).
     #[test]
     fn french_matches_legacy_menu_strings() {
         let texts = PhotoCatalog::new(Language::Fr);

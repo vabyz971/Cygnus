@@ -14,40 +14,40 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! État global du workspace : régions + panneaux.
+//! Global workspace state: regions + panels.
 //!
-//! Volontairement simple (pas de docking) : une région latérale
-//! gauche, une région latérale droite, une région basse et la vue
-//! centrale. Les apps dessinent leurs `egui::Panel` depuis cet état
-//! et le mémorisent via [`super::persistence`] + `preferences`.
+//! Deliberately simple (no docking): a left side region, a right
+//! side region, a bottom region and the central view. Apps draw
+//! their `egui::Panel` from this state and remember it via
+//! [`super::persistence`] + `preferences`.
 
 use super::panel_id::PanelId;
 use super::panel_state::PanelState;
 use serde::{Deserialize, Serialize};
 
-/// Version du format de `WorkspaceState` (incrémentée à tout
-/// changement incompatible, refus propre au chargement).
+/// `WorkspaceState` format version (bumped on any incompatible
+/// change, clean refusal on load).
 pub const WORKSPACE_VERSION: u32 = 1;
 
-/// État global sérialisable du layout.
+/// Serializable global layout state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceState {
-    /// Version du format.
+    /// Format version.
     pub version: u32,
-    /// Panneaux de la région gauche.
+    /// Left-region panels.
     #[serde(default)]
     pub left: Vec<PanelState>,
-    /// Panneaux de la région droite.
+    /// Right-region panels.
     #[serde(default)]
     pub right: Vec<PanelState>,
-    /// Panneaux de la région basse.
+    /// Bottom-region panels.
     #[serde(default)]
     pub bottom: Vec<PanelState>,
 }
 
 impl WorkspaceState {
-    /// Layout par défaut : outils à gauche, inspecteur + calques à
-    /// droite, timeline en bas.
+    /// Default layout: tools on the left, inspector + layers on the
+    /// right, timeline at the bottom.
     pub fn defaults() -> Self {
         Self {
             version: WORKSPACE_VERSION,
@@ -60,7 +60,7 @@ impl WorkspaceState {
         }
     }
 
-    /// Trouve l'état mutable d'un panneau (toutes régions).
+    /// Finds a panel's mutable state (all regions).
     pub fn find_mut(&mut self, id: PanelId) -> Option<&mut PanelState> {
         self.left
             .iter_mut()
@@ -69,7 +69,7 @@ impl WorkspaceState {
             .find(|panel| panel.id == id)
     }
 
-    /// Trouve l'état d'un panneau (toutes régions).
+    /// Finds a panel's state (all regions).
     pub fn find(&self, id: PanelId) -> Option<&PanelState> {
         self.left
             .iter()
@@ -78,7 +78,7 @@ impl WorkspaceState {
             .find(|panel| panel.id == id)
     }
 
-    /// Bascule la visibilité d'un panneau ; `false` si inconnu.
+    /// Toggles a panel's visibility; `false` when unknown.
     pub fn toggle(&mut self, id: PanelId) -> bool {
         match self.find_mut(id) {
             Some(panel) => {
@@ -89,7 +89,7 @@ impl WorkspaceState {
         }
     }
 
-    /// Change la visibilité d'un panneau ; `false` si inconnu.
+    /// Sets a panel's visibility; `false` when unknown.
     pub fn set_visible(&mut self, id: PanelId, visible: bool) -> bool {
         match self.find_mut(id) {
             Some(panel) => {
@@ -102,7 +102,7 @@ impl WorkspaceState {
 }
 
 impl Default for WorkspaceState {
-    /// Layout par défaut.
+    /// Default layout.
     fn default() -> Self {
         Self::defaults()
     }

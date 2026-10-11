@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Mesures ciblées (harnais std : `criterion` indisponible hors-ligne).
+//! Targeted measurements (std harness: `criterion` unavailable offline).
 //!
-//! Pas d'assertions temporelles (flakiness CI) : ces tests IMPRIMENT le
-//! débit (`-- --nocapture`) et verrouillent le COMPORTEMENT (comptes
-//! exacts). Pour brancher `criterion` plus tard : ajouter la dev-dependency,
-//! déplacer chaque `perf_*` en `benches/*.rs` avec `criterion::black_box`
-//! (mêmes scénarios, mêmes invariants).
+//! No timing assertions (CI flakiness): these tests PRINT the
+//! throughput (`-- --nocapture`) and lock BEHAVIOR (exact
+//! counts). To plug in `criterion` later: add the dev-dependency,
+//! move each `perf_*` to `benches/*.rs` with `criterion::black_box`
+//! (same scenarios, same invariants).
 
 use super::*;
 use std::hint::black_box;

@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Bouton calibré sur le thème (variantes + tailles).
+//! Theme-calibrated button (variants + sizes).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::{Button, ButtonVariant};
 //! # use ui_kit::theme::CygnusTheme;
@@ -27,40 +27,40 @@
 //!     .show(ui, &theme)
 //!     .clicked()
 //! {
-//!     // action déclenchée via UiCommand côté app
+//!     // action triggered via UiCommand on the app side
 //! }
 //! # });
 //! ```
 
 use crate::theme::CygnusTheme;
 
-/// Variante visuelle (pas de types spécialisés : un enum suffit).
+/// Visual variant (no specialized types: one enum is enough).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ButtonVariant {
-    /// Action principale (accent).
+    /// Primary action (accent).
     Primary,
-    /// Action secondaire (défaut).
+    /// Secondary action (default).
     #[default]
     Secondary,
-    /// Bouton fantôme (transparent).
+    /// Ghost button (transparent).
     Ghost,
-    /// Action destructrice (erreur).
+    /// Destructive action (error).
     Danger,
 }
 
-/// Taille du bouton (hauteurs dans `theme.sizes`).
+/// Button size (heights in `theme.sizes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ButtonSize {
-    /// Petit (24px).
+    /// Small (24px).
     Small,
-    /// Standard (32px, défaut).
+    /// Standard (32px, default).
     #[default]
     Medium,
-    /// Grand (40px).
+    /// Large (40px).
     Large,
 }
 
-/// Bouton via API builder.
+/// Button via builder API.
 #[derive(Debug, Clone)]
 pub struct Button<'a> {
     label: &'a str,
@@ -70,7 +70,7 @@ pub struct Button<'a> {
 }
 
 impl<'a> Button<'a> {
-    /// Crée un bouton secondaire de taille moyenne.
+    /// Creates a medium-size secondary button.
     pub fn new(label: &'a str) -> Self {
         Self {
             label,
@@ -80,32 +80,32 @@ impl<'a> Button<'a> {
         }
     }
 
-    /// Variante visuelle.
+    /// Visual variant.
     #[must_use]
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    /// Taille du bouton.
+    /// Button size.
     #[must_use]
     pub fn size(mut self, size: ButtonSize) -> Self {
         self.size = size;
         self
     }
 
-    /// État activé / désactivé.
+    /// Enabled / disabled state.
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// Affiche le bouton et retourne la réponse egui.
+    /// Displays the button and returns the egui response.
     ///
-    /// Le survol/pressé sont gérés par egui : les teintes idle/survol
-    /// ([`fills_for`], tout du thème) sont injectées dans les `visuals`
-    /// locaux au lieu d'écraser le `fill` (ce qui tuait le hover).
+    /// Hover/pressed are handled by egui: the idle/hover tints
+    /// ([`fills_for`], all from the theme) are injected into the local
+    /// `visuals` instead of overwriting `fill` (which killed hover).
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme) -> egui::Response {
         let text_color = match self.variant {
             ButtonVariant::Ghost => theme.colors.fg_secondary,
@@ -139,8 +139,8 @@ impl<'a> Button<'a> {
     }
 }
 
-/// Ligne de menu (barre ou popup contextuel) : bouton fantôme
-/// pleine largeur ; `true` si cliquée (l'appelant ferme le menu).
+/// Menu row (bar or context popup): full-width ghost button;
+/// `true` when clicked (the caller closes the menu).
 pub fn menu_row(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
     Button::new(label)
         .variant(ButtonVariant::Ghost)
@@ -149,7 +149,7 @@ pub fn menu_row(ui: &mut egui::Ui, theme: &CygnusTheme, label: &str) -> bool {
         .clicked()
 }
 
-/// Fonds idle/survol/pressé d'une variante, 100 % issus du thème.
+/// Idle/hover/pressed fills of a variant, 100% from the theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ButtonFills {
     idle: egui::Color32,
@@ -157,8 +157,8 @@ struct ButtonFills {
     pressed: egui::Color32,
 }
 
-/// Teintes d'une variante : le survol diffère toujours du repos pour
-/// un retour visuel (même le bouton fantôme, transparent au repos).
+/// Tints of a variant: hover always differs from idle for
+/// visual feedback (even the ghost button, transparent at idle).
 fn fills_for(variant: ButtonVariant, theme: &CygnusTheme) -> ButtonFills {
     let colors = theme.colors;
     match variant {
@@ -230,7 +230,7 @@ mod tests {
                 "pas de retour au survol pour {variant:?}"
             );
         }
-        // Fantôme : invisible au repos, souligné au survol/pressé.
+        // Ghost: invisible at idle, underlined on hover/press.
         let ghost = fills_for(ButtonVariant::Ghost, &theme);
         assert_eq!(ghost.idle, egui::Color32::TRANSPARENT);
         assert_eq!(ghost.hover, theme.colors.item_hover);
@@ -255,7 +255,7 @@ mod tests {
     fn button_reports_hovered_state() {
         let theme = CygnusTheme::dark();
         let ctx = egui::Context::default();
-        // Frame 1 : mise en page, on capture le rectangle du bouton.
+        // Frame 1: layout, capture the button's rectangle.
         let mut rect = egui::Rect::NOTHING;
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -264,7 +264,7 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(!rect.is_negative(), "bouton mis en page");
-        // Frame 2 : pointeur au centre → l'état survolé remonte.
+        // Frame 2: pointer at the center → the hovered state comes up.
         let mut input = egui::RawInput::default();
         input.events.push(egui::Event::PointerMoved(rect.center()));
         let mut hovered = false;

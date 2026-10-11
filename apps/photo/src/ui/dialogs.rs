@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,37 +14,37 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Dialogues export et aide de l'app PHOTO.
+//! PHOTO app export and help dialogs.
 
 use std::path::PathBuf;
 use ui_kit::components::{Select, Slider, TextInput};
 use ui_kit::dialogs::{CygnusModal, ModalAction};
 use ui_kit::theme::typography::body_text;
 
-/// Formats d'export proposés.
+/// Offered export formats.
 pub const EXPORT_FORMATS: &[&str] = &["PNG", "JPEG", "JPG", "GIF"];
 
-/// Requête d'export validée (dossier + nom + format + qualité).
+/// Validated export request (folder + name + format + quality).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportRequest {
-    /// Chemin complet de destination (extension = format).
+    /// Full destination path (extension = format).
     pub path: PathBuf,
-    /// Qualité JPEG 1..=100.
+    /// JPEG quality 1..=100.
     pub quality: u8,
 }
 
-/// État de la fenêtre « Exportation ».
+/// "Export" window state.
 #[derive(Debug, Clone)]
 pub struct ExportDialogState {
-    /// Fenêtre visible.
+    /// Window visible.
     pub open: bool,
-    /// Dossier de destination (champ texte).
+    /// Destination folder (text field).
     pub folder: String,
-    /// Nom de fichier sans extension.
+    /// File name without extension.
     pub filename: String,
-    /// Index dans [`EXPORT_FORMATS`].
+    /// Index into [`EXPORT_FORMATS`].
     pub format: usize,
-    /// Qualité JPEG 1..=100.
+    /// JPEG quality 1..=100.
     pub quality: f32,
 }
 
@@ -61,12 +61,12 @@ impl Default for ExportDialogState {
 }
 
 impl ExportDialogState {
-    /// Ouvre la fenêtre d'export.
+    /// Opens the export window.
     pub fn open(&mut self) {
         self.open = true;
     }
 
-    /// Construit la requête validée (nom assaini, extension = format).
+    /// Builds the validated request (sanitized name, extension = format).
     #[must_use]
     pub fn request(&self) -> ExportRequest {
         let ext = EXPORT_FORMATS
@@ -83,8 +83,8 @@ impl ExportDialogState {
     }
 }
 
-/// Dessine la fenêtre « Exportation ». Retourne la requête validée
-/// (bouton de validation de la modale).
+/// Draws the "Export" window. Returns the validated request
+/// (the modal's confirm button).
 pub fn draw_export_dialog(
     ui_ctx: &crate::commands::PhotoUiContext,
     state: &mut ExportDialogState,
@@ -154,7 +154,7 @@ pub fn draw_export_dialog(
     confirm
 }
 
-/// Dessine la fenêtre d'aide (outils, calques, raccourcis).
+/// Draws the help window (tools, layers, shortcuts).
 pub fn draw_help_dialog(ui_ctx: &crate::commands::PhotoUiContext, open: &mut bool) {
     if !*open {
         return;

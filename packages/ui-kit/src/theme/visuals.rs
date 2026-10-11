@@ -14,24 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Installation des polices et application du thème Cygnus sur egui.
+//! Font setup and Cygnus theme application on egui.
 //!
-//! À appeler UNE SEULE FOIS au démarrage de chaque app, dans cet ordre :
-//! 1. [`setup_fonts`] : police UI (Hanken Grotesk) + police d'icônes.
-//! 2. [`apply_cygnus_theme`] : couleurs, espacements et rayons.
+//! Call EXACTLY ONCE at each app's startup, in this order:
+//! 1. [`setup_fonts`]: UI font (Hanken Grotesk) + icon font.
+//! 2. [`apply_cygnus_theme`]: colors, spacing and radii.
 
 use super::CygnusTheme;
 use super::context::install_theme;
 
-/// Charge la police UI (Hanken Grotesk) PUIS la police d'icônes Material
+/// Loads the UI font (Hanken Grotesk) THEN the Material icon font
 /// Symbols via `egui_material_icons`.
 ///
-/// À appeler une seule fois au boot de chaque app, AVANT
+/// Call once at each app's boot, BEFORE
 /// [`apply_cygnus_theme`].
 pub fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // 1. Police UI Hanken Grotesk (versionnée dans assets/fonts/).
+    // 1. Hanken Grotesk UI font (versioned under assets/fonts/).
     fonts.font_data.insert(
         "hanken_grotesk".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
@@ -46,14 +46,14 @@ pub fn setup_fonts(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
 
-    // 2. Police d'icônes Material Symbols via la lib dédiée
-    //    (jamais de codepoints gérés à la main).
+    // 2. Material Symbols icon font via the dedicated lib
+    //    (never hand-managed codepoints).
     egui_material_icons::initialize(ctx);
 }
 
-/// Applique le thème Cygnus au contexte egui.
+/// Applies the Cygnus theme to the egui context.
 ///
-/// À appeler UNE SEULE FOIS au démarrage de chaque app, après
+/// Call EXACTLY ONCE at each app's startup, after
 /// [`setup_fonts`].
 pub fn apply_cygnus_theme(ctx: &egui::Context) {
     let theme = CygnusTheme::dark();

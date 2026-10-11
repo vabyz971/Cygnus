@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Format projet natif `.cygp` — indépendant de l'UI, réutilisable
-//! par les autres apps de la suite (compositing vidéo de calques…).
+//! Native `.cygp` project format — UI-independent, reusable by the
+//! suite's other apps (layer video compositing…).
 //!
-//! FORMAT_VERSION 5 : imbrication hiérarchique (nesting façon Affinity) —
-//! enfants clippés des calques pixels (`children`), filtres imbriqués des
-//! groupes (`filter_layers`), masques des ajustements (`masks`). Conteneur
-//! JSON versionné, images encodées PNG puis base64.
+//! FORMAT_VERSION 5: hierarchical nesting (Affinity-style nesting) —
+//! pixel layers' clipped children (`children`), groups' nested filters
+//! (`filter_layers`), adjustments' masks (`masks`). Versioned JSON
+//! container, PNG-then-base64 encoded images.
 //!
-//! Politique de compatibilité : v5 lue nativement, v4 lue nativement
-//! (champs v5 absents = défauts vides), v3 MIGRÉE (filtres convertis en
-//! sous-calques neutres) ; toute autre version est refusée avec un
-//! message clair.
+//! Compatibility policy: v5 read natively, v4 read natively
+//! (v5 fields absent = empty defaults), v3 MIGRATED (filters converted
+//! to neutral sub-layers); any other version is refused with a clear
+//! message.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -42,21 +42,21 @@ use crate::document::{
     PixelLayer, Transform2D,
 };
 
-/// Version du format — incrémenter à toute évolution incompatible.
-/// v5 : nesting (enfants pixels, filtres de groupe, masques d'ajustement).
-/// v4 : filtres pixels = sous-calques (`filter_layers`) au lieu de
-/// `live_filters` (v3, migrée à la lecture).
+/// Format version — bump on any incompatible change. v5: nesting
+/// (pixel children, group filters, adjustment masks). v4: pixel filters
+/// = sub-layers (`filter_layers`) instead of `live_filters` (v3,
+/// migrated on read).
 pub const FORMAT_VERSION: u32 = 5;
 
-/// Extension canonique des projets photo Cygnus.
+/// Canonical Cygnus photo project extension.
 pub const PROJECT_EXTENSION: &str = "cygp";
 
-/// Anciennes extensions encore acceptées EN LECTURE : `.csophoto`, puis
-/// `.csphoto` (pré-convention `cso*`).
+/// Old extensions still accepted FOR READING: `.csophoto`, then `.csphoto`
+/// (pre-`cso*` convention).
 pub const LEGACY_PROJECT_EXTENSIONS: [&str; 2] = ["csophoto", "csphoto"];
 
-/// L'extension du fichier correspond-elle à un projet photo (canonique
-/// `.cygp` ou héritée `.csophoto`/`.csphoto`) ? Insensible à la casse.
+/// Does the file extension match a photo project (canonical `.cygp` or
+/// legacy `.csophoto`/`.csphoto`)? Case-insensitive.
 #[must_use]
 pub fn is_project_path(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
@@ -87,7 +87,7 @@ enum LayerNodeDto {
 #[derive(Serialize, Deserialize)]
 struct MaskDto {
     id: Uuid,
-    /// Renommable dans le panneau Calques (défaut « Masque »).
+    /// Renamable in the Layers panel (default « Masque »).
     #[serde(default = "default_mask_name")]
     name: String,
     png_base64: String,
@@ -103,16 +103,16 @@ fn default_mask_name() -> String {
 struct PixelDto {
     id: Uuid,
     name: String,
-    /// Pixels de la SOURCE (jamais l'apparence filtrée) encodés PNG + base64
+    /// SOURCE pixels (never the filtered appearance) PNG + base64 encoded.
     png_base64: String,
-    /// LEGACY v3 : filtres simples, migrés en sous-calques neutres.
-    /// Toujours écrit vide en v4+ (écriture), relu pour la migration (lecture).
+    /// LEGACY v3: plain filters, migrated to neutral sub-layers. Always
+    /// written empty in v4+ (write), re-read for migration (read).
     #[serde(default)]
     live_filters: Vec<FilterDto>,
-    /// v4 : sous-calques de filtres (opacité/fusion/transform/masques).
+    /// v4: filter sub-layers (opacity/blend/transform/masks).
     #[serde(default)]
     filter_layers: Vec<FilterLayerDto>,
-    /// v5 : enfants clippés (nesting façon Affinity).
+    /// v5: clipped children (Affinity-style nesting).
     #[serde(default)]
     children: Vec<LayerNodeDto>,
     transform: Transform2D,
@@ -128,7 +128,7 @@ struct GroupDto {
     id: Uuid,
     name: String,
     children: Vec<LayerNodeDto>,
-    /// v5 : filtres imbriqués du groupe (après enfants, avant masques).
+    /// v5: group nested filters (after children, before masks).
     #[serde(default)]
     filter_layers: Vec<FilterLayerDto>,
     #[serde(default)]
@@ -147,7 +147,7 @@ struct AdjustmentDto {
     filters: Vec<FilterDto>,
     opacity: f32,
     visible: bool,
-    /// v5 : masques restreignant la zone d'effet.
+    /// v5: masks restricting the effect zone.
     #[serde(default)]
     masks: Vec<MaskDto>,
 }
@@ -222,8 +222,8 @@ impl FilterLayer {
         })
     }
 
-    /// Migration v3 → v4 : un filtre simple devient un sous-calque neutre
-    /// (mêmes effets/paramètres/état, attributs de calque par défaut).
+    /// v3 → v4 migration: a plain filter becomes a neutral sub-layer (same
+    /// effects/parameters/state, default layer attributes).
     fn migrate_v3(dto: FilterDto) -> Self {
         let name = dto.type_id.clone();
         Self {
@@ -291,7 +291,7 @@ fn mask_from_dto(dto: MaskDto, name: &str) -> Result<crate::document::LayerMask,
 fn node_to_dto(node: &LayerNode) -> Result<LayerNodeDto, String> {
     Ok(match node {
         LayerNode::Pixel(l) => {
-            // Encodage de la SOURCE : les filtres restent vivants au rechargement
+            // SOURCE encoding: filters stay live on reload
             let children: Result<Vec<LayerNodeDto>, String> =
                 l.children.iter().map(node_to_dto).collect();
             LayerNodeDto::Pixel(PixelDto {
@@ -372,7 +372,7 @@ fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String
                     .map(|f| FilterLayer::from_dto(f, &p.name))
                     .collect::<Result<Vec<_>, _>>()?
             };
-            // v5 : enfants clippés (absents en v3/v4 → `#[serde(default)]`).
+            // v5: clipped children (absent in v3/v4 → `#[serde(default)]`).
             let children: Result<Vec<LayerNode>, String> = p
                 .children
                 .into_iter()
@@ -421,12 +421,12 @@ fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String
     })
 }
 
-/// Document rechargé depuis un `.cygp`.
+/// Document reloaded from a `.cygp`.
 pub struct LoadedProject {
     pub document: Document,
-    /// Chemin du fichier chargé (devient le chemin d'enregistrement courant)
+    /// Loaded file path (becomes the current save path)
     pub path: Option<std::path::PathBuf>,
-    /// Nom de fichier sans extension — alimente le titre du canvas
+    /// File name without extension — feeds the canvas title
     pub source_name: Option<String>,
 }
 
@@ -454,11 +454,11 @@ impl std::fmt::Debug for LoadedProject {
     }
 }
 
-/// Enregistre l'arbre de calques dans un fichier `.cygp` (v5).
+/// Saves the layer tree to a `.cygp` file (v5).
 ///
 /// # Errors
-/// Erreur d'encodage PNG d'un calque, de sérialisation JSON ou d'écriture
-/// disque — message descriptif en français pour l'utilisateur.
+/// PNG encoding error of a layer, JSON serialization or disk write —
+/// descriptive message in French for the user.
 pub fn save(path: &Path, doc: &Document) -> Result<(), String> {
     let root: Result<Vec<LayerNodeDto>, String> = doc.root.iter().map(node_to_dto).collect();
     let file = ProjectFile {
@@ -472,18 +472,18 @@ pub fn save(path: &Path, doc: &Document) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| format!("Écriture de {}: {e}", path.display()))
 }
 
-/// Charge un `.cygp`. v5 lue nativement, v4 lue nativement (champs v5
-/// absents = défauts), v3 migrée (filtres simples → sous-calques
-/// neutres) ; toute autre version est refusée.
+/// Loads a `.cygp`. v5 read natively, v4 read natively (v5 fields absent
+/// = defaults), v3 migrated (plain filters → neutral sub-layers); any
+/// other version is refused.
 ///
 /// # Errors
-/// Fichier illisible, JSON invalide, version étrangère, ou calque
-/// corrompu — message descriptif en français.
+/// Unreadable file, invalid JSON, foreign version, or corrupted layer
+/// — descriptive message in French.
 pub fn load(path: &Path) -> Result<LoadedProject, String> {
     let json = std::fs::read(path).map_err(|e| format!("Lecture de {}: {e}", path.display()))?;
-    // Sonde de version AVANT désérialisation complète : un projet d'une
-    // autre époque doit être refusé avec le bon message, pas avec une
-    // erreur de champs manquants.
+    // Version probe BEFORE full deserialization: a project from another
+    // era must be refused with the right message, not a missing-fields
+    // error.
     #[derive(Deserialize)]
     struct VersionProbe {
         version: u32,
@@ -547,7 +547,7 @@ mod tests {
         }))
     }
 
-    /// Racine : [Groupe(haut, fond filtré), Ajustement(color_correct)]
+    /// Root: [Group(top, filtered background), Adjustment(color_correct)]
     fn sample_document() -> Document {
         let mut doc = Document::new(800, 600);
         let mut haut = PixelLayer::new("haut", green_img());
@@ -591,7 +591,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         assert_eq!((loaded.document.width, loaded.document.height), (800, 600));
-        // Racine : [Groupe(pixels ×2), Ajustement]
+        // Root: [Group(pixels ×2), Adjustment]
         assert_eq!(loaded.document.root.len(), 2);
         let Some(LayerNode::Group(g)) = loaded.document.root.first() else {
             panic!("groupe attendu à la racine");
@@ -613,7 +613,7 @@ mod tests {
             Some(&ParamValue::Float(25.0)),
             "paramètres de filtre préservés"
         );
-        // Pixels identiques après l'aller-retour PNG
+        // Identical pixels after the PNG round-trip
         let reference = sample_document();
         let Some(LayerNode::Group(gr)) = reference.root.first() else {
             panic!()
@@ -628,7 +628,7 @@ mod tests {
     fn detection_extension_projet_canonique_et_heritee() {
         assert!(is_project_path(Path::new("mon-projet.cygp")));
         assert!(is_project_path(Path::new("MON-PROJET.CYGP")));
-        // Anciennes extensions encore reconnues en lecture
+        // Old extensions still recognized for reading
         assert!(is_project_path(Path::new("ancien.csophoto")));
         assert!(is_project_path(Path::new("ancien.csphoto")));
         assert!(!is_project_path(Path::new("image.png")));
@@ -647,8 +647,8 @@ mod tests {
 
     #[test]
     fn projet_v3_migre_en_sous_calques_neutres() {
-        // Fixture v3 RÉELLE : PNG valide + live_filters → migrés en
-        // sous-calques (effet/params/état conservés, attributs neutres).
+        // REAL v3 fixture: valid PNG + live_filters → migrated to sub-layers
+        // (effect/params/state kept, neutral attributes).
         let png = png_encode(
             &DynamicImage::ImageRgba8(RgbaImage::from_pixel(
                 2,
@@ -685,7 +685,7 @@ mod tests {
         assert!(f.enabled);
         assert_eq!(f.opacity, 100.0);
         assert_eq!(f.params.get("brightness"), Some(&ParamValue::Float(25.0)));
-        // Et le rendu suit : 100 + 25*2.55 ≈ 163.
+        // And rendering follows: 100 + 25*2.55 ≈ 163.
         let appearance = loaded.document.appearance(fond.id).expect("apparence");
         let px = appearance.image.to_rgba8().get_pixel(0, 0).0;
         assert!((px[0] as f32 - 163.0).abs() <= 3.0, "{px:?}");
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn migration_v3_conserve_effets_et_params() {
-        // v3 réelle : on sauvegarde via les DTO legacy puis on recharge.
+        // real v3: saved via legacy DTOs then reloaded.
         let mut doc = Document::new(2, 2);
         let mut fond = PixelLayer::new("fond", red_img());
         let legacy = FilterDto {
@@ -737,13 +737,13 @@ mod tests {
         };
         let id = fond.id;
         let appearance = loaded.document.appearance(id).expect("apparence");
-        // preview aux dimensions source, thumb standard 48 px
+        // source-dimensioned preview, standard 48 px thumb
         assert_eq!(
             (appearance.preview.width, appearance.preview.height),
             (3, 2)
         );
         assert_eq!(appearance.thumb.width, 48);
-        // L'ajustement est bien présent et actif
+        // The adjustment is present and active
         assert!(loaded.document.needs_fallback());
     }
 
@@ -759,7 +759,7 @@ mod tests {
         let mut mask = crate::document::LayerMask::full(2, 2);
         mask.enabled = false;
         mask.inverted = true;
-        // pixel distinct pour vérifier PNG
+        // distinct pixel to verify PNG
         mask.image = std::sync::Arc::new(RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 255])));
         layer.masks.push(mask);
         doc.push_layer(LayerNode::Pixel(layer));
@@ -776,8 +776,8 @@ mod tests {
         assert_eq!(m.image.get_pixel(0, 0)[0], 0);
     }
 
-    /// Document imbriqué : enfant clippé + filtre de groupe + masque
-    /// d'ajustement (exercice complet du nesting v5).
+    /// Nested document: clipped child + group filter + adjustment mask
+    /// (full v5 nesting workout).
     fn nested_doc() -> Document {
         let mut doc = Document::new(4, 4);
         let mut parent = PixelLayer::new("parent", red_img());
@@ -807,13 +807,13 @@ mod tests {
         let doc = nested_doc();
         let path = temp_path("v5nest");
         save(&path, &doc).expect("sauvegarde v5");
-        // Version écrite = 5.
+        // Written version = 5.
         let raw = std::fs::read(&path).expect("relecture");
         let probe: serde_json::Value = serde_json::from_slice(&raw).expect("json");
         assert_eq!(probe["version"], 5);
         let loaded = load(&path).expect("chargement v5");
         std::fs::remove_file(&path).ok();
-        // Structure imbriquée préservée (ids stables).
+        // Nested structure preserved (stable ids).
         let LayerNode::Pixel(parent) = &loaded.document.root[0] else {
             panic!("parent attendu");
         };
@@ -832,7 +832,7 @@ mod tests {
             panic!("ajustement attendu");
         };
         assert_eq!(adj.masks.len(), 1);
-        // Rendu identique avant/après (pixels du nesting).
+        // Identical render before/after (nesting pixels).
         let before = doc.composite_preview().expect("composite avant");
         let after = loaded
             .document
@@ -841,10 +841,10 @@ mod tests {
         assert_eq!(before.to_rgba8().as_raw(), after.to_rgba8().as_raw());
     }
 
-    /// Supprime récursivement les clés v5 d'un JSON projet (simule un
-    /// fichier écrit en v4) : `children` des pixels, `filter_layers` des
-    /// groupes, `masks` des ajustements. Les clés v4 (dont `children`
-    /// des groupes) sont conservées.
+    /// Recursively removes v5 keys from a project JSON (simulates a v4-
+    /// written file): pixels' `children`, groups' `filter_layers`,
+    /// adjustments' `masks`. v4 keys (including groups' `children`) are
+    /// kept.
     fn strip_v5(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(map) => {
@@ -875,8 +875,8 @@ mod tests {
 
     #[test]
     fn projet_v4_charge_champs_v5_vides() {
-        // Sauvegarde v5 réelle, rétrogradée en v4 (version + suppression
-        // des champs v5) : chargement sans perte, champs vides.
+        // Real v5 save, downgraded to v4 (version + v5 field removal):
+        // lossless loading, empty fields.
         let doc = nested_doc();
         let path = temp_path("v4nest");
         save(&path, &doc).expect("sauvegarde v5");
@@ -887,7 +887,7 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&v4).expect("json v4")).expect("écriture v4");
         let loaded = load(&path).expect("v4 doit charger (champs v5 par défaut)");
         std::fs::remove_file(&path).ok();
-        // Contenu v4 intact (pixels, filtres pixels, nom).
+        // v4 content intact (pixels, pixel filters, name).
         let LayerNode::Pixel(parent) = &loaded.document.root[0] else {
             panic!("parent attendu");
         };
@@ -905,7 +905,7 @@ mod tests {
             panic!("ajustement attendu");
         };
         assert!(adj.masks.is_empty(), "pas de masques d'ajustement en v4");
-        // Et le rendu v4 reste correct (sans nesting).
+        // And v4 rendering stays correct (no nesting).
         assert!(loaded.document.composite_preview().is_some());
     }
 }

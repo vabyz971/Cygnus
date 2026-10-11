@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Effet Luminosité / Contraste (GPU compute + fallback CPU rayon)
+//! Brightness / Contrast effect (GPU compute + rayon CPU fallback)
 
 use super::{Effect, NodeCtx, to_rgba8};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};

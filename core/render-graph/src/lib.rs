@@ -14,31 +14,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Render Graph : opérations dérivées du Scene Graph, pas son remplacement.
+//! Render Graph: operations derived from the Scene Graph, not its replacement.
 //!
 //! ```text
-//! Scene Graph  ("que contient le document ?" — groupes, images, …)
-//!   │ dérive (build / sync incrémental)
-//! Render Graph ("quelles opérations pour produire l'image ?"
+//! Scene Graph  ("what does the document hold?" — groups, images, …)
+//!   │ derives (build / incremental sync)
+//! Render Graph ("which operations produce the image?"
 //!               Source → Transform → Effect → Mask → Blend → Output)
-//!   │ ordonne (plan topologique, dirty seul si demandé)
-//! Backend      (CPU aujourd'hui, wgpu demain — trait pur, aucune texture ici)
+//!   │ orders (topological plan, dirty-only if requested)
+//! Backend      (CPU today, wgpu tomorrow — pure trait, no textures here)
 //! ```
 //!
-//! Règles de cette crate :
+//! Rules of this crate:
 //!
-//! - AUCUNE dépendance `egui`, UI, widgets, app, `wgpu`, texture ou buffer
-//!   GPU. Les pixels sont résolus par le [`Backend`] au moment d'exécuter.
-//! - Le graphe de dépendances ([`graph::Graph`]) est le moteur
-//!   d'invalidation : propagation dirty, révisions, ordre topologique.
-//!   Cette crate ajoute la DÉRIVATION depuis la scène (liaisons
-//!   scène→rendu, reconstruction partielle par portée) et le vocabulaire
-//!   d'opérations.
-//! - Reconstruction partielle : un changement d'attribut (opacité,
-//!   transform, visibilité…) ne reconstruit RIEN — il salit les nœuds
-//!   dérivés. Un changement structurel ne reconstruit que la PORTÉE
-//!   concernée (fratrie), jamais le graphe entier. Reconstruire le graphe
-//!   ne recalcule aucun pixel : seuls les flags dirty pilotent le travail.
+//! - NO `egui`, UI, widget, app, `wgpu`, texture or buffer
+//!   dependency. Pixels are resolved by the [`Backend`] at execute time.
+//! - The dependency graph ([`graph::Graph`]) is the
+//!   invalidation engine: dirty propagation, revisions, topological order.
+//!   This crate adds DERIVATION from the scene (bindings
+//!   scene→render, partial per-scope rebuild) and the operation
+//!   vocabulary.
+//! - Partial rebuild: an attribute change (opacity,
+//!   transform, visibility…) rebuilds NOTHING — it dirties the derived
+//!   nodes. A structural change only rebuilds the SCOPE
+//!   concerned (sibling group), never the whole graph. Rebuilding the graph
+//!   recomputes no pixels: only dirty flags drive the work.
 //!
 //! # Examples
 //!
@@ -71,12 +71,12 @@ pub use ids::Revision;
 pub use op::{EffectKey, RenderEdge, RenderNode, RenderNodeId, RenderOp, RenderPort};
 pub use scene::{Scene, SceneNodeId};
 
-/// Effets par nœud de scène : chaînes d'effets nommés (filtres photo,
-/// effets vidéo…) dans l'ordre d'application, fournies par le moteur du
-/// domaine au moment de dériver/synchroniser.
+/// Effects per scene node: named effect chains (photo filters,
+/// video effects…) in application order, provided by the domain engine
+/// at derive/synchronize time.
 ///
-/// La scène ne porte pas d'effets (volontairement) ; cet overlay est le
-/// SEUL point d'entrée des effets dans la dérivation — et le point
-/// d'intégration des moteurs existants (voir `photo-engine`,
+/// The scene carries no effects (deliberately); this overlay is the
+/// ONLY entry point for effects into derivation — and the
+/// integration point for existing engines (see `photo-engine`,
 /// `render_overlay::effect_overlay`).
 pub type EffectOverlay = HashMap<SceneNodeId, Vec<EffectKey>>;

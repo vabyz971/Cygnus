@@ -14,21 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Pont vers le Scene Graph : le layout calcule, la scène place.
+//! Bridge to the Scene Graph: layout computes, the scene places.
 //!
-//! [`apply_to_scene`] écrit l'origine de chaque cadre calculé dans le
-//! `offset` du transform local de son nœud de scène mappé (le reste du
-//! transform — échelle, rotation — est préservé : le layout ne place que
-//! des positions). Cadres non mappés ou nœuds disparus : ignorés sans
-//! erreur. C'est l'unique sortie du moteur vers la scène — aucun renderer
-//! n'est touché ici.
+//! [`apply_to_scene`] writes each computed frame's origin into the
+//! `offset` of its mapped scene node's local transform (the rest of the
+//! transform — scale, rotation — is preserved: layout only places
+//! positions). Unmapped frames or vanished nodes: silently ignored.
+//! This is the engine's only output to the scene — no renderer
+//! is touched here.
 
 use scene::Scene;
 
 use crate::{ComputedLayout, LayoutDoc};
 
-/// Applique les placements aux nœuds de scène mappés.
-/// Retourne le nombre de nœuds effectivement touchés.
+/// Applies placements to the mapped scene nodes.
+/// Returns the number of nodes actually touched.
 #[must_use = "le compte dit combien de nœuds ont bougé"]
 pub fn apply_to_scene(computed: &ComputedLayout, doc: &LayoutDoc, scene: &mut Scene) -> usize {
     let mut touched = 0;
@@ -98,7 +98,7 @@ mod tests {
         let mut scene = Scene::new();
         let na = scene.create_node(scene::NodeKind::Image);
         let nb = scene.create_node(scene::NodeKind::Image);
-        // Cadre non mappé + nœud disparu : ignorés.
+        // Unmapped frame + vanished node: ignored.
         assert!(doc.map_to_scene(a, na));
         assert!(doc.map_to_scene(b, nb));
 
@@ -108,7 +108,7 @@ mod tests {
         let tb = scene.local_transform(nb).expect("mapped");
         assert_eq!((ta.offset_x, ta.offset_y), (0.0, 0.0));
         assert_eq!((tb.offset_x, tb.offset_y), (40.0, 0.0));
-        // Idempotent : second passage, mêmes valeurs, même compte.
+        // Idempotent: second pass, same values, same count.
         assert_eq!(apply_to_scene(&computed, &doc, &mut scene), 2);
     }
 

@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Commandes légères d'historique (Command Pattern) pour les micro-éditions.
+//! Lightweight history commands (Command Pattern) for micro-edits.
 //!
-//! Une [`Command`] capture une transition old → new sur UN nœud : elle se
-//! stocke pour quelques octets (contre un clonage complet de l'arbre pour un
-//! Snapshot) et sait se inverser ([`Command::inverse`]) et décrire son
-//! impact rendu ([`Command::render_event`]).
+//! A [`Command`] captures an old → new transition on ONE node: it is
+//! stored for a few bytes (vs a full tree clone for a Snapshot) and
+//! knows how to invert itself ([`Command::inverse`]) and describe its
+//! render impact ([`Command::render_event`]).
 //!
-//! Les types de valeurs réutilisent le modèle existant — AUCUNE duplication :
+//! Value types reuse the existing model — NO duplication:
 //! - [`crate::document::Transform2D`] et [`crate::document::BlendMode`]
 //! - `datatypes::ParamValue`
 
@@ -30,14 +30,14 @@ use uuid::Uuid;
 
 use crate::document::{BlendMode, Transform2D};
 
-/// Commande légère : modification d'un paramètre d'un nœud existant.
+/// Lightweight command: edits one parameter of an existing node.
 ///
-/// Conventions :
-/// - `old`/`new` portent les valeurs AVANT/APRÈS ;
-/// - [`crate::Document::apply_command`] applique `new` et retourne
-///   l'inverse (old/new échangés) prêt à empiler dans l'historique ;
-/// - si le nœud cible a disparu (undo inter-langue avec suppression),
-///   la commande est retournée telle quelle (no-op sûr).
+/// Conventions:
+/// - `old`/`new` carry the BEFORE/AFTER values;
+/// - [`crate::Document::apply_command`] applies `new` and returns the
+///   inverse (old/new swapped) ready to push into history;
+/// - if the target node is gone (undo interleaved with deletion),
+///   the command is returned as is (safe no-op).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     SetOpacity {
@@ -87,7 +87,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Identifiant du nœud ciblé (pour invalidation UI ciblée).
+    /// Targeted node's id (for targeted UI invalidation).
     #[must_use]
     pub fn target(&self) -> Uuid {
         match self {
@@ -102,8 +102,8 @@ impl Command {
         }
     }
 
-    /// Inverse exact : appliquer la commande puis son inverse restaure
-    /// l'état initial (et réciproquement).
+    /// Exact inverse: applying the command then its inverse restores the
+    /// initial state (and vice versa).
     #[must_use]
     pub fn inverse(&self) -> Command {
         match self {
@@ -170,10 +170,10 @@ impl Command {
         }
     }
 
-    /// Fusionne un geste continu : garde l'« old » du DÉBUT du geste et
-    /// met à jour uniquement le « new ». Retourne false si les deux
-    /// commandes ne décrivent pas la même édition (même variante ET même
-    /// cible) — l'appelant empilera alors deux entrées distinctes.
+    /// Merges a continuous gesture: keeps the gesture START's "old" and
+    /// only updates the "new". Returns false if both commands do not
+    /// describe the same edit (same variant AND same target) — the caller
+    /// then pushes two distinct entries.
     pub fn merge_forward(&mut self, next: &Command) -> bool {
         match (self, next) {
             (Command::SetOpacity { new, .. }, Command::SetOpacity { new: n2, .. }) => {
@@ -238,13 +238,13 @@ impl Command {
         }
     }
 
-    /// La commande modifie-t-elle la COMPOSITE globale (et non seulement
-    /// l'apparence isolée du calque dessiné indépendamment) ?
+    /// Does the command modify the GLOBAL composite (and not just the
+    /// isolated appearance of the independently drawn layer)?
     ///
-    /// - opacité/transform/rename : appliqués au draw GPU — aucun recomposite
-    /// - blend mode / visibilité : changent QUI fusionne avec QUI → fallback
-    /// - paramètre de filtre sur calque pixels : l'apparence se recalcule
-    ///   seule (cache de versions) — pas de recomposite global
+    /// - opacity/transform/rename: applied at GPU draw — no recomposite
+    /// - blend mode / visibility: change WHO blends with WHOM → fallback
+    /// - filter parameter on a pixel layer: appearance recomputes alone
+    ///   (version cache) — no global recomposite
     #[must_use]
     pub fn affects_composite(&self) -> bool {
         matches!(
@@ -257,24 +257,24 @@ impl Command {
     }
 }
 
-/// Notification au moteur de rendu : quoi invalider après une édition.
-/// Le cache de textures UI (PreviewCache) affine encore ce signal par
-/// comparaison d'adresses d'Arc — les calques inchangés gardent leurs
-/// textures GPU.
+/// Render engine notification: what to invalidate after an edit. The UI
+/// texture cache (PreviewCache) further refines this signal via Arc
+/// address comparison — unchanged layers keep their GPU
+/// textures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderEvent {
-    /// Tout re-rendre (structure, undo snapshot, ouverture projet…)
+    /// Re-render everything (structure, snapshot undo, project open…)
     FullInvalidation,
-    /// Un seul nœud a changé
+    /// A single node changed
     NodeInvalidated(Uuid),
 }
 
 impl Command {
-    /// Événement rendu induit par cette commande.
+    /// Render event induced by this command.
     #[must_use]
     pub fn render_event(&self) -> RenderEvent {
         if self.affects_composite() {
-            // Le blending global dépend de ce nœud : recomposite complet
+            // Global blending depends on this node: full recomposite
             RenderEvent::FullInvalidation
         } else {
             RenderEvent::NodeInvalidated(self.target())
@@ -282,21 +282,21 @@ impl Command {
     }
 }
 
-/// Révision monotone du rendu : incrémentée chaque fois qu'un nouveau
-/// composite est produit. L'UI l'attache à la texture affichée et
-/// ignore tout rendu dont la révision est obsolète (réponse en retard
-/// après coalescence d'un geste continu).
+/// Monotonic render revision: incremented each time a new composite is
+/// produced. The UI attaches it to the displayed texture and ignores any
+/// render whose revision is stale (late response after coalescing a
+/// continuous gesture).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RenderRevision(pub u64);
 
 impl RenderRevision {
-    /// Avance d'un cran et retourne la nouvelle révision.
+    /// Advances one step and returns the new revision.
     pub fn bump(&mut self) -> Self {
         self.0 = self.0.wrapping_add(1);
         *self
     }
 
-    /// Vrai si `self` est strictement plus récente que `other`.
+    /// True if `self` is strictly newer than `other`.
     #[must_use]
     pub fn is_newer_than(self, other: Self) -> bool {
         self > other
@@ -329,7 +329,7 @@ mod tests {
                 new: 20.0,
             }
         );
-        // Double inverse = identité
+        // Double inverse = identity
         assert_eq!(cmd.inverse().inverse(), cmd);
     }
 
@@ -350,7 +350,7 @@ mod tests {
             old: 70.0,
             new: 80.0,
         }));
-        // Geste 50→60→70→80 coalescé : old=50 (début), new=80 (fin)
+        // Coalesced 50→60→70→80 gesture: old=50 (start), new=80 (end)
         assert_eq!(
             base,
             Command::SetOpacity {

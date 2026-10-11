@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Icône : primitive d'affichage d'une icône sémantique.
+//! Icon: display primitive for a semantic icon.
 //!
-//! Fin wrapper autour de [`crate::icons::Icon`] : la primitive ne
-//! résout aucun glyphe elle-même, elle délègue au registre.
+//! Thin wrapper around [`crate::icons::Icon`]: the primitive
+//! resolves no glyph itself, it delegates to the registry.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::primitives::Icon;
 //! # use ui_kit::icons::Icon as IconKind;
@@ -35,7 +35,7 @@
 
 use crate::icons::{Icon as IconKind, IconRegistry};
 
-/// Glyphe affichable via une API builder.
+/// Glyph displayable via a builder API.
 #[derive(Debug, Clone, Copy)]
 pub struct Icon {
     kind: IconKind,
@@ -44,7 +44,7 @@ pub struct Icon {
 }
 
 impl Icon {
-    /// Crée une icône depuis une icône sémantique
+    /// Creates an icon from a semantic icon
     /// ([`crate::icons::Icon`]).
     pub fn new(kind: IconKind) -> Self {
         Self {
@@ -54,21 +54,21 @@ impl Icon {
         }
     }
 
-    /// Taille du glyphe (préférer `theme.typography.icon_size`).
+    /// Glyph size (prefer `theme.typography.icon_size`).
     #[must_use]
     pub fn size(mut self, size: f32) -> Self {
         self.size = Some(size);
         self
     }
 
-    /// Teinte du glyphe.
+    /// Glyph tint.
     #[must_use]
     pub fn color(mut self, color: egui::Color32) -> Self {
         self.color = Some(color);
         self
     }
 
-    /// Affiche l'icône et retourne la réponse egui.
+    /// Displays the icon and returns the egui response.
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
         let registry = IconRegistry::new();
         let mut glyph = match self.size {

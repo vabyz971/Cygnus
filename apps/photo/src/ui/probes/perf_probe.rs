@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Sondes de mesure TEMPORAIRES (diagnostic des ralentissements egui).
+//! TEMPORARY measurement probes (egui slowdown diagnostics).
 //!
-//! Chaque test mesure une des 8 opérations et affiche les durées via
-//! `eprintln` (lire avec `cargo test -- --nocapture`). Les assertions
-//! ne portent que sur des faits structurels (pas de seuils
-//! temporels, trop fragiles en CI) :
-//! - chaque mutation produit une réponse avec recomposite complet ;
-//! - le cache d'apparence rend le 2e composite plus rapide (HIT) ;
-//! - chaque `update` de texture crée un nouvel id (realloc GPU).
+//! Each test measures one of 8 operations and prints durations via
+//! `eprintln` (read with `cargo test -- --nocapture`). Assertions
+//! only cover structural facts (no timing
+//! thresholds, too fragile in CI):
+//! - each mutation produces a response with a full recomposite;
+//! - the appearance cache makes the 2nd composite faster (HIT);
+//! - each texture `update` creates a new id (GPU realloc).
 //!
-//! À SUPPRIMER une fois le rapport validé et les correctifs en place.
+//! DELETE once the report is validated and fixes are in.
 
 use super::super::engine_bridge::{EngineWorker, PhotoEngineCommand, PhotoEngineResponse};
 use image::GenericImageView;
@@ -32,7 +32,7 @@ use photo_engine::{Document, LayerNode, PixelLayer};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Dimensions 4K de référence (3840×2160×4 ≈ 33 Mo par buffer).
+/// Reference 4K dimensions (3840×2160×4 ≈ 33 MB per buffer).
 const W4K: u32 = 3840;
 const H4K: u32 = 2160;
 
@@ -42,7 +42,7 @@ fn image_4k(pixel: [u8; 4]) -> Arc<image::DynamicImage> {
     ))
 }
 
-/// Document 4K à 3 calques opaques (fond, milieu, dessus).
+/// 4K document with 3 opaque layers (bottom, middle, top).
 fn doc_4k() -> Document {
     let mut doc = Document::new(W4K, H4K);
     for (name, px) in [
@@ -55,7 +55,7 @@ fn doc_4k() -> Document {
     doc
 }
 
-/// Affiche les métriques de la dernière commande du worker.
+/// Prints the last worker command's metrics.
 fn report(worker: &EngineWorker) {
     let m = worker.metrics.last.as_ref().expect("metriques");
     eprintln!(
@@ -92,7 +92,7 @@ fn probe_1_open_image_4k() {
     let dir = std::env::temp_dir().join(format!("cygnus-perf-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("dossier");
     let path = dir.join("photo4k.png");
-    // Fichier 4K synthétique (écriture mesurée séparément).
+    // Synthetic 4K file (write measured separately).
     let t = Instant::now();
     image::save_buffer(
         &path,
@@ -120,7 +120,7 @@ fn probe_2_toggle_visibility_4k() {
     let id = layer_id(&worker, 0);
     worker.apply(PhotoEngineCommand::ToggleLayerVisibility(id));
     report(&worker);
-    // Structurel : la mutation produit une réponse avec aperçu recomposé.
+    // Structural: the mutation produces a response with a recomposited preview.
     assert_eq!(worker.metrics.responses, 2);
     assert_eq!(worker.metrics.previews, 2);
 }
@@ -144,7 +144,7 @@ fn probe_3_opacity_slider_drag_4k() {
         total_ms / 20
     );
     report(&worker);
-    // Structurel : 1 réponse recomposée PAR tick (pas de coalescence rendu).
+    // Structural: 1 recomposited response PER tick (no render coalescing).
     assert_eq!(worker.metrics.responses, responses_before + 20);
     assert_eq!(worker.metrics.previews, responses_before + 20);
 }
@@ -196,7 +196,7 @@ fn probe_6_zoom_pan_state_only() {
     }
     let ns_per_op = t.elapsed().as_nanos() / 200_000;
     eprintln!("zoom/pan: {ns_per_op}ns/op (pur état, zéro traffic worker)");
-    // Structurel : aucun envoi worker possible (état local uniquement).
+    // Structural: no worker send possible (local state only).
     assert!(viewport.zoom() > 1.0);
 }
 
@@ -234,7 +234,7 @@ fn probe_cache_second_composite_hits() {
     let second = doc.composite_preview().expect("composite");
     let hot_us = t.elapsed().as_micros();
     eprintln!("composite froid: {cold_us}us, chaud: {hot_us}us");
-    // Structurel : le cache d'apparence rend le 2e passage plus rapide.
+    // Structural: the appearance cache makes the 2nd pass faster.
     assert!(hot_us < cold_us, "le cache doit accélérer le 2e composite");
     assert_eq!(first.dimensions(), second.dimensions());
 }
@@ -250,9 +250,9 @@ fn probe_texture_update_reuses_slot() {
     cache.update(&ctx, "probe", image);
     let (id2, _) = cache.texture().expect("texture");
     eprintln!("texture id avant/après update mêmes dimensions: {id1:?} -> {id2:?}");
-    // Structurel : mêmes dimensions = mise à jour en place (id stable).
+    // Structural: same dimensions = in-place update (stable id).
     assert_eq!(id1, id2, "update doit réutiliser le slot GPU");
-    // Dimensions différentes = realloc propre.
+    // Different dimensions = clean realloc.
     let big = egui::ColorImage::new([128, 64], vec![egui::Color32::BLUE; 128 * 64]);
     cache.update(&ctx, "probe", big);
     let (id3, size3) = cache.texture().expect("texture");
@@ -276,8 +276,8 @@ fn probe_apply_response_upload_cost() {
     );
     assert_eq!(ui.responses_applied, 1);
     assert!(ui.texture_uploads >= 1);
-    // Décomposition conversion RGBA→ColorImage vs mise à jour texture
-    // (mêmes octets que l'aperçu reçu, hors GPU réel en headless).
+    // RGBA→ColorImage conversion vs texture update breakdown
+    // (same bytes as the received preview, no real GPU in headless).
     if let Some(preview) = ui.last_preview.as_ref() {
         let t = Instant::now();
         let image = egui::ColorImage::from_rgba_unmultiplied(

@@ -14,30 +14,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Rayons de coins du thème Cygnus.
+//! Cygnus theme corner radii.
 //!
-//! SEULE source des rayons : les `corner_radius` des `egui::Frame`
-//! et boutons custom référencent ces tokens.
+//! SINGLE source of radii: the `corner_radius` of `egui::Frame`
+//! and custom buttons reference these tokens.
 
-/// Rayons de coins du thème.
+/// Theme corner radii.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusRadius {
-    /// Petit rayon (2px).
+    /// Small radius (2px).
     pub xs: f32,
-    /// Pas d'arrondi.
+    /// No rounding.
     pub none: f32,
-    /// Petit rayon (4px).
+    /// Small radius (4px).
     pub sm: f32,
-    /// Rayon moyen (8px).
+    /// Medium radius (8px).
     pub md: f32,
-    /// Grand rayon (12px).
+    /// Large radius (12px).
     pub lg: f32,
-    /// Rayon "pilule" (cercles).
+    /// "Pill" radius (circles).
     pub full: f32,
 }
 
 impl CygnusRadius {
-    /// Rayons du thème sombre.
+    /// Dark-theme radii.
     pub fn dark() -> Self {
         Self {
             none: 0.0,
@@ -51,7 +51,7 @@ impl CygnusRadius {
 }
 
 impl Default for CygnusRadius {
-    /// Rayons par défaut.
+    /// Default radii.
     fn default() -> Self {
         Self::dark()
     }

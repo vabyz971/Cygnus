@@ -14,35 +14,35 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Styles de peinture : couleurs, remplissages, contours, booléens.
+//! Paint styles: colors, fills, strokes, booleans.
 //!
-//! Données pures (aucune rasterisation) : le backend convertit ces
-//! descriptions vers ses propres pinceaux (Vello ou autre).
+//! Pure data (no rasterization): the backend converts these
+//! descriptions into its own brushes (Vello or other).
 
 use datatypes::Vec2;
 
-/// Couleur RVBA flottante 0..=1 (bornée à la construction).
+/// Floating-point RVBA color 0..=1 (clamped at construction).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Color {
-    /// Rouge.
+    /// Red.
     pub r: f32,
-    /// Vert.
+    /// Green.
     pub g: f32,
-    /// Bleu.
+    /// Blue.
     pub b: f32,
     /// Alpha (1 = opaque).
     pub a: f32,
 }
 
 impl Color {
-    /// Noir opaque.
+    /// Opaque black.
     pub const BLACK: Self = Self {
         r: 0.0,
         g: 0.0,
         b: 0.0,
         a: 1.0,
     };
-    /// Blanc opaque.
+    /// Opaque white.
     pub const WHITE: Self = Self {
         r: 1.0,
         g: 1.0,
@@ -57,7 +57,7 @@ impl Color {
         a: 0.0,
     };
 
-    /// Nouvelle couleur (composantes bornées à 0..=1).
+    /// New color (components clamped to 0..=1).
     #[must_use]
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self {
@@ -75,17 +75,17 @@ impl Color {
     }
 }
 
-/// Arrêt de dégradé (offset 0..=1 borné).
+/// Gradient stop (offset 0..=1, clamped).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GradientStop {
     /// Position 0..=1.
     pub offset: f32,
-    /// Couleur.
+    /// Color.
     pub color: Color,
 }
 
 impl GradientStop {
-    /// Nouvel arrêt (offset borné).
+    /// New stop (clamped offset).
     #[must_use]
     pub fn new(offset: f32, color: Color) -> Self {
         Self {
@@ -95,79 +95,79 @@ impl GradientStop {
     }
 }
 
-/// Dégradé linéaire entre deux points.
+/// Linear gradient between two points.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LinearGradient {
-    /// Départ (offset 0).
+    /// Start (offset 0).
     pub start: Vec2,
-    /// Arrivée (offset 1).
+    /// End (offset 1).
     pub end: Vec2,
-    /// Arrêts (ordre d'application).
+    /// Stops (in application order).
     pub stops: Vec<GradientStop>,
 }
 
-/// Dégradé radial (centre + rayon).
+/// Radial gradient (center + radius).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RadialGradient {
-    /// Centre (offset 0).
+    /// Center (offset 0).
     pub center: Vec2,
-    /// Rayon (> 0 attendu, non vérifié ici — affaire du backend).
+    /// Radius (> 0 expected, not verified here — backend's business).
     pub radius: f32,
-    /// Arrêts (ordre d'application).
+    /// Stops (in application order).
     pub stops: Vec<GradientStop>,
 }
 
-/// Remplissage d'une forme.
+/// Fill of a shape.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fill {
-    /// Aplat.
+    /// Solid color.
     Solid(Color),
-    /// Dégradé linéaire.
+    /// Linear gradient.
     Linear(LinearGradient),
-    /// Dégradé radial.
+    /// Radial gradient.
     Radial(RadialGradient),
 }
 
-/// Terminaison de contour.
+/// Stroke cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineCap {
-    /// Coupé net.
+    /// Butt.
     Butt,
-    /// Demi-cercle.
+    /// Round.
     Round,
-    /// Carré dépassant.
+    /// Square.
     Square,
 }
 
-/// Jointure de contour.
+/// Stroke join.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineJoin {
-    /// Onglet (biseau extérieur).
+    /// Miter (outer bevel).
     Miter,
-    /// Arrondi.
+    /// Round.
     Round,
-    /// Biseauté.
+    /// Beveled.
     Bevel,
 }
 
-/// Contour d'une forme.
+/// Stroke of a shape.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Stroke {
-    /// Couleur du trait.
+    /// Stroke color.
     pub color: Color,
-    /// Épaisseur en unités dessin (≥ 0).
+    /// Thickness in drawing units (≥ 0).
     pub width: f32,
-    /// Terminaison.
+    /// Cap.
     pub cap: LineCap,
-    /// Jointure.
+    /// Join.
     pub join: LineJoin,
 }
 
 impl Stroke {
-    /// Nouveau contour (épaisseur négative ramenée à 0).
+    /// New stroke (negative thickness clamped to 0).
     #[must_use]
     pub fn new(color: Color, width: f32) -> Self {
         Self {
@@ -179,8 +179,8 @@ impl Stroke {
     }
 }
 
-/// Opération booléenne entre formes (modèle : l'ÉVALUATION — tessellation
-/// d'intersection — appartient au backend, pas au modèle).
+/// Boolean operation between shapes (model: EVALUATION — intersection
+/// tessellation — belongs to the backend, not the model).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BooleanOp {
@@ -188,9 +188,9 @@ pub enum BooleanOp {
     Union,
     /// Intersection.
     Intersection,
-    /// A moins B.
+    /// A minus B.
     Difference,
-    /// Ou exclusif.
+    /// Exclusive or.
     Xor,
 }
 

@@ -14,24 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Mesure du texte : le trait que le layout appelle et que `text-engine`
-//! implémentera pour de vrai.
+//! Text measurement: the trait layout calls and `text-engine`
+//! will implement for real.
 //!
-//! Le layout a besoin d'EXTENSIONS (largeur/hauteur d'un span dans une
-//! largeur max), jamais de glyphes : le façonnage (shaping, fragmentation,
-//! fontes) vit dans `text-engine`. [`NullMeasurer`] donne des avances
-//! déterministes pour les tests et les maquettes sans fontes.
+//! Layout needs EXTENTS (width/height of a span within a
+//! max width), never glyphs: shaping (shaping, fragmentation,
+//! fonts) lives in `text-engine`. [`NullMeasurer`] provides deterministic
+//! advances for tests and fontless mockups.
 
-/// Mesure d'un span texte : `(largeur, hauteur)` pour `font_size` dans
-/// `max_width` (retours `\n` = lignes). Pure et déterministe.
+/// Measures a text span: `(width, height)` for `font_size` within
+/// `max_width` (returns `\n` = lines). Pure and deterministic.
 pub trait TextMeasurer {
-    /// Mesure `text` (points `font_size`, enveloppe `max_width`).
+    /// Measures `text` (`font_size` points, `max_width` envelope).
     fn measure(&self, text: &str, font_size: f32, max_width: f32) -> (f32, f32);
 }
 
-/// Mesureur nul déterministe : avance `0.6 × corps` par caractère,
-/// interligne `1.2 × corps`, lignes coupées à `max_width` (sans césure —
-/// l'habillage fin appartient au façonneur réel).
+/// Deterministic null measurer: `0.6 × size` advance per character,
+/// `1.2 × size` leading, lines broken at `max_width` (no breaking —
+/// fine wrapping belongs to the real shaper).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NullMeasurer;
 
@@ -62,9 +62,9 @@ mod tests {
         assert_eq!(m.measure("", 10.0, 100.0), (0.0, 12.0));
     }
 
-    /// Le layout ne façonne jamais : cet adaptateur (test uniquement)
-    /// prouve que `text-engine` peut nourrir `TextMeasurer` sans que le
-    /// layout ne dépende du façonnage au runtime (dev-dependency seule).
+    /// Layout never shapes: this adapter (test-only)
+    /// proves `text-engine` can feed `TextMeasurer` without
+    /// layout depending on shaping at runtime (dev-dependency only).
     #[test]
     fn text_engine_nourrit_le_mesureur() {
         struct EngineMeasurer;
@@ -77,9 +77,9 @@ mod tests {
         }
 
         let m = EngineMeasurer;
-        // Même résultat que le façonneur direct (une ligne, avances 0.6).
+        // Same result as the direct shaper (one line, 0.6 advances).
         assert_eq!(m.measure("ab", 10.0, 1000.0), (12.0, 12.0));
-        // …et la césure traverse l'adaptateur.
+        // …and breaking passes through the adapter.
         assert_eq!(m.measure("aa bb", 10.0, 20.0), (12.0, 24.0));
     }
 }

@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Thème central Cygnus : assemblage des tokens visuels.
+//! Central Cygnus theme: visual-token assembly.
 //!
-//! [`CygnusTheme`] est la SEULE source des valeurs visuelles
-//! (couleurs, espacements, rayons, typo, tailles, bordures). Les
-//! composants reçoivent le thème en paramètre (`&CygnusTheme`) et ne
-//! codent jamais de valeur en dur. Pour la compatibilité, les types
-//! restent aussi accessibles via [`super::tokens`].
+//! [`CygnusTheme`] is the SINGLE source of visual values
+//! (colors, spacing, radii, typo, sizes, borders). Components
+//! take the theme as a parameter (`&CygnusTheme`) and never
+//! hardcode a value. For compatibility, the types
+//! remain also reachable via [`super::tokens`].
 
 use super::borders::CygnusBorders;
 use super::colors::CygnusColors;
@@ -29,25 +29,25 @@ use super::sizes::CygnusSizes;
 use super::spacing::CygnusSpacing;
 use super::typography::CygnusTypography;
 
-/// Thème complet de Cygnus.
+/// Full Cygnus theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusTheme {
-    /// Couleurs.
+    /// Colors.
     pub colors: CygnusColors,
-    /// Espacements.
+    /// Spacing.
     pub spacing: CygnusSpacing,
-    /// Rayons.
+    /// Radii.
     pub radius: CygnusRadius,
-    /// Typographie.
+    /// Typography.
     pub typography: CygnusTypography,
-    /// Tailles de contrôles.
+    /// Control sizes.
     pub sizes: CygnusSizes,
-    /// Bordures.
+    /// Borders.
     pub borders: CygnusBorders,
 }
 
 impl CygnusTheme {
-    /// Thème sombre par défaut de Cygnus.
+    /// Default Cygnus dark theme.
     pub fn dark() -> Self {
         Self {
             colors: CygnusColors::dark(),
@@ -61,13 +61,13 @@ impl CygnusTheme {
 }
 
 impl Default for CygnusTheme {
-    /// Thème sombre par défaut.
+    /// Default dark theme.
     fn default() -> Self {
         Self::dark()
     }
 }
 
-/// Luminance relative approximative (canal par canal, sans gamma).
+/// Approximate relative luminance (per-channel, no gamma).
 #[cfg(test)]
 fn luminance(color: egui::Color32) -> f32 {
     0.2126 * f32::from(color.r()) + 0.7152 * f32::from(color.g()) + 0.0722 * f32::from(color.b())
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn dark_theme_fg_contrasts_bg() {
-        // Le texte principal doit fortement contraster avec le fond principal.
+        // Primary text must strongly contrast with the primary background.
         let theme = CygnusTheme::dark();
         let contrast =
             (luminance(theme.colors.fg_primary) - luminance(theme.colors.bg_primary)).abs();

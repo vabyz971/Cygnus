@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests des tuiles : modèle, invalidation, cache, scheduler.
+//! Tile tests: model, invalidation, cache, scheduler.
 
 use super::*;
 use crate::{Padding, TileCoord, TileExtent, TileScheduler, Viewport};
@@ -26,13 +26,13 @@ fn grille_test() -> TileGrid {
 #[test]
 fn rectangle_vers_tuiles_cas_nominal() {
     let grid = grille_test();
-    // 1920/256 = 7.5 → 8 colonnes ; 1080/256 = 4.22 → 5 lignes.
+    // 1920/256 = 7.5 → 8 columns; 1080/256 = 4.22 → 5 rows.
     assert_eq!(grid.tile_count(0), (8, 5));
-    // Coin haut-gauche : une seule tuile.
+    // Top-left corner: a single tile.
     let range = grid.tiles_for_rect(&TileRegion::new(0, 0, 10, 10), 0);
     assert_eq!((range.x0, range.y0, range.x1, range.y1), (0, 0, 0, 0));
     assert_eq!(range.count(), 1);
-    // À cheval sur 2×2 tuiles (bord exclusif : 256 appartient à la suivante).
+    // Straddling 2×2 tiles (exclusive edge: 256 belongs to the next one).
     let range = grid.tiles_for_rect(&TileRegion::new(200, 200, 100, 100), 0);
     assert_eq!((range.x0, range.y0, range.x1, range.y1), (0, 0, 1, 1));
     assert_eq!(range.count(), 4);
@@ -43,35 +43,35 @@ fn tuiles_vers_rectangle_englobant() {
     let grid = grille_test();
     let range = grid.tiles_for_rect(&TileRegion::new(200, 200, 100, 100), 0);
     let region = range.to_region(&grid);
-    // Englobe la source et s'aligne sur la grille.
+    // Encloses the source and aligns to the grid.
     assert_eq!(region, TileRegion::new(0, 0, 512, 512));
     assert!(
         !region
             .intersect(TileRegion::new(200, 200, 100, 100))
             .is_empty()
     );
-    // Plage vide → région vide (aller-retour sûr).
+    // Empty range → empty region (safe round-trip).
     assert!(TileRange::empty(0).to_region(&grid).is_empty());
 }
 
 #[test]
 fn clipping_bords_et_hors_surface() {
     let grid = grille_test();
-    // Dépassement bas-droit : clippé aux tuiles existantes.
+    // Bottom-right overflow: clipped to the existing tiles.
     let range = grid.tiles_for_rect(&TileRegion::new(1800, 1000, 500, 500), 0);
     assert_eq!((range.x0, range.y0, range.x1, range.y1), (7, 3, 7, 4));
-    // Entièrement hors surface : vide (jamais de tuiles fantômes).
+    // Fully off-surface: empty (never ghost tiles).
     assert!(
         grid.tiles_for_rect(&TileRegion::new(5000, 5000, 100, 100), 0)
             .is_empty()
     );
     assert!(grid.tiles_for_rect(&TileRegion::EMPTY, 0).is_empty());
-    // Niveau inconnu : vide.
+    // Unknown level: empty.
     assert!(
         grid.tiles_for_rect(&TileRegion::new(0, 0, 100, 100), 9)
             .is_empty()
     );
-    // Coordonnées négatives : plancher correct (pixel -1 ⇒ tuile -1).
+    // Negative coordinates: correct floor (pixel -1 ⇒ tile -1).
     let range = grid.tiles_for_rect(&TileRegion::new(-300, -300, 100, 100), 0);
     assert!(range.is_empty(), "hors surface à gauche/haut");
     let rect = grid.tile_rect(TileId::new(0, -1, -1));
@@ -85,7 +85,7 @@ fn invalidation_elargit_du_padding() {
     let sans = grid.invalidate(&rect, 0, Padding::ZERO);
     let avec = grid.invalidate(&rect, 0, Padding::new(300));
     assert!(avec.count() > sans.count());
-    // Padding nul = rect seul.
+    // Zero padding = rect alone.
     assert_eq!(sans, grid.tiles_for_rect(&rect, 0));
 }
 
@@ -97,7 +97,7 @@ fn padding_rayon_de_flou() {
     assert_eq!(Padding::for_blur_radius(-5.0), Padding::ZERO);
     assert_eq!(Padding::for_blur_radius(f32::NAN), Padding::ZERO);
     assert_eq!(Padding::for_blur_radius(f32::INFINITY), Padding::ZERO);
-    // Élargissement symétrique exact.
+    // Exact symmetric expansion.
     let padded = TileRegion::new(100, 100, 50, 50).pad(Padding::new(20));
     assert_eq!(padded, TileRegion::new(80, 80, 90, 90));
 }
@@ -110,12 +110,12 @@ fn invalidations_chevauchantes_fusionnees_par_le_bitset() {
     let n2 =
         dirty.mark_range(grid.invalidate(&TileRegion::new(200, 200, 400, 400), 0, Padding::ZERO));
     assert!(n1 > 0 && n2 > 0);
-    // Compteur exact : le recouvrement (2×2 tuiles) n'est compté qu'une fois.
+    // Exact count: the overlap (2×2 tiles) is counted only once.
     assert_eq!((n1, n2), (4, 5));
     let count = dirty.iter_dirty().count() as u64;
     assert_eq!(dirty.dirty_count(), count);
     assert_eq!(count, 9);
-    // Re-marquage : zéro nouveauté.
+    // Re-marking: zero new tiles.
     assert_eq!(
         dirty.mark_range(grid.invalidate(&TileRegion::new(0, 0, 300, 300), 0, Padding::ZERO)),
         0
@@ -137,7 +137,7 @@ fn revisions_distinguent_les_contenus() {
     assert!(cache.get(id, r1).is_some(), "même révision = hit");
     assert!(cache.get(id, r2).is_none(), "autre révision = miss");
     assert_eq!(cache.revision_of(id), Some(r1));
-    // Clés composites distinctes.
+    // Distinct composite keys.
     assert_ne!(TileKey::new(id, r1), TileKey::new(id, r2));
     assert_eq!(TileKey::new(id, r1), TileKey::new(id, r1));
 }
@@ -169,14 +169,14 @@ fn cache_lru_evict_et_rend_le_handle() {
     );
     assert!(cache.insert(a, Revision(1), mk(1)).is_none());
     assert!(cache.insert(b, Revision(1), mk(2)).is_none());
-    // Touche A (récent), insère C : B, le moins récent, est rendu.
+    // Touch A (recent), insert C: B, the least recent, is handed back.
     assert!(cache.get(a, Revision(1)).is_some());
     let evicted = cache.insert(c, Revision(1), mk(3)).expect("évincé");
     assert_eq!(&evicted.data[..], &[2, 2, 2, 2]);
     assert_eq!(cache.len(), 2);
     assert!(cache.get(b, Revision(1)).is_none());
     assert_eq!(cache.stats().evicted, 1);
-    // Invalidation rend le handle (le backend libère sa texture).
+    // Invalidation hands the handle back (the backend frees its texture).
     let dropped = cache.invalidate(a).expect("présent");
     assert_eq!(&dropped.data[..], &[1, 1, 1, 1]);
     assert!(!cache.invalidate(a).is_some());
@@ -184,7 +184,7 @@ fn cache_lru_evict_et_rend_le_handle() {
 
 #[test]
 fn poignees_cpu_gpu_separees_par_construction() {
-    // Le GPU ne manipule que des jetons : aucune texture ici.
+    // The GPU only handles tokens: no textures here.
     let mut gpu = GpuTileCache::new(4);
     let id = TileId::new(0, 0, 0);
     assert!(
@@ -199,7 +199,7 @@ fn poignees_cpu_gpu_separees_par_construction() {
         .is_none()
     );
     assert_eq!(gpu.get(id, Revision(3)).expect("hit").token, 42);
-    // Génération périmée = miss (re-upload côté backend).
+    // Stale generation = miss (backend-side re-upload).
     assert!(
         gpu.insert(
             id,
@@ -219,23 +219,23 @@ fn poignees_cpu_gpu_separees_par_construction() {
 fn scheduler_visibles_puis_proches_puis_grossieres() {
     let grid = TileGrid::new(256, 1024, 1024, 3);
     let mut dirty = DirtyTiles::new(&grid);
-    // Sale partout aux niveaux 0 et 2.
+    // Dirty everywhere at levels 0 and 2.
     dirty.mark_range(grid.tiles_for_rect(&TileRegion::new(0, 0, 1024, 1024), 0));
     dirty.mark_range(grid.tiles_for_rect(&TileRegion::new(0, 0, 1024, 1024), 2));
     let view = Viewport::new(TileRegion::new(0, 0, 256, 256), (128, 128));
     let plan = TileScheduler.plan(&dirty, &grid, &view, None);
     assert_eq!(plan.len() as u64, dirty.dirty_count());
-    // 1) Le visible (0,0 niveau 0) sort avant tout hors-écran.
+    // 1) Visible (0,0 at level 0) comes before anything off-screen.
     let pos = |id| plan.iter().position(|&n| n == id).expect("planifié");
     let visible = TileId::new(0, 0, 0);
     let offscreen = TileId::new(0, 3, 3);
     assert!(pos(visible) < pos(offscreen));
-    // 2) À visibilité égale, le proche du focus d'abord.
+    // 2) At equal visibility, nearest the focus first.
     let near = TileId::new(0, 1, 0);
     let far = TileId::new(0, 3, 0);
     assert!(pos(near) < pos(far));
-    // 3) Basse résolution avant haute, à visibilité et distance égales :
-    // tout visible, focus équidistant de (0,0)@L0 et (0,0)@L2.
+    // 3) Low resolution before high, at equal visibility and distance:
+    // all visible, focus equidistant from (0,0)@L0 and (0,0)@L2.
     let wide = Viewport::new(TileRegion::new(0, 0, 1024, 1024), (320, 320));
     let plan = TileScheduler.plan(&dirty, &grid, &wide, None);
     let pos = |id| plan.iter().position(|&n| n == id).expect("planifié");
@@ -247,11 +247,11 @@ fn scheduler_hors_ecran_en_dernier_et_budget_progressif() {
     let grid = TileGrid::new(256, 1024, 1024, 1);
     let mut dirty = DirtyTiles::new(&grid);
     dirty.mark_range(grid.tiles_for_rect(&TileRegion::new(0, 0, 1024, 1024), 0));
-    // Fenêtre sur la première tuile uniquement.
+    // Window on the first tile only.
     let view = Viewport::new(TileRegion::new(0, 0, 256, 256), (0, 0));
     let total = dirty.dirty_count();
     assert_eq!(total, 16);
-    // Exécution progressive par budgets de 5 : 5 + 5 + 5 + 1.
+    // Progressive execution in budgets of 5: 5 + 5 + 5 + 1.
     let mut out = Vec::new();
     let mut rounds = 0;
     while !dirty.is_empty() {
@@ -263,7 +263,7 @@ fn scheduler_hors_ecran_en_dernier_et_budget_progressif() {
         rounds += 1;
     }
     assert_eq!(rounds, 4);
-    // La première planifiée est la tuile visible.
+    // The first scheduled tile is the visible one.
     let mut dirty2 = DirtyTiles::new(&grid);
     dirty2.mark_range(grid.tiles_for_rect(&TileRegion::new(0, 0, 1024, 1024), 0));
     let first = TileScheduler.plan(&dirty2, &grid, &view, Some(1));
@@ -273,18 +273,18 @@ fn scheduler_hors_ecran_en_dernier_et_budget_progressif() {
 #[test]
 fn tuile_mip_couvre_le_bon_rectangle() {
     let grid = TileGrid::new(256, 1024, 1024, 3);
-    // Niveau 1 : surface 512×512 → tuile (1,0) = x ∈ [256,512), y ∈ [0,256).
+    // Level 1: 512×512 surface → tile (1,0) = x ∈ [256,512), y ∈ [0,256).
     assert_eq!(grid.tile_count(1), (2, 2));
     assert_eq!(
         grid.tile_rect(TileId::new(1, 1, 0)),
         TileRegion::new(256, 0, 256, 256)
     );
-    // Niveau 1 → L0 : ×2.
+    // Level 1 → L0: ×2.
     assert_eq!(
         grid.tile_rect_l0(TileId::new(1, 1, 0)),
         TileRegion::new(512, 0, 512, 512)
     );
-    // Invalidation mip conservative : 1 px niveau 0 touche une tuile niveau 2.
+    // Conservative mip invalidation: 1 level-0 px touches one level-2 tile.
     let range = grid.tiles_for_rect(&TileRegion::new(900, 900, 1, 1), 2);
     assert_eq!(range.count(), 1);
     assert!(range.to_region(&grid).contains(900, 900));

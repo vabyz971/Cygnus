@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,8 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Commandes du pont moteur : [`PhotoEngineCommand`], routage de rendu
-//! ([`render_routing`]) et coalescence de lots ([`fold_batch`]).
+//! Engine bridge commands: [`PhotoEngineCommand`], render routing
+//! ([`render_routing`]) and batch coalescing ([`fold_batch`]).
 
 use super::responses::PhotoEngineResponse;
 use crate::ui::features::layers::{
@@ -32,204 +32,204 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
-/// Commandes UI → worker moteur.
+/// UI → engine worker commands.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PhotoEngineCommand {
-    /// Basculer la visibilité d'un calque.
+    /// Toggle a layer's visibility.
     ToggleLayerVisibility(Uuid),
-    /// Réordonner par ids (drop hiérarchique avant/après : même
-    /// parent ou non — nesting libre via `reorder_before` moteur).
+    /// Reorder by ids (hierarchical before/after drop: same
+    /// parent or not — free nesting via the engine's `reorder_before`).
     ReorderNodes {
-        /// Calque déplacé.
+        /// Moved layer.
         dragged: Uuid,
-        /// Calque cible.
+        /// Target layer.
         target: Uuid,
-        /// Vrai = avant la cible, faux = après.
+        /// True = before the target, false = after.
         before: bool,
     },
-    /// Imbriquer un calque en tête d'un groupe (`move_into` moteur).
+    /// Nest a layer at a group's head (engine `move_into`).
     MoveIntoGroup {
-        /// Calque déplacé.
+        /// Moved layer.
         layer: Uuid,
-        /// Groupe d'accueil.
+        /// Host group.
         group: Uuid,
     },
-    /// Replier / déplier un groupe (affichage seul : snapshot sans
-    /// nouveau composite).
+    /// Collapse / expand a group (display only: snapshot without
+    /// a new composite).
     ToggleGroupCollapsed(Uuid),
-    /// Régler l'opacité d'un calque (unités moteur 0..=100).
+    /// Set a layer's opacity (engine units 0..=100).
     SetOpacity { layer: Uuid, opacity: f32 },
-    /// Régler le mode de fusion d'un calque (choix discret).
+    /// Set a layer's blend mode (discrete choice).
     SetBlendMode { layer: Uuid, mode: BlendMode },
-    /// Annuler la dernière mutation.
+    /// Undo the last mutation.
     Undo,
-    /// Rétablir la dernière annulation.
+    /// Redo the last undo.
     Redo,
-    /// Annuler jusqu'à `steps` mutations (saut d'état du panneau
-    /// Historique, O003) : applique ce qui existe (au plus la pile),
-    /// un seul rendu.
+    /// Undo up to `steps` mutations (History panel
+    /// state jump, O003): applies whatever exists (at most the stack),
+    /// a single render.
     UndoSteps {
-        /// Nombre de pas en arrière demandés.
+        /// Number of requested backward steps.
         steps: u32,
     },
-    /// Rétablir jusqu'à `steps` mutations (O003, symétrique).
+    /// Redo up to `steps` mutations (O003, symmetric).
     RedoSteps {
-        /// Nombre de pas en avant demandés.
+        /// Number of requested forward steps.
         steps: u32,
     },
-    /// Commiter un trait de pinceau/gomme sur un calque pixels.
+    /// Commit a brush/eraser stroke on a pixel layer.
     ///
-    /// `points` en pixels image (espace monde du viewport). La
-    /// transform du calque est supposée identité en Phase 4 (cas des
-    /// calques photo frais) ; le commit transform-aware complet
-    /// (cf. `paint::commit_stroke`) viendra en Phase 5.
+    /// `points` in image pixels (viewport world space). The
+    /// layer transform is assumed identity in Phase 4 (the fresh
+    /// photo layer case); the full transform-aware commit
+    /// (see `paint::commit_stroke`) will come in Phase 5.
     PaintStroke {
-        /// Calque pixels cible.
+        /// Target pixel layer.
         layer: Uuid,
-        /// Polyligne du trait (pixels image).
+        /// Stroke polyline (image pixels).
         points: Vec<(f32, f32)>,
-        /// Vrai = gomme (réduit l'alpha), faux = pinceau.
+        /// True = eraser (lowers alpha), false = brush.
         eraser: bool,
-        /// Rayon en pixels image.
+        /// Radius in image pixels.
         radius: f32,
-        /// Couleur RGB (ignorée en mode gomme).
+        /// RGB color (ignored in eraser mode).
         color: [u8; 3],
-        /// Opacité du trait 0..=1.
+        /// Stroke opacity 0..=1.
         opacity: f32,
     },
-    /// Déplacer un calque pixels de `(dx, dy)` pixels document
-    /// (outil sélection/déplacement : drag commis au relâchement).
+    /// Move a pixel layer by `(dx, dy)` document pixels
+    /// (select/move tool: drag committed on release).
     MoveLayer {
-        /// Calque pixels cible.
+        /// Target pixel layer.
         layer: Uuid,
-        /// Décalage horizontal en pixels document.
+        /// Horizontal offset in document pixels.
         dx: f32,
-        /// Décalage vertical en pixels document.
+        /// Vertical offset in document pixels.
         dy: f32,
     },
-    /// Peindre dans un masque (pinceau = blanc/révèle, gomme =
-    /// noir/masque — convention Affinity, couleur du pinceau
-    /// ignorée). Points en pixels image, comme `PaintStroke`.
+    /// Paint into a mask (brush = white/reveals, eraser =
+    /// black/hides — Affinity convention, brush color
+    /// ignored). Points in image pixels, like `PaintStroke`.
     PaintMask {
-        /// Porteur (calque ou sous-calque de filtre).
+        /// Owner (layer or filter sub-layer).
         owner: Uuid,
-        /// Masque visé.
+        /// Targeted mask.
         mask: Uuid,
-        /// Polyligne du trait (pixels image).
+        /// Stroke polyline (image pixels).
         points: Vec<(f32, f32)>,
-        /// Vrai = gomme (noir), faux = pinceau (blanc).
+        /// True = eraser (black), false = brush (white).
         eraser: bool,
-        /// Rayon en pixels image.
+        /// Radius in image pixels.
         radius: f32,
-        /// Opacité du trait 0..=1.
+        /// Stroke opacity 0..=1.
         opacity: f32,
     },
-    /// Ouvrir une image comme nouveau calque (décodage lourd, déjà
-    /// sur le thread worker donc non bloquant pour l'UI).
+    /// Open an image as a new layer (heavy decode, already
+    /// on the worker thread hence non-blocking for the UI).
     OpenImage {
-        /// Chemin du fichier image.
+        /// Image file path.
         path: PathBuf,
     },
-    /// Ajouter un calque vide transparent (dimensions du document).
+    /// Add a transparent empty layer (document dimensions).
     AddEmptyLayer,
-    /// Dupliquer un calque (nouveaux ids, inséré au-dessus).
+    /// Duplicate a layer (new ids, inserted above).
     DuplicateLayer(Uuid),
-    /// Miroir horizontal du calque pixels (O004, destructif + historique).
+    /// Horizontal mirror of the pixel layer (O004, destructive + history).
     FlipHorizontal(Uuid),
-    /// Miroir vertical du calque pixels (O004).
+    /// Vertical mirror of the pixel layer (O004).
     FlipVertical(Uuid),
-    /// Rotation 90° horaire, centre conservé (O004).
+    /// 90° clockwise rotation, center kept (O004).
     RotateClockwise(Uuid),
-    /// Rotation 90° antihoraire (O004).
+    /// 90° counterclockwise rotation (O004).
     RotateCounterclockwise(Uuid),
-    /// Rogner le calque pixels à l'intersection avec le document
-    /// (O004) : sans recouvrement = erreur propre, déjà contenu =
-    /// no-op (sans entrée d'historique).
+    /// Crop the pixel layer to its intersection with the document
+    /// (O004): no overlap = clean error, already contained =
+    /// no-op (no history entry).
     CropToDocument(Uuid),
-    /// Supprimer un calque (refusé s'il est le dernier).
+    /// Delete a layer (refused when it is the last one).
     DeleteLayer(Uuid),
-    /// Ajouter un filtre live à un calque pixels (`type_id` du registre).
+    /// Add a live filter to a pixel layer (registry `type_id`).
     AddFilter {
-        /// Calque pixels cible.
+        /// Target pixel layer.
         layer: Uuid,
-        /// Identifiant du filtre (ex. « brightness_contrast »).
+        /// Filter id (e.g. "brightness_contrast").
         filter_type: String,
     },
-    /// Renommer un calque, un filtre ou un masque (nom non vide).
+    /// Rename a layer, filter, or mask (non-empty name).
     RenameLayer { layer: Uuid, name: String },
-    /// Ajouter un masque blanc (tout visible) au calque porteur.
+    /// Add a white mask (all visible) to the owning layer.
     AddMask { layer: Uuid },
-    /// Supprimer un masque de son porteur.
+    /// Delete a mask from its owner.
     RemoveMask { owner: Uuid, mask: Uuid },
-    /// Activer/désactiver un filtre live (bascule, sans perdre ses réglages).
+    /// Enable/disable a live filter (toggle, keeping its settings).
     ToggleFilter {
-        /// Calque pixels porteur.
+        /// Owning pixel layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
     },
-    /// Régler un paramètre flottant d'un filtre live (curseurs de
-    /// l'inspecteur, geste continu coalescé comme l'opacité).
+    /// Set a float parameter of a live filter (inspector
+    /// sliders, continuous gesture coalesced like opacity).
     SetFilterParam {
-        /// Calque pixels porteur.
+        /// Owning pixel layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
-        /// Clé du paramètre (ex. `"brightness"`).
+        /// Parameter key (e.g. `"brightness"`).
         key: String,
-        /// Nouvelle valeur.
+        /// New value.
         value: f32,
     },
-    /// Activer/désactiver un masque (bascule, sans perdre ses pixels).
+    /// Enable/disable a mask (toggle, keeping its pixels).
     ToggleMask {
-        /// Porteur (calque ou sous-calque de filtre).
+        /// Owner (layer or filter sub-layer).
         owner: Uuid,
-        /// Masque visé.
+        /// Targeted mask.
         mask: Uuid,
     },
-    /// Déplacer un filtre dans la pile de son calque (`up` = vers le haut affiché).
+    /// Move a filter within its layer's stack (`up` = toward the displayed top).
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Déplacer un masque dans la pile de son porteur.
+    /// Move a mask within its owner's stack.
     MoveMask { owner: Uuid, mask: Uuid, up: bool },
-    /// Supprimer un filtre d'un calque pixels.
+    /// Delete a filter from a pixel layer.
     RemoveFilter { layer: Uuid, filter: Uuid },
-    /// Exporter le composite (format déduit de l'extension : png, jpg,
-    /// jpeg, gif — gif = première image, sans transparence animée).
+    /// Export the composite (format inferred from the extension: png, jpg,
+    /// jpeg, gif — gif = first frame, no animated transparency).
     Export {
-        /// Chemin de destination.
+        /// Destination path.
         path: PathBuf,
-        /// Qualité JPEG 1..=100 (ignorée hors JPEG).
+        /// JPEG quality 1..=100 (ignored outside JPEG).
         quality: u8,
     },
-    /// Resynchronisation sans mutation (snapshot initial au boot).
+    /// Resync without mutation (initial snapshot at boot).
     Refresh,
-    /// Enregistrer le document dans un `.cygp` (O001 : Save/Save As).
-    /// Le chemin est déjà résolu par l'app (état local) ; le worker
-    /// ne fait que sérialiser via `photo_engine::project::save`.
+    /// Save the document into a `.cygp` (O001: Save/Save As).
+    /// The path is already resolved by the app (local state); the worker
+    /// only serializes via `photo_engine::project::save`.
     SaveProject {
-        /// Chemin de destination (extension `.cygp` gérée par le picker).
+        /// Destination path (`.cygp` extension handled by the picker).
         path: PathBuf,
     },
-    /// Charger un `.cygp` en remplacement du document vivant (O001 :
-    /// Open). Historique et caches vidés : nouvelle session d'édition.
-    /// Le titre/chemin UI sont posés par l'app au dispatch (état
-    /// local) ; le worker ne renvoie que le composite (`LayersChanged`)
-    /// ou `EngineError` (version étrangère, fichier corrompu).
+    /// Load a `.cygp` replacing the live document (O001:
+    /// Open). History and caches drained: new editing session.
+    /// The UI title/path are set by the app at dispatch (local
+    /// state); the worker only returns the composite (`LayersChanged`)
+    /// or `EngineError` (foreign version, corrupt file).
     LoadProject {
-        /// Chemin du projet à charger.
+        /// Project path to load.
         path: PathBuf,
     },
-    /// Rogner l'aperçu aux dimensions du document (menu Affichage).
-    /// `false` (défaut) = plan infini : le contenu hors document reste
-    /// visible autour du cadre.
+    /// Clip the preview to the document dimensions (View menu).
+    /// `false` (default) = infinite plane: off-document content stays
+    /// visible around the frame.
     SetPreviewClip {
-        /// Vrai = aperçu rogné au document.
+        /// True = preview clipped to the document.
         clip: bool,
     },
 }
 
 impl PhotoEngineCommand {
-    /// Nom stable de la commande (instrumentation uniquement).
+    /// Stable command name (instrumentation only).
     pub fn op_name(&self) -> &'static str {
         match self {
             Self::ToggleLayerVisibility(_) => "toggle_visibility",
@@ -273,27 +273,27 @@ impl PhotoEngineCommand {
     }
 }
 
-/// Invalidation de rendu induite par une commande : sépare ce qui ne
-/// touche que l'état document (pas de nouveau composite) de ce qui
-/// exige un re-rendu. Ordre : `Unchanged < StateOnly < Composite`.
+/// Render invalidation induced by a command: separates what only
+/// touches document state (no new composite) from what
+/// requires a re-render. Order: `Unchanged < StateOnly < Composite`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RenderInvalidation {
-    /// Aucun changement d'état (no-op) : rien à produire.
+    /// No state change (no-op): nothing to produce.
     Unchanged,
-    /// État changé, pixels identiques (ex. renommage) : snapshot seul.
+    /// State changed, identical pixels (e.g. rename): snapshot only.
     StateOnly,
-    /// Pixels potentiellement changés : nouveau composite requis.
+    /// Potentially changed pixels: new composite required.
     Composite,
 }
 
-/// Routage d'une commande vers son événement rendu sémantique
-/// ([`RenderEvent`], mécanismes `photo-engine::command`) et son
-/// invalidation concrète dans le pipeline CPU actuel.
+/// Routing of a command to its semantic render event
+/// ([`RenderEvent`], `photo-engine::command` machinery) and its
+/// concrete invalidation in the current CPU pipeline.
 ///
-/// Note : `SetOpacity`/`MoveLayer` sont `NodeInvalidated` au sens de
-/// `Command::affects_composite` (pensé pour un futur draw GPU), mais
-/// le composite CPU doit quand même être re-blendé → `Composite`.
-/// Renommage et repli de groupe sont purement `StateOnly`.
+/// Note: `SetOpacity`/`MoveLayer` are `NodeInvalidated` in the
+/// `Command::affects_composite` sense (meant for a future GPU draw), but
+/// the CPU composite must still be re-blended → `Composite`.
+/// Rename and group collapse are purely `StateOnly`.
 pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInvalidation) {
     match command {
         PhotoEngineCommand::ToggleLayerVisibility(_) => {
@@ -359,52 +359,52 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
     }
 }
 
-/// Marquage dirty porté par une mutation (Phase 6E) : centralisé dans
-/// `mutate()`, jamais demandé aux appelants UI.
+/// Dirty marking carried by a mutation (Phase 6E): centralized in
+/// `mutate()`, never asked of UI callers.
 ///
-/// Par défaut : `Composite` ⇒ `Global` (sûr : toute nouvelle commande oublie
-/// au pire de la précision, jamais de la correction), sinon `None`. Les bras
-/// qui connaissent leur zone (peinture, déplacement…) affinent en `Region`.
-/// Appliqué au cache du worker juste après le match, avant `respond`.
+/// By default: `Composite` ⇒ `Global` (safe: any new command at worst
+/// forgets precision, never correctness), else `None`. Arms
+/// that know their zone (painting, moving…) refine to `Region`.
+/// Applied to the worker cache right after the match, before `respond`.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) enum DirtyMark {
-    /// Dériver du routage (`Composite` ⇒ `Global`, sinon `None`).
+    /// Derive from routing (`Composite` ⇒ `Global`, else `None`).
     #[default]
     Auto,
-    /// Aucune zone (no-op, état seul).
+    /// No zone (no-op, state only).
     None,
-    /// Zone DOCUMENT SPACE précise (footprint + halo déjà inclus).
+    /// Precise DOCUMENT SPACE zone (footprint + halo already included).
     Region(TileRegion),
-    /// Tout le document (structurel, global, repli sûr).
+    /// The whole document (structural, global, safe fallback).
     Global,
 }
 
-/// Décision d'envoi miniature (Phase 6G.3 §17, pure et déterministe).
+/// Thumbnail send decision (Phase 6G.3 §17, pure and deterministic).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SubmitDecision {
-    /// Store déjà à jour : rien à faire.
+    /// Store already up to date: nothing to do.
     Fresh,
-    /// Même version déjà en attente : intention absorbée (coalescing).
+    /// Same version already pending: absorbed intent (coalescing).
     Coalesce,
-    /// Nouvelle intention à transmettre.
+    /// New intent to forward.
     Submit,
 }
 
-/// Résultat d'une mutation sans rendu : réponses immédiates (export,
-/// erreurs) + invalidation à produire ensuite.
+/// Result of a render-less mutation: immediate responses (export,
+/// errors) + invalidation to produce next.
 pub(crate) struct Mutation {
-    /// Réponses à envoyer telles quelles (pas de rendu associé).
+    /// Responses to send as-is (no associated render).
     pub(crate) immediates: Vec<PhotoEngineResponse>,
-    /// Invalidation cumulée de la mutation.
+    /// Cumulative mutation invalidation.
     pub(crate) invalidation: RenderInvalidation,
-    /// Vrai si l'état document a changé (snapshot à renvoyer).
+    /// True when document state changed (snapshot to resend).
     pub(crate) changed: bool,
-    /// Marquage dirty (défaut sûr selon `invalidation`, affiné par bras).
+    /// Dirty marking (safe default from `invalidation`, refined per arm).
     pub(crate) dirty: DirtyMark,
 }
 
 impl Mutation {
-    /// Mutation effective : un rendu/réponse suivra.
+    /// Effective mutation: a render/response will follow.
     pub(crate) fn changed(invalidation: RenderInvalidation) -> Self {
         Self {
             immediates: Vec::new(),
@@ -414,7 +414,7 @@ impl Mutation {
         }
     }
 
-    /// No-op (id inconnu, garde-fou) : état inchangé.
+    /// No-op (unknown id, guard): state unchanged.
     pub(crate) fn unchanged() -> Self {
         Self {
             immediates: Vec::new(),
@@ -424,7 +424,7 @@ impl Mutation {
         }
     }
 
-    /// Réponse immédiate sans rendu (export, erreur non bloquante).
+    /// Immediate response without rendering (export, non-blocking error).
     pub(crate) fn immediate(response: PhotoEngineResponse) -> Self {
         Self {
             immediates: vec![response],
@@ -434,16 +434,16 @@ impl Mutation {
         }
     }
 
-    /// Affine le marquage avec une zone précise (consomme `self`).
+    /// Refines the marking with a precise zone (consumes `self`).
     pub(crate) fn with_dirty(mut self, dirty: DirtyMark) -> Self {
         self.dirty = dirty;
         self
     }
 }
 
-/// Marquage précis pour un nœud porteur (empreinte + spread exact) :
-/// `EMPTY` (ajustement, calque vide) ⇒ repli `Global` — jamais de région
-/// vide silencieuse (un ajustement touche tout l'accumulateur).
+/// Precise marking for a bearer node (footprint + exact spread):
+/// `EMPTY` (adjustment, empty layer) ⇒ `Global` fallback — never a silent
+/// empty region (an adjustment touches the whole accumulator).
 pub(crate) fn mark_for_node(node: &photo_engine::LayerNode) -> DirtyMark {
     let region = photo_engine::tiles::node_mark_region(node);
     if region.is_empty() {
@@ -453,14 +453,14 @@ pub(crate) fn mark_for_node(node: &photo_engine::LayerNode) -> DirtyMark {
     }
 }
 
-/// Replie un lot de commandes en attente (latest-value-wins) AVANT
-/// application : les `SetOpacity` consécutifs sur un même calque ne
-/// gardent que la dernière valeur (idem `SetFilterParam` par
-/// calque/filtre/clé), les `MoveLayer` consécutifs sont
-/// sommés (somme nulle = commande supprimée). Les valeurs
-/// intermédiaires ne remplissent donc jamais la file de rendu, et
-/// l'historique ne retient qu'une entrée par geste (coalescence
-/// existante préservée : le repli ne franchit jamais `Undo`/`Redo`).
+/// Folds a batch of pending commands (latest-value-wins) BEFORE
+/// application: consecutive `SetOpacity` on the same layer keep
+/// only the last value (same for `SetFilterParam` per
+/// layer/filter/key), consecutive `MoveLayer` are
+/// summed (zero sum = dropped command). Intermediate
+/// values therefore never fill the render queue, and
+/// history keeps one entry per gesture (existing
+/// coalescing preserved: folding never crosses `Undo`/`Redo`).
 pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCommand> {
     let mut folded: Vec<PhotoEngineCommand> = Vec::with_capacity(commands.len());
     for command in commands {

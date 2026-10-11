@@ -14,56 +14,53 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! État de drag & drop GÉNÉRIQUE basé sur des index.
+//! GENERIC index-based drag & drop state.
 //!
-//! Réutilisable : calques (photo), clips (video), pistes (audio).
-//! Strictement domain-agnostic : aucun type métier ici, uniquement
-//! des index.
+//! Reusable: layers (photo), clips (video), tracks (audio).
+//! Strictly domain-agnostic: no domain type here, only indexes.
 
-/// État de drag & drop générique basé sur des index.
+/// Generic index-based drag & drop state.
 #[derive(Debug, Clone, Default)]
 pub struct ReorderDragState {
-    /// Index d'origine du drag, pendant un drag.
+    /// Drag origin index, during a drag.
     pub dragging_index: Option<usize>,
-    /// Dernière position souris connue pendant le drag.
+    /// Last known mouse position during the drag.
     pub current_mouse_pos: egui::Pos2,
-    /// Index d'insertion courant, pendant un drag.
+    /// Current insertion index, during a drag.
     pub target_index: Option<usize>,
-    /// Position du dépôt courant (avant / dedans / après la cible).
+    /// Current drop position (before / into / after the target).
     pub drop_position: DropPosition,
-    /// Vrai si un drag est en cours.
+    /// True while a drag is in progress.
     pub is_dragging: bool,
 }
 
-/// Position d'un dépôt par rapport à sa ligne cible (listes
-/// hiérarchiques : `Into` = imbriquer dedans, la cible doit
-/// l'accepter).
+/// A drop's position relative to its target row (hierarchical
+/// lists: `Into` = nest inside, the target must accept it).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DropPosition {
-    /// Insérer avant la ligne cible.
+    /// Insert before the target row.
     #[default]
     Before,
-    /// Déposer dedans la cible (imbrication).
+    /// Drop inside the target (nesting).
     Into,
-    /// Insérer après la ligne cible.
+    /// Insert after the target row.
     After,
 }
 
 impl ReorderDragState {
-    /// Démarre le drag de l'item à `index`.
+    /// Starts dragging the item at `index`.
     pub fn start(&mut self, index: usize) {
         self.dragging_index = Some(index);
         self.is_dragging = true;
     }
 
-    /// Réinitialise l'état (fin ou annulation de drag).
+    /// Resets the state (drag end or cancel).
     pub fn reset(&mut self) {
         *self = Self::default();
     }
 
-    /// Termine le drag et retourne `(from, to)` si un
-    /// réordonnancement doit être appliqué, `None` sinon.
-    /// Réinitialise l'état dans tous les cas.
+    /// Ends the drag and returns `(from, to)` when a reorder must be
+    /// applied, `None` otherwise. Resets the state in all cases.
     pub fn end_drag(&mut self) -> Option<(usize, usize)> {
         let result = match (self.dragging_index, self.target_index) {
             (Some(from), Some(to)) if from != to => Some((from, to)),
@@ -73,9 +70,9 @@ impl ReorderDragState {
         result
     }
 
-    /// Termine le drag et retourne `(from, to, position)` pour les
-    /// listes hiérarchiques (`Into` = imbriquer, même index que
-    /// l'origine accepté). Réinitialise dans tous les cas.
+    /// Ends the drag and returns `(from, to, position)` for
+    /// hierarchical lists (`Into` = nest, same index as the origin
+    /// accepted). Resets in all cases.
     pub fn end_drag_hierarchical(&mut self) -> Option<(usize, usize, DropPosition)> {
         let result = match (self.dragging_index, self.target_index) {
             (Some(from), Some(to)) => match self.drop_position {
@@ -104,7 +101,7 @@ mod tests {
         assert_eq!(state.dragging_index, Some(2));
         state.target_index = Some(5);
         assert_eq!(state.end_drag(), Some((2, 5)));
-        // Réinitialisé après end_drag.
+        // Reset after end_drag.
         assert!(!state.is_dragging);
         assert_eq!(state.dragging_index, None);
         assert_eq!(state.target_index, None);
@@ -138,12 +135,12 @@ mod tests {
             Some((1, 3, DropPosition::After))
         );
         assert!(!state.is_dragging);
-        // Into sur soi-même : no-op (jamais de commande).
+        // Into onto itself: no-op (never a command).
         state.start(2);
         state.target_index = Some(2);
         state.drop_position = DropPosition::Into;
         assert_eq!(state.end_drag_hierarchical(), None);
-        // Into ailleurs : conservé (le moteur valide ensuite).
+        // Into elsewhere: kept (the engine validates next).
         state.start(2);
         state.target_index = Some(5);
         state.drop_position = DropPosition::Into;

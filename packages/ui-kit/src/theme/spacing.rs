@@ -14,30 +14,30 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Espacements du thème Cygnus.
+//! Cygnus theme spacing.
 //!
-//! SEULE source des espacements : marges, paddings et gouttières des
-//! composants référencent ces tokens au lieu de littéraux `f32`.
+//! SINGLE source of spacing: component margins, paddings and gutters
+//! reference these tokens instead of `f32` literals.
 
-/// Espacements du thème.
+/// Theme spacing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusSpacing {
-    /// Très petit espacement (2px).
+    /// Extra-extra-small spacing (2px).
     pub xxs: f32,
-    /// Très petit espacement (4px).
+    /// Extra-small spacing (4px).
     pub xs: f32,
-    /// Petit espacement (8px).
+    /// Small spacing (8px).
     pub sm: f32,
-    /// Espacement moyen (12px).
+    /// Medium spacing (12px).
     pub md: f32,
-    /// Grand espacement (16px).
+    /// Large spacing (16px).
     pub lg: f32,
-    /// Très grand espacement (24px).
+    /// Extra-large spacing (24px).
     pub xl: f32,
 }
 
 impl CygnusSpacing {
-    /// Échelle d'espacements du thème sombre.
+    /// Dark-theme spacing scale.
     pub fn dark() -> Self {
         Self {
             xxs: 2.0,
@@ -51,7 +51,7 @@ impl CygnusSpacing {
 }
 
 impl Default for CygnusSpacing {
-    /// Échelle d'espacements par défaut.
+    /// Default spacing scale.
     fn default() -> Self {
         Self::dark()
     }

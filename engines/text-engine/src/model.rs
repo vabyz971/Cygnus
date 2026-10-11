@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modèle texte : spans stylés identifiés, sans aucune métrique.
+//! Text model: identified styled spans, no metrics at all.
 //!
-//! Un [`TextModel`] est une suite de [`Span`] (chaîne + famille + corps +
-//! graisse/italique). Ni coupure, ni avances, ni glyphes ici : voir
+//! A [`TextModel`] is a sequence of [`Span`]s (string + family + size +
+//! weight/italic). No breaking, advances, or glyphs here: see
 //! [`layout`](crate::layout).
 
 use ids::EntityId;
 
-/// Identifiant stable d'un [`TextModel`].
+/// Stable identifier of a [`TextModel`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -30,25 +30,25 @@ use ids::EntityId;
 pub struct TextId(EntityId);
 
 impl TextId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul (sentinelle, jamais attribué).
+    /// Null identifier (sentinel, never assigned).
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente.
+    /// The underlying entity.
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante.
+    /// Wraps an existing entity.
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -56,7 +56,7 @@ impl TextId {
 }
 
 impl Default for TextId {
-    /// Identifiant nul — même valeur que [`TextId::nil`].
+    /// Null identifier — same value as [`TextId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -68,23 +68,23 @@ impl std::fmt::Display for TextId {
     }
 }
 
-/// Segment stylé : la plus petite unité partageant fonte et graisse.
+/// Styled segment: the smallest unit sharing font and weight.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Span {
-    /// Texte (peut contenir `\n` — coupés au layout).
+    /// Text (may contain `\n` — split at layout).
     pub text: String,
-    /// Famille de fonte (clé logique, ex. `"Hanken Grotesk"`).
+    /// Font family (logical key, e.g. `"Hanken Grotesk"`).
     pub family: String,
-    /// Corps en points.
+    /// Size in points.
     pub size: f32,
-    /// Graisse (400 = normal, 700 = gras…).
+    /// Weight (400 = normal, 700 = bold…).
     pub weight: u16,
-    /// Italique.
+    /// Italic.
     pub italic: bool,
 }
 
 impl Span {
-    /// Nouveau span (taille négative ramenée à 0).
+    /// New span (negative size clamped to 0).
     #[must_use]
     pub fn new(text: impl Into<String>, family: impl Into<String>, size: f32) -> Self {
         Self {
@@ -97,17 +97,17 @@ impl Span {
     }
 }
 
-/// Document texte : suite ordonnée de spans.
+/// Text document: ordered sequence of spans.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextModel {
-    /// Identifiant stable.
+    /// Stable identifier.
     pub id: TextId,
-    /// Spans dans l'ordre.
+    /// Spans in order.
     pub spans: Vec<Span>,
 }
 
 impl TextModel {
-    /// Nouveau modèle vide.
+    /// New empty model.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -116,18 +116,18 @@ impl TextModel {
         }
     }
 
-    /// Vrai si aucun span ou que du vide.
+    /// True if no spans or only empty content.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.spans.iter().all(|s| s.text.is_empty())
     }
 
-    /// Ajoute un span.
+    /// Adds a span.
     pub fn push(&mut self, span: Span) {
         self.spans.push(span);
     }
 
-    /// Texte brut concaténé (sans style — diagnostics, recherche).
+    /// Concatenated raw text (unstyled — diagnostics, search).
     #[must_use]
     pub fn plain_text(&self) -> String {
         self.spans.iter().map(|s| s.text.as_str()).collect()

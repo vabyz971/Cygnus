@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Persistence JSON du workspace (via `packages/preferences`).
+//! Workspace JSON persistence (via `packages/preferences`).
 //!
-//! Les apps sérialisent au quit et restaurent au boot :
+//! Apps serialize on quit and restore on boot:
 //! ```rust,no_run
 //! # use ui_kit::layout::{WorkspaceState, load_workspace, save_workspace};
 //! let state = WorkspaceState::defaults();
@@ -27,20 +27,20 @@
 
 use super::workspace_state::{WORKSPACE_VERSION, WorkspaceState};
 
-/// Sérialise le workspace en JSON.
+/// Serializes the workspace to JSON.
 ///
 /// # Errors
-/// Retourne l'erreur `serde_json` si la sérialisation échoue.
+/// Returns the `serde_json` error when serialization fails.
 pub fn save_workspace(state: &WorkspaceState) -> Result<String, serde_json::Error> {
     serde_json::to_string(state)
 }
 
-/// Restaure le workspace depuis son JSON.
+/// Restores the workspace from its JSON.
 ///
 /// # Errors
-/// Retourne une erreur si le JSON est invalide ou si sa version ne
-/// correspond pas à [`WORKSPACE_VERSION`] (refus propre, l'app
-/// retombe alors sur [`WorkspaceState::defaults`]).
+/// Returns an error when the JSON is invalid or its version
+/// mismatches [`WORKSPACE_VERSION`] (clean refusal; the app then
+/// falls back to [`WorkspaceState::defaults`]).
 pub fn load_workspace(json: &str) -> Result<WorkspaceState, serde_json::Error> {
     let state: WorkspaceState = serde_json::from_str(json)?;
     if state.version != WORKSPACE_VERSION {

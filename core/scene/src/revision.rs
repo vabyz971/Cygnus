@@ -14,22 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Révisions de la scène : le compteur partagé [`Revision`](ids::Revision).
+//! Scene revisions: the shared counter [`Revision`](ids::Revision).
 //!
-//! Stratégie (volontairement simple, aucun cache ici) :
+//! Strategy (deliberately simple, no cache here):
 //!
-//! - [`Scene`](crate::Scene) possède un compteur monotone (`tree_revision`).
-//! - Chaque mutation structurelle ou d'attribut alloue UNE révision et
-//!   l'applique au nœud touché **et à tous ses ancêtres** : la révision
-//!   d'un parent reflète donc toujours l'état de sa sous-arborescence.
-//! - Les frères et les autres branches gardent leur révision : un
-//!   observateur détecte un changement de sous-arbre par simple
-//!   comparaison d'entiers, sans parcourir.
-//! - Les écritures sans effet (même valeur, rattachement identique,
-//!   suppression d'un id inconnu) n'allouent RIEN et se distinguent des
-//!   mutations par leur valeur de retour (`None` vs `Some(revision)`).
+//! - [`Scene`](crate::Scene) owns a monotonic counter (`tree_revision`).
+//! - Each structural or attribute mutation allocates ONE revision and
+//!   applies it to the touched node **and all its ancestors**: a
+//!   parent's revision therefore always reflects its subtree's state.
+//! - Siblings and other branches keep their revision: an
+//!   observer detects a subtree change with a simple
+//!   integer comparison, no traversal.
+//! - Writes with no effect (same value, identical re-attachment,
+//!   removal of an unknown id) allocate NOTHING and are told apart from
+//!   mutations by their return value (`None` vs `Some(revision)`).
 //!
-//! Un futur cache de rendu utilisera ces révisions comme clés
-//! d'invalidation — il n'est pas construit ici.
+//! A future render cache will use these revisions as
+//! invalidation keys — it is not built here.
 
 pub use ids::Revision;

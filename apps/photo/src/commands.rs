@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Commandes UI de l'app Photo : le seul canal panels → app.
+//! Photo app UI commands: the only panels → app channel.
 //!
-//! Flux imposé :
+//! Required flow:
 //!
 //! ```text
 //! UI (panels, viewport, menus)
@@ -26,11 +26,11 @@
 //! Engine (worker)
 //! ```
 //!
-//! Les panels ne touchent JAMAIS au worker : ils poussent des
-//! [`PhotoAction`] dans la [`PhotoCommandQueue`] (ou les retournent
-//! en `Vec`, drainés par le workspace). [`PhotoUiContext`] porte les
-//! dépendances d'affichage partagées (thème, icônes, traduction) —
-//! ni documents, ni moteurs.
+//! Panels NEVER touch the worker: they push
+//! [`PhotoAction`] into the [`PhotoCommandQueue`] (or return them
+//! as a `Vec`, drained by the workspace). [`PhotoUiContext`] carries the
+//! shared display dependencies (theme, icons, translation) —
+//! neither documents nor engines.
 
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{PaintRequest, PhotoCanvasTool};
@@ -42,184 +42,184 @@ use ui_kit::icons::IconRegistry;
 use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
-/// Action UI émise par un panel, le viewport ou un menu.
+/// UI action emitted by a panel, the viewport, or a menu.
 ///
-/// Les ids de calques sont résolus à l'émission (le panel connaît la
-/// sélection) ; `PhotoApp` n'a plus qu'à router vers l'état local ou
-/// le worker.
+/// Layer ids are resolved at emission (the panel knows the
+/// selection); `PhotoApp` only has to route to local state or
+/// the worker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PhotoAction {
-    /// Ouvrir la fenêtre « Nouveau document ».
+    /// Open the "New document" window.
     OpenNewDocumentDialog,
-    /// Créer un document aux dimensions validées (nouvel onglet).
+    /// Create a document with the validated dimensions (new tab).
     CreateDocument { width: u32, height: u32 },
-    /// Ouvrir le file picker d'image.
+    /// Open the image file picker.
     OpenImageDialog,
-    /// Ouvrir le file picker de projet `.cygp` (O001).
+    /// Open the `.cygp` project file picker (O001).
     OpenProjectDialog,
-    /// Enregistrer le projet actif (chemin connu) ou basculer vers
-    /// « Enregistrer sous » (O001).
+    /// Save the active project (known path) or fall back to
+    /// "Save as" (O001).
     SaveProject,
-    /// Ouvrir le file picker « Enregistrer sous » `.cygp` (O001).
+    /// Open the `.cygp` "Save as" file picker (O001).
     SaveProjectAsDialog,
-    /// Ouvrir la fenêtre « Exportation ».
+    /// Open the "Export" window.
     OpenExportDialog,
-    /// Exporter le document actif (dossier créé si besoin par l'app).
+    /// Export the active document (folder created by the app if needed).
     ExportDocument { path: PathBuf, quality: u8 },
-    /// Fermer l'onglet actif.
+    /// Close the active tab.
     CloseTab,
-    /// Annuler / rétablir (worker).
+    /// Undo / redo (worker).
     Undo,
-    /// Rétablir (worker).
+    /// Redo (worker).
     Redo,
-    /// Sauter `steps` pas en arrière (panneau Historique, O003).
+    /// Jump `steps` steps back (History panel, O003).
     HistoryBack(u32),
-    /// Sauter `steps` pas en avant (O003).
+    /// Jump `steps` steps forward (O003).
     HistoryForward(u32),
-    /// Nouveau calque vide (worker).
+    /// New empty layer (worker).
     AddEmptyLayer,
-    /// Calque depuis une image (file picker).
+    /// Layer from an image (file picker).
     AddImageLayer,
-    /// Dupliquer le calque sélectionné (worker, sans effet si aucun).
+    /// Duplicate the selected layer (worker, no-op if none).
     DuplicateSelectedLayer,
-    /// Miroir horizontal du calque sélectionné (O004, worker).
+    /// Horizontal mirror of the selected layer (O004, worker).
     FlipHorizontalSelected,
-    /// Miroir vertical du calque sélectionné (O004, worker).
+    /// Vertical mirror of the selected layer (O004, worker).
     FlipVerticalSelected,
-    /// Rotation 90° horaire du calque sélectionné (O004, worker).
+    /// 90° clockwise rotation of the selected layer (O004, worker).
     RotateClockwiseSelected,
-    /// Rotation 90° antihoraire du calque sélectionné (O004, worker).
+    /// 90° counterclockwise rotation of the selected layer (O004, worker).
     RotateCounterclockwiseSelected,
-    /// Rogner le calque sélectionné au document (O004, worker).
+    /// Crop the selected layer to the document (O004, worker).
     CropSelectedToDocument,
-    /// Supprimer le calque sélectionné (worker, sans effet si aucun).
+    /// Delete the selected layer (worker, no-op if none).
     DeleteSelectedLayer,
-    /// Supprimer le calque `layer` (worker, depuis sa rangée).
+    /// Delete layer `layer` (worker, from its row).
     DeleteLayer(Uuid),
-    /// Dupliquer le calque `layer` (worker, menu contextuel).
+    /// Duplicate layer `layer` (worker, context menu).
     DuplicateLayer(Uuid),
-    /// Ajouter un masque au calque sélectionné (worker, sans effet si aucun).
+    /// Add a mask to the selected layer (worker, no-op if none).
     AddMaskToSelected,
-    /// Ajouter un filtre live (worker).
+    /// Add a live filter (worker).
     AddFilter { layer: Uuid, filter_type: String },
-    /// Régler un paramètre flottant d'un filtre live (worker, geste
-    /// continu coalescé).
+    /// Tune a float parameter of a live filter (worker, coalesced
+    /// continuous gesture).
     SetFilterParam {
-        /// Calque porteur.
+        /// Owning layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
-        /// Clé du paramètre (ex. `"brightness"`).
+        /// Parameter key (e.g. `"brightness"`).
         key: String,
-        /// Nouvelle valeur.
+        /// New value.
         value: f32,
     },
-    /// Sélectionner un calque (état UI local).
+    /// Select a layer (local UI state).
     SelectLayer(Uuid),
-    /// Focaliser une pièce jointe (état UI local, porteur sélectionné aussi).
+    /// Focus an attachment (local UI state, owner selected too).
     FocusAttachment {
-        /// Calque porteur.
+        /// Owning layer.
         owner: Uuid,
-        /// Filtre ou masque visé.
+        /// Targeted filter or mask.
         id: Uuid,
     },
-    /// Activer/désactiver un filtre (worker).
+    /// Enable/disable a filter (worker).
     ToggleFilter {
-        /// Calque porteur.
+        /// Owning layer.
         layer: Uuid,
-        /// Filtre visé.
+        /// Targeted filter.
         filter: Uuid,
     },
-    /// Activer/désactiver un masque (worker).
+    /// Enable/disable a mask (worker).
     ToggleMask {
-        /// Porteur.
+        /// Owner.
         owner: Uuid,
-        /// Masque visé.
+        /// Targeted mask.
         mask: Uuid,
     },
-    /// Renommer un calque (worker).
+    /// Rename a layer (worker).
     RenameLayer { layer: Uuid, name: String },
-    /// Réordonner par ids (drag & drop hiérarchique, worker) :
-    /// `dragged` avant (`before`) ou après (`!before`) `target`
-    /// (même parent ou non — nesting libre).
+    /// Reorder by ids (hierarchical drag & drop, worker):
+    /// `dragged` before (`before`) or after (`!before`) `target`
+    /// (same parent or not — free nesting).
     ReorderNodes {
-        /// Calque déplacé.
+        /// Moved layer.
         dragged: Uuid,
-        /// Calque cible.
+        /// Target layer.
         target: Uuid,
-        /// Vrai = avant la cible, faux = après.
+        /// True = before the target, false = after.
         before: bool,
     },
-    /// Imbriquer un calque en tête d'un groupe (worker).
+    /// Nest a layer at the head of a group (worker).
     MoveIntoGroup {
-        /// Calque déplacé.
+        /// Moved layer.
         layer: Uuid,
-        /// Groupe d'accueil.
+        /// Host group.
         group: Uuid,
     },
-    /// Replier / déplier un groupe (worker, sans re-rendu).
+    /// Collapse / expand a group (worker, no re-render).
     ToggleGroupCollapsed(Uuid),
-    /// Basculer la visibilité (worker).
+    /// Toggle visibility (worker).
     ToggleLayerVisibility(Uuid),
-    /// Régler l'opacité (unités moteur 0..=100, worker).
+    /// Set opacity (engine units 0..=100, worker).
     SetOpacity { layer: Uuid, opacity: f32 },
-    /// Régler le mode de fusion (worker).
+    /// Set the blend mode (worker).
     SetBlendMode { layer: Uuid, mode: BlendMode },
-    /// Déplacer un filtre dans sa pile (worker).
+    /// Move a filter within its stack (worker).
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Déplacer un masque dans sa pile (worker).
+    /// Move a mask within its stack (worker).
     MoveMask { owner: Uuid, mask: Uuid, up: bool },
-    /// Supprimer un filtre (worker).
+    /// Delete a filter (worker).
     RemoveFilter { layer: Uuid, filter: Uuid },
-    /// Supprimer un masque (worker).
+    /// Delete a mask (worker).
     RemoveMask { owner: Uuid, mask: Uuid },
-    /// Changer d'outil (état UI local).
+    /// Switch tool (local UI state).
     SetTool(PhotoCanvasTool),
-    /// Basculer la grille (état UI local).
+    /// Toggle the grid (local UI state).
     ToggleGrid,
-    /// Rogner l'aperçu au document (worker, sans historique).
+    /// Clip the preview to the document (worker, no history).
     TogglePreviewClip,
-    /// Zoom avant / arrière, ancré au centre.
+    /// Zoom in / out, anchored at center.
     ZoomIn,
-    /// Zoom arrière.
+    /// Zoom out.
     ZoomOut,
-    /// Réinitialiser le zoom à 100 %.
+    /// Reset zoom to 100%.
     ZoomReset,
-    /// Commettre un trait pinceau/gomme (worker).
+    /// Commit a brush/eraser stroke (worker).
     CommitStroke(PaintRequest),
-    /// Déplacer un calque pixels (outil sélection, worker).
+    /// Move a pixel layer (select tool, worker).
     MoveLayer { layer: Uuid, dx: f32, dy: f32 },
-    /// Rouvrir un onglet dock fermé (outils, inspecteur, calques).
+    /// Reopen a closed dock tab (tools, inspector, layers).
     ShowDockTab(PhotoDockTab),
-    /// Restaurer la disposition des docks par défaut.
+    /// Restore the default dock layout.
     ResetDockLayout,
-    /// Ouvrir la fenêtre d'aide.
+    /// Open the help window.
     ShowHelp,
-    /// Quitter l'application.
+    /// Quit the application.
     Quit,
 }
 
-/// File d'actions UI drainée une fois par frame par `PhotoApp`.
+/// UI action queue drained once per frame by `PhotoApp`.
 ///
-/// Alias de la file générique [`ActionQueue`](app_shell::ActionQueue)
-/// instanciée sur [`PhotoAction`].
+/// Alias of the generic [`ActionQueue`](app_shell::ActionQueue)
+/// instantiated on [`PhotoAction`].
 pub type PhotoCommandQueue = app_shell::ActionQueue<PhotoAction>;
 
-/// Dépendances d'affichage partagées par les features.
+/// Display dependencies shared by the features.
 ///
-/// Construit une fois par frame ([`PhotoUiContext::for_frame`]) :
-/// contexte egui cloné, thème, registre d'icônes, traducteur. Ni
-/// documents, ni moteurs, ni état mutable — pas de GodContext.
+/// Built once per frame ([`PhotoUiContext::for_frame`]):
+/// cloned egui context, theme, icon registry, translator. No
+/// documents, no engines, no mutable state — no GodContext.
 #[derive(Debug, Clone)]
 pub struct PhotoUiContext {
-    /// Dépendances communes ui-kit.
+    /// Shared ui-kit dependencies.
     pub shared: UiContext,
 }
 
 impl PhotoUiContext {
-    /// Contexte standard pour la frame (thème sombre, icônes,
-    /// catalogue français : langue de l'app jusqu'au câblage de la
-    /// préférence de langue).
+    /// Standard per-frame context (dark theme, icons,
+    /// French catalog: app language until the language
+    /// preference is wired).
     pub fn for_frame(ctx: &egui::Context) -> Self {
         Self {
             shared: UiContext::new(

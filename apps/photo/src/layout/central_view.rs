@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Contenu des onglets dock « Canevas » (un par document ouvert).
+//! "Canvas" dock tab content (one per open document).
 //!
-//! Chaque document ouvert a son onglet dock, titré du nom du
-//! document (voir `super::dock`) : activer l'onglet active le
-//! document, fermer l'onglet ferme le document. Le canvas
-//! (`PhotoCanvas`, viewport générique + outils photo) ne renvoie que
-//! des données : le commit d'un trait remonte en
-//! [`PhotoAction::CommitStroke`](crate::commands::PhotoAction), le
-//! déplacement en [`PhotoAction::MoveLayer`](crate::commands::PhotoAction),
-//! la pipette échantillonne en état UI local. Cadre du document et
-//! curseur du pinceau par-dessus.
+//! Each open document has its dock tab, titled with the
+//! document name (see `super::dock`): activating the tab activates
+//! the document, closing the tab closes the document. The canvas
+//! (`PhotoCanvas`, generic viewport + photo tools) only returns
+//! data: a stroke commit bubbles up as
+//! [`PhotoAction::CommitStroke`](crate::commands::PhotoAction), a
+//! move as [`PhotoAction::MoveLayer`](crate::commands::PhotoAction),
+//! the eyedropper samples into local UI state. Document frame and
+//! brush cursor on top.
 
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::i18n::{PhotoCatalog, PhotoTextKey};
@@ -35,8 +35,8 @@ use crate::ui::{
 };
 use ui_kit::components::{menu_row, menu_style};
 
-/// Canvas du document + overlays + pipette (contenu de l'onglet
-/// dock, sans `CentralPanel`).
+/// Document canvas + overlays + eyedropper (dock tab content,
+/// no `CentralPanel`).
 pub fn draw_canvas_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
@@ -44,9 +44,9 @@ pub fn draw_canvas_content(
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     let texture = doc.ui.texture_cache.texture();
-    // Plan infini : la miniature peut dépasser le document (calque
-    // déplacé hors cadre) et être réduite (plafond 1600 px) — le
-    // mapping ramène chaque geste en pixels document exacts.
+    // Infinite plane: the thumbnail may extend past the document (layer
+    // moved out of frame) and be downscaled (1600 px cap) — the
+    // mapping brings every gesture back to exact document pixels.
     let geom = doc.ui.preview_geom;
     let mapping = geom
         .map(|g| CanvasMapping {
@@ -62,31 +62,31 @@ pub fn draw_canvas_content(
         .brush(doc.ui.brush)
         .mapping(mapping)
         .show(ui, &mut doc.ui.viewport);
-    // Commit du trait : routé au worker par l'app.
+    // Stroke commit: routed to the worker by the app.
     let committed = outcome.paint.is_some();
     if let Some(paint) = outcome.paint {
         actions.push(PhotoAction::CommitStroke(paint));
     }
-    // Phase 6G.3P : feedback interactif pendant le drag (AUCUNE action
-    // worker ici — le worker ne voit que le commit ci-dessus, inchangé ;
-    // les miniatures sont donc différées au commit, §11).
+    // Phase 6G.3P: interactive feedback during the drag (NO worker
+    // action here — the worker only sees the commit above, unchanged;
+    // thumbnails are therefore deferred to commit, §11).
     if !ink_tool_active(doc.ui.tool) {
-        // Changement d'outil en cours de geste : abandon propre (le
-        // canvas a déjà vidé `stroke`).
+        // Tool switch mid-gesture: clean abort (the
+        // canvas already drained `stroke`).
         clear_ink(&mut doc.ui);
     } else if committed {
-        // Le commit couvre le geste : l'overlay a rempli son rôle.
+        // The commit covers the gesture: the overlay did its job.
         clear_ink(&mut doc.ui);
     } else if ui.input(|input| input.key_pressed(egui::Key::Escape)) && !doc.ui.stroke.is_empty() {
-        // Échap : annule le geste (AUCUN commit — l'historique et les
-        // miniatures sont intacts, §10).
+        // Escape: cancels the gesture (NO commit — history and
+        // thumbnails stay intact, §10).
         clear_ink(&mut doc.ui);
         doc.ui.needs_repaint = true;
     } else {
         let origin = geom.map(|g| g.origin).unwrap_or(egui::Vec2::ZERO);
         let thumb_w = geom.map(|g| g.thumb_size.x).unwrap_or(0.0);
-        // Snapshot panneau copié AVANT l'emprunt mutable (transform +
-        // gate : jamais devinés par l'UI).
+        // Panel snapshot copied BEFORE the mutable borrow (transform +
+        // gate: never guessed by the UI).
         let live = doc.ui.selected.and_then(|id| {
             doc.ui
                 .layers
@@ -124,7 +124,7 @@ pub fn draw_canvas_content(
             .is_some();
         }
         if fed {
-            // Nouveau segment affiché ce frame : le drag continue.
+            // New segment displayed this frame: the drag continues.
             doc.ui.needs_repaint = true;
         } else if outcome.ink_dragging
             && draw_cached_ink(
@@ -136,14 +136,14 @@ pub fn draw_canvas_content(
                 thumb_w,
             )
         {
-            // Palier du drag (bouton tenu, aucun point ce frame) : la
-            // texture en cache est replacée au `dest` courant — visible
-            // sans attendre le `MouseUp`, sans re-rendre (zoom/pan
-            // state-only : même id de texture).
+            // Drag plateau (button held, no points this frame): the
+            // cached texture is re-placed at the current `dest` — visible
+            // without waiting for `MouseUp`, without re-rendering (zoom/pan
+            // state-only: same texture id).
             doc.ui.needs_repaint = true;
         }
     }
-    // Commit du déplacement (outil sélection) : routé au worker.
+    // Move commit (select tool): routed to the worker.
     if let Some(moving) = outcome.move_layer {
         actions.push(PhotoAction::MoveLayer {
             layer: moving.layer,
@@ -151,8 +151,7 @@ pub fn draw_canvas_content(
             dy: moving.dy,
         });
     }
-    // Clic droit : menu contextuel vue (zoom, grille), sections
-    // façon rerun.
+    // Right click: view context menu (zoom, grid), rerun-style sections.
     if let Some(response) = &outcome.response {
         let theme = ctx.shared.theme();
         let catalog = ctx.shared.translator();
@@ -177,7 +176,7 @@ pub fn draw_canvas_content(
                     actions.push(PhotoAction::ToggleGrid);
                     ui.close();
                 }
-                // Calque sélectionné : sous-menu Transformations.
+                // Selected layer: Transformations submenu.
                 if doc.ui.selected.is_some() {
                     ui.separator();
                     ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
@@ -205,8 +204,8 @@ pub fn draw_canvas_content(
                 }
             });
     }
-    // Pipette : le geste est en pixels document, l'échantillon en
-    // pixels miniature — reconverti via l'origine et l'échelle.
+    // Eyedropper: the gesture is in document pixels, the sample in
+    // thumbnail pixels — converted back via origin and scale.
     if doc.ui.tool == PhotoCanvasTool::Eyedropper
         && let (Some(world), Some(preview)) =
             (outcome.pointer_world.last(), doc.ui.last_preview.as_ref())
@@ -222,10 +221,10 @@ pub fn draw_canvas_content(
             doc.ui.brush.color = color;
         }
     }
-    // Overlays : cadre EXACT du document dans la miniature (stable
-    // quand un calque sort du cadre ou que la miniature réduit) SANS
-    // libellé — la résolution vit dans le titre de l'onglet canevas.
-    // Puis cercle du pinceau/gomme.
+    // Overlays: EXACT document frame inside the thumbnail (stable
+    // when a layer leaves the frame or the thumbnail downscales) with NO
+    // label — the resolution lives in the canvas tab title.
+    // Then the brush/eraser circle.
     let doc_rect = match (geom, outcome.dest_rect) {
         (Some(g), Some(dest)) => g.doc_rect(dest),
         _ => outcome.dest_rect,
@@ -235,8 +234,8 @@ pub fn draw_canvas_content(
         doc.ui.tool,
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser
     ) {
-        // Curseur OS conservé (croix du viewport) + cercle au diamètre
-        // du pinceau/gomme par-dessus.
+        // OS cursor kept (viewport crosshair) + circle at the
+        // brush/eraser diameter on top.
         if let (Some(dest), Some(geom)) = (outcome.dest_rect, geom) {
             let to_screen = if geom.thumb_size.x > 0.0 {
                 dest.width() / geom.thumb_size.x / mapping.thumb_to_doc.max(f32::EPSILON)

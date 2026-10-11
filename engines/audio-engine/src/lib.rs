@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur audio : timeline, graphe DSP, effets — HORS Scene Graph.
+//! Audio engine: timeline, DSP graph, effects — OUTSIDE the Scene Graph.
 //!
-//! L'audio n'est PAS spatial : aucun `Scene`, aucun `Transform2D`, aucun
-//! pixel. Il partage avec les autres domaines les fondations génériques
-//! (`ids`, `graph` : dépendances + cycles + topo, `Revision`, sérialisation)
-//! et garde ses propres nœuds métier :
+//! Audio is NOT spatial: no `Scene`, no `Transform2D`, no
+//! pixels. It shares the generic foundations with the other domains
+//! (`ids`, `graph`: dependencies + cycles + topo, `Revision`, serialization)
+//! and keeps its own business nodes:
 //!
 //! ```text
 //! Audio Timeline → Audio Graph → DSP Backend
-//!   (régions)      (Source/Gain/EQ/Compressor/Reverb/Mixer)
+//!   (regions)      (Source/Gain/EQ/Compressor/Reverb/Mixer)
 //! ```
 
 pub mod dsp;

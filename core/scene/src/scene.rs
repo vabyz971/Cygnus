@@ -14,21 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Graphe de scène : hiérarchie sémantique, seule source de structure.
+//! Scene graph: semantic hierarchy, sole source of structure.
 //!
-//! [`Scene`] possède tous les [`SceneNode`] (table `HashMap` + liste des
-//! racines) : c'est elle qui maintient la cohérence `parent`/`children` et
-//! alloue les [`Revision`] (voir [`crate::revision`]).
+//! [`Scene`] owns all [`SceneNode`]s (`HashMap` table + list of
+//! roots): it maintains the `parent`/`children` consistency and
+//! allocates [`Revision`]s (see [`crate::revision`]).
 //!
-//! Contrat des mutations (uniforme) : elles retournent
-//! [`Option<Revision>`] — `None` = cible introuvable ou opération rejetée
-//! (cycle, rattachement impossible) ; `Some(revision)` = succès, la
-//! révision étant NOUVELLE si quelque chose a changé, INCHANGÉE (valeur
-//! courante du nœud) en cas d'écriture sans effet. Les suppressions
-//! retournent un `bool` (les nœuds supprimés n'ont plus de révision).
+//! Mutation contract (uniform): they return
+//! [`Option<Revision>`] — `None` = target not found or rejected operation
+//! (cycle, impossible re-attachment); `Some(revision)` = success, the
+//! revision being NEW if something changed, UNCHANGED (the node's
+//! current value) on a no-effect write. Removals
+//! return a `bool` (removed nodes have no revision anymore).
 //!
-//! Aucune méthode `find_mut` publique : toute mutation passe par `Scene`
-//! pour garantir les révisions. Lecture seule via [`Scene::find`].
+//! No public `find_mut` method: every mutation goes through `Scene`
+//! to guarantee revisions. Read-only access via [`Scene::find`].
 
 use std::collections::HashMap;
 
@@ -36,11 +36,11 @@ use math_utils::Transform2D;
 
 use crate::{Affine2, Mask, NodeKind, Revision, SceneNode, SceneNodeId};
 
-/// Hiérarchie sémantique des nœuds visuels d'un document.
+/// Semantic hierarchy of a document's visual nodes.
 ///
-/// Non_threadée par elle-même (`HashMap` standard) : le partage inter-threads
-/// reste à la charge de l'appelant (`Arc`, worker dédié…), comme pour les
-/// documents existants de la suite.
+/// Not thread-safe by itself (standard `HashMap`): inter-thread sharing
+/// stays the caller's job (`Arc`, dedicated worker…), as with the suite's
+/// existing documents.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Scene {
     nodes: HashMap<SceneNodeId, SceneNode>,
@@ -49,59 +49,59 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// Scène vide.
+    /// Empty scene.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de nœuds (racines + descendants).
+    /// Number of nodes (roots + descendants).
     #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Vrai si la scène ne contient aucun nœud.
+    /// True if the scene holds no nodes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
-    /// Vrai si `id` désigne un nœud de la scène.
+    /// True if `id` designates a scene node.
     #[must_use]
     pub fn contains(&self, id: SceneNodeId) -> bool {
         self.nodes.contains_key(&id)
     }
 
-    /// Racines dans l'ordre de document.
+    /// Roots in document order.
     #[must_use]
     pub fn roots(&self) -> &[SceneNodeId] {
         &self.roots
     }
 
-    /// Tous les identifiants (ordre non garanti — parcours déterministe via
+    /// All identifiers (order not guaranteed — deterministic walk via
     /// [`Scene::roots`] + [`Scene::children_of`]).
     #[must_use]
     pub fn all_ids(&self) -> Vec<SceneNodeId> {
         self.nodes.keys().copied().collect()
     }
 
-    /// Dernière révision émise ([`Revision::NONE`] si aucune mutation).
+    /// Last emitted revision ([`Revision::NONE`] if no mutation).
     #[must_use]
     pub fn tree_revision(&self) -> Revision {
         Revision(self.next)
     }
 
-    /// Révision courante d'un nœud (`None` si introuvable).
+    /// Current revision of a node (`None` if not found).
     #[must_use]
     pub fn node_revision(&self, id: SceneNodeId) -> Option<Revision> {
         self.nodes.get(&id).map(|n| n.revision)
     }
 
-    // -- Création ----------------------------------------------------------
+    // -- Creation -----------------------------------------------------------
 
-    /// Crée un nœud racine (valeurs par défaut : identité, visible,
-    /// opacité pleine) et retourne son identifiant frais.
+    /// Creates a root node (defaults: identity, visible,
+    /// full opacity) and returns its fresh identifier.
     pub fn create_node(&mut self, kind: NodeKind) -> SceneNodeId {
         let id = SceneNodeId::new();
         let revision = self.alloc();
@@ -110,8 +110,8 @@ impl Scene {
         id
     }
 
-    /// Crée un nœud directement comme enfant de `parent`
-    /// (`None` si le parent est introuvable).
+    /// Creates a node directly as a child of `parent`
+    /// (`None` if the parent is not found).
     pub fn create_child(&mut self, parent: SceneNodeId, kind: NodeKind) -> Option<SceneNodeId> {
         if !self.nodes.contains_key(&parent) {
             return None;
@@ -128,64 +128,64 @@ impl Scene {
         Some(id)
     }
 
-    // -- Lecture -----------------------------------------------------------
+    // -- Reading ------------------------------------------------------------
 
-    /// Nœud par identifiant (`None` si introuvable).
+    /// Node by identifier (`None` if not found).
     #[must_use]
     pub fn find(&self, id: SceneNodeId) -> Option<&SceneNode> {
         self.nodes.get(&id)
     }
 
-    /// Parent direct (`None` si racine ou introuvable — voir
-    /// [`Scene::contains`] pour distinguer).
+    /// Direct parent (`None` if root or not found — see
+    /// [`Scene::contains`] to tell apart).
     #[must_use]
     pub fn parent_of(&self, id: SceneNodeId) -> Option<SceneNodeId> {
         self.nodes.get(&id)?.parent
     }
 
-    /// Enfants directs dans l'ordre de document (`None` si introuvable).
+    /// Direct children in document order (`None` if not found).
     #[must_use]
     pub fn children_of(&self, id: SceneNodeId) -> Option<&[SceneNodeId]> {
         self.nodes.get(&id).map(|n| n.children.as_slice())
     }
 
-    /// Nature sémantique (`None` si introuvable).
+    /// Semantic nature (`None` if not found).
     #[must_use]
     pub fn kind_of(&self, id: SceneNodeId) -> Option<&NodeKind> {
         self.nodes.get(&id).map(|n| &n.kind)
     }
 
-    /// Transform local (`None` si introuvable).
+    /// Local transform (`None` if not found).
     #[must_use]
     pub fn local_transform(&self, id: SceneNodeId) -> Option<Transform2D> {
         self.nodes.get(&id).map(|n| n.local)
     }
 
-    /// Visibilité propre (hors ancêtres — voir [`Scene::world_visible`).
+    /// Own visibility (excluding ancestors — see [`Scene::world_visible`).
     #[must_use]
     pub fn is_visible(&self, id: SceneNodeId) -> Option<bool> {
         self.nodes.get(&id).map(|n| n.visible)
     }
 
-    /// Opacité propre `0.0..=100.0` (hors ancêtres).
+    /// Own opacity `0.0..=100.0` (excluding ancestors).
     #[must_use]
     pub fn opacity(&self, id: SceneNodeId) -> Option<f32> {
         self.nodes.get(&id).map(|n| n.opacity)
     }
 
-    /// Masques attachés (`None` si nœud introuvable).
+    /// Attached masks (`None` if node not found).
     #[must_use]
     pub fn masks_of(&self, id: SceneNodeId) -> Option<&[Mask]> {
         self.nodes.get(&id).map(|n| n.masks.as_slice())
     }
 
-    /// Métadonnée libre (`None` si nœud ou clé introuvable).
+    /// Free metadata entry (`None` if node or key not found).
     #[must_use]
     pub fn meta(&self, id: SceneNodeId, key: &str) -> Option<&str> {
         self.nodes.get(&id)?.metadata.get(key).map(String::as_str)
     }
 
-    /// Profondeur (`0` = racine, `None` si introuvable).
+    /// Depth (`0` = root, `None` if not found).
     #[must_use]
     pub fn depth(&self, id: SceneNodeId) -> Option<usize> {
         let mut depth = 0;
@@ -197,7 +197,7 @@ impl Scene {
         Some(depth)
     }
 
-    /// Taille de la sous-arborescence, nœud inclus (`None` si introuvable).
+    /// Subtree size, node included (`None` if not found).
     #[must_use]
     pub fn subtree_len(&self, id: SceneNodeId) -> Option<usize> {
         if !self.nodes.contains_key(&id) {
@@ -214,7 +214,7 @@ impl Scene {
         Some(count)
     }
 
-    /// Vrai si `ancestor` est un ancêtre strict de `id`.
+    /// True if `ancestor` is a strict ancestor of `id`.
     #[must_use]
     pub fn is_ancestor_of(&self, ancestor: SceneNodeId, id: SceneNodeId) -> bool {
         let mut current = self.nodes.get(&id).and_then(|n| n.parent);
@@ -227,15 +227,15 @@ impl Scene {
         false
     }
 
-    // -- Structure ---------------------------------------------------------
+    // -- Structure ----------------------------------------------------------
 
-    /// Rattache `child` sous `parent`, en fin de fratrie (déplacé depuis
-    /// son ancien parent ou ses racines le cas échéant).
+    /// Attaches `child` under `parent`, at sibling-group end (moved from
+    /// its former parent or roots as applicable).
     ///
-    /// Rejeté (`None`) si un identifiant est introuvable, si
-    /// `parent == child`, ou si le rattachement créerait un cycle. Déjà
-    /// dernier de la fratrie : sans effet (révision courante retournée).
-    /// Même parent mais autre position : déplacé en fin (réordre).
+    /// Rejected (`None`) if an identifier is not found, if
+    /// `parent == child`, or if the attachment would create a cycle. Already
+    /// last of the sibling group: no effect (current revision returned).
+    /// Same parent but another position: moved to the end (reorder).
     pub fn attach(&mut self, parent: SceneNodeId, child: SceneNodeId) -> Option<Revision> {
         if parent == child || !self.contains(parent) || !self.contains(child) {
             return None;
@@ -262,17 +262,17 @@ impl Scene {
             node.parent = Some(parent);
         }
         let revision = self.touch(child);
-        // L'ancienne branche a perdu un sous-arbre : elle change aussi.
+        // The old branch lost a subtree: it changes too.
         if let Some(old) = old_parent {
             self.touch(old);
         }
         Some(revision)
     }
 
-    /// Détache `child` de son parent (redevient racine, sous-arbre conservé).
+    /// Detaches `child` from its parent (becomes a root again, subtree kept).
     ///
-    /// `None` si introuvable, déjà racine, ou… `None` dans les deux cas —
-    /// voir [`Scene::contains`] pour distinguer.
+    /// `None` if not found, already a root, or… `None` in both cases —
+    /// see [`Scene::contains`] to tell apart.
     pub fn detach(&mut self, child: SceneNodeId) -> Option<Revision> {
         let old_parent = {
             let node = self.nodes.get(&child)?;
@@ -287,7 +287,7 @@ impl Scene {
         Some(self.touch(child))
     }
 
-    /// Supprime `id` et toute sa descendance. Faux si introuvable.
+    /// Removes `id` and all its descendants. False if not found.
     pub fn remove_subtree(&mut self, id: SceneNodeId) -> bool {
         if !self.nodes.contains_key(&id) {
             return false;
@@ -320,9 +320,9 @@ impl Scene {
         true
     }
 
-    // -- Attributs ---------------------------------------------------------
+    // -- Attributes ----------------------------------------------------------
 
-    /// Remplace le transform local (révision inchangée si valeur identique).
+    /// Replaces the local transform (revision unchanged if identical value).
     pub fn set_local_transform(&mut self, id: SceneNodeId, local: Transform2D) -> Option<Revision> {
         if !self.nodes.contains_key(&id) {
             return None;
@@ -336,7 +336,7 @@ impl Scene {
         Some(self.touch(id))
     }
 
-    /// Remplace la visibilité (révision inchangée si valeur identique).
+    /// Replaces visibility (revision unchanged if identical value).
     pub fn set_visible(&mut self, id: SceneNodeId, visible: bool) -> Option<Revision> {
         if !self.nodes.contains_key(&id) {
             return None;
@@ -350,8 +350,8 @@ impl Scene {
         Some(self.touch(id))
     }
 
-    /// Remplace l'opacité, bornée à `0.0..=100.0` (révision inchangée si
-    /// valeur identique après bornage).
+    /// Replaces opacity, clamped to `0.0..=100.0` (revision unchanged if
+    /// identical value after clamping).
     pub fn set_opacity(&mut self, id: SceneNodeId, opacity: f32) -> Option<Revision> {
         let clamped = opacity.clamp(0.0, 100.0);
         if !self.nodes.contains_key(&id) {
@@ -366,7 +366,7 @@ impl Scene {
         Some(self.touch(id))
     }
 
-    /// Ajoute ou remplace (même `Mask::id`) un masque du nœud.
+    /// Adds or replaces (same `Mask::id`) a mask of the node.
     pub fn add_mask(&mut self, owner: SceneNodeId, mask: Mask) -> Option<Revision> {
         if !self.nodes.contains_key(&owner) {
             return None;
@@ -385,7 +385,7 @@ impl Scene {
         Some(self.touch(owner))
     }
 
-    /// Retire un masque (`Some` sans bump si déjà absent).
+    /// Removes a mask (`Some` without bumping if already absent).
     pub fn remove_mask(&mut self, owner: SceneNodeId, mask_id: SceneNodeId) -> Option<Revision> {
         let position = self
             .nodes
@@ -404,7 +404,7 @@ impl Scene {
         }
     }
 
-    /// Pose une métadonnée (révision inchangée si paire identique).
+    /// Sets a metadata entry (revision unchanged if identical pair).
     pub fn set_meta(
         &mut self,
         id: SceneNodeId,
@@ -429,7 +429,7 @@ impl Scene {
         Some(self.touch(id))
     }
 
-    /// Retire une métadonnée (`Some` sans bump si clé absente).
+    /// Removes a metadata entry (`Some` without bumping if key absent).
     pub fn remove_meta(&mut self, id: SceneNodeId, key: &str) -> Option<Revision> {
         if !self.nodes.contains_key(&id) {
             return None;
@@ -447,9 +447,9 @@ impl Scene {
         Some(self.touch(id))
     }
 
-    // -- Dérivés monde (jamais stockés) ------------------------------------
+    // -- World derivatives (never stored) ---------------------------------
 
-    /// Matrice monde : composition des locaux de la racine jusqu'à `id`.
+    /// World matrix: composition of locals from the root down to `id`.
     #[must_use]
     pub fn world_affine(&self, id: SceneNodeId) -> Option<Affine2> {
         let mut chain = Vec::new();
@@ -468,13 +468,13 @@ impl Scene {
         Some(world)
     }
 
-    /// Point local de `id` exprimé en coordonnées monde (`None` si inconnu).
+    /// Local point of `id` expressed in world coordinates (`None` if unknown).
     #[must_use]
     pub fn world_point(&self, id: SceneNodeId, x: f32, y: f32) -> Option<(f32, f32)> {
         self.world_affine(id).map(|w| w.apply(x, y))
     }
 
-    /// Visibilité effective : ET logique sur toute la chaîne d'ancêtres.
+    /// Effective visibility: logical AND over the whole ancestor chain.
     #[must_use]
     pub fn world_visible(&self, id: SceneNodeId) -> Option<bool> {
         let mut current = self.nodes.get(&id)?;
@@ -489,7 +489,7 @@ impl Scene {
         }
     }
 
-    /// Opacité effective : produit des opacités `0.0..=100.0` sur la chaîne.
+    /// Effective opacity: product of `0.0..=100.0` opacities along the chain.
     #[must_use]
     pub fn world_opacity(&self, id: SceneNodeId) -> Option<f32> {
         let mut acc = 100.0_f32;
@@ -505,19 +505,19 @@ impl Scene {
 
     // -- Internes ----------------------------------------------------------
 
-    /// Alloue la prochaine révision (avance `tree_revision`).
+    /// Allocates the next revision (advances `tree_revision`).
     fn alloc(&mut self) -> Revision {
         self.next = self.next.wrapping_add(1);
         Revision(self.next)
     }
 
-    /// Avance le compteur sans toucher de nœud (suppression de racine).
+    /// Advances the counter without touching any node (root removal).
     fn advance(&mut self) {
         self.next = self.next.wrapping_add(1);
     }
 
-    /// Estampille `id` et tous ses ancêtres avec UNE révision fraîche.
-    /// Le nœud doit exister (vérifié par les appelants).
+    /// Stamps `id` and all its ancestors with ONE fresh revision.
+    /// The node must exist (checked by callers).
     fn touch(&mut self, id: SceneNodeId) -> Revision {
         let revision = self.alloc();
         let mut current = Some(id);
@@ -533,9 +533,9 @@ impl Scene {
         revision
     }
 
-    /// Détache `id` de son parent ou des racines, sans révision ni
-    /// réinsertion (voir [`Scene::attach`]/[`Scene::detach`]).
-    /// Le nœud doit exister (vérifié par les appelants).
+    /// Detaches `id` from its parent or roots, with no revision and no
+    /// re-insertion (see [`Scene::attach`]/[`Scene::detach`]).
+    /// The node must exist (checked by callers).
     fn unlink(&mut self, id: SceneNodeId) {
         let parent = self.nodes.get(&id).and_then(|n| n.parent);
         match parent {

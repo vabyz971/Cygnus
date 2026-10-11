@@ -14,32 +14,32 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Interactions souris du canvas : pan, zoom molette et outils.
+//! Canvas mouse interactions: pan, wheel zoom and tools.
 //!
-//! [`zoom_factor_for_scroll`] est une fonction pure (delta molette →
-//! facteur), testable sans contexte UI. [`handle_pointer`] applique
-//! pan (bouton milieu, ou drag avec l'outil main), zoom (molette
-//! ancrée au pointeur, clic avec l'outil loupe) et rapporte les
-//! positions monde pour les outils de dessin.
+//! [`zoom_factor_for_scroll`] is a pure function (wheel delta →
+//! factor), testable without a UI context. [`handle_pointer`] applies
+//! pan (middle button, or drag with the hand tool), zoom (wheel
+//! anchored at the pointer, click with the magnifier tool) and reports
+//! world positions for drawing tools.
 
 use super::viewport_state::ViewportState;
 
-/// Outil actif du canvas.
+/// The canvas's active tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewportTool {
-    /// Déplacement / sélection.
+    /// Move / select.
     #[default]
     Move,
-    /// Main : le drag déplace la vue.
+    /// Hand: dragging moves the view.
     Pan,
-    /// Loupe : clic = zoom avant, clic droit = zoom arrière.
+    /// Magnifier: click = zoom in, right-click = zoom out.
     Zoom,
-    /// Pinceau : le drag rapporte les positions monde.
+    /// Brush: dragging reports world positions.
     Brush,
 }
 
 impl ViewportTool {
-    /// Curseur associé à l'outil.
+    /// Cursor for the tool.
     pub fn cursor(self) -> egui::CursorIcon {
         match self {
             Self::Move => egui::CursorIcon::Move,
@@ -50,26 +50,25 @@ impl ViewportTool {
     }
 }
 
-/// Action rapportée par [`handle_pointer`], à traiter par l'app
-/// (mise à jour d'état local, ou envoi au moteur via channel).
+/// Action reported by [`handle_pointer`], for the app to handle
+/// (local state update, or engine send via channel).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewportAction {
-    /// La vue a été déplacée (pan).
+    /// The view moved (pan).
     Panned,
-    /// Le zoom a changé.
+    /// The zoom changed.
     Zoomed,
-    /// Position monde du pointeur (clic ou drag avec un outil de
-    /// dessin/déplacement), en pixels image.
+    /// Pointer's world position (click or drag with a drawing/move
+    /// tool), in image pixels.
     PointerAtWorld(egui::Vec2),
 }
 
-/// Facteur de zoom pour un delta de molette vertical.
+/// Zoom factor for a vertical wheel delta.
 ///
-/// Convention : molette haut (`delta_y > 0`) = zoom avant (facteur
-/// `> 1`), molette bas = zoom arrière (`< 1`), aucun scroll = `1.0`.
-/// Le facteur par événement est borné à [1/4, 4] (garde-fou
-/// trackpads) ; les bornes de zoom restent appliquées par
-/// [`ViewportState`].
+/// Convention: wheel up (`delta_y > 0`) = zoom in (factor `> 1`),
+/// wheel down = zoom out (`< 1`), no scroll = `1.0`. The per-event
+/// factor is bounded to [1/4, 4] (trackpad guard); zoom bounds stay
+/// enforced by [`ViewportState`].
 pub fn zoom_factor_for_scroll(delta_y: f32) -> f32 {
     if delta_y == 0.0 {
         return 1.0;
@@ -77,14 +76,14 @@ pub fn zoom_factor_for_scroll(delta_y: f32) -> f32 {
     (2.0f32.powf(delta_y * 0.002)).clamp(0.25, 4.0)
 }
 
-/// Applique pan/zoom/outils depuis les entrées pointeur.
+/// Applies pan/zoom/tools from pointer inputs.
 ///
-/// À appeler après l'allocation du canvas, avec sa `response`.
-/// Le zoom molette n'est pris en compte que si le canvas est survolé.
-/// `viewport_center` est le centre écran du widget (géométrie réelle
-/// `screen = center + offset + world * zoom`) : le zoom molette et la
-/// loupe y sont ancrés pour que le point image sous la souris reste
-/// fixe (zoom au niveau du curseur).
+/// Call after allocating the canvas, with its `response`.
+/// Wheel zoom only counts when the canvas is hovered.
+/// `viewport_center` is the widget's screen center (real geometry
+/// `screen = center + offset + world * zoom`): wheel zoom and the
+/// magnifier anchor there so the image point under the mouse stays
+/// fixed (zoom at the cursor).
 pub fn handle_pointer(
     ui: &mut egui::Ui,
     response: &egui::Response,
@@ -94,7 +93,7 @@ pub fn handle_pointer(
 ) -> Vec<ViewportAction> {
     let mut actions = Vec::new();
 
-    // Pan : bouton milieu toujours, bouton principal avec l'outil main.
+    // Pan: middle button always, primary button with the hand tool.
     if response.dragged_by(egui::PointerButton::Middle)
         || (tool == ViewportTool::Pan && response.dragged_by(egui::PointerButton::Primary))
     {
@@ -102,7 +101,7 @@ pub fn handle_pointer(
         actions.push(ViewportAction::Panned);
     }
 
-    // Zoom molette ancré au pointeur (canvas survolé uniquement).
+    // Pointer-anchored wheel zoom (hovered canvas only).
     if response.hovered() {
         let delta_y = ui.input(|input| input.smooth_scroll_delta()).y;
         let factor = zoom_factor_for_scroll(delta_y);
@@ -114,7 +113,7 @@ pub fn handle_pointer(
         }
     }
 
-    // Clic loupe : avant (gauche) / arrière (droit), ancré au pointeur.
+    // Magnifier click: in (left) / out (right), anchored at the pointer.
     if tool == ViewportTool::Zoom
         && let Some(anchor) = ui.ctx().pointer_latest_pos()
     {
@@ -127,7 +126,7 @@ pub fn handle_pointer(
         }
     }
 
-    // Outils de dessin/déplacement : rapporter la position monde.
+    // Drawing/move tools: report the world position.
     if (tool == ViewportTool::Brush || tool == ViewportTool::Move)
         && (response.dragged_by(egui::PointerButton::Primary)
             || response.clicked_by(egui::PointerButton::Primary))
@@ -147,17 +146,17 @@ mod tests {
 
     #[test]
     fn wheel_zoom_direction() {
-        // Molette haut = zoom avant.
+        // Wheel up = zoom in.
         assert!(zoom_factor_for_scroll(50.0) > 1.0);
-        // Molette bas = zoom arrière.
+        // Wheel down = zoom out.
         assert!(zoom_factor_for_scroll(-50.0) < 1.0);
-        // Pas de scroll = pas de zoom.
+        // No scroll = no zoom.
         assert_eq!(zoom_factor_for_scroll(0.0), 1.0);
     }
 
     #[test]
     fn wheel_factor_bounded() {
-        // Rafale trackpad : facteur borné, jamais de saut brutal.
+        // Trackpad burst: bounded factor, never a brutal jump.
         assert_eq!(zoom_factor_for_scroll(10_000.0), 4.0);
         assert_eq!(zoom_factor_for_scroll(-10_000.0), 0.25);
     }

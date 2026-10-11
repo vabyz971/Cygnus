@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Contenus des onglets dock « Inspecteur », « Calques » et
-//! « Historique ».
+//! Dock tab contents: "Inspector", "Layers" and
+//! "History".
 //!
 //! ```text
 //! PhotoDockTab::Inspector → InspectorPanel
@@ -23,8 +23,8 @@
 //! PhotoDockTab::History   → HistoryPanel
 //! ```
 //!
-//! Position-indépendants : visibilité et placement via le dock
-//! (fermeture + menu Fenêtre), plus via le `WorkspaceState`.
+//! Position-independent: visibility and placement via the dock
+//! (close + Window menu), plus via the `WorkspaceState`.
 
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
@@ -33,7 +33,7 @@ use crate::ui::{
     inspector_action_to_photo, layer_panel_action_to_photo,
 };
 
-/// Inspecteur du calque sélectionné (contenu de l'onglet).
+/// Inspector of the selected layer (tab content).
 pub fn draw_inspector_content(
     ui: &mut egui::Ui,
     doc: &OpenDocument,
@@ -49,14 +49,14 @@ pub fn draw_inspector_content(
         .collect()
 }
 
-/// Liste des calques (contenu de l'onglet).
+/// Layer list (tab content).
 pub fn draw_layers_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
     ctx: &PhotoUiContext,
     filter_types: &[(String, String)],
 ) -> Vec<PhotoAction> {
-    // Annule un renommage orphelin avant affichage.
+    // Cancel an orphaned rename before display.
     if doc
         .ui
         .rename
@@ -85,7 +85,7 @@ pub fn draw_layers_content(
     .collect()
 }
 
-/// Historique des pas undo/redo (contenu de l'onglet).
+/// Undo/redo step history (tab content).
 pub fn draw_history_content(
     ui: &mut egui::Ui,
     doc: &OpenDocument,

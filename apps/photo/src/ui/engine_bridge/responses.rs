@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,7 @@
 #![allow(dead_code)] // TODO(Phase 5) : levé au câblage dans app.rs.
 #![allow(unused_imports)] // TODO(Phase 5) : idem.
 
-//! Réponses du worker vers l'UI : [`PhotoEngineResponse`].
+//! Worker-to-UI responses: [`PhotoEngineResponse`].
 
 use super::preview::PreviewImage;
 use crate::ui::features::layers::{
@@ -31,77 +31,77 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
-/// Réponses worker → UI.
+/// Worker → UI responses.
 #[derive(Debug, Clone)]
 pub enum PhotoEngineResponse {
-    /// État frais après application, avec nouveau composite.
-    /// `revision` identifie le rendu : l'UI ignore tout aperçu dont
-    /// la révision n'est pas plus récente que la texture affichée.
+    /// Fresh state after application, with a new composite.
+    /// `revision` identifies the render: the UI ignores any preview
+    /// whose revision is not newer than the displayed texture.
     LayersChanged {
-        /// Snapshot pour l'UI.
+        /// Snapshot for the UI.
         layers: Vec<PhotoLayerInfo>,
-        /// Aperçu composite pour le canvas (`None` si vide).
+        /// Composite preview for the canvas (`None` when empty).
         preview: Option<PreviewImage>,
-        /// Révision du rendu produit.
+        /// Produced render revision.
         revision: RenderRevision,
-        /// Profondeurs d'historique (pour griser undo/redo).
+        /// History depths (to grey out undo/redo).
         can_undo: bool,
-        /// Profondeur redo.
+        /// Redo depth.
         can_redo: bool,
-        /// Libellés des pas annulables, du plus ancien au plus récent
-        /// (panneau Historique, O003).
+        /// Undoable step labels, oldest to newest
+        /// (History panel, O003).
         undo_labels: Vec<String>,
-        /// Libellés des pas rétablissables, du plus ancien au plus
-        /// récent (l'UI affiche en tête le dernier = prochain redo).
+        /// Redoable step labels, oldest to
+        /// newest (the UI shows the last one first = next redo).
         redo_labels: Vec<String>,
     },
-    /// État frais SANS nouveau rendu (ex. renommage, no-op) : l'UI
-    /// met à jour le panneau et conserve la texture affichée.
+    /// Fresh state WITHOUT a new render (e.g. rename, no-op): the UI
+    /// updates the panel and keeps the displayed texture.
     StateChanged {
-        /// Snapshot pour l'UI.
+        /// Snapshot for the UI.
         layers: Vec<PhotoLayerInfo>,
-        /// Révision du dernier rendu (inchangée, texture conservée).
+        /// Last render revision (unchanged, texture kept).
         revision: RenderRevision,
-        /// Profondeurs d'historique (pour griser undo/redo).
+        /// History depths (to grey out undo/redo).
         can_undo: bool,
         /// Profondeur redo.
         can_redo: bool,
-        /// Libellés des pas annulables (O003, comme `LayersChanged`).
+        /// Undoable step labels (O003, like `LayersChanged`).
         undo_labels: Vec<String>,
-        /// Libellés des pas rétablissables (O003).
+        /// Redoable step labels (O003).
         redo_labels: Vec<String>,
     },
-    /// Miniature secondaire arrivée APRÈS le canvas (Phase 6G.3) : le
-    /// `LayersChanged` précédent portait l'aperçu canvas + des miniatures
-    /// potentiellement périmées d'une frame ; celle-ci synchronise le
-    /// panneau sans jamais re-rendre le canvas. L'UI l'applique si et
-    /// seulement si sa version est plus récente que le cache (garde
-    /// anti-obsolescence côté UI, en plus de la garde worker).
+    /// Secondary thumbnail arrived AFTER the canvas (Phase 6G.3): the
+    /// previous `LayersChanged` carried the canvas preview + thumbnails
+    /// potentially one frame stale; this one syncs the
+    /// panel without ever re-rendering the canvas. The UI applies it if and
+    /// only if its version is newer than the cache (UI-side
+    /// anti-staleness guard, on top of the worker guard).
     ThumbnailUpdated {
-        /// Calque concerné.
+        /// Concerned layer.
         layer: Uuid,
-        /// Miniature + version d'apparence calculée.
+        /// Thumbnail + computed appearance version.
         thumb: PhotoLayerThumb,
     },
-    /// Échec non bloquant (ex. décodage impossible).
+    /// Non-blocking failure (e.g. undecodable).
     EngineError {
-        /// Message affichable dans la barre de statut.
+        /// Message displayable in the status bar.
         message: String,
     },
-    /// Export PNG terminé.
+    /// PNG export finished.
     ExportDone {
-        /// Chemin du fichier écrit.
+        /// Written file path.
         path: PathBuf,
     },
-    /// Projet `.cygp` enregistré (O001 : Save/Save As).
+    /// `.cygp` project saved (O001: Save/Save As).
     ProjectSaved {
-        /// Chemin du fichier écrit.
+        /// Written file path.
         path: PathBuf,
     },
 }
 
 // ---------------------------------------------------------------------------
-// INSTRUMENTATION TEMPORAIRE (diagnostic perf, aucune incidence
-// fonctionnelle) : timings worker + compteurs, à retirer une fois le
-// rapport validé.
+// TEMPORARY INSTRUMENTATION (perf diagnostics, no functional
+// impact): worker timings + counters, to remove once the
+// report is validated.
 // ---------------------------------------------------------------------------

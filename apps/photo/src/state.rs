@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! État de l'app Photo, séparé en trois couches.
+//! Photo app state, split into three layers.
 //!
-//! - [`OpenDocument`] : lien worker + état par document (titre, UI).
-//! - [`PhotoUiState`] : état d'interface par document (sélection,
-//!   outil, viewport, drag…), jamais de pixels.
-//! - [`PhotoShellState`] : état global de la coquille (workspace,
-//!   dialogs, modales).
-//! - [`PhotoRuntimeState`] : éphémère non sérialisable (file
-//!   pickers, catalogue de filtres, compteurs).
+//! - [`OpenDocument`]: worker link + per-document state (title, UI).
+//! - [`PhotoUiState`]: per-document interface state (selection,
+//!   tool, viewport, drag…), never pixels.
+//! - [`PhotoShellState`]: global shell state (workspace,
+//!   dialogs, modals).
+//! - [`PhotoRuntimeState`]: ephemeral non-serializable state (file
+//!   pickers, filter catalog, counters).
 //!
-//! La frontière moteur→UI ([`apply_response`]) vit ici : c'est le
-//! seul point de conversion des réponses worker en état UI.
+//! The engine→UI boundary ([`apply_response`]) lives here: it is the
+//! only conversion point from worker responses to UI state.
 
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
@@ -42,22 +42,22 @@ use ui_kit::utils::ReorderDragState;
 use ui_kit::viewport::{ViewportState, ViewportTextureCache};
 use uuid::Uuid;
 
-/// Géométrie de l'aperçu : où se trouve le document dans la miniature
-/// (plan infini : le composite dépasse dès qu'un calque sort du cadre).
+/// Preview geometry: where the document sits inside the thumbnail
+/// (infinite plane: the composite extends as soon as a layer leaves the frame).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PreviewGeom {
-    /// Dimensions de la miniature en pixels.
+    /// Thumbnail dimensions in pixels.
     pub thumb_size: egui::Vec2,
-    /// Dimensions du composite pleine résolution.
+    /// Full-resolution composite dimensions.
     pub full_size: egui::Vec2,
-    /// Coin haut-gauche du document en pixels miniature.
+    /// Top-left corner of the document in thumbnail pixels.
     pub origin: egui::Vec2,
-    /// Dimensions du document en pixels.
+    /// Document dimensions in pixels.
     pub doc_size: egui::Vec2,
 }
 
 impl PreviewGeom {
-    /// Facteur miniature→pixels document (miniature uniforme).
+    /// Thumbnail→document-pixel factor (uniform thumbnail).
     pub fn thumb_to_doc(self) -> f32 {
         if self.thumb_size.x > 0.0 && self.full_size.x > 0.0 {
             self.full_size.x / self.thumb_size.x
@@ -66,8 +66,8 @@ impl PreviewGeom {
         }
     }
 
-    /// Rectangle écran du document à partir du rectangle écran de la
-    /// miniature (`None` sans géométrie valide).
+    /// On-screen document rect from the thumbnail's on-screen rect
+    /// (`None` without valid geometry).
     pub fn doc_rect(self, dest: egui::Rect) -> Option<egui::Rect> {
         if self.thumb_size.x <= 0.0 || self.doc_size.x <= 0.0 || self.doc_size.y <= 0.0 {
             return None;
@@ -90,18 +90,18 @@ impl PreviewGeom {
     }
 }
 
-/// Miniature de calque téléversée (cache textures du panneau).
+/// Uploaded layer thumbnail (panel texture cache).
 pub(crate) struct CachedLayerThumb {
-    /// Texture GPU (vivante tant que le calque est affiché).
+    /// GPU texture (alive while the layer is displayed).
     handle: egui::TextureHandle,
-    /// Version d'apparence servie (re-téléversement si changée).
+    /// Served appearance version (re-upload if changed).
     version: u64,
-    /// Dimensions de la miniature en pixels.
+    /// Thumbnail dimensions in pixels.
     size: egui::Vec2,
 }
 
 impl PhotoUiState {
-    /// Vue des miniatures pour le panneau Calques (id texture + taille).
+    /// Thumbnail views for the Layers panel (texture id + size).
     pub fn thumb_views(&self) -> HashMap<Uuid, crate::ui::LayerThumbView> {
         self.thumb_cache
             .iter()
@@ -118,140 +118,140 @@ impl PhotoUiState {
     }
 }
 
-/// État UI d'un document ouvert.
+/// UI state of an open document.
 #[derive(Default)]
 pub struct PhotoUiState {
-    /// Snapshot pour le panneau (haut de pile d'abord).
+    /// Snapshot for the panel (top of stack first).
     pub layers: Vec<PhotoLayerInfo>,
-    /// Calque sélectionné (état UI pur).
+    /// Selected layer (pure UI state).
     pub selected: Option<Uuid>,
-    /// Pièce jointe focalisée (filtre/masque, sélection secondaire :
-    /// le porteur reste la sélection principale).
+    /// Focused attachment (filter/mask, secondary selection:
+    /// the owner stays the primary selection).
     pub focused_attachment: Option<crate::ui::AttachmentRef>,
-    /// Outil canvas actif.
+    /// Active canvas tool.
     pub tool: PhotoCanvasTool,
-    /// Mode d'édition (Vector / Pixel / Layout, 2e rangée haute).
+    /// Edit mode (Vector / Pixel / Layout, 2nd top row).
     pub edit_mode: PhotoEditMode,
-    /// Zoom/pan du canvas.
+    /// Canvas zoom/pan.
     pub viewport: ViewportState,
-    /// Texture du composite moteur.
+    /// Engine composite texture.
     pub texture_cache: ViewportTextureCache,
-    /// Dernier aperçu reçu (échantillonnage pipette).
+    /// Last received preview (eyedropper sampling).
     pub last_preview: Option<PreviewImage>,
-    /// Géométrie du dernier aperçu (cadre document dans la miniature).
+    /// Last preview geometry (document frame inside the thumbnail).
     pub preview_geom: Option<PreviewGeom>,
-    /// Aperçu rogné au document (menu Affichage, défaut : plan infini).
+    /// Preview clipped to the document (View menu, default: infinite plane).
     pub preview_clip: bool,
-    /// Textures des miniatures du panneau Calques, par calque.
+    /// Layers panel thumbnail textures, per layer.
     pub thumb_cache: HashMap<Uuid, CachedLayerThumb>,
-    /// Trait de pinceau en cours (pixels image).
+    /// In-progress brush stroke (image pixels).
     pub stroke: Vec<egui::Vec2>,
-    /// Surface transitoire du geste en cours (Phase 6G.3P) : jamais vers le
-    /// worker avant commit, vidée au commit/annulation/changement d'outil.
+    /// Transient surface of the in-progress gesture (Phase 6G.3P): never to the
+    /// worker before commit, drained on commit/cancel/tool switch.
     pub ink_overlay: photo_engine::interaction::InteractionOverlay,
-    /// Texture du trait transitoire (région bornée au geste).
+    /// Transient stroke texture (gesture-bounded region).
     pub ink_texture: Option<egui::TextureHandle>,
-    /// Géométrie de la frame en cache (redraw persistant sans re-rendre).
+    /// Cached frame geometry (persistent redraw without re-rendering).
     pub ink_frame: Option<crate::ui::InkFrameGeom>,
-    /// Dernières métriques d'interaction (rapport/tests, pas d'affichage).
+    /// Latest interaction metrics (report/tests, no display).
     pub ink_metrics: photo_engine::interaction::InteractionMetrics,
-    /// Réglages pinceau/gomme.
+    /// Brush/eraser settings.
     pub brush: PhotoBrushSettings,
-    /// État de drag du panneau calques.
+    /// Layers panel drag state.
     pub drag_state: ReorderDragState,
-    /// Renommage inline d'un calque (double-clic).
+    /// Inline layer rename (double-click).
     pub rename: LayerRenameState,
-    /// Profondeurs d'historique (boutons undo/redo).
+    /// History depths (undo/redo buttons).
     pub can_undo: bool,
-    /// Redo disponible.
+    /// Redo available.
     pub can_redo: bool,
-    /// Libellés des pas annulables, du plus ancien au plus récent
-    /// (panneau Historique, O003).
+    /// Undoable step labels, oldest to newest
+    /// (History panel, O003).
     pub history_undo: Vec<String>,
-    /// Libellés des pas rétablissables (O003).
+    /// Redoable step labels (O003).
     pub history_redo: Vec<String>,
-    /// Message de statut.
+    /// Status message.
     pub status: String,
-    /// Grille du canvas.
+    /// Canvas grid.
     pub show_grid: bool,
-    /// Repaint explicite demandé.
+    /// Explicit repaint requested.
     pub needs_repaint: bool,
-    /// INSTRUMENTATION TEMPORAIRE (diagnostic perf) : réponses worker
-    /// appliquées (== previews reçus + erreurs/exports).
+    /// TEMPORARY INSTRUMENTATION (perf diagnostics): applied worker
+    /// responses (== received previews + errors/exports).
     pub responses_applied: u64,
-    /// INSTRUMENTATION TEMPORAIRE : uploads de textures egui
-    /// (aperçu + miniatures périmées).
+    /// TEMPORARY INSTRUMENTATION: egui texture uploads
+    /// (preview + stale thumbnails).
     pub texture_uploads: u64,
-    /// INSTRUMENTATION 6G.1 (diagnostic présentation, aucun effet) :
-    /// octets téléversés vers le GPU (aperçu + miniatures).
+    /// INSTRUMENTATION 6G.1 (presentation diagnostics, no effect):
+    /// bytes uploaded to the GPU (preview + thumbnails).
     pub texture_upload_bytes: u64,
-    /// INSTRUMENTATION 6G.1 : dernière présentation mesurée.
+    /// INSTRUMENTATION 6G.1: last measured presentation.
     pub last_presentation: PresentationTimings,
-    /// Révision du rendu affiché (`None` = aucune texture) : les
-    /// réponses obsolètes ne re-téléversent pas.
+    /// Displayed render revision (`None` = no texture): stale
+    /// responses do not re-upload.
     pub displayed_revision: Option<RenderRevision>,
 }
 
-/// Chronos et volumes de présentation (Phase 6G.1 §9–13) : mesurés à
-/// l'appelant (`apply_response`), jamais dans les widgets (ui-kit intact).
-/// `texture_set_us` = coût CPU observable de l'appel d'upload, PAS une
-/// latence GPU exacte (le transfert peut finir après le retour).
+/// Presentation timings and volumes (Phase 6G.1 §9–13): measured at
+/// the caller (`apply_response`), never in widgets (ui-kit untouched).
+/// `texture_set_us` = observable CPU cost of the upload call, NOT an
+/// exact GPU latency (the transfer may finish after return).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PresentationTimings {
-    /// Application totale de la réponse (décodage match inclus).
+    /// Total response application (match decoding included).
     pub response_apply_us: u128,
-    /// Synchronisation des miniatures (`sync_thumbs`, panneau Calques).
+    /// Thumbnail sync (`sync_thumbs`, Layers panel).
     pub thumb_sync_us: u128,
-    /// Construction `ColorImage` depuis le RGBA preview.
+    /// `ColorImage` construction from the RGBA preview.
     pub colorimage_us: u128,
-    /// Appel `texture.set` (upload aperçu).
+    /// `texture.set` call (preview upload).
     pub texture_set_us: u128,
-    /// Application de l'aperçu (ColorImage + upload).
+    /// Preview application (ColorImage + upload).
     pub preview_apply_us: u128,
 }
 
-/// Un document ouvert : worker moteur + état UI.
+/// An open document: engine worker + UI state.
 pub struct OpenDocument {
-    /// Identifiant stable (onglet dock, persistance du layout).
+    /// Stable id (dock tab, layout persistence).
     pub id: Uuid,
-    /// Titre de l'onglet dock.
+    /// Dock tab title.
     pub title: String,
-    /// Chemin du projet `.cygp` associé (O001 : Save direct si
-    /// présent, Save As sinon ; posé au dispatch, jamais lu par le
-    /// worker — état UI pur).
+    /// Associated `.cygp` project path (O001: direct Save when
+    /// present, Save As otherwise; set at dispatch, never read by
+    /// the worker — pure UI state).
     pub project_path: Option<PathBuf>,
-    /// État UI du document.
+    /// Document UI state.
     pub ui: PhotoUiState,
-    /// Commandes vers le worker.
+    /// Commands to the worker.
     pub tx: std::sync::mpsc::Sender<crate::ui::engine_bridge::PhotoEngineCommand>,
-    /// Réponses du worker (poll non bloquant).
+    /// Worker responses (non-blocking poll).
     pub rx: Receiver<PhotoEngineResponse>,
-    // NOTE : le JoinHandle du worker n'est pas conservé : le thread
-    // se termine seul quand le `Sender` est lâché (fin du `recv`).
+    // NOTE: the worker JoinHandle is not kept: the thread
+    // exits on its own when the `Sender` is dropped (`recv` ends).
 }
 
-/// État global de la coquille (fenêtre unique, tous documents).
+/// Global shell state (single window, all documents).
 pub struct PhotoShellState {
-    /// Layout des régions et panneaux (persistable, voir
+    /// Region and panel layout (persistable, see
     /// `crate::persistence`).
     pub workspace: WorkspaceState,
-    /// Tuiles ancrables (outils, canevas, inspecteur, calques).
-    /// `Tree` n'implémente pas `Default` : voir le `impl`
-    /// manuel ci-dessous (arbre vide, reconstruit par l'app autour
-    /// du premier document).
+    /// Dockable tiles (tools, canvas, inspector, layers).
+    /// `Tree` does not implement `Default`: see the manual
+    /// `impl` below (empty tree, rebuilt by the app around
+    /// the first document).
     pub tree: egui_tiles::Tree<PhotoDockTab>,
-    /// Fenêtre « Créer un document » (format, dimensions, orientation).
+    /// "Create document" window (format, dimensions, orientation).
     pub new_doc_dialog: CreateDocumentDialogState,
-    /// Fenêtre « Exportation » (dossier, format, validation).
+    /// "Export" window (folder, format, validation).
     pub export_dialog: ExportDialogState,
-    /// Fenêtre d'aide visible.
+    /// Help window visible.
     pub help_open: bool,
 }
 
 impl Default for PhotoShellState {
-    /// Coquille par défaut : workspace standard + arbre vide
-    /// (`Tree` n'a pas de `Default`). `PhotoApp::new`
-    /// reconstruit aussitôt le layout autour du premier document.
+    /// Default shell: standard workspace + empty tree
+    /// (`Tree` has no `Default`). `PhotoApp::new`
+    /// immediately rebuilds the layout around the first document.
     fn default() -> Self {
         Self {
             workspace: WorkspaceState::default(),
@@ -263,24 +263,24 @@ impl Default for PhotoShellState {
     }
 }
 
-/// État éphémère d'exécution (non sérialisable).
+/// Ephemeral runtime state (non-serializable).
 pub struct PhotoRuntimeState {
-    /// Catalogue des filtres (registre moteur, statique).
+    /// Filter catalog (engine registry, static).
     pub filter_types: Vec<(String, String)>,
-    /// Résolveur de raccourcis (bindings par défaut, O002).
+    /// Shortcut resolver (default bindings, O002).
     pub keys: preferences::KeybindingResolver,
-    /// File picker d'ouverture en cours (non bloquant).
+    /// Open file picker in flight (non-blocking).
     pub open_picker: Option<Receiver<Option<PathBuf>>>,
-    /// File picker d'ouverture de projet `.cygp` (O001, non bloquant).
+    /// `.cygp` project open file picker (O001, non-blocking).
     pub project_open_picker: Option<Receiver<Option<PathBuf>>>,
-    /// File picker « Enregistrer sous » `.cygp` (O001, non bloquant).
+    /// `.cygp` "Save as" file picker (O001, non-blocking).
     pub project_save_picker: Option<Receiver<Option<PathBuf>>>,
-    /// Compteur « Sans titre ».
+    /// "Untitled" counter.
     pub untitled_counter: usize,
 }
 
 impl PhotoRuntimeState {
-    /// Runtime initial (catalogue de filtres du registre moteur).
+    /// Initial runtime (engine-registry filter catalog).
     pub fn new() -> Self {
         let filter_types = photo_engine::filterable_types()
             .iter()
@@ -305,10 +305,10 @@ impl Default for PhotoRuntimeState {
     }
 }
 
-/// Téléverse une miniature (sans condition : l'appelant a déjà vérifié la
-/// garde). Factorise `sync_thumbs` et le bras `ThumbnailUpdated` (même
-/// téléversement, mêmes compteurs) — le CHOIX de la garde reste à l'appelant
-/// pour préserver exactement les sémantiques historiques de chaque chemin.
+/// Uploads a thumbnail (unconditional: the caller already checked the
+/// guard). Shares `sync_thumbs` and the `ThumbnailUpdated` arm (same
+/// upload, same counters) — the guard CHOICE stays with the caller
+/// to preserve each path's historical semantics exactly.
 fn upload_layer_thumb(
     ctx: &egui::Context,
     ui: &mut PhotoUiState,
@@ -323,10 +323,10 @@ fn upload_layer_thumb(
         ),
         egui::TextureOptions::LINEAR,
     );
-    // INSTRUMENTATION TEMPORAIRE.
+    // TEMPORARY INSTRUMENTATION.
     ui.texture_uploads += 1;
-    // INSTRUMENTATION 6G.1 : volume miniature (§14 : séparer
-    // le coût du panneau Calques de celui du canvas).
+    // INSTRUMENTATION 6G.1: thumbnail volume (§14: separate
+    // the Layers panel cost from the canvas one).
     ui.texture_upload_bytes += thumb.width as u64 * thumb.height as u64 * 4;
     ui.thumb_cache.insert(
         id,
@@ -338,14 +338,14 @@ fn upload_layer_thumb(
     );
 }
 
-/// Cache des miniatures : re-téléverse uniquement les calques dont
-/// l'apparence a changé, purge les disparus. Partagé par les deux
-/// bras d'état (`LayersChanged` et `StateChanged`). Garde `!=` historique
-/// INCHANGÉE (y compris downgrade de version au undo — comportement préservé
-/// à l'octet).
+/// Thumbnail cache: re-uploads only layers whose
+/// appearance changed, purges the gone ones. Shared by both
+/// state arms (`LayersChanged` and `StateChanged`). Historical `!=` guard
+/// UNCHANGED (including version downgrade on undo — behavior preserved
+/// byte-for-byte).
 fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
-    // Par index (pas d'emprunt maintenu sur `layers`) : l'upload emprunte
-    // `ui` en mutable via le helper partagé. Clone borné (miniature 48×32).
+    // By index (no borrow held on `layers`): the upload borrows
+    // `ui` mutably via the shared helper. Bounded clone (48×32 thumbnail).
     for index in 0..ui.layers.len() {
         let pending = {
             let layer = &ui.layers[index];
@@ -369,13 +369,13 @@ fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
         .retain(|id, _| ui.layers.iter().any(|layer| layer.id == *id));
 }
 
-/// Applique une réponse worker à l'état UI d'un document.
+/// Applies a worker response to a document's UI state.
 ///
-/// Seul point de conversion moteur→UI : snapshots + aperçu
-/// composite (texture téléversée côté app, zéro régénération au
+/// Only engine→UI conversion point: snapshots + composite
+/// preview (texture uploaded app-side, zero regeneration on
 /// zoom/pan — state-only).
 pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: PhotoEngineResponse) {
-    // INSTRUMENTATION 6G.1 (aucun effet) : chrono total d'application.
+    // INSTRUMENTATION 6G.1 (no effect): total application timing.
     let t_apply = std::time::Instant::now();
     let mut presentation = PresentationTimings::default();
     match response {
@@ -393,7 +393,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.can_redo = can_redo;
             ui.history_undo = undo_labels;
             ui.history_redo = redo_labels;
-            // INSTRUMENTATION TEMPORAIRE.
+            // TEMPORARY INSTRUMENTATION.
             ui.responses_applied += 1;
             if ui
                 .selected
@@ -401,7 +401,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             {
                 ui.selected = None;
             }
-            // Focus orphelin (porteur disparu) : abandonné aussi.
+            // Orphaned focus (owner gone): dropped too.
             if ui.focused_attachment.is_some_and(|focus| {
                 crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
             }) {
@@ -412,8 +412,8 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             presentation.thumb_sync_us = t_thumbs.elapsed().as_micros();
             match preview {
                 Some(image) => {
-                    // Garde anti-obsolescence : une réponse en retard
-                    // (révision <= texture affichée) ne re-téléverse pas.
+                    // Anti-staleness guard: a late response
+                    // (revision <= displayed texture) does not re-upload.
                     let fresh = ui
                         .displayed_revision
                         .is_none_or(|shown| revision.is_newer_than(shown));
@@ -438,9 +438,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         ui.texture_cache.update(ctx, "photo_preview", color);
                         presentation.texture_set_us = t_set.elapsed().as_micros();
                         presentation.preview_apply_us = t_preview.elapsed().as_micros();
-                        // INSTRUMENTATION TEMPORAIRE.
+                        // TEMPORARY INSTRUMENTATION.
                         ui.texture_uploads += 1;
-                        // INSTRUMENTATION 6G.1 : volume téléversé (octets).
+                        // INSTRUMENTATION 6G.1: uploaded volume (bytes).
                         ui.texture_upload_bytes += image.width as u64 * image.height as u64 * 4;
                         ui.last_preview = Some(image);
                         ui.displayed_revision = Some(revision);
@@ -464,14 +464,14 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             undo_labels,
             redo_labels,
         } => {
-            // Snapshot seul : la texture affichée est conservée telle
-            // quelle (aucun nouveau rendu produit côté worker).
+            // Snapshot only: the displayed texture is kept as
+            // is (no new render produced worker-side).
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
             ui.history_undo = undo_labels;
             ui.history_redo = redo_labels;
-            // INSTRUMENTATION TEMPORAIRE.
+            // TEMPORARY INSTRUMENTATION.
             ui.responses_applied += 1;
             if ui
                 .selected
@@ -479,7 +479,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             {
                 ui.selected = None;
             }
-            // Focus orphelin (porteur disparu) : abandonné aussi.
+            // Orphaned focus (owner gone): dropped too.
             if ui.focused_attachment.is_some_and(|focus| {
                 crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
             }) {
@@ -503,12 +503,12 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ThumbnailUpdated { layer, thumb } => {
-            // Phase 6G.3 §4A : miniature secondaire, arrivée après le canvas.
-            // Garde STRICTE `>` (seconde barrière après la garde worker) :
-            // un résultat plus ancien qu'un affichage existant est ignoré —
-            // jamais de retour visuel en arrière (ordre d'achèvement vs
-            // ordre d'envoi découplés par le thread). Calque inconnu :
-            // ignoré sans téléversement (pas d'orphelin dans le cache).
+            // Phase 6G.3 §4A: secondary thumbnail, arriving after the canvas.
+            // STRICT `>` guard (second barrier after the worker guard):
+            // a result older than an existing display is ignored —
+            // never a visual step back (completion order vs
+            // send order decoupled by the thread). Unknown layer:
+            // ignored without upload (no orphan in the cache).
             if ui.layers.iter().any(|l| l.id == layer) {
                 let current = ui.thumb_cache.get(&layer).map(|cached| cached.version);
                 if current.is_none_or(|v| thumb.version > v) {
@@ -525,8 +525,8 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
     ui.last_presentation = presentation;
 }
 
-/// Échantillonne la couleur du composite sous `(x, y)` pixels image.
-/// `None` hors bornes ou sans aperçu (la pipette ignore alors le clic).
+/// Samples the composite color under `(x, y)` image pixels.
+/// `None` out of bounds or without preview (the eyedropper then ignores the click).
 pub fn sample_preview_color(preview: &PreviewImage, x: f32, y: f32) -> Option<[u8; 3]> {
     if preview.width == 0 || preview.height == 0 {
         return None;
@@ -659,12 +659,12 @@ mod tests {
         assert_eq!(ui.displayed_revision, Some(RenderRevision(2)));
         let uploads = ui.texture_uploads;
         let texture = ui.texture_cache.texture().expect("texture");
-        // Réponse en retard : texture et aperçu conservés.
+        // Late response: texture and preview kept.
         apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(1)));
         assert_eq!(ui.texture_uploads, uploads, "aucun re-téléversement");
         assert_eq!(ui.texture_cache.texture().expect("texture"), texture);
         assert_eq!(ui.displayed_revision, Some(RenderRevision(2)));
-        // Révision plus récente : téléversement normal.
+        // Newer revision: normal upload.
         apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(3)));
         assert_eq!(ui.texture_uploads, uploads + 1);
         assert_eq!(ui.displayed_revision, Some(RenderRevision(3)));
@@ -689,7 +689,7 @@ mod tests {
                 redo_labels: Vec::new(),
             },
         );
-        // Panneau à jour (undo), texture intacte.
+        // Panel up to date (undo), texture intact.
         assert!(ui.can_undo);
         assert_eq!(ui.history_undo, vec![String::from("Opacité")]);
         assert_eq!(ui.texture_uploads, uploads);
@@ -699,8 +699,8 @@ mod tests {
 
     #[test]
     fn upload_volumes_bytes_et_chronos() {
-        // §26/§27 6G.1 : chaque upload frais comptabilise ses octets
-        // (2×2×4) et ses chronos ; réponse périmée ⇒ rien.
+        // §26/§27 6G.1: each fresh upload accounts its bytes
+        // (2×2×4) and timings; stale response ⇒ nothing.
         let ctx = egui::Context::default();
         let mut ui = PhotoUiState::default();
         apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(2)));
@@ -715,7 +715,7 @@ mod tests {
             t.preview_apply_us >= t.colorimage_us + t.texture_set_us,
             "preview = colorimage + texture (+ epsilon)"
         );
-        // Périmée : aucun volume, aucun chrono d'upload.
+        // Stale: no volume, no upload timing.
         apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(1)));
         assert_eq!(ui.texture_uploads, 1);
         assert_eq!(ui.texture_upload_bytes, 2 * 2 * 4);
@@ -723,8 +723,8 @@ mod tests {
 
     #[test]
     fn thumbnail_updated_applique_que_le_plus_recent() {
-        // §16 6G.3 au niveau UI : B appliqué, A antérieur rejeté ensuite —
-        // jamais de retour visuel en arrière, sans thread ni race.
+        // §16 6G.3 at UI level: B applied, earlier A rejected next —
+        // never a visual step back, no thread or race.
         let ctx = egui::Context::default();
         let mut ui = PhotoUiState::default();
         let mut doc = photo_engine::Document::new(4, 4);
@@ -756,7 +756,7 @@ mod tests {
         );
         assert_eq!(ui.texture_uploads, 1);
         assert_eq!(ui.layers[0].thumb.as_ref().expect("miniature").version, 12);
-        // Ancienne génération arrivant après : ignorée (ni upload, ni état).
+        // Older generation arriving late: ignored (neither upload nor state).
         apply_response(
             &ctx,
             &mut ui,
@@ -771,7 +771,7 @@ mod tests {
             90,
             "B conservé, A rejeté"
         );
-        // Calque inconnu : ignoré sans panic.
+        // Unknown layer: ignored without panic.
         apply_response(
             &ctx,
             &mut ui,
@@ -799,7 +799,7 @@ mod geom_tests {
 
     #[test]
     fn doc_rect_stable_quand_la_miniature_deborde() {
-        // Miniature 28x8 (plan infini), document 8x8 à l'origine (10, 0).
+        // 28x8 thumbnail (infinite plane), 8x8 document at origin (10, 0).
         let geom = PreviewGeom {
             thumb_size: egui::vec2(28.0, 8.0),
             full_size: egui::vec2(28.0, 8.0),
@@ -807,7 +807,7 @@ mod geom_tests {
             doc_size: egui::vec2(8.0, 8.0),
         };
         assert!((geom.thumb_to_doc() - 1.0).abs() < 1e-5);
-        // Dest écran 280x80 à (0, 0) : échelle 10.
+        // 280x80 screen dest at (0, 0): scale 10.
         let dest = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(280.0, 80.0));
         let rect = geom.doc_rect(dest).expect("cadre document");
         assert!((rect.min.x - 100.0).abs() < 1e-3);

@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Math utils partagés pour Cygnus
+//! Shared math utils for Cygnus
 //!
-//! `Vec2` n'est pas redéfini ici : la source canonique reste
-//! `datatypes::Vec2`, réexportée pour la commodité des appelants.
+//! `Vec2` is not redefined here: the canonical source remains
+//! `datatypes::Vec2`, re-exported for callers' convenience.
 
 pub mod transform2d;
 

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Orchestrateur de l'app Photo : état, commandes, moteur, workspace.
+//! Photo app orchestrator: state, commands, engine, workspace.
 //!
-//! `PhotoApp` ne dessine RIEN lui-même : il possède les documents
-//! (workers + états), draine la [`PhotoCommandQueue`] (routage vers
-//! l'état local ou le worker) et appelle [`PhotoWorkspace`] pour un
-//! frame. Aucune logique de panel, canvas, menu ou toolbar ici.
+//! `PhotoApp` draws NOTHING itself: it owns the documents
+//! (workers + states), drains the [`PhotoCommandQueue`] (routing to
+//! local state or the worker) and calls [`PhotoWorkspace`] for one
+//! frame. No panel, canvas, menu, or toolbar logic here.
 
 use crate::commands::{PhotoAction, PhotoCommandQueue, PhotoUiContext};
 use crate::layout::PhotoWorkspace;
@@ -35,35 +35,35 @@ use std::sync::mpsc::channel;
 use ui_kit::dialogs::{pick_image_to_open, pick_project_to_open, pick_project_to_save};
 use ui_kit::layout::PanelId;
 
-/// App Photo : documents à onglets + coquille + runtime + file d'actions.
+/// Photo app: tabbed documents + shell + runtime + action queue.
 ///
-/// L'app démarre SANS document : la fenêtre « Créer un document »
-/// s'ouvre pour le premier document (ou une image). Zéro document
-/// ouvert est un état normal (écran d'accueil).
+/// The app starts WITHOUT a document: the "Create document" window
+/// opens for the first document (or an image). Zero open
+/// documents is a normal state (welcome screen).
 pub struct PhotoApp {
-    /// Documents ouverts (vide au démarrage).
+    /// Open documents (empty at startup).
     pub docs: Vec<OpenDocument>,
-    /// Index du document actif (valide seulement si non vide).
+    /// Active document index (valid only when non-empty).
     pub active: usize,
-    /// État global de la coquille (workspace, dialogs).
+    /// Global shell state (workspace, dialogs).
     pub shell: PhotoShellState,
-    /// État éphémère (pickers, catalogue, compteurs).
+    /// Ephemeral state (pickers, catalog, counters).
     pub runtime: PhotoRuntimeState,
-    /// Actions UI en attente (drainées chaque frame).
+    /// Pending UI actions (drained each frame).
     pub queue: PhotoCommandQueue,
 }
 
 impl PhotoApp {
-    /// Crée l'app sans document et ouvre la fenêtre de création
-    /// (premier document ou ouverture d'image).
+    /// Creates the app without a document and opens the creation
+    /// window (first document or image opening).
     pub fn new() -> Self {
-        // Restauration du layout : aucun JSON stocké pour l'instant
-        // (câblage disque via `preferences` : phase suivante).
+        // Layout restore: no stored JSON yet
+        // (disk wiring via `preferences`: next phase).
         let mut shell = PhotoShellState {
             workspace: load_workspace_or_default(None),
             ..Default::default()
         };
-        // Photo n'a pas (encore) de timeline : région basse masquée.
+        // Photo has no timeline (yet): bottom region hidden.
         shell.workspace.set_visible(PanelId::Timeline, false);
         let mut app = Self {
             docs: Vec::new(),
@@ -72,41 +72,41 @@ impl PhotoApp {
             runtime: PhotoRuntimeState::new(),
             queue: PhotoCommandQueue::new(),
         };
-        // Pas de document initial : l'utilisateur crée (ou ouvre).
+        // No initial document: the user creates (or opens).
         app.shell.new_doc_dialog.open();
-        // Disposition des docks autour des canevas (câblage disque
-        // via `preferences` : phase suivante).
+        // Dock arrangement around the canvases (disk wiring
+        // via `preferences`: next phase).
         app.shell.tree = load_tree_or_default(None, &app.doc_ids());
         app
     }
 
-    /// Document actif, s'il y en a un.
+    /// Active document, if any.
     pub fn active_doc_opt(&self) -> Option<&OpenDocument> {
         self.docs
             .get(self.active.min(self.docs.len().saturating_sub(1)))
     }
 
-    /// Document actif mutable, s'il y en a un.
+    /// Mutable active document, if any.
     pub fn active_doc_mut_opt(&mut self) -> Option<&mut OpenDocument> {
         let index = self.active.min(self.docs.len().saturating_sub(1));
         self.docs.get_mut(index)
     }
 
-    /// Ouvre un onglet aux dimensions validées (fenêtre Nouveau doc),
-    /// avec un premier calque transparent à ces dimensions.
+    /// Opens a tab with the validated dimensions (New doc window),
+    /// with a first transparent layer at those dimensions.
     pub fn open_sized_tab(&mut self, width: u32, height: u32) {
         self.runtime.untitled_counter += 1;
         let title = format!("Sans titre {}", self.runtime.untitled_counter);
         self.spawn_document(title, Document::with_blank_layer(width, height));
     }
 
-    /// Crée le worker d'un document, lui ajoute son onglet canevas
-    /// et l'active.
+    /// Spawns a document's worker, adds its canvas tab
+    /// and activates it.
     pub fn spawn_document(&mut self, title: String, document: Document) {
         let (tx, worker_rx) = channel();
         let (worker_tx, rx) = channel();
-        // Handle détaché volontairement : le worker vit tant que
-        // le channel est ouvert, sans jamais bloquer l'UI.
+        // Handle deliberately detached: the worker lives while
+        // the channel is open, never blocking the UI.
         std::mem::forget(spawn_photo_engine_worker(document, worker_rx, worker_tx));
         let ui = PhotoUiState {
             needs_repaint: true,
@@ -127,14 +127,14 @@ impl PhotoApp {
         let _ = self.docs[self.active].tx.send(PhotoEngineCommand::Refresh);
     }
 
-    /// Ids des documents ouverts (canevas du layout).
+    /// Open document ids (layout canvases).
     fn doc_ids(&self) -> Vec<uuid::Uuid> {
         self.docs.iter().map(|doc| doc.id).collect()
     }
 
-    /// Ferme l'onglet actif (zéro document autorisé : l'écran
-    /// d'accueil prend le relais). Le worker s'arrête à la chute
-    /// du channel.
+    /// Closes the active tab (zero documents allowed: the
+    /// welcome screen takes over). The worker stops when
+    /// the channel drops.
     pub fn close_active_tab(&mut self) {
         if self.docs.is_empty() {
             return;
@@ -143,24 +143,24 @@ impl PhotoApp {
         self.close_document(self.docs[index].id);
     }
 
-    /// Ferme le document `id` et retire son onglet canevas (sans
-    /// effet si inconnu ; zéro document autorisé).
+    /// Closes document `id` and removes its canvas tab (no-op
+    /// if unknown; zero documents allowed).
     pub fn close_document(&mut self, id: uuid::Uuid) {
         remove_document(&mut self.docs, &mut self.active, id);
         crate::layout::dock::remove_canvas_tab(&mut self.shell.tree, id);
     }
 
-    /// Envoie une commande au worker du document actif (sans effet
-    /// sans document : l'UI ne panique jamais).
+    /// Sends a command to the active document's worker (no-op
+    /// without a document: the UI never panics).
     fn send_active(&self, command: PhotoEngineCommand) {
         if let Some(doc) = self.active_doc_opt() {
             let _ = doc.tx.send(command);
         }
     }
 
-    /// Mise à jour optimiste d'un calque du snapshot local : le
-    /// panneau reflète le changement dès la frame courante, la
-    /// réponse worker (recomposite coûteux) confirme ensuite.
+    /// Optimistic update of a layer in the local snapshot: the
+    /// panel reflects the change from the current frame, the
+    /// worker response (expensive recomposite) confirms next.
     fn update_layer_opt(
         &mut self,
         id: uuid::Uuid,
@@ -174,10 +174,10 @@ impl PhotoApp {
         }
     }
 
-    /// Route une action UI : état local ou commande worker.
+    /// Routes a UI action: local state or worker command.
     ///
-    /// Seul endroit (avec [`apply_response`](crate::state::apply_response))
-    /// où l'app touche au moteur : les panels n'y accèdent jamais.
+    /// Only place (with [`apply_response`](crate::state::apply_response))
+    /// where the app touches the engine: panels never access it.
     pub fn handle_action(&mut self, ctx: &egui::Context, action: PhotoAction) {
         match action {
             PhotoAction::OpenNewDocumentDialog => self.shell.new_doc_dialog.open(),
@@ -201,7 +201,7 @@ impl PhotoApp {
                     }
                     self.send_active(PhotoEngineCommand::SaveProject { path });
                 } else {
-                    // Jamais enregistré : bascule vers « Enregistrer sous ».
+                    // Never saved: fall back to "Save as".
                     self.runtime.project_save_picker = Some(pick_project_to_save());
                 }
             }
@@ -279,8 +279,8 @@ impl PhotoApp {
                 key,
                 value,
             } => {
-                // Optimiste : le curseur suit le geste sans attendre le
-                // thread background (coalescé côté worker).
+                // Optimistic: the slider follows the gesture without waiting for
+                // the background thread (coalesced worker-side).
                 if let Some(doc) = self.active_doc_mut_opt()
                     && let Some(info) =
                         crate::ui::features::layers::find_layer_in_mut(&mut doc.ui.layers, layer)
@@ -335,14 +335,14 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::ToggleGroupCollapsed(id));
             }
             PhotoAction::ToggleLayerVisibility(id) => {
-                // Optimiste : l'œil bascule dès cette frame, le worker
-                // confirme (recomposite) juste après.
+                // Optimistic: the eye toggles from this frame, the worker
+                // confirms (recomposites) right after.
                 self.update_layer_opt(id, |layer| layer.visible = !layer.visible);
                 self.send_active(PhotoEngineCommand::ToggleLayerVisibility(id));
             }
             PhotoAction::SetOpacity { layer, opacity } => {
-                // Optimiste : le slider suit le geste sans attendre le
-                // thread background (coalescé côté worker).
+                // Optimistic: the slider follows the gesture without waiting for
+                // the background thread (coalesced worker-side).
                 self.update_layer_opt(layer, |info| info.opacity = opacity.clamp(0.0, 100.0));
                 self.send_active(PhotoEngineCommand::SetOpacity { layer, opacity });
             }
@@ -395,9 +395,9 @@ impl PhotoApp {
                 }
             }
             PhotoAction::CommitStroke(paint) => {
-                // Masque focalisé du calque sélectionné : le trait
-                // part dans le masque (blanc/noir), sinon dans la
-                // source du calque (comportement historique).
+                // Focused mask of the selected layer: the stroke
+                // goes into the mask (white/black), otherwise into
+                // the layer source (historical behavior).
                 let mask_target = self.active_doc_opt().and_then(|doc| {
                     let focus = doc.ui.focused_attachment?;
                     if Some(focus.owner) != doc.ui.selected {
@@ -453,21 +453,21 @@ impl PhotoApp {
         }
     }
 
-    /// Poll non bloquant : réponses workers + file pickers.
+    /// Non-blocking poll: worker responses + file pickers.
     pub fn poll(&mut self, ctx: &egui::Context) {
         for doc in &mut self.docs {
             while let Ok(response) = doc.rx.try_recv() {
                 apply_response(ctx, &mut doc.ui, response);
             }
         }
-        // Ouverture d'image → document actif (créé si besoin).
+        // Image opening → active document (created if needed).
         if let Some(rx) = self.runtime.open_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
                     if self.docs.is_empty() {
                         self.runtime.untitled_counter += 1;
                         let title = format!("Sans titre {}", self.runtime.untitled_counter);
-                        // Dimensions ajustées par le worker à l'image.
+                        // Dimensions adjusted by the worker to the image.
                         self.spawn_document(title, Document::new(1, 1));
                     }
                     self.send_active(PhotoEngineCommand::OpenImage { path });
@@ -483,8 +483,8 @@ impl PhotoApp {
                 }
             }
         }
-        // Ouverture de projet `.cygp` → TOUJOURS un nouvel onglet (jamais
-        // fusionné dans le document actif : un projet remplace tout).
+        // `.cygp` project opening → ALWAYS a new tab (never
+        // merged into the active document: a project replaces everything).
         if let Some(rx) = self.runtime.project_open_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
@@ -507,8 +507,8 @@ impl PhotoApp {
                 }
             }
         }
-        // « Enregistrer sous » → document actif (chemin + titre posés au
-        // dispatch, état UI pur ; le worker ne fait que sérialiser).
+        // "Save as" → active document (path + title set at
+        // dispatch, pure UI state; the worker only serializes).
         if let Some(rx) = self.runtime.project_save_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
@@ -532,12 +532,12 @@ impl PhotoApp {
         }
     }
 
-    /// Un frame complet : poll, workspace, drainage des actions.
+    /// One full frame: poll, workspace, action drain.
     pub fn draw(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         self.poll(ctx);
         let photo_ctx = PhotoUiContext::for_frame(ctx);
         PhotoWorkspace::show(ui, self, &photo_ctx);
-        // Clavier (O002) : même flux que menus et panels — file unique.
+        // Keyboard (O002): same flow as menus and panels — single queue.
         for action in crate::shortcuts::poll_shortcut_actions(ctx, &self.runtime.keys) {
             self.queue.push(action);
         }
@@ -559,8 +559,8 @@ impl Default for PhotoApp {
     }
 }
 
-/// Titre d'onglet depuis un chemin de projet : nom sans extension
-/// (« rendu.cygp » → « rendu »), repli « Sans titre » si illisible.
+/// Tab title from a project path: name without extension
+/// ("rendu.cygp" → "rendu"), "Sans titre" fallback when unreadable.
 fn project_title(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
@@ -568,15 +568,15 @@ fn project_title(path: &Path) -> String {
         .unwrap_or_else(|| String::from("Sans titre"))
 }
 
-/// Retire le document `id` de `docs` et recale `active` (zéro
-/// document autorisé : l'accueil prend le relais). Le worker du
-/// document s'arrête à la chute de ses channels. Partagée par
-/// `PhotoApp::close_document` (menu) et la croix des onglets canevas
-/// (`layout::dock`, qui retire aussi la tuile).
+/// Removes document `id` from `docs` and re-seats `active` (zero
+/// documents allowed: welcome takes over). The document's
+/// worker stops when its channels drop. Shared by
+/// `PhotoApp::close_document` (menu) and the canvas tab crosses
+/// (`layout::dock`, which also removes the tile).
 pub(crate) fn remove_document(docs: &mut Vec<OpenDocument>, active: &mut usize, id: uuid::Uuid) {
     if let Some(index) = docs.iter().position(|doc| doc.id == id) {
         docs.remove(index);
-        // Un document avant l'actif décalerait la sélection.
+        // A document before the active one would shift the selection.
         if index < *active {
             *active -= 1;
         }
@@ -612,14 +612,14 @@ mod tests {
         app.open_sized_tab(800, 600);
         app.open_sized_tab(800, 600);
         assert_eq!(app.docs.len(), 2);
-        // Un onglet canevas par document.
+        // One canvas tab per document.
         for doc in &app.docs {
             assert!(app_shell::dock::has_tab(
                 &app.shell.tree,
                 PhotoDockTab::Canvas(doc.id)
             ));
         }
-        // Fermer l'actif retire aussi son canevas.
+        // Closing the active one also removes its canvas.
         let removed = app.active_doc_opt().expect("doc actif").id;
         app.close_active_tab();
         assert_eq!(app.docs.len(), 1);
@@ -627,10 +627,10 @@ mod tests {
             &app.shell.tree,
             PhotoDockTab::Canvas(removed)
         ));
-        // Fermer le dernier : zéro document autorisé (accueil).
+        // Closing the last one: zero documents allowed (welcome).
         app.close_active_tab();
         assert!(app.docs.is_empty());
-        // Id inconnu : sans effet.
+        // Unknown id: no-op.
         app.close_document(Uuid::from_u128(999));
         assert!(app.docs.is_empty());
     }
@@ -653,7 +653,7 @@ mod tests {
             &app.shell.tree,
             PhotoDockTab::Canvas(app.active_doc_opt().expect("doc actif").id)
         ));
-        // Snapshot initial du worker : le calque vierge aux dimensions.
+        // Initial worker snapshot: the blank layer at the right dimensions.
         let response = app
             .active_doc_opt()
             .expect("doc actif")
@@ -682,8 +682,8 @@ mod tests {
         app.open_sized_tab(16, 16);
         app.active_doc_mut_opt().expect("doc").project_path = Some(path.clone());
         app.handle_action(&ctx, PhotoAction::SaveProject);
-        // Boucle egui réelle : poll non bloquant jusqu'à l'accusé worker
-        // (« Enregistre : », pas le statut optimiste « Enregistrement »).
+        // Real egui loop: non-blocking poll until the worker ack
+        // ("Enregistre :", not the optimistic "Enregistrement" status).
         let start = Instant::now();
         loop {
             app.poll(&ctx);
@@ -714,7 +714,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cyg-app-open-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dossier de test");
         let path = dir.join("maquette.cygp");
-        // Projet témoin : un document 16×16 enregistré via son worker.
+        // Witness project: a 16×16 document saved via its worker.
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
         app.open_sized_tab(16, 16);
@@ -724,7 +724,7 @@ mod tests {
         loop {
             app.poll(&ctx);
             if path.is_file() {
-                // Draine l'accusé avant d'ouvrir (ordre déterministe).
+                // Drain the ack before opening (deterministic order).
                 std::thread::sleep(Duration::from_millis(50));
                 app.poll(&ctx);
                 break;
@@ -732,7 +732,7 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(30));
             std::thread::sleep(Duration::from_millis(10));
         }
-        // Simule le file picker (canal prêt, sans rfd) : nouvel onglet.
+        // Simulate the file picker (ready channel, no rfd): new tab.
         let (tx, rx) = channel();
         tx.send(Some(path.clone())).expect("envoi picker");
         app.runtime.project_open_picker = Some(rx);
@@ -747,7 +747,7 @@ mod tests {
             app.active_doc_opt().expect("doc").project_path.as_deref(),
             Some(path.as_path())
         );
-        // Le chargement worker remplace le document 1×1 par l'arbre sauvé.
+        // Worker loading replaces the 1×1 document with the saved tree.
         let start = Instant::now();
         loop {
             app.poll(&ctx);
@@ -773,7 +773,7 @@ mod tests {
         app.open_sized_tab(16, 16);
         app.handle_action(&ctx, PhotoAction::AddEmptyLayer);
         app.handle_action(&ctx, PhotoAction::AddEmptyLayer);
-        // Attend les 2 pas (boucle egui réelle, poll non bloquant).
+        // Wait for the 2 steps (real egui loop, non-blocking poll).
         let start = Instant::now();
         loop {
             app.poll(&ctx);
@@ -786,7 +786,7 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        // Saut arrière au-delà de la pile : retour au calque initial.
+        // Backward jump past the stack: back to the initial layer.
         app.handle_action(&ctx, PhotoAction::HistoryBack(5));
         let start = Instant::now();
         loop {
@@ -800,7 +800,7 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(30), "saut attendu");
             std::thread::sleep(Duration::from_millis(10));
         }
-        // Puis un pas en avant : le calque ajouté revient.
+        // Then one step forward: the added layer comes back.
         app.handle_action(&ctx, PhotoAction::HistoryForward(1));
         let start = Instant::now();
         loop {
@@ -822,7 +822,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
         app.open_sized_tab(16, 16);
-        // Attend le snapshot pour sélectionner le calque initial.
+        // Wait for the snapshot to select the initial layer.
         let start = Instant::now();
         loop {
             app.poll(&ctx);
@@ -854,7 +854,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
         app.open_sized_tab(16, 16);
-        // Attend le calque, sélectionne, ajoute un masque blanc.
+        // Wait for the layer, select it, add a white mask.
         let start = Instant::now();
         loop {
             app.poll(&ctx);
@@ -884,7 +884,7 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(30), "masque attendu");
             std::thread::sleep(Duration::from_millis(10));
         };
-        // Focus masque + trait gomme : doit partir en PaintMask.
+        // Mask focus + eraser stroke: must go as PaintMask.
         app.handle_action(&ctx, PhotoAction::FocusAttachment { owner: id, id: mid });
         app.handle_action(
             &ctx,
@@ -935,7 +935,7 @@ mod tests {
     fn actions_route_to_local_state() {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
-        // Sans document : sans effet, sans panique.
+        // Without a document: no-op, no panic.
         app.handle_action(&ctx, PhotoAction::ToggleGrid);
         app.open_sized_tab(800, 600);
         let before = app.active_doc_opt().expect("doc actif").ui.show_grid;
@@ -955,7 +955,7 @@ mod tests {
         use uuid::Uuid;
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
-        // Sans document : sans effet, sans panique.
+        // Without a document: no-op, no panic.
         let id = Uuid::new_v4();
         app.handle_action(&ctx, PhotoAction::SelectLayer(id));
         assert!(app.active_doc_opt().is_none());
@@ -973,19 +973,19 @@ mod tests {
         let ctx = egui::Context::default();
         ui_kit::theme::setup_fonts(&ctx);
         let ctx_clone = ctx.clone();
-        // Accueil + dialogue de création (zéro document).
+        // Welcome + creation dialog (zero documents).
         ctx.run_ui(egui::RawInput::default(), |ui| {
             app.draw(&ctx_clone, ui);
         })
         .drop_without_applying_deltas();
         assert!(app.queue.is_empty());
-        // Puis workspace complet avec un document.
+        // Then the full workspace with one document.
         app.open_sized_tab(64, 64);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             app.draw(&ctx_clone, ui);
         })
         .drop_without_applying_deltas();
-        // Le draw ne laisse aucune action en attente.
+        // Draw leaves no pending action.
         assert!(app.queue.is_empty());
     }
 
@@ -1005,19 +1005,19 @@ mod tests {
 
     #[test]
     fn zoom_actions_send_no_worker_command() {
-        // §28 6G.1 : zoom d'affichage = state-only. Aucune commande worker,
-        // donc aucune réponse, aucun rendu, aucun upload, aucune régénération.
+        // §28 6G.1: display zoom = state-only. No worker command,
+        // hence no response, no render, no upload, no regeneration.
         use std::time::{Duration, Instant};
 
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
         app.open_sized_tab(64, 64);
         let zoom_before = app.active_doc_opt().expect("doc").ui.viewport.zoom();
-        // Barrière déterministe : drain jusqu'au SILENCE (le boot émet
-        // `LayersChanged` puis, depuis la 6G.3, `ThumbnailUpdated` en tâche
-        // de fond — compter UNE réponse casse dès que le thread miniature
-        // devance le drain). Après 300 ms sans réponse, tout trafic
-        // ultérieur ne peut venir que du zoom testé ci-dessous.
+        // Deterministic barrier: drain until SILENCE (boot emits
+        // `LayersChanged` then, since 6G.3, background `ThumbnailUpdated`
+        // — counting ONE response breaks as soon as the thumbnail thread
+        // beats the drain). After 300 ms without a response, any later
+        // traffic can only come from the zoom tested below.
         let start = Instant::now();
         let mut last_traffic = Instant::now();
         let mut saw_response = false;
@@ -1042,7 +1042,7 @@ mod tests {
                 }
             }
         }
-        // Gestes de zoom : état display seul, zéro trafic worker.
+        // Zoom gestures: display-only state, zero worker traffic.
         fn zoom_of(app: &PhotoApp) -> f32 {
             app.active_doc_opt().expect("doc").ui.viewport.zoom()
         }
@@ -1065,8 +1065,8 @@ mod tests {
         use crate::ui::PhotoEngineCommand;
         use std::time::{Duration, Instant};
 
-        // Grosse image (3000x3000) : décodage + composite coûteux,
-        // intégralement sur le worker.
+        // Large image (3000x3000): expensive decode + composite,
+        // entirely on the worker.
         let path =
             std::env::temp_dir().join(format!("cygnus_phase5_big_{}.png", std::process::id()));
         image::save_buffer(
@@ -1085,9 +1085,9 @@ mod tests {
             .send(PhotoEngineCommand::OpenImage { path: path.clone() })
             .expect("envoi commande");
 
-        // Pattern de la boucle egui : poll non bloquant, le thread UI
-        // reste libre (chaque try_recv retourne immédiatement). On
-        // ignore les réponses antérieures (snapshot initial du boot).
+        // Egui loop pattern: non-blocking poll, the UI thread
+        // stays free (each try_recv returns immediately). We
+        // ignore earlier responses (boot initial snapshot).
         let start = Instant::now();
         let mut polls = 0;
         let layers = loop {
@@ -1101,7 +1101,7 @@ mod tests {
                     break layers;
                 }
                 Ok(_) => {
-                    // Snapshot initial ou aperçu intermédiaire : on continue.
+                    // Initial snapshot or intermediate preview: keep going.
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     assert!(

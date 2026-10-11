@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Menu contextuel PHOTO (barre haute, widget métier).
+//! PHOTO context menu (top bar, domain widget).
 //!
-//! Six menus : Fichier (nouveau document avec paramètres, ouvrir,
-//! exporter avec paramètres, quitter), Édition (annuler, rétablir),
-//! Calque (vide, image, dupliquer, masque, supprimer), Affichage
-//! (grille, zoom), Fenêtre (rouvrir un panneau fermé, réinitialiser
-//! la disposition des docks), Aide. Items via [`ui_kit::components::menu`].
-//! Le style de la barre utilise des coins carrés via `menu_bar_style`,
-//! les sous‑menus gardent le rayon arrondi du thème.
-//! Les libellés génériques viennent du catalogue [`Catalog`](ui_kit::i18n::Catalog),
-//! les chaînes spécifiques à Photo du catalogue [`PhotoCatalog`](crate::i18n::PhotoCatalog) ;
-//! les fenêtres de paramètres (nouveau document, export) sont des
-//! modales détenues par l'app (voir `super::dialogs`).
+//! Six menus: File (new document with settings, open,
+//! export with settings, quit), Edit (undo, redo),
+//! Layer (empty, image, duplicate, mask, delete), View
+//! (grid, zoom), Window (reopen a closed panel, reset
+//! the dock layout), Help. Items via [`ui_kit::components::menu`].
+//! The bar style uses square corners via `menu_bar_style`,
+//! sub-menus keep the theme's rounded radius.
+//! Generic labels come from the [`Catalog`](ui_kit::i18n::Catalog) catalog,
+//! Photo-specific strings from the [`PhotoCatalog`](crate::i18n::PhotoCatalog) catalog;
+//! the settings windows (new document, export) are
+//! app-owned modals (see `super::dialogs`).
 
 use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use crate::layout::dock::PhotoDockTab;
@@ -35,88 +35,88 @@ use ui_kit::components::menu::{menu_bar_style, menu_item, menu_item_enabled, men
 use ui_kit::i18n::{Catalog, TextKey};
 use ui_kit::theme::CygnusTheme;
 
-/// Action rapportée par [`draw_menu_bar`], traitée par l'app.
+/// Action reported by [`draw_menu_bar`], handled by the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhotoMenuAction {
-    /// Nouveau document (ouvre la fenêtre de paramètres).
+    /// New document (opens the settings window).
     NewDocument,
-    /// Ouvrir une image (file picker non bloquant).
+    /// Open an image (non-blocking file picker).
     OpenImage,
-    /// Ouvrir un projet `.cygp` (nouvel onglet, file picker non bloquant).
+    /// Open a `.cygp` project (new tab, non-blocking file picker).
     OpenProject,
-    /// Enregistrer le projet (chemin connu) ou basculer vers
-    /// « Enregistrer sous ».
+    /// Save the project (known path) or fall back to
+    /// "Save as".
     SaveProject,
-    /// Enregistrer le projet sous un nouveau chemin `.cygp`.
+    /// Save the project under a new `.cygp` path.
     SaveProjectAs,
-    /// Exporter (ouvre la fenêtre de paramètres d'export).
+    /// Export (opens the export settings window).
     Export,
-    /// Quitter l'application.
+    /// Quit the application.
     Quit,
-    /// Annuler / rétablir (worker).
+    /// Undo / redo (worker).
     Undo,
-    /// Rétablir.
+    /// Redo.
     Redo,
-    /// Nouveau calque vide.
+    /// New empty layer.
     AddEmptyLayer,
-    /// Dupliquer le calque sélectionné.
+    /// Duplicate the selected layer.
     DuplicateLayer,
-    /// Miroir horizontal du calque sélectionné (O004).
+    /// Horizontal mirror of the selected layer (O004).
     FlipHorizontal,
-    /// Miroir vertical du calque sélectionné (O004).
+    /// Vertical mirror of the selected layer (O004).
     FlipVertical,
-    /// Rotation 90° horaire (O004).
+    /// 90° clockwise rotation (O004).
     RotateClockwise,
-    /// Rotation 90° antihoraire (O004).
+    /// 90° counterclockwise rotation (O004).
     RotateCounterclockwise,
-    /// Rogner le calque sélectionné au document (O004).
+    /// Crop the selected layer to the document (O004).
     CropToDocument,
-    /// Ajouter un masque au calque sélectionné.
+    /// Add a mask to the selected layer.
     AddMask,
-    /// Supprimer le calque sélectionné.
+    /// Delete the selected layer.
     DeleteLayer,
-    /// Basculer la grille du canvas.
+    /// Toggle the canvas grid.
     ToggleGrid,
-    /// Rogner l'aperçu au document (sinon plan infini : le contenu
-    /// hors cadre reste visible autour).
+    /// Clip the preview to the document (else infinite plane: off-frame
+    /// content stays visible around).
     TogglePreviewClip,
-    /// Zoom avant / arrière (ancré au centre).
+    /// Zoom in / out (anchored at center).
     ZoomIn,
-    /// Zoom arrière.
+    /// Zoom out.
     ZoomOut,
-    /// Réinitialiser le zoom à 100 %.
+    /// Reset zoom to 100%.
     ZoomReset,
-    /// Fermer le document actif.
+    /// Close the active document.
     CloseDocument,
-    /// Rouvrir un onglet dock fermé.
+    /// Reopen a closed dock tab.
     ShowDockTab(PhotoDockTab),
-    /// Restaurer la disposition des docks par défaut.
+    /// Restore the default dock layout.
     ResetDockLayout,
-    /// Ouvrir la fenêtre d'aide.
+    /// Open the help window.
     ShowHelp,
 }
 
-/// Disponibilités pour griser les entrées (historique, sélection).
+/// Availability flags for greying out entries (history, selection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MenuAvailability {
-    /// Un document est ouvert (sinon tout le reste est verrouillé).
+    /// A document is open (otherwise everything else is locked).
     pub has_document: bool,
-    /// Undo / redo possibles.
+    /// Undo / redo available.
     pub can_undo: bool,
-    /// Redo possible.
+    /// Redo available.
     pub can_redo: bool,
-    /// Un calque est sélectionné.
+    /// A layer is selected.
     pub has_selection: bool,
-    /// L'aperçu est rogné au document (coche du menu Affichage).
+    /// The preview is clipped to the document (View menu check).
     pub preview_clip: bool,
 }
 
-/// Dessine la barre de menus et retourne les actions.
+/// Draws the menu bar and returns the actions.
 ///
-/// Les items sont des boutons fantômes ui-kit (fond transparent,
-/// surlignage egui natif au survol) ; le clic ferme le menu ouvert.
-/// Les libellés génériques viennent du catalogue ui-kit, les chaînes
-/// spécifiques à Photo du catalogue [`PhotoCatalog`].
+/// Items are ui-kit ghost buttons (transparent background,
+/// native egui hover highlight); clicking closes the open menu.
+/// Generic labels come from the ui-kit catalog, Photo-specific
+/// strings from the [`PhotoCatalog`] catalog.
 pub fn draw_menu_bar(
     ui: &mut egui::Ui,
     availability: MenuAvailability,
@@ -131,17 +131,17 @@ pub fn draw_menu_bar(
             theme.spacing.xs as i8,
         ))
         .show(ui, |ui| {
-            // Appliquer le style de barre de menus (coins carrés)
-            // via un Scope pour ne pas polluer le style global.
+            // Apply the menu bar style (square corners)
+            // via a Scope to avoid polluting the global style.
             let bar_style = {
                 let s = ui.style_mut();
                 menu_bar_style(theme).apply(s);
                 s.clone()
             };
             ui.scope_builder(egui::UiBuilder::new().style(bar_style), |ui| {
-                // Padding interne des titres de menus (plus grosses zones
-                // cliquables, barre aérée), tout du thème. Les items
-                // déroulants gardent leur hauteur fixe (min_size ui-kit).
+                // Inner padding of menu titles (bigger clickable
+                // areas, airy bar), all from the theme. Dropdown
+                // items keep their fixed height (ui-kit min_size).
                 ui.spacing_mut().button_padding = egui::vec2(theme.spacing.sm, theme.spacing.sm);
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button(catalog.get(TextKey::File), |ui| {
@@ -232,8 +232,8 @@ pub fn draw_menu_bar(
                         ) {
                             actions.push(PhotoMenuAction::DuplicateLayer);
                         }
-                        // Sous-menu Transformations (miroir, rotation,
-                        // crop) : même style, fermeture gérée par items.
+                        // Transformations submenu (mirror, rotation,
+                        // crop): same style, closing handled by items.
                         ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
                             menu_style(theme).apply(ui.style_mut());
                             if menu_item_enabled(
@@ -304,7 +304,7 @@ pub fn draw_menu_bar(
                         ) {
                             actions.push(PhotoMenuAction::ToggleGrid);
                         }
-                        // Coche via le catalogue (rendu identique à avant).
+                        // Check via the catalog (rendering identical to before).
                         let crop_label = format!(
                             "[{}] {}",
                             if availability.preview_clip { "x" } else { " " },
@@ -345,9 +345,9 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(catalog.get(TextKey::Window), |ui| {
                         menu_style(theme).apply(ui.style_mut());
-                        // Canevas épinglés (non fermables) : seuls
-                        // outils, inspecteur, calques et historique
-                        // sont à rouvrir.
+                        // Pinned canvases (non-closable): only
+                        // tools, inspector, layers, and history
+                        // can be reopened.
                         for tab in [
                             PhotoDockTab::Tools,
                             PhotoDockTab::Inspector,

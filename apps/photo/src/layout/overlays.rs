@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modales et dialogs par-dessus le workspace.
+//! Modals and dialogs over the workspace.
 //!
-//! Les dialogs valident en données pures ; la validation remonte en
-//! [`PhotoAction`](crate::commands::PhotoAction) (création de
-//! document, export). L'ajout de filtre passe par le menu contextuel
-//! du panneau Calques (jamais de modale). L'app route ensuite.
+//! Dialogs validate into pure data; validation bubbles up as
+//! [`PhotoAction`](crate::commands::PhotoAction) (document
+//! creation, export). Adding a filter goes through the Layers
+//! panel context menu (never a modal). The app routes next.
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
@@ -27,7 +27,7 @@ use crate::ui::{
     NewDocumentChoice, draw_create_document_dialog, draw_export_dialog, draw_help_dialog,
 };
 
-/// Toutes les modales (nouveau document, export, aide).
+/// All modals (new document, export, help).
 pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     actions.extend(draw_new_document_overlay(ui, app, ctx));
@@ -36,8 +36,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<
     actions
 }
 
-/// Fenêtre « Créer un document » : validation = nouvel onglet,
-/// ouverture d'image = dialogue fichier.
+/// "Create document" window: confirm = new tab,
+/// open image = file dialog.
 fn draw_new_document_overlay(
     _ui: &mut egui::Ui,
     app: &mut PhotoApp,
@@ -56,7 +56,7 @@ fn draw_new_document_overlay(
     actions
 }
 
-/// Fenêtre « Exportation » : validation = export du document actif.
+/// "Export" window: confirm = export the active document.
 fn draw_export_overlay(
     _ui: &mut egui::Ui,
     app: &mut PhotoApp,

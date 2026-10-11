@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests du Render Graph : dérivation, invalidation, partialité, exécution.
+//! Render Graph tests: derivation, invalidation, partiality, execution.
 
 use super::*;
 use crate::{EffectKey, NullBackend, RenderOp, RenderPort};
@@ -24,7 +24,7 @@ fn overlay_vide() -> EffectOverlay {
     EffectOverlay::new()
 }
 
-/// Scène : groupe racine avec deux images sœurs.
+/// Scene: root group with two sibling images.
 fn scene_groupe_deux_images() -> (Scene, SceneNodeId, SceneNodeId, SceneNodeId) {
     let mut scene = Scene::new();
     let root = scene.create_node(NodeKind::Group);
@@ -51,14 +51,14 @@ fn construction_chaine_complete_et_puits() {
     let (scene, root, a, b) = scene_groupe_deux_images();
     let graph = RenderGraph::build(&scene, &overlay_vide());
 
-    // Feuille : Source → Transform → Blend (ni effet ni masque ici).
+    // Leaf: Source → Transform → Blend (neither effect nor mask here).
     assert_eq!(
         ops_of(&graph, a),
         vec![RenderOp::Source, RenderOp::Transform, RenderOp::Blend]
     );
-    // Groupe : un Blend qui plie ses enfants.
+    // Group: a Blend folding its children.
     assert_eq!(ops_of(&graph, root), vec![RenderOp::Blend]);
-    // Puits unique alimenté par le top du groupe racine.
+    // Single sink fed by the root group's top.
     let output = graph.output();
     assert_eq!(graph.find(output).expect("output").op, RenderOp::Output);
     let fg: Vec<_> = graph
@@ -70,7 +70,7 @@ fn construction_chaine_complete_et_puits() {
         .collect();
     assert_eq!(fg, vec![graph.top_of(root).expect("group top")]);
 
-    // Ordre d'exécution : chaque entrée précède son lecteur.
+    // Execution order: each input precedes its reader.
     let plan = graph.plan();
     assert_eq!(plan.len(), graph.node_count());
     let pos = |id| plan.order.iter().position(|&n| n == id).expect("planned");
@@ -79,7 +79,7 @@ fn construction_chaine_complete_et_puits() {
             assert!(pos(input.from) < pos(*id), "topo violé");
         }
     }
-    // Le fond (a) précède le premier plan (b) : ordre de peinture.
+    // Background (a) precedes foreground (b): paint order.
     assert!(pos(graph.top_of(a).expect("top")) < pos(graph.top_of(b).expect("top")));
 }
 
@@ -131,13 +131,13 @@ fn modification_scene_salit_sans_reconstruire() {
     assert_eq!(report.rebuilt_scopes, 0);
     assert_eq!(report.appended, 0);
     assert_eq!(report.removed, 0);
-    // Identités préservées, révisions avancées, dirty propagé.
+    // Identities preserved, revisions advanced, dirty propagated.
     assert_eq!(graph.plan().order, before_ids);
     assert!(graph.tree_revision().is_newer_than(before_tree));
     for rid in graph.derived_of(a).unwrap_or(&[]) {
         assert!(graph.is_dirty(*rid).expect("known"), "dirty attendu");
     }
-    // Idempotent : second sync vierge.
+    // Idempotent: second sync clean.
     assert!(graph.sync(&scene, &overlay_vide()).is_clean());
 }
 
@@ -155,7 +155,7 @@ fn frere_epargne_par_la_salissure() {
     scene.set_opacity(a, 10.0).expect("exists");
     let report = graph.sync(&scene, &overlay_vide());
     assert!(report.dirtied > 0);
-    // Contenu du frère (Source, Transform) : révisions et propreté intactes…
+    // Sibling's content (Source, Transform): revisions and cleanliness intact…
     let after: Vec<_> = graph
         .derived_of(b)
         .unwrap_or(&[])
@@ -166,7 +166,7 @@ fn frere_epargne_par_la_salissure() {
     for rid in graph.derived_of(b).unwrap_or(&[])[..2].iter() {
         assert!(!graph.is_dirty(*rid).expect("known"));
     }
-    // …mais son Blend suit le nouveau fond : dirty légitime.
+    // …but its Blend follows the new background: legitimate dirty.
     let blend_b = graph.top_of(b).expect("top");
     assert!(graph.is_dirty(blend_b).expect("known"));
     assert_ne!(after[2], b_revs[2]);
@@ -196,7 +196,7 @@ fn plan_dirty_sautes_les_propres() {
     let dirty = graph.plan_dirty();
     assert!(!dirty.is_empty());
     assert!(dirty.len() < graph.node_count());
-    // Chaque planifié est dirty ; exécution partielle possible.
+    // Each scheduled node is dirty; partial execution possible.
     for id in &dirty.order {
         assert!(graph.is_dirty(*id).expect("known"));
     }
@@ -218,11 +218,11 @@ fn ajout_feuille_preserve_l_existant() {
     let report = graph.sync(&scene, &overlay_vide());
     assert_eq!(report.appended, 1);
     assert_eq!(report.rebuilt_scopes, 0);
-    // L'existant : mêmes ids, mêmes révisions, propre.
+    // The existing: same ids, same revisions, clean.
     assert_eq!(graph.top_of(a), Some(old_top_a));
     assert_eq!(graph.node_revision(old_top_a), Some(old_rev_a));
     assert!(!graph.is_dirty(old_top_a).expect("known"));
-    // Le Blend du groupe suit le nouveau dernier top, chaîné sur l'ancien.
+    // The group's Blend follows the new last top, chained onto the old one.
     let new_top_b = graph.top_of(b).expect("top");
     let group_top = graph.top_of(root).expect("group top");
     let fg = graph
@@ -257,11 +257,11 @@ fn suppression_feuille_recable_sans_reconstruire() {
     let report = graph.sync(&scene, &overlay_vide());
     assert!(report.removed > 0);
     assert_eq!(report.rebuilt_scopes, 0);
-    // Les survivants gardent leurs identités…
+    // Survivors keep their identities…
     assert_eq!(graph.top_of(a), Some(top_a));
     assert_eq!(graph.top_of(c), Some(top_c));
     assert!(graph.find(top_b).is_none());
-    // …et le fond de C pointe désormais vers A.
+    // …and C's background now points to A.
     let bg = graph
         .inputs_of(top_c)
         .unwrap_or(&[])
@@ -281,14 +281,14 @@ fn reordre_par_recablage_identites_preservees() {
     let top_a = graph.top_of(a).expect("top");
     let top_b = graph.top_of(b).expect("top");
 
-    // Déplace A en fin de fratrie : [A, B] → [B, A].
+    // Moves A to the end of the sibling group: [A, B] → [B, A].
     scene.attach(root, a).expect("move ok");
     let report = graph.sync(&scene, &overlay_vide());
     assert_eq!(report.reordered, 1);
     assert_eq!(report.rebuilt_scopes, 0);
     assert_eq!(graph.top_of(a), Some(top_a));
     assert_eq!(graph.top_of(b), Some(top_b));
-    // Nouvel ordre de peinture : B sous A, Blend du groupe sur A.
+    // New paint order: B under A, group Blend over A.
     let bg_a = graph
         .inputs_of(top_a)
         .unwrap_or(&[])
@@ -319,17 +319,17 @@ fn reconstruction_partielle_epargne_les_groupes_intacts() {
     let rev_gb = graph.node_revision(top_gb).expect("known");
     let lb_nodes: Vec<_> = graph.derived_of(lb).unwrap_or(&[]).to_vec();
 
-    // Ajout dans A : B n'est pas reconstruit (identités préservées)…
+    // Addition into A: B is not rebuilt (identities preserved)…
     scene.create_child(ga, NodeKind::Video).expect("ok");
     let report = graph.sync(&scene, &overlay_vide());
     assert_eq!(report.rebuilt_scopes, 0);
     assert_eq!(graph.top_of(gb), Some(top_gb));
     assert_eq!(graph.derived_of(lb).unwrap_or(&[]), lb_nodes.as_slice());
-    // La chaîne interne de B (amont du Blend de groupe) reste propre.
+    // B's inner chain (upstream of the group Blend) stays clean.
     for rid in graph.derived_of(lb).unwrap_or(&[]) {
         assert!(!graph.is_dirty(*rid).expect("known"));
     }
-    // …mais son Blend suit le nouveau fond de A : dirty légitime.
+    // …but its Blend follows A's new background: legitimate dirty.
     assert!(
         graph
             .node_revision(top_gb)
@@ -349,7 +349,7 @@ fn changement_overlay_reconstruit_la_portee() {
     overlay.insert(a, vec![EffectKey::new("blur")]);
     let report = graph.sync(&scene, &overlay);
     assert_eq!(report.rebuilt_scopes, 1);
-    // La chaîne contient désormais l'effet ; l'ancienne est purgée.
+    // The chain now holds the effect; the old one is purged.
     assert!(ops_of(&graph, a).contains(&RenderOp::Effect(EffectKey::new("blur"))));
     for rid in &old_nodes {
         assert!(!graph.contains(*rid), "ancien nœud purgé");
@@ -369,7 +369,7 @@ fn melange_retrait_ajout_reconstruit_la_portee() {
     scene.create_child(root, NodeKind::Video).expect("ok");
     let report = graph.sync(&scene, &overlay_vide());
     assert_eq!(report.rebuilt_scopes, 1);
-    // Graphe à nouveau cohérent et exécutable.
+    // Graph coherent and executable again.
     let plan = graph.plan();
     let mut backend = NullBackend::new();
     let result = graph.execute(&mut backend, &plan).expect("null ok");

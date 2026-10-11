@@ -14,28 +14,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Graphe de dépendances générique — fondation CPU pure.
+//! Generic dependency graph — pure-CPU foundation.
 //!
-//! Représente `Node` + `Edge` directionnelle + `Dependency` (adjacence) +
-//! [`Revision`](ids::Revision) + état dirty, sans AUCUNE logique de domaine :
-//! ni filtres photo, ni effets vidéo, ni DSP audio, ni `wgpu`, ni `egui`,
-//! ni passes GPU. Les charges utiles vivent HORS du graphe, dans les
-//! moteurs propriétaires, et référencent les nœuds par [`NodeId`].
+//! Represents `Node` + directional `Edge` + `Dependency` (adjacency) +
+//! [`Revision`](ids::Revision) + dirty state, with NO domain logic at all:
+//! neither photo filters, nor video effects, nor audio DSP, nor `wgpu`, nor `egui`,
+//! nor GPU passes. Payloads live OUTSIDE the graph, in the
+//! owning engines, and reference nodes via [`NodeId`].
 //!
-//! Convention d'arête (unique, à retenir) : `from → to` signifie
-//! « `to` dépend de `from` » — les données circulent de `from` vers `to`,
-//! et invalider `from` salit `to` (propagation aval).
+//! Edge convention (single, worth remembering): `from → to` means
+//! "`to` depends on `from`" — data flows from `from` to `to`,
+//! and invalidating `from` dirties `to` (downstream propagation).
 //!
 //! ```text
-//! A → B → C   : si A change, A, B et C deviennent dirty.
+//! A → B → C   : if A changes, A, B and C become dirty.
 //! ```
 //!
-//! Stratégie de révision : UNE révision fraîche estampille TOUS les nœuds
-//! nouvellement salis par un même [`Graph::mark_dirty`] (un changement
-//! logique = un timbre). [`Graph::clear_dirty`] ne bumpe PAS (la révision
-//! identifie l'état calculé — bumper invaliderait faussement les caches).
-//! Les cycles sont interdits à l'insertion ([`GraphError::Cycle`]) ; les
-//! doublons d'arêtes sont des no-ops idempotents.
+//! Revision strategy: ONE fresh revision stamps ALL nodes
+//! newly dirtied by the same [`Graph::mark_dirty`] (one
+//! logical change = one stamp). [`Graph::clear_dirty`] does NOT bump (the revision
+//! identifies the computed state — bumping would falsely invalidate caches).
+//! Cycles are forbidden at insertion ([`GraphError::Cycle`]);
+//! edge duplicates are idempotent no-ops.
 //!
 //! # Examples
 //!

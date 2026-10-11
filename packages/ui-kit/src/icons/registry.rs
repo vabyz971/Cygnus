@@ -14,44 +14,44 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Registre d'icônes : point d'accès unique des apps aux glyphes.
+//! Icon registry: apps' single access point to glyphs.
 //!
-//! Le registre ne connaît aucune bibliothèque d'icônes : il délègue
-//! au module interne [`super::glyph`], seul contact du workspace avec
-//! `egui_material_icons::icons`. Changer de lib un jour = modifier un
-//! seul fichier.
+//! The registry knows no icon library: it delegates to the internal
+//! [`super::glyph`] module, the workspace's only contact with
+//! `egui_material_icons::icons`. Switching libs one day = editing a
+//! single file.
 
 use super::glyph::CygnusIcon;
 use super::icon::Icon;
 use crate::theme::UiThemeExt;
 
-/// Fournisseur de glyphes pour les apps (zéro dépendance externe).
+/// Glyph provider for apps (zero external dependency).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IconRegistry;
 
 impl IconRegistry {
-    /// Crée le registre (statique, sans état).
+    /// Creates the registry (static, stateless).
     pub fn new() -> Self {
         Self
     }
 
-    /// Glyphe prêt à afficher pour `icon`.
+    /// Display-ready glyph for `icon`.
     pub fn text(self, icon: Icon) -> egui::RichText {
         Self::resolve(icon).text()
     }
 
-    /// Glyphe à la taille demandée.
+    /// Glyph at the requested size.
     pub fn sized(self, icon: Icon, size: f32) -> egui::RichText {
         Self::resolve(icon).sized(size)
     }
 
-    /// Glyphe teinté à la taille demandée.
+    /// Tinted glyph at the requested size.
     pub fn colored(self, icon: Icon, size: f32, color: egui::Color32) -> egui::RichText {
         Self::resolve(icon).sized(size).color(color)
     }
 
-    /// Résolution [`Icon`] → [`CygnusIcon`] (exhaustive : toute
-    /// variante ajoutée à `Icon` casse ici jusqu'à son mapping).
+    /// [`Icon`] → [`CygnusIcon`] resolution (exhaustive: any variant
+    /// added to `Icon` breaks here until mapped).
     pub(crate) fn resolve(icon: Icon) -> CygnusIcon {
         match icon {
             Icon::Save => CygnusIcon::Save,
@@ -105,9 +105,9 @@ impl IconRegistry {
     }
 }
 
-/// Liste exhaustive des icônes publiques, utilisée par les tests et les
-/// galeries (47 variantes de [`Icon`] ; `Open` et `Folder` partagent le
-/// même glyphe mais restent deux usages distincts).
+/// Exhaustive list of public icons, used by tests and galleries
+/// (47 [`Icon`] variants; `Open` and `Folder` share one glyph but
+/// remain two distinct usages).
 pub const ALL_ICONS: &[Icon] = &[
     Icon::Add,
     Icon::Remove,
@@ -158,18 +158,18 @@ pub const ALL_ICONS: &[Icon] = &[
     Icon::ExpandLess,
 ];
 
-/// Bouton icône standard Cygnus : sans frame, fond au hover, tooltip optionnel.
+/// Standard Cygnus icon button: frameless, hover background, optional tooltip.
 ///
-/// Utilisé PARTOUT (toolbar, panels, layers) pour garantir l'uniformité
-/// entre les 3 apps.
+/// Used EVERYWHERE (toolbar, panels, layers) to guarantee consistency
+/// across the 3 apps.
 ///
-/// # Exemple
+/// # Example
 /// ```rust,no_run
 /// # use ui_kit::icons::{Icon, icon_button};
 /// # egui::__run_test_ui(|ui| {
 /// let response = icon_button(ui, Icon::Save, Some("Enregistrer"));
 /// if response.clicked() {
-///     // … déclencher la sauvegarde via un channel moteur …
+///     // … trigger saving via an engine channel …
 /// }
 /// # });
 /// ```
@@ -190,7 +190,7 @@ mod tests {
     use super::*;
     use crate::theme::setup_fonts;
 
-    /// Toutes les variantes de `Icon` doivent se résoudre.
+    /// Every `Icon` variant must resolve.
     #[test]
     fn all_icons_resolve() {
         let registry = IconRegistry::new();
@@ -241,10 +241,10 @@ mod tests {
 
     #[test]
     fn all_icons_list_is_exhaustive() {
-        // 47 variantes déclarées dans `Icon` : le test casse si une
-        // variante est ajoutée sans être enregistrée dans ALL_ICONS.
-        // (`Open` et `Folder` partagent le glyphe dossier mais comptent
-        // comme deux usages distincts, d'où 47 contre 46 côté glyphe.)
+        // 47 variants declared in `Icon`: the test breaks when a variant
+        // is added without being registered in ALL_ICONS.
+        // (`Open` and `Folder` share the folder glyph but count as two
+        // distinct usages, hence 47 vs 46 on the glyph side.)
         assert_eq!(ALL_ICONS.len(), 47);
     }
 

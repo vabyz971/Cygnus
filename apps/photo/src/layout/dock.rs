@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,28 +14,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tuiles ancrables Photo via `egui_tiles` (moteur de rerun).
+//! Photo dockable tiles via `egui_tiles` (rerun engine).
 //!
 //! ```text
-//! PhotoWorkspace (top/bottom fixes)
+//! PhotoWorkspace (top/bottom fixed)
 //!   ↓ CentralPanel (Tree)
 //! PhotoDockTab (Tools / Canvas(id) / Inspector / Layers+History)
 //!   ↓
-//! Contenus métier (left_sidebar / central_view / right_sidebar)
+//! Domain contents (left_sidebar / central_view / right_sidebar)
 //! ```
 //!
-//! Les barres haute (menus, modes) et basse (statut) restent des
-//! `egui::Panel` fixes. Chaque document ouvert a son panneau
-//! « Canevas », titré `nom | zoom %` et FERMABLE (croix de l'onglet) :
-//! l'activer active le document, le fermer ferme le document (retour
-//! à l'accueil si c'était le dernier). Le rail d'outils est compact,
-//! titré d'une icône de drag (la barre d'onglet porte le DnD) ;
-//! l'inspecteur est au-dessus des calques, tous deux avec padding
-//! interne `sm`. Masquer un autre panneau (croix) le rend
-//! invisible en gardant sa place ; le menu Fenêtre le réaffiche
+//! The top (menus, modes) and bottom (status) bars stay fixed
+//! `egui::Panel`s. Each open document has its
+//! "Canvas" panel, titled `name | zoom %` and CLOSABLE (tab cross):
+//! activating it activates the document, closing it closes the document (back
+//! to welcome if it was the last one). The tool rail is compact,
+//! titled with a drag icon (the tab bar carries DnD);
+//! the inspector sits above the layers, both with inner
+//! `sm` padding. Hiding another panel (cross) makes it
+//! invisible while keeping its slot; the Window menu shows it again
 //! ([`PhotoAction::ShowDockTab`](crate::commands::PhotoAction)).
-//! Le style hérite d'egui (donc du thème Cygnus) : aucune couleur
-//! en dur ici.
+//! Styling inherits from egui (hence the Cygnus theme): no hardcoded
+//! color here.
 
 use super::{central_view, left_sidebar, right_sidebar};
 use crate::app::{PhotoApp, remove_document};
@@ -48,29 +48,29 @@ use ui_kit::i18n::TextKey;
 use ui_kit::icons::{Icon, IconRegistry};
 use uuid::Uuid;
 
-/// Mécanique de dock générique (recherche, onglets canevas,
-/// réconciliation) : voir `app-shell`.
+/// Generic dock mechanics (lookup, canvas tabs,
+/// reconciliation): see `app-shell`.
 pub use app_shell::dock::{ensure_tab, push_canvas_tab, reconcile_canvases, remove_canvas_tab};
 
-/// Panneau ancrable du workspace Photo (stable entre versions :
-/// sérialisé dans les préférences, ne jamais renommer sans
-/// migration — comme [`ui_kit::layout::PanelId`]).
+/// Dockable Photo workspace panel (stable across versions:
+/// serialized into preferences, never rename without
+/// migration — like [`ui_kit::layout::PanelId`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PhotoDockTab {
-    /// Rail d'outils compact.
+    /// Compact tool rail.
     Tools,
-    /// Canevas du document `Uuid` (titre = nom + zoom).
+    /// Canvas of document `Uuid` (title = name + zoom).
     Canvas(Uuid),
-    /// Inspecteur du calque sélectionné.
+    /// Inspector of the selected layer.
     Inspector,
-    /// Liste des calques.
+    /// Layer list.
     Layers,
-    /// Historique des pas undo/redo (onglet avec Calques).
+    /// Undo/redo step history (tabbed with Layers).
     History,
 }
 
 impl PhotoDockTab {
-    /// Clé de traduction du titre (hors canevas : nom + zoom).
+    /// Title translation key (except canvas: name + zoom).
     pub fn title_key(self) -> TextKey {
         match self {
             Self::Tools => TextKey::Tools,
@@ -95,9 +95,9 @@ impl DockTab for PhotoDockTab {
     }
 }
 
-/// Layout photo par défaut : canevas au centre, outils à gauche,
-/// inspecteur au-dessus des calques à droite, Historique en onglet
-/// avec les calques (voir `app-shell::dock::default_tree`).
+/// Default photo layout: canvas at center, tools on the left,
+/// inspector above layers on the right, History tabbed
+/// with layers (see `app-shell::dock::default_tree`).
 pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
     let mut tree = app_shell::dock::default_tree(
         PhotoDockTab::Tools,
@@ -109,10 +109,10 @@ pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
     tree
 }
 
-/// Historique en onglet avec les Calques (bas de colonne droite).
+/// History tabbed with Layers (bottom of the right column).
 ///
-/// Idempotent : sans effet si l'onglet existe déjà (arbres restaurés
-/// d'un JSON antérieur : voir `load_tree_or_default`).
+/// Idempotent: no effect if the tab already exists (trees restored
+/// from an earlier JSON: see `load_tree_or_default`).
 pub fn ensure_history_tabbed(tree: &mut Tree<PhotoDockTab>) {
     if app_shell::dock::has_tab(tree, PhotoDockTab::History) {
         return;
@@ -123,8 +123,8 @@ pub fn ensure_history_tabbed(tree: &mut Tree<PhotoDockTab>) {
     let Some(parent) = tree.tiles.parent_of(layers_tile) else {
         return;
     };
-    // Position relevée AVANT toute mutation : en cas de conteneur
-    // inattendu, on ne touche à rien (jamais de tuile orpheline).
+    // Position read BEFORE any mutation: on an unexpected container,
+    // touch nothing (never an orphaned tile).
     let position = match tree.tiles.get(parent) {
         Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) => linear
             .children
@@ -144,12 +144,12 @@ pub fn ensure_history_tabbed(tree: &mut Tree<PhotoDockTab>) {
     }
 }
 
-/// Dessine l'arbre dans le panneau central et retourne les actions
-/// métier des panneaux.
+/// Draws the tree in the central panel and returns the panels'
+/// domain actions.
 ///
-/// Emprunts disjoints (`docs` / `active` vs `shell.tree`) : le
-/// behavior ne prend jamais `PhotoApp` en entier, sinon `Tree::ui`
-/// (qui emprunte l'arbre) refuserait de compiler.
+/// Disjoint borrows (`docs` / `active` vs `shell.tree`): the
+/// behavior never takes the whole `PhotoApp`, otherwise `Tree::ui`
+/// (which borrows the tree) would refuse to compile.
 pub fn show_tree(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
     let mut behavior = PhotoTreeBehavior {
         docs: &mut app.docs,
@@ -162,8 +162,8 @@ pub fn show_tree(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) ->
     behavior.actions
 }
 
-/// Contenu d'une tuile avec padding interne `sm` (inspecteur,
-/// calques) : le style reste 100 % tokens du thème.
+/// Tile content with inner `sm` padding (inspector,
+/// layers): styling stays 100% theme tokens.
 fn padded_tile<R>(
     ui: &mut egui::Ui,
     ctx: &PhotoUiContext,
@@ -175,42 +175,42 @@ fn padded_tile<R>(
         .inner
 }
 
-/// Behavior `egui_tiles` : titres traduits + contenus métier.
+/// `egui_tiles` behavior: translated titles + domain contents.
 ///
-/// Ne possède que les documents (jamais l'arbre) pour respecter le
-/// découpage des emprunts de [`show_tree`]. Les tuiles ne sont
-/// dessinées qu'avec au moins un document (le workspace affiche
-/// l'accueil sinon) ; les bras défensifs évitent tout panic.
+/// Owns only the documents (never the tree) to honor the
+/// borrow split of [`show_tree`]. Tiles are only
+/// drawn with at least one document (the workspace shows
+/// the welcome screen otherwise); defensive arms avoid any panic.
 struct PhotoTreeBehavior<'a> {
-    /// Documents ouverts (non vide quand l'arbre est dessiné).
+    /// Open documents (non-empty when the tree is drawn).
     docs: &'a mut Vec<OpenDocument>,
-    /// Index du document actif.
+    /// Active document index.
     active: &'a mut usize,
-    /// Catalogue des filtres (registre moteur : nom, `type_id`) pour
-    /// le menu contextuel du panneau Calques.
+    /// Filter catalog (engine registry: name, `type_id`) for
+    /// the Layers panel context menu.
     filter_types: &'a [(String, String)],
-    /// Dépendances d'affichage (thème, traduction).
+    /// Display dependencies (theme, translation).
     ctx: &'a PhotoUiContext,
-    /// Actions métier collectées pendant le frame.
+    /// Domain actions collected during the frame.
     actions: Vec<PhotoAction>,
 }
 
 impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
     fn tab_title_for_pane(&mut self, pane: &PhotoDockTab) -> egui::WidgetText {
         match *pane {
-            // Rail étroit : icône de drag au lieu du texte (le DnD
-            // passe par la barre d'onglet, qu'il faut conserver).
+            // Narrow rail: drag icon instead of text (DnD
+            // goes through the tab bar, which must be kept).
             PhotoDockTab::Tools => IconRegistry::new()
                 .sized(
                     Icon::DragHandle,
                     self.ctx.shared.theme().typography.body_size,
                 )
                 .into(),
-            // Titre document : nom + résolution + zoom (la résolution
-            // vit ici, jamais en overlay sur le canvas). (Profil couleur
-            // et profondeur 16/32 bits : le moteur est 100 % RGBA 8
-            // bits sans profil — à ajouter ici quand le `Document`
-            // exposera ces métadonnées.)
+            // Document title: name + resolution + zoom (resolution
+            // lives here, never as an overlay on the canvas). (Color profile
+            // and 16/32-bit depth: the engine is 100% RGBA 8-bit
+            // with no profile — add here when `Document`
+            // exposes that metadata.)
             PhotoDockTab::Canvas(id) => self
                 .docs
                 .iter()
@@ -243,8 +243,8 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         _tile_id: TileId,
         pane: &mut PhotoDockTab,
     ) -> UiResponse {
-        // Emprunts disjoints explicites : `ctx` est copié (référence
-        // partagée `Copy`) avant l'emprunt mutable des documents.
+        // Explicit disjoint borrows: `ctx` is copied (`Copy`
+        // shared reference) before the mutable document borrow.
         let ctx: &PhotoUiContext = self.ctx;
         let translator = ctx.shared.translator();
         let texts = crate::i18n::PhotoCatalog::new(translator.language());
@@ -265,7 +265,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                 ));
             }
             PhotoDockTab::Canvas(id) => {
-                // Activer l'onglet active le document.
+                // Activating the tab activates the document.
                 if let Some(index) = self.docs.iter().position(|doc| doc.id == id) {
                     *self.active = index;
                     let doc: &mut OpenDocument = &mut self.docs[index];
@@ -312,30 +312,30 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         UiResponse::None
     }
 
-    /// Tous les onglets sont fermables : la croix d'un canevas ferme
-    /// son document (voir `on_tab_close`), celle d'un autre panneau
-    /// le masque en gardant sa place (menu Fenêtre pour rouvrir).
+    /// Every tab is closable: a canvas cross closes
+    /// its document (see `on_tab_close`), any other panel's cross
+    /// hides it while keeping its slot (Window menu to reopen).
     fn is_tab_closable(&self, _tiles: &Tiles<PhotoDockTab>, _tile_id: TileId) -> bool {
         true
     }
 
     fn on_tab_close(&mut self, tiles: &mut Tiles<PhotoDockTab>, tile_id: TileId) -> bool {
-        // Canevas : fermer le DOCUMENT (retiré des docs, worker arrêté
-        // à la chute des channels) et détruire la tuile (`true`).
-        // Zéro document restant = retour à l'accueil (le workspace
-        // n'affiche l'arbre que s'il reste un document).
+        // Canvas: close the DOCUMENT (removed from docs, worker stopped
+        // when the channels drop) and destroy the tile (`true`).
+        // Zero documents left = back to welcome (the workspace
+        // only shows the tree while a document remains).
         if let Some(egui_tiles::Tile::Pane(PhotoDockTab::Canvas(id))) = tiles.get(tile_id) {
             let id = *id;
             remove_document(self.docs, self.active, id);
             return true;
         }
-        // Autre panneau : on le masque au lieu de le détruire pour
-        // garder sa place dans le layout (`false` = la tuile reste).
+        // Other panel: hide instead of destroying to
+        // keep its slot in the layout (`false` = the tile stays).
         tiles.set_visible(tile_id, false);
         false
     }
 
-    /// Barre d'onglets partout (même à panneau unique, façon dock).
+    /// Tab bar everywhere (even single-pane, dock-style).
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
         egui_tiles::SimplificationOptions {
             all_panes_must_have_tabs: true,
@@ -350,12 +350,12 @@ mod tests {
     use app_shell::dock::has_tab;
     use egui_tiles::Container;
 
-    /// Trouve le `TileId` du panneau `tab`, s'il existe.
+    /// Finds the `TileId` of panel `tab`, if any.
     fn find_tile(tree: &Tree<PhotoDockTab>, tab: PhotoDockTab) -> Option<TileId> {
         tree.tiles.find_pane(&tab)
     }
 
-    /// Panneaux fixes de test.
+    /// Fixed test panels.
     const FIXED_TABS: [PhotoDockTab; 4] = [
         PhotoDockTab::Tools,
         PhotoDockTab::Inspector,
@@ -383,7 +383,7 @@ mod tests {
         let inspector = find_tile(&tree, PhotoDockTab::Inspector).expect("inspecteur présent");
         let layers = find_tile(&tree, PhotoDockTab::Layers).expect("calques présents");
         let history = find_tile(&tree, PhotoDockTab::History).expect("historique présent");
-        // Calques + Historique en onglets : même tuile parente.
+        // Layers + History tabbed: same parent tile.
         let layers_parent = tree.tiles.parent_of(layers).expect("parent calques");
         let history_parent = tree.tiles.parent_of(history).expect("parent historique");
         assert_eq!(
@@ -397,7 +397,7 @@ mod tests {
             ),
             "conteneur d'onglets attendu"
         );
-        // L'onglet partage la colonne droite verticale avec l'inspecteur.
+        // The tab shares the vertical right column with the inspector.
         let tabs_parent = tree.tiles.parent_of(layers_parent).expect("parent onglets");
         let inspector_parent = tree.tiles.parent_of(inspector).expect("parent inspecteur");
         assert_eq!(tabs_parent, inspector_parent, "même colonne droite");
@@ -442,7 +442,7 @@ mod tests {
     fn closing_panel_hides_it_and_menu_reopens_it() {
         let mut tree = default_tree(vec![canvas(1)]);
         let inspector = find_tile(&tree, PhotoDockTab::Inspector).expect("inspecteur présent");
-        // La croix masque sans détruire (place conservée).
+        // The cross hides without destroying (slot kept).
         tree.set_visible(inspector, false);
         assert!(has_tab(&tree, PhotoDockTab::Inspector));
         assert!(!tree.is_visible(inspector));
@@ -490,9 +490,9 @@ mod tests {
             PhotoDockTab::Canvas(first),
             PhotoDockTab::Canvas(second),
         ]);
-        // Fermer le premier canevas : document retiré, tuile détruite
-        // (`true` = egui_tiles détruit la tuile — reproduit ici par
-        // `remove_recursively`), second document actif.
+        // Close the first canvas: document removed, tile destroyed
+        // (`true` = egui_tiles destroys the tile — reproduced here with
+        // `remove_recursively`), second document active.
         {
             let tile = find_tile(&tree, PhotoDockTab::Canvas(first)).expect("canevas 1");
             let mut behavior = PhotoTreeBehavior {
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(app.active_doc_opt().expect("doc restant").id, second);
         assert!(!has_tab(&tree, PhotoDockTab::Canvas(first)));
         assert!(has_tab(&tree, PhotoDockTab::Canvas(second)));
-        // Fermer le dernier : zéro document = retour à l'accueil.
+        // Close the last one: zero documents = back to welcome.
         {
             let tile = find_tile(&tree, PhotoDockTab::Canvas(second)).expect("canevas 2");
             let mut behavior = PhotoTreeBehavior {
@@ -524,7 +524,7 @@ mod tests {
         }
         assert!(app.docs.is_empty(), "accueil : aucun document");
         assert!(!has_tab(&tree, PhotoDockTab::Canvas(second)));
-        // Panneaux conservés pour la prochaine ouverture.
+        // Panels kept for the next opening.
         for tab in FIXED_TABS {
             assert!(has_tab(&tree, tab), "panneau perdu : {tab:?}");
         }
@@ -544,7 +544,7 @@ mod tests {
             .expect("document présent")
             .title
             .clone();
-        // Sans aperçu : nom + zoom (repli avant la première réponse).
+        // Without preview: name + zoom (fallback before the first response).
         {
             let mut behavior = PhotoTreeBehavior {
                 docs: &mut app.docs,
@@ -561,7 +561,7 @@ mod tests {
             );
             assert!(title.text().contains('|'), "zoom absent du titre");
         }
-        // Avec aperçu : la résolution rejoint le titre (jamais l'overlay).
+        // With preview: resolution joins the title (never the overlay).
         app.active_doc_mut_opt().expect("doc actif").ui.preview_geom =
             Some(crate::state::PreviewGeom {
                 thumb_size: egui::vec2(800.0, 600.0),
@@ -609,7 +609,7 @@ mod tests {
         reconcile_canvases(&mut tree, &[Uuid::from_u128(2)]);
         assert!(!has_tab(&tree, canvas(1)));
         assert!(has_tab(&tree, canvas(2)));
-        // Panneaux conservés.
+        // Panels kept.
         for tab in FIXED_TABS {
             assert!(has_tab(&tree, tab), "panneau perdu : {tab:?}");
         }
@@ -632,7 +632,7 @@ mod tests {
         for tab in FIXED_TABS {
             assert!(has_tab(&restored, tab), "panneau perdu : {tab:?}");
         }
-        // Les canevas portent les ids des documents ouverts.
+        // Canvases carry the open documents' ids.
         for doc in &app.docs {
             assert!(has_tab(&restored, PhotoDockTab::Canvas(doc.id)));
         }

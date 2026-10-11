@@ -14,27 +14,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Bordures du thème Cygnus.
+//! Cygnus theme borders.
 //!
-//! SEULE source des épaisseurs de trait : les `egui::Stroke` des
-//! cartes, surfaces et focus référencent ces tokens. La couleur des
-//! bordures reste dans [`super::colors`] (`border`).
+//! SINGLE source of stroke widths: the `egui::Stroke` of
+//! cards, surfaces and focus reference these tokens. Border
+//! color stays in [`super::colors`] (`border`).
 
-/// Épaisseurs de bordure.
+/// Border widths.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusBorders {
-    /// Trait fin standard (1px).
+    /// Standard thin stroke (1px).
     pub thin: f32,
-    /// Trait moyen, emphase (2px).
+    /// Medium stroke, emphasis (2px).
     pub medium: f32,
-    /// Trait épais, drag & drop (3px).
+    /// Thick stroke, drag & drop (3px).
     pub thick: f32,
-    /// Trait de sélection (2.5px).
+    /// Selection stroke (2.5px).
     pub selected: f32,
 }
 
 impl CygnusBorders {
-    /// Bordures du thème sombre.
+    /// Dark-theme borders.
     pub fn dark() -> Self {
         Self {
             thin: 1.0,
@@ -46,7 +46,7 @@ impl CygnusBorders {
 }
 
 impl Default for CygnusBorders {
-    /// Bordures par défaut.
+    /// Default borders.
     fn default() -> Self {
         Self::dark()
     }

@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Interrupteur (switch) dessiné au style du thème.
+//! Switch (toggle) drawn in the theme's style.
 //!
-//! Contrairement à la case à cocher, l'interrupteur convient aux
-//! options "on/off" autonomes (grille, magnétisme, aperçu).
+//! Unlike the checkbox, the switch suits standalone
+//! "on/off" options (grid, snapping, preview).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::Toggle;
 //! # use ui_kit::theme::CygnusTheme;
@@ -32,20 +32,20 @@
 
 use crate::theme::CygnusTheme;
 
-/// Interrupteur labellisé via API builder.
+/// Labeled switch via builder API.
 #[derive(Debug, Clone)]
 pub struct Toggle<'a> {
     label: &'a str,
 }
 
 impl<'a> Toggle<'a> {
-    /// Crée un interrupteur avec libellé.
+    /// Creates a switch with label.
     pub fn new(label: &'a str) -> Self {
         Self { label }
     }
 
-    /// Affiche l'interrupteur, met à jour `on`, retourne la réponse
-    /// du switch (le libellé suit, non cliquable).
+    /// Displays the switch, updates `on`, returns the switch's
+    /// response (the label follows, non-clickable).
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, on: &mut bool) -> egui::Response {
         let height = theme.sizes.min_touch * 0.8;
         let track_width = height * 1.8;

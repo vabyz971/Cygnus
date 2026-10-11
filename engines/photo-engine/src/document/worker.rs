@@ -14,31 +14,31 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Rendu incrémental par tuiles (Phase 6E) : orchestration, pas de calcul.
+//! Incremental tile rendering (Phase 6E): orchestration, no computation.
 //!
-//! [`RenderWorker`] enchaîne les fondations sans absorber leurs
-//! responsabilités :
+//! [`RenderWorker`] chains the foundations without absorbing their
+//! responsibilities:
 //!
 //! ```text
-//! DirtyRegion (dirty.rs)      = quelles zones sont modifiées
-//! SpatialScope (compositing)  = pour R, quelle dépendance D calculer
-//! TileCache (tile_cache.rs)   = réutiliser le résultat final de R
-//! RenderWorker (ici)          = découper, regarder, assembler, mesurer
+//! DirtyRegion (dirty.rs)      = which zones were modified
+//! SpatialScope (compositing)  = for R, which dependency D to compute
+//! TileCache (tile_cache.rs)   = reuse the final result of R
+//! RenderWorker (here)         = slice, look up, assemble, measure
 //! ```
 //!
-//! Le worker ne connaît ni blur ni blend : pour chaque tuile manquante il
-//! délègue à [`get_or_render`](super::tile_cache::get_or_render), qui
-//! délègue à `composite_region_with` (fenêtre 6C). Séquentiel (pas de
-//! scheduler multithread en 6E), pur moteur (aucun egui/wgpu).
+//! The worker knows neither blur nor blend: for each missing tile it
+//! delegates to [`get_or_render`](super::tile_cache::get_or_render),
+//! which delegates to `composite_region_with` (6C window). Sequential (no
+//! multithread scheduler in 6E), pure engine (no egui/wgpu).
 //!
-//! Espaces : les requêtes de tuiles sont en DOCUMENT SPACE (rects entiers)
-//! ; l'assemblage se fait en coordonnées buffer via l'origine portée par
-//! chaque [`RegionalComposite`] — aucun calcul géométrique dupliqué ici.
+//! Spaces: tile requests are in DOCUMENT SPACE (integer rects); assembly
+//! happens in buffer coordinates via the origin carried by each
+//! [`RegionalComposite`] — no duplicated geometry math here.
 //!
-//! Sécurité de périmètre : le worker suit la géométrie du scope
-//! ([`ScopeGeom`]) ; tout changement (resize, débordement, contenu déplacé)
-//! vide le cache avant rendu — jamais de tuile d'un ancien périmètre
-//! resservie sous une nouvelle géométrie.
+//! Perimeter safety: the worker tracks the scope geometry ([`ScopeGeom`]);
+//! any change (resize, overflow, moved content) empties the cache
+//! before rendering — never a tile from an old perimeter re-served
+//! under a new geometry.
 
 use std::sync::Arc;
 
@@ -54,23 +54,23 @@ use super::tree::Document;
 use crate::gpu::GpuContext;
 use crate::tile_key::{BackendTag, GPU_PIXEL_THRESHOLD, tile_content_signature};
 
-/// Géométrie du périmètre de rendu (= grille d'assemblage) : dimensions du
-/// buffer + origine monde (mêmes formules que `composite_scope_with`).
-/// Mode rogné : `{doc, 0, 0}` ; plan infini : extents réels.
+/// Render perimeter geometry (= assembly grid): buffer dimensions + world
+/// origin (same formulas as `composite_scope_with`). Cropped mode: `{doc,
+/// 0, 0}`; infinite plane: real extents.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScopeGeom {
-    /// Largeur du buffer (px).
+    /// Buffer width (px).
     pub w: u32,
-    /// Hauteur du buffer (px).
+    /// Buffer height (px).
     pub h: u32,
-    /// Origine monde X (monde (0,0) = buffer − origine).
+    /// World origin X (world (0,0) = buffer − origin).
     pub origin_x: f32,
-    /// Origine monde Y.
+    /// World origin Y.
     pub origin_y: f32,
 }
 
 impl ScopeGeom {
-    /// Périmètre document (mode rogné) : buffer == document, origine nulle.
+    /// Document perimeter (cropped mode): buffer == document, zero origin.
     #[must_use]
     pub fn document(doc_w: u32, doc_h: u32) -> Self {
         Self {
@@ -81,82 +81,82 @@ impl ScopeGeom {
         }
     }
 
-    /// Rectangle buffer couvert.
+    /// Covered buffer rectangle.
     #[must_use]
     pub fn rect(self) -> TileRegion {
         TileRegion::new(0, 0, self.w, self.h)
     }
 }
 
-/// Vue assemblée : pixels + origine buffer (correspondance document-space
-/// conservée comme `RegionalComposite`).
+/// Assembled view: pixels + buffer origin (document-space mapping kept
+/// like `RegionalComposite`).
 #[derive(Debug, Clone)]
 pub struct AssembledView {
-    /// Pixels assemblés (viewport clippé au scope).
+    /// Assembled pixels (viewport clipped to scope).
     pub image: DynamicImage,
-    /// Colonne buffer de l'origine.
+    /// Buffer column of the origin.
     pub origin_x: u32,
-    /// Ligne buffer de l'origine.
+    /// Buffer row of the origin.
     pub origin_y: u32,
 }
 
-/// Compteurs d'orchestration (Phase 6E §15) : que du comptage, aucune
-/// télémétrie complexe. `rendered_tiles` = tuiles évaluées (miss ⇒ une
-/// évaluation régionale) ; `dirty_tiles` = tuiles requises intersectant le
-/// dirty AVANT rendu ; `dependency_px` = pixels de dépendance cumulés
-/// (somme des fenêtres D réellement évaluées — `CompositeStats::scope_px`
-/// étant écrasé à chaque tuile, ce cumul est LA mesure §18/§22).
+/// Orchestration counters (Phase 6E §15): pure counting, no fancy
+/// telemetry. `rendered_tiles` = evaluated tiles (miss ⇒ one regional
+/// evaluation); `dirty_tiles` = required tiles intersecting dirty BEFORE
+/// rendering; `dependency_px` = cumulative dependency pixels (sum of
+/// actually evaluated D windows — `CompositeStats::scope_px` being
+/// overwritten per tile, this cumulative sum IS the §18/§22 measure).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderWorkerStats {
-    /// Tuiles demandées (viewport ∩ scope).
+    /// Requested tiles (viewport ∩ scope).
     pub requested_tiles: u64,
-    /// Tuiles évaluées (miss).
+    /// Evaluated tiles (miss).
     pub rendered_tiles: u64,
-    /// Tuiles resservies sans calcul.
+    /// Tiles re-served without computation.
     pub cache_hits: u64,
-    /// Tuiles manquées.
+    /// Missed tiles.
     pub cache_misses: u64,
-    /// Tuiles sales parmi les requises (découverte dirty).
+    /// Dirty tiles among required ones (dirty discovery).
     pub dirty_tiles: u64,
-    /// Tuiles visibles requises (== `requested_tiles` tant qu'il n'y a pas
-    /// de prefetch — Phase 6F §20).
+    /// Required visible tiles (== `requested_tiles` while there is no
+    /// prefetch — Phase 6F §20).
     pub visible_tiles: u64,
-    /// Pixels de dépendance évalués (cumul des D).
+    /// Evaluated dependency pixels (cumulative D).
     pub dependency_px: u64,
-    /// Temps de construction du plan (ordonnancement pur, Phase 6G.1).
+    /// Plan build time (pure scheduling, Phase 6G.1).
     pub schedule_us: u128,
-    /// Temps total des évaluations de tuiles (lookup cache + rendu miss).
+    /// Total tile evaluation time (cache lookup + miss render).
     pub tile_render_total_us: u128,
-    /// Plus petite évaluation de tuile (µs, 0 si aucune).
+    /// Smallest tile evaluation (µs, 0 if none).
     pub tile_render_min_us: u64,
-    /// Plus grande évaluation de tuile (µs).
+    /// Largest tile evaluation (µs).
     pub tile_render_max_us: u64,
-    /// Temps de découpe d'assemblage (memcpy O(viewport), Phase 6G.1 §7).
+    /// Assembly crop time (memcpy O(viewport), Phase 6G.1 §7).
     pub assembly_us: u128,
 }
 
-/// Orchestrateur du rendu incrémental : cache + grain + périmètre suivi +
-/// surface persistante.
+/// Incremental render orchestrator: cache + grain + tracked perimeter +
+/// persistent surface.
 ///
-/// Le `Clone` des hits recopie les pixels (fondation correctness-first,
-/// cf. `TileCache` ; `Arc` documenté comme optimisation future). La surface
-/// (`PreviewSurface`, Phase 6G) accumule les tuiles rendues : un hit
-/// n'écrit RIEN (zéro réécriture), un miss n'écrit que sa tuile.
+/// Hit `Clone`s copy pixels (correctness-first foundation, see
+/// `TileCache`; `Arc` documented as a future optimization). The
+/// (`PreviewSurface`, Phase 6G) surface accumulates rendered tiles: a
+/// hit writes NOTHING (zero rewrite), a miss only writes its own tile.
 #[derive(Debug)]
 pub struct RenderWorker {
     cache: TileCache,
     tile_px: u32,
     last_scope: Option<ScopeGeom>,
     surface: Option<PreviewSurface>,
-    /// Rects document effectivement (re)rendus par le dernier `render`
-    /// (miss avec contribution) — soldés via `take_rendered_tiles`.
+    /// Document rects actually (re)rendered by the last `render` (miss
+    /// with contribution) — settled via `take_rendered_tiles`.
     last_rendered: Vec<TileRegion>,
 }
 
 impl RenderWorker {
-    /// Nouveau worker (budget cache en pixels, grain de tuile en px ;
-    /// `VIEWPORT_TILE_PX` par défaut). Surface créée au premier rendu
-    /// (chemin full explicite).
+    /// New worker (cache budget in pixels, tile grain in px; default
+    /// `VIEWPORT_TILE_PX`). Surface created on first render (explicit
+    /// full path).
     #[must_use]
     pub fn new(max_pixels: usize, tile_px: u32) -> Self {
         Self {
@@ -168,14 +168,14 @@ impl RenderWorker {
         }
     }
 
-    /// Rects rendus par le dernier `render`, vidés à la lecture (Phase 6G.2
-    /// §1) : l'appelant les transmet à `consume_rendered` APRÈS application
-    /// du résultat — jamais avant, jamais sans rendu.
+    /// Rects rendered by the last `render`, drained on read (Phase 6G.2 §1):
+    /// the caller passes them to `consume_rendered` AFTER applying the
+    /// result — never before, never without rendering.
     pub fn take_rendered_tiles(&mut self) -> Vec<TileRegion> {
         std::mem::take(&mut self.last_rendered)
     }
 
-    /// Statistiques cumulées de la surface persistante (zéro si jamais créée).
+    /// Cumulative persistent-surface statistics (zero if never created).
     #[must_use]
     pub fn surface_stats(&self) -> PreviewSurfaceStats {
         self.surface
@@ -183,17 +183,17 @@ impl RenderWorker {
             .map_or(PreviewSurfaceStats::default(), PreviewSurface::stats)
     }
 
-    /// Oublie la surface (le cache est conservé) : le prochain `render` la
-    /// recrée vide puis la repeuple par rendu, ou `repopulate_from_cache`
-    /// la remplit SANS recomposer. Explicite (§8 : ni silencieux ni fréquent).
+    /// Forgets the surface (cache kept): the next `render` recreates it
+    /// empty then repopulates it by rendering, or `repopulate_from_cache`
+    /// fills it WITHOUT recompositing. Explicit (§8: neither silent nor frequent).
     pub fn reset_surface(&mut self) {
         self.surface = None;
     }
 
-    /// Repeuple la surface depuis le cache seul (zéro compositing) puis
-    /// retourne la découpe `viewport` (coords buffer du `scope`).
-    /// `None` si scope inconnu/incohérent (passer par `render`, qui détecte
-    /// et invalide) ou si aucune tuile ne couvre la zone.
+    /// Repopulates the surface from cache alone (zero compositing) then
+    /// returns the `viewport` crop (`scope` buffer coords). `None` if the
+    /// scope is unknown/inconsistent (go through `render`, which detects and
+    /// invalidates) or if no tile covers the zone.
     pub fn repopulate_from_cache(
         &mut self,
         scope: ScopeGeom,
@@ -217,7 +217,7 @@ impl RenderWorker {
         Self::crop_surface(surface, &clip)
     }
 
-    /// Surface garantie aux dims du scope (créée si besoin : full explicite).
+    /// Surface ensured at scope dims (created if needed: explicit full).
     fn surface_for(&mut self, scope: ScopeGeom) -> &mut PreviewSurface {
         if self.surface.is_none() {
             self.surface = Some(PreviewSurface::new(scope.w, scope.h));
@@ -227,7 +227,7 @@ impl RenderWorker {
         surface
     }
 
-    /// Découpe la surface au clip (coords buffer).
+    /// Crops the surface to the clip (buffer coords).
     fn crop_surface(surface: &PreviewSurface, clip: &TileRegion) -> Option<AssembledView> {
         let (sw, sh) = surface.dimensions();
         let rect = TileRegion::new(0, 0, sw, sh).intersect(*clip);
@@ -249,25 +249,25 @@ impl RenderWorker {
         })
     }
 
-    /// Accès au cache (marquage dirty par l'appelant — voir le worker applicatif).
+    /// Cache access (caller-side dirty marking — see the app worker).
     pub fn cache_mut(&mut self) -> &mut TileCache {
         &mut self.cache
     }
 
-    /// Accès lecture au cache (découverte dirty, diagnostics).
+    /// Read access to the cache (dirty discovery, diagnostics).
     #[must_use]
     pub fn cache(&self) -> &TileCache {
         &self.cache
     }
 
-    /// Grain de tuile (px).
+    /// Tile grain (px).
     #[must_use]
     pub fn tile_px(&self) -> u32 {
         self.tile_px
     }
 
-    /// Périmètre réel du document (plan infini) : mêmes formules que
-    /// `composite_scope_with` (extents + clamp), sans aucun pixel calculé.
+    /// Real document perimeter (infinite plane): same formulas as
+    /// `composite_scope_with` (extents + clamp), with zero pixels computed.
     #[must_use]
     pub fn scope_for(
         &self,
@@ -285,9 +285,9 @@ impl RenderWorker {
         }
     }
 
-    /// Requête couvrant tout un scope (DOCUMENT SPACE) : le plan issu de
-    /// cette requête assemble exactement le buffer du scope (l'assemblage
-    /// utilise les origines buffer authoritatives des tuiles).
+    /// Request covering a whole scope (DOCUMENT SPACE): the plan from such a
+    /// request assembles exactly the scope buffer (assembly uses the tiles'
+    /// authoritative buffer origins).
     #[must_use]
     pub fn scope_request(scope: ScopeGeom, scale: f32) -> RenderRequest {
         RenderRequest::new(
@@ -303,23 +303,23 @@ impl RenderWorker {
         )
     }
 
-    /// Rend une requête viewport (DOCUMENT SPACE) : plan ordonnancé
-    /// (sales d'abord, puis distance — [`schedule_viewport`]), tuiles via
-    /// le cache, assemblage exact en coords buffer, statistiques
-    /// d'orchestration.
+    /// Renders a viewport request (DOCUMENT SPACE): ordered plan (dirty
+    /// first, then distance — [`schedule_viewport`]), tiles via the cache,
+    /// exact assembly in buffer coords, orchestration
+    /// statistics.
     ///
-    /// Seules les tuiles manquantes sont évaluées (`composite_region_with`
-    /// fenêtré). `None` si requête vide, hors scope ou rien à contribuer.
-    /// L'ordre du plan est l'ordre d'exécution (visible+dirty d'abord).
+    /// Only missing tiles are evaluated (windowed `composite_region_with`).
+    /// `None` if the request is empty, out of scope or nothing contributes.
+    /// Plan order is execution order (visible+dirty first).
     ///
-    /// Backend HONNÊTE par tuile (les noyaux CPU/GPU divergent — clé fausse
-    /// interdite) : estimé depuis la fenêtre D (requête + halo 6C) via
-    /// [`BackendTag::select`]. Sous le seuil, aucun `is_available` n'est
-    /// appelé (pas de réveil GPU pour les petits documents) ; déterministe
-    /// à contenu égal, donc hits stables.
+    /// HONEST per-tile backend (CPU/GPU kernels diverge — wrong keys
+    /// forbidden): estimated from the D window (request + 6C halo) via
+    /// [`BackendTag::select`]. Below the threshold, no `is_available` is
+    /// called (no GPU wake-up for small documents); deterministic at equal
+    /// content, hence stable hits.
     ///
-    /// Huit paramètres explicites (pas de `RenderJob` artificiel : chaque
-    /// appelant fournit déjà ces pièces, cf. `get_or_render` / 6B).
+    /// Eight explicit parameters (no artificial `RenderJob`): each caller
+    /// already provides these pieces, see `get_or_render` / 6B).
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -334,16 +334,16 @@ impl RenderWorker {
         if scope.w == 0 || scope.h == 0 {
             return None;
         }
-        // Périmètre suivi : tout changement vide le cache (sécurité, pas
-        // d'optimisation : les clés d'un ancien périmètre ne doivent jamais
-        // resservir sous une nouvelle géométrie).
+        // Tracked perimeter: any change empties the cache (safety, not
+        // optimization: old-perimeter keys must never be re-served under a
+        // new geometry).
         if self.last_scope != Some(scope) {
             self.cache.invalidate_all();
             self.last_scope = Some(scope);
         }
-        // Plage document valide (scope ramené en document) : le plan ne
-        // demande jamais hors de cette zone (les débordements n'ont pas de
-        // contenu adressable et rendraient None de toute façon).
+        // Valid document range (scope brought back into document): the plan
+        // never requests outside this zone (overflows have no addressable
+        // content and would return None anyway).
         let doc_valid = TileRegion::new(
             (-scope.origin_x).floor() as i32,
             (-scope.origin_y).floor() as i32,
@@ -354,10 +354,10 @@ impl RenderWorker {
         if viewport.is_empty() {
             return None;
         }
-        // Fenêtre buffer d'assemblage : viewport mappé (+ origine), clippé
-        // au scope. Les tuiles rendues portent leur origine buffer
-        // authoritative (`RegionalComposite`) : l'assemblage ne recalcule
-        // aucune géométrie.
+        // Assembly buffer window: mapped viewport (+ origin), clipped to
+        // the scope. Rendered tiles carry their authoritative buffer origin
+        // (`RegionalComposite`): assembly recomputes
+        // no geometry.
         let clip = TileRegion::new(
             (viewport.x as f32 + scope.origin_x).floor() as i32,
             (viewport.y as f32 + scope.origin_y).floor() as i32,
@@ -373,25 +373,25 @@ impl RenderWorker {
             return None;
         }
         let sub_request = RenderRequest::new(viewport, request.scale);
-        // Instrumentation 6G.1 (aucun effet sur le rendu) : chrono du plan.
+        // 6G.1 instrumentation (no render effect): plan timer.
         let t_schedule = std::time::Instant::now();
         let plan = schedule_viewport(&sub_request, self.cache.dirty(), self.tile_px, ctx);
         stats.schedule_us += t_schedule.elapsed().as_micros();
         if plan.is_empty() {
             return None;
         }
-        // Surface persistante aux dims du scope (créée/recréée ici : chemin
-        // full explicite — jamais de reconstruction silencieuse ailleurs).
+        // Persistent surface at scope dims (created/recreated here: explicit
+        // full path — never a silent rebuild elsewhere).
         self.surface_for(scope);
-        // Protection viewport pendant le rendu : les évictions préfèrent les
-        // tuiles hors champ (repli LRU strict si tout est protégé).
+        // Viewport protection during render: evictions prefer off-screen tiles
+        // (strict LRU fallback if all is protected).
         let protected: Vec<TileRegion> = plan.iter().map(|item| item.rect).collect();
         self.cache.set_protected(&protected);
         let content = tile_content_signature(doc);
         let halo = super::compositing::scope_adjustment_window(&doc.root).halo_px;
         let mut contributed = false;
-        // Emprunts disjoints : la surface écrit, le cache lit, le relevé
-        // des rects rendus s'accumule pour `take_rendered_tiles`.
+        // Disjoint borrows: the surface writes, the cache reads, rendered-rect
+        // bookkeeping accumulates for `take_rendered_tiles`.
         let Self {
             surface,
             cache,
@@ -406,8 +406,8 @@ impl RenderWorker {
             if item.priority == TilePriority::VisibleDirty {
                 stats.dirty_tiles += 1;
             }
-            // Fenêtre D estimée (requête + halo) : backend réel (CPU sous
-            // le seuil sans requête GPU, `select` au-delà).
+            // Estimated D window (request + halo): real backend (CPU below the
+            // threshold with no GPU query, `select` beyond).
             let est = (u64::from(item.rect.width) + 2 * u64::from(halo))
                 * (u64::from(item.rect.height) + 2 * u64::from(halo));
             let backend = if est < GPU_PIXEL_THRESHOLD {
@@ -416,9 +416,9 @@ impl RenderWorker {
                 BackendTag::select(GpuContext::is_available(), est)
             };
             let (hits_avant, misses_avant) = (cache.stats().hits, cache.stats().misses);
-            // Une zone sans contribution (accumulateur vide) rend None :
-            // on saute la tuile, les voisines contribuent quand même.
-            // Instrumentation 6G.1 : chrono par tuile (lookup + rendu).
+            // A zone with no contribution (empty accumulator) returns None: the
+            // tile is skipped, neighbors still contribute.
+            // 6G.1 instrumentation: per-tile timer (lookup + render).
             let t_tile = std::time::Instant::now();
             let tile = get_or_render(
                 cache,
@@ -433,7 +433,7 @@ impl RenderWorker {
             );
             let tile_us = t_tile.elapsed().as_micros();
             stats.tile_render_total_us += tile_us;
-            // Min/max en µs (u64) : initialisés à la première tuile.
+            // Min/max in µs (u64): initialized on the first tile.
             let tile_us64 = tile_us.min(u128::from(u64::MAX)) as u64;
             if stats.requested_tiles <= 1 {
                 stats.tile_render_min_us = tile_us64;
@@ -450,15 +450,15 @@ impl RenderWorker {
             let misses = cache.stats().misses - misses_avant;
             stats.cache_misses += misses;
             if misses > 0 {
-                // Seuls les miss écrivent la surface persistante : un hit
-                // prouve que la surface détient déjà ces octets (zéro
-                // réécriture — le cœur de 6G). Le rect rendu est relevé
-                // pour consommation dirty APRÈS application (§1 6G.2).
+                // Only misses write the persistent surface: a hit proves the surface
+                // already holds these bytes (zero rewrite — the heart of 6G). The
+                // rendered rect is recorded for dirty consumption AFTER application
+                // (§1 6G.2).
                 surface.update_tile(&tile);
                 last_rendered.push(item.rect);
-                // `composite_region_with` pose scope_px = fenêtre D
-                // évaluée : cumul worker (l'assignation par tuile ne
-                // permet pas de lire un total dans CompositeStats).
+                // `composite_region_with` sets scope_px = evaluated D window: worker
+                // cumulative sum (per-tile assignment allows no total read from
+                // CompositeStats).
                 stats.rendered_tiles += misses;
                 stats.dependency_px += render_stats.scope_px;
             }
@@ -468,8 +468,8 @@ impl RenderWorker {
         if !contributed {
             return None;
         }
-        // Instrumentation 6G.1 : la découpe (memcpy O(viewport)) est mesurée
-        // explicitement (§7 : elle doit rester visible dans les métriques).
+        // 6G.1 instrumentation: the crop (memcpy O(viewport)) is explicitly
+        // measured (§7: it must stay visible in metrics).
         let t_assembly = std::time::Instant::now();
         let out = Self::crop_surface(self.surface.as_ref().expect("créée ci-dessus"), &clip);
         stats.assembly_us += t_assembly.elapsed().as_micros();

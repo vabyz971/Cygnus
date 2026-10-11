@@ -14,19 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modèle layout : document de cadres typés, sans géométrie calculée.
+//! Layout model: typed-frame document, no computed geometry.
 //!
-//! Un [`Frame`] décrit une intention (conteneur, feuille, page) ; les
-//! [`Rect`] calculés vivent dans [`ComputedLayout`](crate::ComputedLayout).
-//! Le façonnage du texte n'est PAS ici : les feuilles texte portent la
-//! chaîne et sa taille, mesurées via [`TextMeasurer`](crate::TextMeasurer).
+//! A [`Frame`] describes an intent (container, leaf, page); computed
+//! [`Rect`]s live in [`ComputedLayout`](crate::ComputedLayout).
+//! Text shaping is NOT here: text leaves carry the
+//! string and its size, measured via [`TextMeasurer`](crate::TextMeasurer).
 
 use std::collections::HashMap;
 
 use ids::EntityId;
 use scene::SceneNodeId;
 
-/// Identifiant stable d'un [`Frame`].
+/// Stable identifier of a [`Frame`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -34,25 +34,25 @@ use scene::SceneNodeId;
 pub struct FrameId(EntityId);
 
 impl FrameId {
-    /// Nouvel identifiant aléatoire.
+    /// New random identifier.
     #[must_use]
     pub fn new() -> Self {
         Self(EntityId::new())
     }
 
-    /// Identifiant nul (sentinelle, jamais attribué).
+    /// Null identifier (sentinel, never assigned).
     #[must_use]
     pub fn nil() -> Self {
         Self(EntityId::nil())
     }
 
-    /// L'entité sous-jacente.
+    /// The underlying entity.
     #[must_use]
     pub fn entity(self) -> EntityId {
         self.0
     }
 
-    /// Enveloppe une entité existante.
+    /// Wraps an existing entity.
     #[must_use]
     pub fn from_entity(id: EntityId) -> Self {
         Self(id)
@@ -60,7 +60,7 @@ impl FrameId {
 }
 
 impl Default for FrameId {
-    /// Identifiant nul — même valeur que [`FrameId::nil`].
+    /// Null identifier — same value as [`FrameId::nil`].
     fn default() -> Self {
         Self::nil()
     }
@@ -72,43 +72,43 @@ impl std::fmt::Display for FrameId {
     }
 }
 
-/// Axe d'empilement d'un conteneur.
+/// Stack axis of a container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
-    /// Horizontal (x croissant).
+    /// Horizontal (increasing x).
     Row,
-    /// Vertical (y croissant).
+    /// Vertical (increasing y).
     Column,
 }
 
-/// Alignement sur l'axe transverse.
+/// Cross-axis alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Alignment {
-    /// Début (haut/gauche).
+    /// Start (top/left).
     Start,
-    /// Centré.
+    /// Centered.
     Center,
-    /// Fin (bas/droite).
+    /// End (bottom/right).
     End,
 }
 
-/// Marges internes (paddings) d'un cadre.
+/// Inner margins (padding) of a frame.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Insets {
-    /// Gauche.
+    /// Left.
     pub left: f32,
-    /// Haut.
+    /// Top.
     pub top: f32,
-    /// Droite.
+    /// Right.
     pub right: f32,
-    /// Bas.
+    /// Bottom.
     pub bottom: f32,
 }
 
 impl Insets {
-    /// Zéro partout.
+    /// Zero everywhere.
     pub const ZERO: Self = Self {
         left: 0.0,
         top: 0.0,
@@ -116,7 +116,7 @@ impl Insets {
         bottom: 0.0,
     };
 
-    /// Uniforme (négatifs ramenés à 0).
+    /// Uniform (negatives clamped to 0).
     #[must_use]
     pub fn uniform(v: f32) -> Self {
         let v = v.max(0.0);
@@ -128,34 +128,34 @@ impl Insets {
         }
     }
 
-    /// Largeur horizontale totale.
+    /// Total horizontal width.
     #[must_use]
     pub fn horizontal(self) -> f32 {
         (self.left + self.right).max(0.0)
     }
 
-    /// Hauteur verticale totale.
+    /// Total vertical height.
     #[must_use]
     pub fn vertical(self) -> f32 {
         (self.top + self.bottom).max(0.0)
     }
 }
 
-/// Bornes min/max appliquées à la taille calculée.
+/// Min/max bounds applied to the computed size.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Constraints {
-    /// Largeur min.
+    /// Min width.
     pub min_width: f32,
-    /// Hauteur min.
+    /// Min height.
     pub min_height: f32,
-    /// Largeur max (`INFINITY` = libre).
+    /// Max width (`INFINITY` = unconstrained).
     pub max_width: f32,
-    /// Hauteur max.
+    /// Max height.
     pub max_height: f32,
 }
 
 impl Constraints {
-    /// Contraintes libres (zéro min, max infini).
+    /// Free constraints (zero min, infinite max).
     #[must_use]
     pub fn free() -> Self {
         Self {
@@ -166,7 +166,7 @@ impl Constraints {
         }
     }
 
-    /// Taille fixe (min = max).
+    /// Fixed size (min = max).
     #[must_use]
     pub fn fixed(width: f32, height: f32) -> Self {
         Self {
@@ -177,7 +177,7 @@ impl Constraints {
         }
     }
 
-    /// Borne une taille (min puis max, NaN → 0).
+    /// Clamps a size (min then max, NaN → 0).
     #[must_use]
     pub fn clamp_size(self, w: f32, h: f32) -> (f32, f32) {
         let w = sanitize(w).clamp(self.min_width.max(0.0), self.max_width.max(0.0));
@@ -190,75 +190,75 @@ fn sanitize(v: f32) -> f32 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
 }
 
-/// Contenu d'une feuille.
+/// Leaf content.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Content {
-    /// Vide (taille nulle).
+    /// Empty (zero size).
     Empty,
-    /// Boîte de taille intrinsèque fixe.
+    /// Fixed intrinsic-size box.
     Box {
-        /// Largeur.
+        /// Width.
         width: f32,
-        /// Hauteur.
+        /// Height.
         height: f32,
     },
-    /// Texte (mesuré via `TextMeasurer` — jamais façonné ici).
+    /// Text (measured via `TextMeasurer` — never shaped here).
     Text {
-        /// Chaîne (retours `\n` = lignes).
+        /// String (returns `\n` = lines).
         text: String,
-        /// Corps en points.
+        /// Size in points.
         font_size: f32,
     },
 }
 
-/// Nature d'un cadre.
+/// Kind of a frame.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameKind {
-    /// Conteneur d'empilement (enfants positionnés par l'algo).
+    /// Stack container (children positioned by the algorithm).
     Container {
-        /// Axe.
+        /// Axis.
         direction: Direction,
-        /// Espacement entre enfants (≥ 0).
+        /// Spacing between children (≥ 0).
         gap: f32,
-        /// Alignement transverse.
+        /// Cross-axis alignment.
         alignment: Alignment,
     },
-    /// Feuille (taille intrinsèque ou mesurée).
+    /// Leaf (intrinsic or measured size).
     Leaf {
-        /// Contenu.
+        /// Content.
         content: Content,
     },
-    /// Page à taille imposée (enfants empilés en colonne dans les marges).
+    /// Fixed-size page (children stacked in a column within the margins).
     Page {
-        /// Largeur imposée.
+        /// Imposed width.
         width: f32,
-        /// Hauteur imposée.
+        /// Imposed height.
         height: f32,
-        /// Marges internes.
+        /// Inner margins.
         margins: Insets,
     },
 }
 
-/// Cadre : intention de mise en page + rattachement scène.
+/// Frame: layout intent + scene attachment.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame {
-    /// Identifiant stable.
+    /// Stable identifier.
     pub id: FrameId,
-    /// Nom d'affichage.
+    /// Display name.
     pub name: String,
-    /// Nature.
+    /// Kind.
     pub kind: FrameKind,
-    /// Bornes appliquées à la taille calculée.
+    /// Bounds applied to the computed size.
     pub constraints: Constraints,
-    /// Marges internes (conteneurs et pages ; ignorées des feuilles).
+    /// Inner margins (containers and pages; ignored by leaves).
     pub insets: Insets,
-    /// Parent (`None` = racine du document).
+    /// Parent (`None` = document root).
     pub parent: Option<FrameId>,
-    /// Enfants dans l'ordre.
+    /// Children in order.
     pub children: Vec<FrameId>,
-    /// Nœud de scène recevant le placement (`None` = non mappé).
+    /// Scene node receiving the placement (`None` = unmapped).
     pub scene: Option<SceneNodeId>,
 }
 
@@ -277,7 +277,7 @@ impl Frame {
     }
 }
 
-/// Document layout : cadres hiérarchisés (table + racines).
+/// Layout document: hierarchical frames (table + roots).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LayoutDoc {
     frames: HashMap<FrameId, Frame>,
@@ -285,43 +285,43 @@ pub struct LayoutDoc {
 }
 
 impl LayoutDoc {
-    /// Document vide.
+    /// Empty document.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Nombre de cadres.
+    /// Number of frames.
     #[must_use]
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
-    /// Vrai si vide.
+    /// True if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    /// Vrai si suivi.
+    /// True if tracked.
     #[must_use]
     pub fn contains(&self, id: FrameId) -> bool {
         self.frames.contains_key(&id)
     }
 
-    /// Racines dans l'ordre.
+    /// Roots in order.
     #[must_use]
     pub fn roots(&self) -> &[FrameId] {
         &self.roots
     }
 
-    /// Cadre par id.
+    /// Frame by id.
     #[must_use]
     pub fn find(&self, id: FrameId) -> Option<&Frame> {
         self.frames.get(&id)
     }
 
-    /// Crée un cadre racine.
+    /// Creates a root frame.
     pub fn create_root(&mut self, name: impl Into<String>, kind: FrameKind) -> FrameId {
         let id = FrameId::new();
         self.frames.insert(id, Frame::new(id, name.into(), kind));
@@ -329,7 +329,7 @@ impl LayoutDoc {
         id
     }
 
-    /// Crée un cadre enfant (`None` si parent inconnu).
+    /// Creates a child frame (`None` if parent unknown).
     pub fn create_child(
         &mut self,
         parent: FrameId,
@@ -349,7 +349,7 @@ impl LayoutDoc {
         Some(id)
     }
 
-    /// Rattache un cadre à un nœud de scène (faux si cadre inconnu).
+    /// Attaches a frame to a scene node (false if frame unknown).
     pub fn map_to_scene(&mut self, id: FrameId, scene: SceneNodeId) -> bool {
         match self.frames.get_mut(&id) {
             Some(frame) => {
@@ -360,7 +360,7 @@ impl LayoutDoc {
         }
     }
 
-    /// Remplace les marges internes (faux si cadre inconnu).
+    /// Replaces the inner margins (false if frame unknown).
     pub fn set_insets(&mut self, id: FrameId, insets: Insets) -> bool {
         match self.frames.get_mut(&id) {
             Some(frame) => {
@@ -371,7 +371,7 @@ impl LayoutDoc {
         }
     }
 
-    /// Remplace l'alignement transverse (faux si inconnu ou non-conteneur).
+    /// Replaces the cross-axis alignment (false if unknown or not a container).
     pub fn set_alignment(&mut self, id: FrameId, alignment: Alignment) -> bool {
         match self.frames.get_mut(&id) {
             Some(frame) => match &mut frame.kind {

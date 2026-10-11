@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Algorithme de placement : empilements ligne/colonne en deux passes.
+//! Placement algorithm: row/column stacks in two passes.
 //!
-//! [`layout`] parcourt le document en profondeur : chaque conteneur mesure
-//! d'abord ses enfants (passe 1 : tailles), puis les place selon l'axe, le
-//! pas (`gap`), les marges et l'alignement transverse (passe 2 : positions).
-//! Les pages imposent leur taille ; les feuilles texte sont mesurées via le
-//! [`TextMeasurer`](crate::TextMeasurer). Coordonnées absolues accumulées
-//! depuis l'origine du document.
+//! [`layout`] walks the document depth-first: each container first measures
+//! its children (pass 1: sizes), then places them along the axis using the
+//! gap, margins and cross-axis alignment (pass 2: positions).
+//! Pages impose their size; text leaves are measured via the
+//! [`TextMeasurer`](crate::TextMeasurer). Absolute coordinates accumulated
+//! from the document origin.
 
 use std::collections::HashMap;
 
@@ -29,34 +29,34 @@ use datatypes::Rect;
 
 use crate::{Alignment, Content, Direction, FrameId, FrameKind, LayoutDoc, TextMeasurer};
 
-/// Placement calculé : bornes absolues par cadre.
+/// Computed placement: absolute bounds per frame.
 #[derive(Debug, Clone, Default)]
 pub struct ComputedLayout {
     bounds: HashMap<FrameId, Rect>,
 }
 
 impl ComputedLayout {
-    /// Bornes d'un cadre (`None` si non placé — id inconnu au layout).
+    /// Bounds of a frame (`None` if unplaced — id unknown to layout).
     #[must_use]
     pub fn bounds_of(&self, id: FrameId) -> Option<Rect> {
         self.bounds.get(&id).copied()
     }
 
-    /// Nombre de cadres placés.
+    /// Number of placed frames.
     #[must_use]
     pub fn len(&self) -> usize {
         self.bounds.len()
     }
 
-    /// Vrai si aucun cadre placé.
+    /// True if no frame placed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bounds.is_empty()
     }
 }
 
-/// Calcule le placement de tout le document (racines empilées en colonne
-/// depuis l'origine, largeur disponible infinie).
+/// Computes the placement of the whole document (roots stacked in a column
+/// from the origin, infinite available width).
 #[must_use]
 pub fn layout(doc: &LayoutDoc, measurer: &dyn TextMeasurer) -> ComputedLayout {
     let mut out = ComputedLayout::default();
@@ -68,7 +68,7 @@ pub fn layout(doc: &LayoutDoc, measurer: &dyn TextMeasurer) -> ComputedLayout {
     out
 }
 
-/// Place un cadre et sa descendance ; retourne ses bornes absolues.
+/// Places a frame and its descendants; returns its absolute bounds.
 fn place_frame(
     doc: &LayoutDoc,
     measurer: &dyn TextMeasurer,
@@ -130,7 +130,7 @@ fn place_frame(
     placed
 }
 
-/// Bornes intrinsèques d'une feuille (relatives — l'appelant translate).
+/// Intrinsic bounds of a leaf (relative — the caller translates).
 fn leaf_bounds(content: &Content, measurer: &dyn TextMeasurer, avail_w: f32) -> Rect {
     match content {
         Content::Empty => Rect::EMPTY,
@@ -144,8 +144,8 @@ fn leaf_bounds(content: &Content, measurer: &dyn TextMeasurer, avail_w: f32) -> 
     }
 }
 
-/// Passe 1 (tailles via `intrinsic_size`, source unique) puis passe 2
-/// (positions) d'un conteneur. Retourne ses bornes absolues.
+/// Pass 1 (sizes via `intrinsic_size`, single source) then pass 2
+/// (positions) of a container. Returns its absolute bounds.
 #[allow(clippy::too_many_arguments)]
 fn container_bounds(
     doc: &LayoutDoc,
@@ -171,7 +171,7 @@ fn container_bounds(
             Direction::Column => *w,
         })
         .fold(0.0, f32::max);
-    // Passe 2 : positions (alignement sur l'axe transverse).
+    // Pass 2: positions (cross-axis alignment).
     let mut cursor = 0.0;
     for (index, &child) in frame.children.iter().enumerate() {
         let (cw, ch) = sizes[index];
@@ -204,9 +204,9 @@ fn container_bounds(
             Direction::Column => ch,
         } + gap;
     }
-    // Taille depuis les tailles déjà mesurées (un seul parcours : pas
-    // de second appel à `intrinsic_size`, qui serait exponentiel en
-    // profondeur). Même formule, bornée par les contraintes du cadre.
+    // Size from the already-measured sizes (single traversal: no
+    // second `intrinsic_size` call, which would be exponential in
+    // depth). Same formula, clamped by the frame's constraints.
     let main_total: f32 = sizes
         .iter()
         .map(|(w, h)| match direction {
@@ -229,7 +229,7 @@ fn container_bounds(
     Rect::from_xywh(x, y, w, h)
 }
 
-/// Taille intrinsèque d'un sous-arbre (sans placer — positions jetées).
+/// Intrinsic size of a subtree (no placement — positions discarded).
 fn intrinsic_size(
     doc: &LayoutDoc,
     measurer: &dyn TextMeasurer,
@@ -399,7 +399,7 @@ mod tests {
         assert!(doc.set_alignment(root, Alignment::Center));
         assert!(!doc.set_alignment(a, Alignment::End));
         let placed = layout(&doc, &NullMeasurer);
-        // Hauteur max 20 : A (h=20) à y=0, B (h=10) centré à y=5.
+        // Max height 20: A (h=20) at y=0, B (h=10) centered at y=5.
         assert_eq!(placed.bounds_of(a).expect("a").y0, 0.0);
         assert_eq!(placed.bounds_of(b).expect("b").y0, 5.0);
     }
@@ -428,7 +428,7 @@ mod tests {
             )
             .expect("ok");
         let placed = layout(&doc, &NullMeasurer);
-        // NullMeasurer : "ab" à 10 pt = 12 × 12, placé sous les marges.
+        // NullMeasurer: "ab" at 10 pt = 12 × 12, placed below the margins.
         assert_eq!(
             placed.bounds_of(t),
             Some(Rect::from_xywh(10.0, 10.0, 12.0, 12.0))

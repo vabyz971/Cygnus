@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Liste des calques : hiérarchie aplatie + réordonnancement.
+//! Layer list: flattened hierarchy + reordering.
 //!
-//! La hiérarchie (`children`, filtres, masques) est aplatie en lignes
-//! à hauteur connue ([`super::types::flatten_layers`]) puis affichée
-//! via `ui_kit::components::ReorderableList::show_variable` : chaque
-//! ligne alloue EXACTEMENT sa hauteur — aucun chevauchement possible.
-//! Le drop remonte en [`LayerDrop`](super::types::LayerDrop) (avant /
-//! dedans / après), converti en [`PhotoAction`](crate::commands::PhotoAction)
-//! par [`super::panel`] (jamais d'envoi worker ici).
+//! The hierarchy (`children`, filters, masks) is flattened into
+//! known-height rows ([`super::types::flatten_layers`]) then displayed
+//! via `ui_kit::components::ReorderableList::show_variable`: each
+//! row allocates EXACTLY its height — no overlap possible.
+//! The drop bubbles as [`LayerDrop`](super::types::LayerDrop) (before /
+//! inside / after), converted to [`PhotoAction`](crate::commands::PhotoAction)
+//! by [`super::panel`] (never a worker send here).
 
 use super::layer_item::{
     LayerItemAction, LayerRenameState, attachments_open, draw_attachment_row, draw_photo_layer_item,
@@ -38,9 +38,9 @@ use ui_kit::theme::UiThemeExt;
 use ui_kit::utils::ReorderDragState;
 use uuid::Uuid;
 
-/// Hauteur allouée d'une ligne aplatie (jamais de chevauchement : la
-/// liste alloue exactement cette hauteur par ligne). Les valeurs
-/// vivent dans le thème (`sizes.layer_row`, `sizes.attachment_row`).
+/// Allocated height of a flattened row (never overlapping: the
+/// list allocates exactly this height per row). Values
+/// live in the theme (`sizes.layer_row`, `sizes.attachment_row`).
 pub fn row_height_for(theme: &CygnusTheme, kind: FlatRowKind) -> f32 {
     match kind {
         FlatRowKind::Layer => theme.sizes.layer_row,
@@ -48,7 +48,7 @@ pub fn row_height_for(theme: &CygnusTheme, kind: FlatRowKind) -> f32 {
     }
 }
 
-/// Dessine le fantôme semi-transparent qui suit la souris pendant le drag.
+/// Draws the semi-transparent ghost following the mouse during the drag.
 fn draw_drag_ghost(
     ui: &mut egui::Ui,
     drag_state: &ReorderDragState,
@@ -86,8 +86,8 @@ fn draw_drag_ghost(
     );
 }
 
-/// Convertit un drop d'indices aplatis en [`LayerDrop`] (bornes
-/// vérifiées : `None` si la liste a changé entre-temps).
+/// Converts a flattened-index drop into [`LayerDrop`] (checked
+/// bounds: `None` when the list changed meanwhile).
 fn resolve_drop(rows: &[FlatRow], drop: HierarchicalDrop) -> Option<LayerDrop> {
     let dragged = rows.get(drop.from).copied()?;
     let target = rows.get(drop.to).copied()?;
@@ -98,13 +98,13 @@ fn resolve_drop(rows: &[FlatRow], drop: HierarchicalDrop) -> Option<LayerDrop> {
     })
 }
 
-/// Dessine la liste hiérarchique réordonnable.
+/// Draws the reorderable hierarchical list.
 ///
-/// Les pièces jointes d'un porteur replié (chevron de sa ligne)
-/// sont masquées ; les indices de drop sont résolus sur ces mêmes
-/// lignes visibles (jamais de décalage). Retourne les actions des
-/// lignes et, le cas échéant, le drop hiérarchique résolu en lignes
-/// (jamais d'envoi worker ici).
+/// Attachments of a collapsed owner (its row chevron)
+/// are hidden; drop indices resolve on those same
+/// visible rows (never shifted). Returns the rows' actions
+/// and, when present, the hierarchical drop resolved to rows
+/// (never a worker send here).
 pub fn draw_layer_list(
     ui: &mut egui::Ui,
     layers: &[PhotoLayerInfo],
@@ -129,8 +129,8 @@ pub fn draw_layer_list(
         ui,
         |row| row_height_for(&theme, row.kind),
         |row| row.nestable,
-        // Seuls les calques se déplacent par DnD (les pièces jointes
-        // se réordonnent aux boutons monter/descendre de leur ligne).
+        // Only layers move via DnD (attachments
+        // reorder with their row's up/down buttons).
         |row| row.kind == FlatRowKind::Layer,
         |ui, row, _index, _is_dragging| match row.kind {
             FlatRowKind::Layer => {
@@ -218,7 +218,7 @@ mod tests {
     fn rows_allocate_exact_heights_by_kind() {
         use super::super::types::{FlatRowKind, flatten_layers};
         let theme = CygnusTheme::dark();
-        // 3 calques plats : 3 lignes à hauteur calque, somme exacte.
+        // 3 flat layers: 3 layer-height rows, exact sum.
         let layers = fixture_layers();
         let rows = flatten_layers(&layers);
         assert_eq!(rows.len(), 3);
@@ -228,8 +228,8 @@ mod tests {
             .sum();
         assert_eq!(total, 3.0 * theme.sizes.layer_row);
         assert!(rows.iter().all(|row| row.kind == FlatRowKind::Layer));
-        // Un calque avec filtre : 2 lignes (calque + enfant), le
-        // bandeau horizontal a disparu — plus de dépassement.
+        // One layer with a filter: 2 rows (layer + child), the
+        // horizontal band is gone — no more overflow.
         let mut doc = Document::new(8, 8);
         let mut pixels = PixelLayer::new("fond", Arc::new(image::DynamicImage::new_rgba8(4, 4)));
         pixels.filter_layers.push(photo_engine::FilterLayer::new(

@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Onglets génériques (studios Pixel/Vecteur/Layout, panneaux…).
+//! Generic tabs (Pixel/Vector/Layout studios, panels…).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::Tabs;
 //! # use ui_kit::theme::CygnusTheme;
@@ -30,20 +30,20 @@
 
 use crate::theme::CygnusTheme;
 
-/// Barre d'onglets via API builder.
+/// Tab bar via builder API.
 #[derive(Debug, Clone, Copy)]
 pub struct Tabs<'a> {
     options: &'a [&'a str],
 }
 
 impl<'a> Tabs<'a> {
-    /// Crée une barre d'onglets.
+    /// Creates a tab bar.
     pub fn new(options: &'a [&'a str]) -> Self {
         Self { options }
     }
 
-    /// Affiche les onglets, met à jour l'index, retourne la réponse
-    /// du conteneur.
+    /// Displays the tabs, updates the index, returns the container's
+    /// response.
     pub fn show(
         self,
         ui: &mut egui::Ui,
@@ -96,8 +96,8 @@ mod tests {
 
     #[test]
     fn tabs_show_sanitized_content() {
-        // Porté depuis l'ancien `panels::CygnusTabs` (supprimé, inutilisé
-        // par les apps) : un index hors limites est ramené dans la plage.
+        // Ported from the old `panels::CygnusTabs` (removed, unused
+        // by apps): an out-of-bounds index is clamped back into range.
         use crate::components::sanitize_selected;
         let theme = CygnusTheme::dark();
         let ctx = egui::Context::default();
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn tabs_empty_renders_without_panic() {
-        // Porté depuis l'ancien `panels::CygnusTabs` : liste vide sans panic.
+        // Ported from the old `panels::CygnusTabs`: empty list without panic.
         let theme = CygnusTheme::dark();
         let ctx = egui::Context::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {

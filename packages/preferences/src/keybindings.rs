@@ -14,25 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Résolveur générique de raccourcis clavier : parsing des
-//! combinaisons (« Ctrl+Shift+S ») et conversion d'un événement
-//! clavier en identifiant d'action (`String`).
+//! Generic keyboard-shortcut resolver: parsing
+//! combos ("Ctrl+Shift+S") and converting a keyboard
+//! event into an action id (`String`).
 //!
-//! Le package ne connaît AUCUNE action métier : les apps définissent
-//! leur propre enum (ex. `PhotoShortcut` côté photo, avec `id()` /
-//! `from_id()`) et convertissent l'identifiant retourné par
-//! [`KeybindingResolver::resolve`]. La compatibilité du JSON de
-//! préférences repose sur ces ids (`"undo"`, …).
+//! The package knows NO domain action: apps define
+//! their own enum (e.g. `PhotoShortcut` on the photo side, with `id()` /
+//! `from_id()`) and convert the id returned by
+//! [`KeybindingResolver::resolve`]. Compatibility of the preferences
+//! JSON rests on these ids (`"undo"`, …).
 //!
-//! Types clavier PROPRES (aucune dépendance UI) : l'app convertit
-//! `egui::Key`/`egui::Modifiers` vers [`AppKey`]/[`AppModifiers`].
+//! Framework-free keyboard types (no UI dependency): the app converts
+//! `egui::Key`/`egui::Modifiers` to [`AppKey`]/[`AppModifiers`].
 
 use std::collections::HashMap;
 
-/// Combinaison de touches normalisée (« Ctrl+Shift+S »).
+/// Normalized key combo ("Ctrl+Shift+S").
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct KeyCombo {
-    /// Touche principale NORMALISÉE EN MAJUSCULE (« S », « F7 », « Delete »)
+    /// Main key NORMALIZED TO UPPERCASE ("S", "F7", "Delete")
     pub key: String,
     pub ctrl: bool,
     pub shift: bool,
@@ -56,90 +56,90 @@ impl std::fmt::Display for KeyCombo {
     }
 }
 
-/// Touche logique indépendante du framework UI.
+/// UI-framework-independent logical key.
 ///
-/// L'app convertit les événements clavier (ex. `egui::Key`) vers ce
-/// type avant d'appeler [`KeybindingResolver::resolve`].
+/// The app converts keyboard events (e.g. `egui::Key`) to this
+/// type before calling [`KeybindingResolver::resolve`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AppKey {
-    /// Caractère imprimable (« z », « S », « + »…).
+    /// Printable character ("z", "S", "+"…).
     Character(String),
-    /// Touche nommée (fonction, édition, flèches, modificateurs…).
+    /// Named key (function, editing, arrows, modifiers…).
     Named(NamedKey),
 }
 
-/// Touches nommées prises en charge par le résolveur.
+/// Named keys supported by the resolver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NamedKey {
-    /// Touches de fonction.
+    /// Function keys.
     F1,
-    /// Touches de fonction.
+    /// Function keys.
     F2,
-    /// Touches de fonction.
+    /// Function keys.
     F3,
-    /// Touches de fonction.
+    /// Function keys.
     F4,
-    /// Touches de fonction.
+    /// Function keys.
     F5,
-    /// Touches de fonction.
+    /// Function keys.
     F6,
-    /// Touches de fonction.
+    /// Function keys.
     F7,
-    /// Touches de fonction.
+    /// Function keys.
     F8,
-    /// Touches de fonction.
+    /// Function keys.
     F9,
-    /// Touches de fonction.
+    /// Function keys.
     F10,
-    /// Touches de fonction.
+    /// Function keys.
     F11,
-    /// Touches de fonction.
+    /// Function keys.
     F12,
-    /// Espace.
+    /// Space.
     Space,
-    /// Entrée.
+    /// Enter.
     Enter,
-    /// Échap.
+    /// Escape.
     Escape,
-    /// Suppr.
+    /// Delete.
     Delete,
-    /// Retour arrière.
+    /// Backspace.
     Backspace,
-    /// Tabulation.
+    /// Tab.
     Tab,
-    /// Flèche haut.
+    /// Up arrow.
     ArrowUp,
-    /// Flèche bas.
+    /// Down arrow.
     ArrowDown,
-    /// Flèche gauche.
+    /// Left arrow.
     ArrowLeft,
-    /// Flèche droite.
+    /// Right arrow.
     ArrowRight,
-    /// Modificateurs seuls (jamais résolus en action).
+    /// Lone modifiers (never resolved to an action).
     Control,
-    /// Modificateur seul.
+    /// Lone modifier.
     Shift,
-    /// Modificateur seul.
+    /// Lone modifier.
     Alt,
-    /// Modificateur seul (Cmd/Super).
+    /// Lone modifier (Cmd/Super).
     Meta,
 }
 
-/// Modificateurs indépendants du framework UI.
+/// UI-framework-independent modifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct AppModifiers {
-    /// Ctrl (ou Cmd, selon la plateforme — l'app choisit).
+    /// Ctrl (or Cmd, depending on the platform — the app chooses).
     pub ctrl: bool,
-    /// Maj.
+    /// Shift.
     pub shift: bool,
     /// Alt/Option.
     pub alt: bool,
-    /// Cmd/Super explicite (replié sur ctrl par le résolveur).
+    /// Explicit Cmd/Super (folded onto ctrl by the resolver).
     pub command: bool,
 }
 
 impl AppModifiers {
-    /// Aucun modificateur.
+    /// No modifier.
     pub const EMPTY: Self = Self {
         ctrl: false,
         shift: false,
@@ -147,7 +147,7 @@ impl AppModifiers {
         command: false,
     };
 
-    /// Ctrl seul.
+    /// Ctrl alone.
     pub const CTRL: Self = Self {
         ctrl: true,
         shift: false,
@@ -156,18 +156,18 @@ impl AppModifiers {
     };
 }
 
-/// Résolveur générique : table combo → identifiant d'action,
-/// construite depuis les préférences. L'app convertit l'identifiant
-/// en son propre type d'action (ex. `PhotoShortcut::from_id`).
+/// Generic resolver: combo → action-id table,
+/// built from the preferences. The app converts the id
+/// into its own action type (e.g. `PhotoShortcut::from_id`).
 #[derive(Debug, Default)]
 pub struct KeybindingResolver {
     lookup: HashMap<KeyCombo, String>,
 }
 
 impl KeybindingResolver {
-    /// Construit le résolveur depuis la table id→combinaison. Toute
-    /// entrée parsable est conservée (même un id inconnu : ce package
-    /// ne connaît pas les actions des apps).
+    /// Builds the resolver from the id→combo table. Every
+    /// parsable entry is kept (even an unknown id: this package
+    /// knows nothing about apps' actions).
     #[must_use]
     pub fn from_bindings(bindings: &HashMap<String, String>) -> Self {
         let mut resolver = Self::default();
@@ -179,8 +179,8 @@ impl KeybindingResolver {
         resolver
     }
 
-    /// Identifiant d'action correspondant à cet événement clavier, s'il
-    /// y en a un.
+    /// Action id matching this keyboard event, if
+    /// there is one.
     #[must_use]
     pub fn resolve(&self, key: &AppKey, modifiers: AppModifiers) -> Option<String> {
         let combo = KeyCombo {
@@ -192,21 +192,21 @@ impl KeybindingResolver {
         self.lookup.get(&combo).cloned()
     }
 
-    /// Nombre de combinaisons actives (diagnostic).
+    /// Number of active combos (diagnostics).
     #[must_use]
     pub fn len(&self) -> usize {
         self.lookup.len()
     }
 
-    /// Toujours vrai : un résolveur vide est valide.
+    /// Always true: an empty resolver is valid.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.lookup.is_empty()
     }
 }
 
-/// Parse « Ctrl+Shift+S » / « F7 » / « Delete » en [`KeyCombo`] normalisé.
-/// Tolère la casse et les alias (« Control », « Cmd », « Option »).
+/// Parses "Ctrl+Shift+S" / "F7" / "Delete" into a normalized [`KeyCombo`].
+/// Tolerates case and aliases ("Control", "Cmd", "Option").
 #[must_use]
 pub fn parse_combo(s: &str) -> Option<KeyCombo> {
     let mut ctrl = false;
@@ -234,9 +234,9 @@ pub fn parse_combo(s: &str) -> Option<KeyCombo> {
     })
 }
 
-/// Convertit une touche logique en sa représentation texte normalisée
-/// (identique à celle utilisée par [`parse_combo`] : MAJUSCULES).
-/// Les modificateurs seuls retournent `None` (jamais d'action).
+/// Converts a logical key to its normalized text representation
+/// (identical to the one used by [`parse_combo`]: UPPERCASE).
+/// Lone modifiers return `None` (never an action).
 #[must_use]
 pub fn key_to_string(key: &AppKey) -> Option<String> {
     match key {
@@ -304,8 +304,8 @@ mod tests {
 
     #[test]
     fn resolve_retourne_l_identifiant_sans_connaitre_l_action() {
-        // Le résolveur est générique : il mappe vers des ids opaques,
-        // y compris inconnus de ce package.
+        // The resolver is generic: it maps to opaque ids,
+        // including ones unknown to this package.
         let mut bindings = HashMap::new();
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("action_future_inconnue".to_string(), "F7".to_string());
@@ -318,23 +318,23 @@ mod tests {
             resolver.resolve(&z, AppModifiers::CTRL),
             Some("undo".to_string())
         );
-        // 'z' SANS Ctrl ne résout pas.
+        // 'z' WITHOUT Ctrl does not resolve.
         assert_eq!(resolver.resolve(&z, AppModifiers::EMPTY), None);
-        // Id inconnu conservé tel quel.
+        // Unknown id kept as-is.
         assert_eq!(
             resolver.resolve(&AppKey::Named(NamedKey::F7), AppModifiers::EMPTY),
             Some("action_future_inconnue".to_string())
         );
-        // Modificateur seul ne déclenche rien.
+        // Lone modifier triggers nothing.
         assert_eq!(
             resolver.resolve(&AppKey::Named(NamedKey::Control), AppModifiers::CTRL),
             None
         );
     }
 
-    /// Les touches nommées en casse mixte (`Tab`, `Delete`, `Space`)
-    /// résolvent comme leurs bindings (`TAB`, `DELETE`, `SPACE`) :
-    /// `parse_combo` et `key_to_string` partagent la même norme.
+    /// Named keys in mixed case (`Tab`, `Delete`, `Space`)
+    /// resolve like their bindings (`TAB`, `DELETE`, `SPACE`):
+    /// `parse_combo` and `key_to_string` share the same norm.
     #[test]
     fn named_keys_resolvent_malgre_la_casse_mixte() {
         let mut bindings = HashMap::new();

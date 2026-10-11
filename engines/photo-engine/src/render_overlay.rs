@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Point d'intégration Render Graph : overlay d'effets pur.
+//! Render Graph integration point: pure effect overlay.
 //!
-//! [`effect_overlay`] expose les chaînes de filtres du document sous la
-//! forme attendue par `render-graph` (`SceneNodeId → [EffectKey…]`, dans
-//! l'ordre d'application, filtres désactivés exclus), avec des clés stables
-//! dérivées des ids photo (`SceneNodeId::from_uuid`).
+//! [`effect_overlay`] exposes the document's filter chains in the shape
+//! `render-graph` expects (`SceneNodeId → [EffectKey…]`, in application
+//! order, disabled filters excluded), with stable keys derived from photo
+//! ids (`SceneNodeId::from_uuid`).
 //!
-//! Fonction PURE en lecture seule sur le [`Document`] : ni le renderer
-//! (`renderer.rs`), ni le compositing, ni l'historique ne sont touchés.
-//! Le jour où le document photo sera adossé à une `Scene`, cet overlay
-//! alimentera directement `RenderGraph::build`/`sync` — en attendant, il
-//! est testé ici, sans câblage au rendu.
+//! PURE read-only function over the [`Document`]: neither the renderer
+//! (`renderer.rs`), nor compositing, nor history is touched. Once the
+//! photo document is backed by a `Scene`, this overlay will feed
+//! `RenderGraph::build`/`sync` directly — meanwhile, it is tested here,
+//! with no render wiring.
 
 use std::collections::HashMap;
 
@@ -33,12 +33,12 @@ use render_graph::{EffectKey, SceneNodeId};
 
 use crate::document::Document;
 
-/// Overlay d'effets photo : `SceneNodeId::from_uuid(layer_id) → type_ids`
-/// des sous-calques de filtres ACTIFS, dans l'ordre d'application.
+/// Photo effect overlay: `SceneNodeId::from_uuid(layer_id) → type_ids`
+/// of ACTIVE filter sub-layers, in application order. Only pixel layers
 ///
-/// Seuls les calques pixels portant au moins un filtre actif apparaissent
-/// (visibles ou non : la visibilité est résolue au rendu, comme les
-/// miniatures du snapshot).
+/// carrying at least one active filter appear (visible or not:
+/// visibility is resolved at render time, like the snapshot
+/// thumbnails).
 #[must_use]
 pub fn effect_overlay(doc: &Document) -> HashMap<SceneNodeId, Vec<EffectKey>> {
     let mut overlay = HashMap::new();

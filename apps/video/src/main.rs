@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Base minimale de l'app Video (prompt v2) : boot eframe + thème.
+//! Minimal base of the Video app (prompt v2): eframe boot + theme.
 //!
-//! `video-engine` étant en fondation, pas d'interface complexe pour
-//! le moment : un placeholder central. La timeline, le media bin et
-//! la preview seront construits ici quand le moteur arrivera.
+//! `video-engine` is still foundation-only, so no complex UI for
+//! now: a central placeholder. Timeline, media bin and
+//! preview will be built here when the engine arrives.
 
 mod app;
 

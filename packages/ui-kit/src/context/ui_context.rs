@@ -14,33 +14,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Contexte UI partagé : dépendances réellement communes.
+//! Shared UI context: truly-shared dependencies.
 //!
-//! Ni GodContext ni état métier : uniquement le contexte egui, le
-//! thème, le registre d'icônes et le traducteur. Les documents,
-//! moteurs et commandes applicatives restent côté apps.
+//! Neither God-context nor domain state: only the egui context, the
+//! theme, the icon registry and the translator. Documents, engines
+//! and app commands stay on the apps' side.
 
 use crate::i18n::Catalog;
 use crate::icons::IconRegistry;
 use crate::theme::CygnusTheme;
 use crate::theme::UiThemeExt;
 
-/// Dépendances communes à toute frame UI.
+/// Dependencies shared by every UI frame.
 #[derive(Debug, Clone)]
 pub struct UiContext {
-    /// Contexte egui (clonable, peu coûteux).
+    /// egui context (clonable, cheap).
     ctx: egui::Context,
-    /// Thème actif.
+    /// Active theme.
     theme: CygnusTheme,
-    /// Registre d'icônes.
+    /// Icon registry.
     icons: IconRegistry,
-    /// Traducteur actif.
+    /// Active translator.
     translator: Catalog,
 }
 
 impl UiContext {
-    /// Assemble le contexte (thème sombre + registre + catalogue par
-    /// défaut si non fournis : voir [`UiContext::dark`]).
+    /// Assembles the context (dark theme + registry + default catalog
+    /// when not provided: see [`UiContext::dark`]).
     pub fn new(
         ctx: egui::Context,
         theme: CygnusTheme,
@@ -55,34 +55,34 @@ impl UiContext {
         }
     }
 
-    /// Contexte standard : thème installé (sombre par défaut),
-    /// registre et catalogue par défaut.
+    /// Standard context: installed theme (dark by default), default
+    /// registry and catalog.
     pub fn dark(ctx: egui::Context) -> Self {
         let theme = ctx.cygnus_theme();
         Self::new(ctx, theme, IconRegistry::new(), Catalog::default())
     }
 
-    /// Contexte egui.
+    /// egui context.
     pub fn ctx(&self) -> &egui::Context {
         &self.ctx
     }
 
-    /// Thème actif.
+    /// Active theme.
     pub fn theme(&self) -> &CygnusTheme {
         &self.theme
     }
 
-    /// Registre d'icônes.
+    /// Icon registry.
     pub fn icons(&self) -> IconRegistry {
         self.icons
     }
 
-    /// Traducteur actif.
+    /// Active translator.
     pub fn translator(&self) -> Catalog {
         self.translator
     }
 
-    /// Change le traducteur (changement de langue).
+    /// Switches the translator (language change).
     pub fn set_translator(&mut self, translator: Catalog) {
         self.translator = translator;
     }

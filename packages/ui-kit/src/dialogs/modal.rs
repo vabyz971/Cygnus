@@ -14,25 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modale standard Cygnus (titre + contenu + boutons d'action).
+//! Standard Cygnus modal (title + content + action buttons).
 //!
-//! L'ouverture/fermeture est détenue par l'app (`open: &mut bool`) :
-//! la modale ne fait qu'afficher et rapporter l'action choisie.
+//! Open/close ownership sits with the app (`open: &mut bool`):
+//! the modal only displays and reports the chosen action.
 use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
-/// Action rapportée par [`CygnusModal::show`].
+/// Action reported by [`CygnusModal::show`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalAction {
-    /// Bouton primaire (valider).
+    /// Primary button (confirm).
     Confirm,
-    /// Bouton secondaire (annuler) ou fermeture.
+    /// Secondary button (cancel) or close.
     Cancel,
 }
 
-/// Modale standard Cygnus.
+/// Standard Cygnus modal.
 ///
-/// # Exemple
+/// # Example
 /// ```rust
 /// # use ui_kit::dialogs::CygnusModal;
 /// # egui::__run_test_ui(|ui| {
@@ -47,12 +47,12 @@ pub struct CygnusModal<'a> {
     title: &'a str,
     confirm_label: &'a str,
     cancel_label: &'a str,
-    /// Taille de base (largeur × hauteur) de la fenêtre.
+    /// Base size (width × height) of the window.
     size: Option<egui::Vec2>,
 }
 
 impl<'a> CygnusModal<'a> {
-    /// Crée une modale (titre + libellés des boutons).
+    /// Creates a modal (title + button labels).
     pub fn new(title: &'a str, confirm_label: &'a str, cancel_label: &'a str) -> Self {
         Self {
             title,
@@ -62,15 +62,15 @@ impl<'a> CygnusModal<'a> {
         }
     }
 
-    /// Fixe la taille de base de la fenêtre (plafonnée à l'écran).
+    /// Sets the window's base size (clamped to the screen).
     #[must_use]
     pub fn size(mut self, size: impl Into<egui::Vec2>) -> Self {
         self.size = Some(size.into());
         self
     }
 
-    /// Affiche la modale si `open`. Retourne l'action éventuelle
-    /// (et referme sur Confirm/Cancel).
+    /// Shows the modal when `open`. Returns the resulting action, if any
+    /// (and closes on Confirm/Cancel).
     pub fn show<R>(
         self,
         ctx: &egui::Context,
@@ -83,9 +83,9 @@ impl<'a> CygnusModal<'a> {
         let theme = ctx.cygnus_theme();
         let mut action = None;
 
-        // La fenêtre est bornée à l'écran pour ne jamais masquer les
-        // boutons d'action : largeur/hauteur max = ~92% de l'écran et
-        // le contenu défile si nécessaire.
+        // The window is bounded to the screen so it never hides the
+        // action buttons: max width/height = ~92% of the screen and
+        // content scrolls when needed.
         let available = ctx.input(|i| i.raw.screen_rect);
         let available_w = available.map_or(theme.spacing.xl * 12.0, |r| {
             r.width() - theme.spacing.xl * 2.0

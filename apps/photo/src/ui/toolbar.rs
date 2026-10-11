@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Rail d'outils PHOTO (panneau gauche, widget métier).
+//! PHOTO tool rail (left panel, domain widget).
 //!
-//! Barre verticale d'icônes avec tooltip affichant le nom de chaque
-//! outil. Le contenu suit le mode d'édition (voir `super::modebar` :
-//! tous les outils en Pixel, navigation seule en Vector/Layout).
-//! Style exclusivement ui-kit.
+//! Vertical icon bar with a tooltip showing each
+//! tool's name. Content follows the edit mode (see `super::modebar`:
+//! all tools in Pixel, navigation only in Vector/Layout).
+//! ui-kit-only styling.
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
@@ -27,7 +27,7 @@ use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use ui_kit::icons::{Icon, IconRegistry};
 use ui_kit::theme::CygnusTheme;
 
-/// Icône + aide contextuelle d'un outil du rail.
+/// Icon + contextual help of a rail tool.
 fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str) {
     match tool {
         PhotoCanvasTool::Move => (Icon::MoveTool, texts.get(PhotoTextKey::MoveHint)),
@@ -39,13 +39,13 @@ fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str)
     }
 }
 
-/// Dessine le rail d'outils vertical compact (32 px, couleur du
-/// pinceau juste après les outils, façon Affinity) pour le `mode`
-/// courant et retourne l'outil choisi éventuel.
+/// Draws the compact vertical tool rail (32 px, brush
+/// color right after the tools, Affinity-style) for the current
+/// `mode` and returns the newly chosen tool, if any.
 ///
-/// Survol et sélection peints avec les tokens du thème
-/// (`item_hover`, `item_selected`) : les boutons sont sans frame,
-/// le fond est dessiné avant le bouton (derrière l'icône).
+/// Hover and selection painted with theme tokens
+/// (`item_hover`, `item_selected`): buttons are frameless,
+/// the background is drawn before the button (behind the icon).
 pub fn draw_tool_rail(
     ui: &mut egui::Ui,
     current_tool: &mut PhotoCanvasTool,
@@ -61,7 +61,7 @@ pub fn draw_tool_rail(
             let (icon, tip) = tool_icon(tool, texts);
             let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
             let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
-            // Fondu d'apparition (egui natif) vers survol/sélection.
+            // Appear fade (native egui) toward hover/selection.
             let active = *current_tool == tool;
             let fade = ui.ctx().animate_bool_with_time(
                 ui.make_persistent_id(("photo_tool_hover", index)),

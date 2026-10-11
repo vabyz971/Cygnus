@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Champ de saisie texte monoligne (renommage, recherche…) et
-//! champ numérique (dimensions, zoom…).
+//! Single-line text input (rename, search…) and
+//! numeric field (dimensions, zoom…).
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::components::{NumberInput, TextInput};
 //! # use ui_kit::theme::CygnusTheme;
@@ -36,26 +36,26 @@
 
 use crate::theme::CygnusTheme;
 
-/// Champ texte via API builder.
+/// Text field via builder API.
 #[derive(Debug, Clone, Default)]
 pub struct TextInput<'a> {
     placeholder: Option<&'a str>,
 }
 
 impl<'a> TextInput<'a> {
-    /// Crée un champ vide.
+    /// Creates an empty field.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Texte d'aide affiché à vide.
+    /// Help text shown when empty.
     #[must_use]
     pub fn placeholder(mut self, placeholder: &'a str) -> Self {
         self.placeholder = Some(placeholder);
         self
     }
 
-    /// Affiche le champ, met à jour `text`, retourne la réponse egui.
+    /// Displays the field, updates `text`, returns the egui response.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, text: &mut String) -> egui::Response {
         let mut edit = egui::TextEdit::singleline(text)
             .desired_width(f32::INFINITY)
@@ -72,17 +72,17 @@ impl<'a> TextInput<'a> {
     }
 }
 
-/// Champ numérique (label + `DragValue`) via API builder.
+/// Numeric field (label + `DragValue`) via builder API.
 #[derive(Debug, Clone, Default)]
 pub struct NumberInput<'a> {
     label: &'a str,
     range: Option<std::ops::RangeInclusive<f64>>,
-    /// Vrai = libellé au-dessus du champ (colonne verticale).
+    /// True = label above the field (vertical column).
     stacked: bool,
 }
 
 impl<'a> NumberInput<'a> {
-    /// Crée un champ numérique avec libellé.
+    /// Creates a numeric field with label.
     pub fn new(label: &'a str) -> Self {
         Self {
             label,
@@ -91,22 +91,22 @@ impl<'a> NumberInput<'a> {
         }
     }
 
-    /// Plage de valeurs autorisées.
+    /// Allowed value range.
     #[must_use]
     pub fn range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
         self.range = Some(range);
         self
     }
 
-    /// Empile le libellé au-dessus du champ (au lieu de côte à côte).
+    /// Stacks the label above the field (instead of side by side).
     #[must_use]
     pub fn stacked(mut self) -> Self {
         self.stacked = true;
         self
     }
 
-    /// Affiche le champ, met à jour `value`, retourne la réponse egui.
-    /// En mode [`NumberInput::stacked`], le libellé est au-dessus du champ.
+    /// Displays the field, updates `value`, returns the egui response.
+    /// In [`NumberInput::stacked`] mode, the label sits above the field.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, value: &mut f64) -> egui::Response {
         let label = egui::RichText::new(self.label)
             .size(theme.typography.body_size)

@@ -14,49 +14,49 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tailles de contrôles du thème Cygnus.
+//! Cygnus theme control sizes.
 //!
-//! SEULE source des hauteurs de widgets (boutons, inputs, onglets) :
-//! les composants référencent ces tokens au lieu de littéraux `f32`.
-//! Les espacements restent dans [`super::spacing`].
+//! SINGLE source of widget heights (buttons, inputs, tabs):
+//! components reference these tokens instead of `f32` literals.
+//! Spacing stays in [`super::spacing`].
 
-/// Hauteurs standard des contrôles.
+/// Standard control heights.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CygnusSizes {
-    /// Hauteur d'un très petit bouton (12px).
+    /// Extra-extra-small button height (12px).
     pub button_xxs: f32,
-    /// Hauteur d'un petit bouton (18px).
+    /// Extra-small button height (18px).
     pub button_xs: f32,
-    /// Hauteur d'un petit bouton (24px).
+    /// Small button height (24px).
     pub button_sm: f32,
-    /// Hauteur d'un bouton standard (32px).
+    /// Standard button height (32px).
     pub button_md: f32,
-    /// Hauteur d'un grand bouton (40px).
+    /// Large button height (40px).
     pub button_lg: f32,
-    /// Hauteur d'un champ de saisie (30px).
+    /// Text-input field height (30px).
     pub input_height: f32,
-    /// Taille d'un bouton icône carré (28px).
+    /// Square icon-button size (28px).
     pub icon_button: f32,
-    /// Hauteur d'une ligne de calque photo (44px).
+    /// Photo layer-row height (44px).
     pub layer_row: f32,
-    /// Hauteur d'une ligne de pièce jointe (30px).
+    /// Attachment-row height (30px).
     pub attachment_row: f32,
-    /// Miniature carrée d'un calque (28px).
+    /// Square layer thumbnail (28px).
     pub layer_thumb: f32,
-    /// Bouton d'outil carré de la barre d'outils (28px).
+    /// Square toolbar tool button (28px).
     pub tool_button: f32,
-    /// Carte de préréglage du dialogue de création (90px).
+    /// Creation-dialog preset card (90px).
     pub preset_card: f32,
-    /// Hauteur d'une barre de sélection photo (40px).
+    /// Photo selection-bar height (40px).
     pub bar_height: f32,
-    /// Hauteur d'un onglet (28px).
+    /// Tab height (28px).
     pub tab_height: f32,
-    /// Cible tactile minimale (24px).
+    /// Minimum touch target (24px).
     pub min_touch: f32,
 }
 
 impl CygnusSizes {
-    /// Tailles du thème sombre.
+    /// Dark-theme sizes.
     pub fn dark() -> Self {
         Self {
             button_xxs: 12.0,
@@ -79,7 +79,7 @@ impl CygnusSizes {
 }
 
 impl Default for CygnusSizes {
-    /// Tailles par défaut.
+    /// Default sizes.
     fn default() -> Self {
         Self::dark()
     }

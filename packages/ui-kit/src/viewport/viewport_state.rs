@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! État du viewport canvas : zoom, bornes et décalage (pan).
+//! Canvas viewport state: zoom, bounds and offset (pan).
 //!
-//! Logique pure, sans dépendance au moteur ni au GPU : `zoom` et
-//! `offset` sont appliqués au moment du draw (modèle « state-only »).
-//! Transformation écran : `screen = world * zoom + offset`.
+//! Pure logic, no engine or GPU dependency: `zoom` and `offset`
+//! apply at draw time ("state-only" model). Screen transform:
+//! `screen = world * zoom + offset`.
 
-/// Bornes de zoom par défaut (10% .. 800%).
+/// Default zoom bounds (10% .. 800%).
 pub const DEFAULT_MIN_ZOOM: f32 = 0.1;
-/// Borne haute de zoom par défaut.
+/// Default zoom upper bound.
 pub const DEFAULT_MAX_ZOOM: f32 = 8.0;
 
-/// État du viewport canvas (zoom + pan).
+/// Canvas viewport state (zoom + pan).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewportState {
     zoom: f32,
@@ -46,8 +46,8 @@ impl Default for ViewportState {
 }
 
 impl ViewportState {
-    /// Crée un viewport avec bornes personnalisées.
-    /// Bornes invalides (`min <= 0`, `max < min`) → bornes par défaut.
+    /// Creates a viewport with custom bounds.
+    /// Invalid bounds (`min <= 0`, `max < min`) → default bounds.
     pub fn new(min_zoom: f32, max_zoom: f32) -> Self {
         let valid = min_zoom > 0.0 && max_zoom >= min_zoom;
         Self {
@@ -58,29 +58,29 @@ impl ViewportState {
         }
     }
 
-    /// Facteur de zoom courant.
+    /// Current zoom factor.
     pub fn zoom(self) -> f32 {
         self.zoom
     }
 
-    /// Borne basse du zoom.
+    /// Zoom lower bound.
     pub fn min_zoom(self) -> f32 {
         self.min_zoom
     }
 
-    /// Borne haute du zoom.
+    /// Zoom upper bound.
     pub fn max_zoom(self) -> f32 {
         self.max_zoom
     }
 
-    /// Décalage de pan courant (pixels écran).
+    /// Current pan offset (screen pixels).
     pub fn offset(self) -> egui::Vec2 {
         self.offset
     }
 
-    /// Définit le zoom (clampé aux bornes). Si `anchor` est donné
-    /// (position écran), le point sous l'ancre reste fixe.
-    /// Un zoom `NaN` est ignoré (garde-fou anti-corruption d'état).
+    /// Sets the zoom (clamped to bounds). When `anchor` is given
+    /// (screen position), the point under the anchor stays fixed.
+    /// A `NaN` zoom is ignored (anti-state-corruption guard).
     pub fn set_zoom(&mut self, zoom: f32, anchor: Option<egui::Pos2>) {
         if zoom.is_nan() {
             return;
@@ -95,22 +95,22 @@ impl ViewportState {
         }
     }
 
-    /// Multiplie le zoom par `factor` (ignoré si `<= 0`).
+    /// Multiplies the zoom by `factor` (ignored when `<= 0`).
     pub fn zoom_by(&mut self, factor: f32, anchor: Option<egui::Pos2>) {
         if factor > 0.0 {
             self.set_zoom(self.zoom * factor, anchor);
         }
     }
 
-    /// Définit le zoom en gardant fixe le point image sous `anchor`.
+    /// Sets the zoom keeping the image point under `anchor` fixed.
     ///
-    /// Contrairement à [`set_zoom`](Self::set_zoom) (ancre exprimée
-    /// dans le repère écran brut `screen = world * zoom + offset`), ici
-    /// l'ancre est exprimée en coordonnées écran absolues et le
-    /// viewport est centré sur `viewport_center` (géométrie réelle du
-    /// widget : `screen = center + offset + world * zoom`). Sans cette
-    /// correction, le zoom molette dérive vers le centre au lieu de
-    /// rester sous la souris.
+    /// Unlike [`set_zoom`](Self::set_zoom) (anchor expressed in the
+    /// raw screen frame `screen = world * zoom + offset`), here the
+    /// anchor is expressed in absolute screen coordinates and the
+    /// viewport is centered on `viewport_center` (the widget's real
+    /// geometry: `screen = center + offset + world * zoom`). Without
+    /// this correction, wheel zoom drifts toward the center instead
+    /// of staying under the mouse.
     pub fn set_zoom_around(&mut self, zoom: f32, anchor: egui::Pos2, viewport_center: egui::Pos2) {
         if !zoom.is_finite() {
             return;
@@ -127,27 +127,27 @@ impl ViewportState {
         }
     }
 
-    /// Multiplie le zoom par `factor` en gardant fixe le point image
-    /// sous `anchor` (voir [`set_zoom_around`](Self::set_zoom_around)).
-    /// Ignoré si `factor <= 0` ou non fini.
+    /// Multiplies the zoom by `factor` keeping the image point under
+    /// `anchor` fixed (see [`set_zoom_around`](Self::set_zoom_around)).
+    /// Ignored when `factor <= 0` or non-finite.
     pub fn zoom_by_around(&mut self, factor: f32, anchor: egui::Pos2, viewport_center: egui::Pos2) {
         if factor > 0.0 && factor.is_finite() {
             self.set_zoom_around(self.zoom * factor, anchor, viewport_center);
         }
     }
 
-    /// Décale la vue de `delta` pixels écran.
+    /// Shifts the view by `delta` screen pixels.
     pub fn pan_by(&mut self, delta: egui::Vec2) {
         self.offset += delta;
     }
 
-    /// Réinitialise zoom (1.0) et pan (zéro).
+    /// Resets zoom (1.0) and pan (zero).
     pub fn reset(&mut self) {
         self.zoom = 1.0;
         self.offset = egui::Vec2::ZERO;
     }
 
-    /// Convertit des coordonnées monde (image) en pixels écran.
+    /// Converts world (image) coordinates to screen pixels.
     pub fn world_to_screen(self, world: egui::Vec2) -> egui::Pos2 {
         egui::pos2(
             world.x * self.zoom + self.offset.x,
@@ -155,7 +155,7 @@ impl ViewportState {
         )
     }
 
-    /// Convertit des pixels écran en coordonnées monde (image).
+    /// Converts screen pixels to world (image) coordinates.
     pub fn screen_to_world(self, screen: egui::Pos2) -> egui::Vec2 {
         egui::vec2(
             (screen.x - self.offset.x) / self.zoom,
@@ -201,11 +201,11 @@ mod tests {
 
     #[test]
     fn zoom_around_keeps_image_point_under_cursor() {
-        // Géométrie réelle du widget : dest centré sur `center + offset`.
+        // Real widget geometry: dest centered on `center + offset`.
         let mut viewport = ViewportState::default();
         let center = egui::pos2(200.0, 150.0);
         let anchor = egui::pos2(260.0, 110.0);
-        // Point image sous le curseur avant zoom.
+        // Image point under the cursor before zoom.
         let before = egui::vec2(
             (anchor.x - center.x - viewport.offset().x) / viewport.zoom(),
             (anchor.y - center.y - viewport.offset().y) / viewport.zoom(),

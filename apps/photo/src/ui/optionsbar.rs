@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Barre des paramètres de l'outil actif PHOTO (sous le menu).
+//! Active-tool settings bar of PHOTO (under the menu).
 //!
-//! Reprend l'ancienne interface : pinceau (taille, opacité, couleur),
-//! gomme (taille, opacité), autres outils (aide contextuelle).
-//! Rien si l'outil n'a pas de réglages — la barre reste vide.
+//! Resumes the old interface: brush (size, opacity, color),
+//! eraser (size, opacity), other tools (contextual help).
+//! Nothing when the tool has no settings — the bar stays empty.
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use crate::i18n::{PhotoCatalog, PhotoTextKey};
@@ -26,8 +26,8 @@ use ui_kit::components::{Slider, Toggle};
 use ui_kit::theme::CygnusTheme;
 use ui_kit::theme::typography::body_text;
 
-/// Dessine les réglages de l'outil actif (met à jour `brush` et
-/// `show_grid` en place, sans channel : état purement local).
+/// Draws the active tool's settings (updates `brush` and
+/// `show_grid` in place, no channel: purely local state).
 pub fn draw_tool_options(
     ui: &mut egui::Ui,
     tool: PhotoCanvasTool,

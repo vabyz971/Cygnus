@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Conversion des actions du panneau Calques en [`PhotoAction`].
+//! Converting Layers panel actions into [`PhotoAction`].
 //!
-//! Seule la sélection reste locale à l'app ; tout le reste est routé
-//! au worker par `PhotoApp::handle_action`. Les ids sont déjà résolus
-//! à l'émission (le panneau connaît la sélection).
+//! Only selection stays local to the app; everything else is routed
+//! to the worker by `PhotoApp::handle_action`. Ids are already resolved
+//! at emission (the panel knows the selection).
 
 use super::panel::LayerPanelAction;
 use crate::commands::PhotoAction;
 
-/// Convertit une action du panneau en action app.
+/// Converts a panel action into an app action.
 pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
     match action {
         LayerPanelAction::AddImage => PhotoAction::AddImageLayer,

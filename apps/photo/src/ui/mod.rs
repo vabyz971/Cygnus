@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Widgets egui MÉTIER de l'app Photo.
+//! Photo app DOMAIN egui widgets.
 //!
-//! Trois niveaux :
+//! Three levels:
 //!
-//! - `features/` : fonctionnalités par domaine (calques, inspecteur),
-//!   position-indépendantes, remontant des [`PhotoAction`](crate::commands::PhotoAction) ;
-//! - `viewport/` : canvas + overlays autour du viewport générique ui-kit ;
-//! - widgets plats (`menubar`, `modebar`, `toolbar`, `optionsbar`,
-//!   `dialogs`) : contenus utilisés par `crate::layout`.
+//! - `features/`: per-domain features (layers, inspector),
+//!   position-independent, bubbling [`PhotoAction`](crate::commands::PhotoAction)s;
+//! - `viewport/`: canvas + overlays around the generic ui-kit viewport;
+//! - flat widgets (`menubar`, `modebar`, `toolbar`, `optionsbar`,
+//!   `dialogs`): contents used by `crate::layout`.
 //!
-//! Le pont moteur (`engine_bridge`, channels + worker) ne sait rien
-//! d'egui au-delà des snapshots ; aucun widget n'y envoie directement.
+//! The engine bridge (`engine_bridge`, channels + worker) knows nothing
+//! of egui beyond snapshots; no widget sends to it directly.
 
 pub mod create_document;
 pub mod dialogs;
@@ -35,7 +35,7 @@ pub mod ink_overlay;
 pub mod menubar;
 pub mod modebar;
 pub mod optionsbar;
-/// Sondes de mesure perf (diagnostic temporaire, tests uniquement).
+/// Perf measurement probes (temporary diagnostics, tests only).
 #[cfg(test)]
 mod probes;
 pub mod thumb_worker;

@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Overlays agnostiques : cadres monde + croix, sans type métier.
+//! Agnostic overlays: world frames + crosshair, no domain type.
 //!
-//! Les apps y projettent leurs bornes (document, sélection, clip) en
-//! rectangles monde : l'overlay ne sait pas ce qu'il encadre.
+//! Apps project their bounds (document, selection, clip) as world
+//! rectangles: the overlay does not know what it frames.
 
 use super::camera::Camera;
 use crate::theme::CygnusTheme;
 
-/// Dessine un rectangle monde (bornes de contenu, sélection…).
+/// Draws a world rectangle (content bounds, selection…).
 pub fn draw_rect_world(
     painter: &egui::Painter,
     camera: Camera,
@@ -38,7 +38,7 @@ pub fn draw_rect_world(
     );
 }
 
-/// Dessine une croix centrée sur `center_screen` (origine, pivot…).
+/// Draws a crosshair centered on `center_screen` (origin, pivot…).
 pub fn draw_crosshair(
     painter: &egui::Painter,
     center_screen: egui::Pos2,
@@ -62,7 +62,7 @@ pub fn draw_crosshair(
     );
 }
 
-/// Cadre de sélection au style du thème (accent, trait moyen).
+/// Theme-styled selection frame (accent, medium stroke).
 pub fn draw_selection(
     painter: &egui::Painter,
     camera: Camera,

@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Pile horizontale ou verticale à espacement calibré.
+//! Horizontal or vertical stack with calibrated spacing.
 //!
-//! # Exemple
+//! # Example
 //! ```rust,no_run
 //! # use ui_kit::containers::Stack;
 //! # use ui_kit::theme::CygnusTheme;
@@ -31,14 +31,14 @@
 
 use crate::theme::CygnusTheme;
 
-/// Direction d'une pile.
+/// A stack's direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Direction {
     Horizontal,
     Vertical,
 }
 
-/// Pile de widgets via API builder.
+/// Widget stack via builder API.
 #[derive(Debug, Clone, Copy)]
 pub struct Stack {
     direction: Direction,
@@ -46,7 +46,7 @@ pub struct Stack {
 }
 
 impl Stack {
-    /// Pile horizontale (espacement `sm` du thème).
+    /// Horizontal stack (theme `sm` spacing).
     pub fn horizontal(theme: &CygnusTheme) -> Self {
         Self {
             direction: Direction::Horizontal,
@@ -54,7 +54,7 @@ impl Stack {
         }
     }
 
-    /// Pile verticale (espacement `sm` du thème).
+    /// Vertical stack (theme `sm` spacing).
     pub fn vertical(theme: &CygnusTheme) -> Self {
         Self {
             direction: Direction::Vertical,
@@ -62,14 +62,14 @@ impl Stack {
         }
     }
 
-    /// Espacement entre enfants (préférer un token `theme.spacing.*`).
+    /// Spacing between children (prefer a `theme.spacing.*` token).
     #[must_use]
     pub fn spacing(mut self, spacing: f32) -> Self {
         self.spacing = spacing;
         self
     }
 
-    /// Affiche la pile et son contenu.
+    /// Displays the stack and its content.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,

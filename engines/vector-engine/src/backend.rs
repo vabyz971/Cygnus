@@ -14,44 +14,44 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Frontière de rendu vectoriel : le trait [`VectorBackend`].
+//! Vector rendering boundary: the [`VectorBackend`] trait.
 //!
-//! Le modèle ne connaît ni `wgpu`, ni Vello, ni aucun tessellateur : un
-//! adaptateur futur (Vello ou autre) implémente ce trait avec SES propres
-//! types en interne et convertit les [`Shape`](crate::Shape) à la soumission.
-//! [`render_scene`] pilote l'ordre et saute les invisibles — même contrat
-//! que `render-graph::execute`, sans pixels ici.
+//! The model knows neither `wgpu`, nor Vello, nor any tessellator: a
+//! future adapter (Vello or other) implements this trait with ITS OWN
+//! internal types and converts [`Shape`](crate::Shape)s at submission.
+//! [`render_scene`] drives the order and skips invisible shapes — same contract
+//! as `render-graph::execute`, no pixels here.
 
 use crate::document::Shape;
 use crate::{ShapeId, VectorScene};
 
-/// Backend de rendu vectoriel (CPU, Vello ou autre — spécialisé plus tard).
+/// Vector rendering backend (CPU, Vello or other — specialized later).
 ///
-/// Le backend convertit les formes à la soumission ; le modèle reste
-/// indépendant du moteur de dessin choisi.
+/// The backend converts shapes at submission; the model stays
+/// independent of the chosen drawing engine.
 pub trait VectorBackend {
-    /// Ouvre une passe (dimensions de la cible).
+    /// Opens a pass (target dimensions).
     fn begin_frame(&mut self, _width: u32, _height: u32) {}
 
-    /// Dessine UNE forme (géométrie + styles + placement convertis par
-    /// l'implémentation).
+    /// Draws ONE shape (geometry + styles + placement converted by
+    /// the implementation).
     ///
     /// # Errors
     ///
-    /// Retourne un message si la soumission échoue.
+    /// Returns a message if submission fails.
     fn draw_shape(&mut self, shape: &Shape) -> Result<(), String>;
 
-    /// Ferme la passe (présentation — sémantique du backend).
+    /// Closes the pass (presentation — backend semantics).
     fn end_frame(&mut self) {}
 }
 
-/// Soumet une scène en ordre de peinture, invisibles sautés.
-/// Retourne le nombre de formes soumises.
+/// Submits a scene in paint order, invisible shapes skipped.
+/// Returns the number of submitted shapes.
 ///
 /// # Errors
 ///
-/// Remonte la première erreur du backend (l'état partiel appartient au
-/// backend, jamais au modèle).
+/// Propagates the backend's first error (partial state belongs to the
+/// backend, never to the model).
 pub fn render_scene<B: VectorBackend>(
     backend: &mut B,
     scene: &VectorScene,
@@ -72,8 +72,8 @@ pub fn render_scene<B: VectorBackend>(
     Ok(submitted)
 }
 
-/// Backend nul : enregistre les ids soumis, ne dessine rien.
-/// Gabarit des futurs backends + tests sans GPU.
+/// Null backend: records submitted ids, draws nothing.
+/// Template for future backends + GPU-less tests.
 #[derive(Debug, Default)]
 pub struct NullBackend {
     drawn: Vec<ShapeId>,
@@ -81,19 +81,19 @@ pub struct NullBackend {
 }
 
 impl NullBackend {
-    /// Nouveau backend nul.
+    /// New null backend.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Ids soumis, en ordre.
+    /// Submitted ids, in order.
     #[must_use]
     pub fn drawn(&self) -> &[ShapeId] {
         &self.drawn
     }
 
-    /// Passes ouvertes.
+    /// Open passes.
     #[must_use]
     pub fn frames(&self) -> u32 {
         self.frames

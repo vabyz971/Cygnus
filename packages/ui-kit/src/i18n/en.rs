@@ -14,16 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Table anglaise (langue de repli).
+//! English table (fallback language).
 //!
-//! Une entrée par [`TextKey`](super::key::TextKey), dans l'ordre de
-//! l'enum : le `match` exhaustif casse à l'ajout d'une clé tant
-//! qu'elle n'est pas traduite ici (et en français, voir
-//! [`super::fr`]).
+//! One entry per [`TextKey`](super::key::TextKey), in enum order:
+//! the exhaustive `match` breaks when a key is added until it is
+//! translated here (and in French, see [`super::fr`]).
 
 use super::key::TextKey;
 
-/// Traduit `key` en anglais.
+/// Translates `key` into English.
 pub fn translate(key: TextKey) -> &'static str {
     match key {
         TextKey::Save => "Save",

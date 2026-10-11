@@ -14,14 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! File d'actions UI drainée une fois par frame par l'app.
+//! UI action queue drained once per frame by the app.
 //!
-//! Version générique de l'ancienne `PhotoCommandQueue` : les panels
-//! poussent des actions, l'app les draine et les route (état local
-//! ou worker moteur). `A` est le type d'action de l'app (ex.
-//! `PhotoAction` côté photo).
+//! Generic version of the old `PhotoCommandQueue`: panels
+//! push actions, the app drains and routes them (local state
+//! or engine worker). `A` is the app's action type (e.g.
+//! `PhotoAction` on the photo side).
 
-/// File d'actions UI (ordre d'émission préservé).
+/// UI action queue (emission order preserved).
 #[derive(Debug)]
 pub struct ActionQueue<A> {
     actions: Vec<A>,
@@ -34,34 +34,34 @@ impl<A> Default for ActionQueue<A> {
 }
 
 impl<A> ActionQueue<A> {
-    /// File vide.
+    /// Empty queue.
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
         }
     }
 
-    /// Ajoute une action en fin de file.
+    /// Pushes an action at the back of the queue.
     pub fn push(&mut self, action: A) {
         self.actions.push(action);
     }
 
-    /// Ajoute plusieurs actions en fin de file.
+    /// Pushes several actions at the back of the queue.
     pub fn extend(&mut self, actions: impl IntoIterator<Item = A>) {
         self.actions.extend(actions);
     }
 
-    /// Nombre d'actions en attente.
+    /// Number of pending actions.
     pub fn len(&self) -> usize {
         self.actions.len()
     }
 
-    /// Vrai si aucune action en attente.
+    /// True when no action is pending.
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
 
-    /// Vide la file et retourne les actions (ordre d'émission).
+    /// Drains the queue and returns the actions (emission order).
     pub fn drain(&mut self) -> Vec<A> {
         std::mem::take(&mut self.actions)
     }
@@ -71,7 +71,7 @@ impl<A> ActionQueue<A> {
 mod tests {
     use super::*;
 
-    /// Action factice (la file ne connaît pas les actions des apps).
+    /// Dummy action (the queue knows nothing about apps' actions).
     #[derive(Debug, Clone, PartialEq)]
     enum Probe {
         Undo,

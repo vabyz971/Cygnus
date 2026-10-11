@@ -14,33 +14,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Invalidation spatiale et Tile Scheduler — optimisation du rendu.
+//! Spatial invalidation and Tile Scheduler — render optimization.
 //!
 //! ```text
 //! Scene Graph → Render Graph → invalidate(rect) → DirtyTiles
 //!                                          ↓
-//!                              TileScheduler::plan (visible, proche,
-//!                                basse-résolution d'abord, progressif)
+//!                              TileScheduler::plan (visible, near,
+//!                                low-resolution first, progressive)
 //!                                          ↓
-//!                              Backend (CPU aujourd'hui, GPU demain)
+//!                              Backend (CPU today, GPU tomorrow)
 //! ```
 //!
-//! Règles de cette crate :
+//! Rules of this crate:
 //!
-//! - Les tuiles sont une STRATÉGIE D'EXÉCUTION, pas un modèle de document :
-//!   aucune hiérarchie, aucune sémantique — seulement des rectangles
-//!   entiers, des révisions et des priorités.
-//! - Arithmétique entière EXACTE (`i32`/`u32`, pas de `f32`) : l'appartenance
-//!   d'un pixel à une tuile ne tolère aucun flou d'arrondi (d'où un modèle
-//!   propre au lieu de réutiliser `datatypes::Vec2`, géométrie UI flottante).
-//! - Zéro allocation sur les chemins chauds : `invalidate` retourne une
-//!   [`TileRange`] (bornes, pas de `Vec`), [`DirtyTiles`] est un bitset
-//!   dense (pas de `HashMap`), la planification réutilise le `Vec`
-//!   de l'appelant (`plan_into`).
-//! - AUCUNE donnée GPU ici : [`GpuTile`] est un jeton opaque résolu par le
-//!   backend (zéro readback, zéro synchronisation CPU/GPU dans cette crate).
-//! - `tiles::TileId` (tuile de rendu) n'a aucun rapport avec
-//!   `egui_tiles::TileId` (panneau dockable de l'app photo).
+//! - Tiles are an EXECUTION STRATEGY, not a document model:
+//!   no hierarchy, no semantics — only integer
+//!   rectangles, revisions and priorities.
+//! - EXACT integer arithmetic (`i32`/`u32`, no `f32`): a pixel's tile
+//!   membership tolerates no rounding fuzz (hence a dedicated
+//!   model instead of reusing `datatypes::Vec2`, floating UI geometry).
+//! - Zero allocation on hot paths: `invalidate` returns a
+//!   [`TileRange`] (bounds, no `Vec`), [`DirtyTiles`] is a dense
+//!   bitset (no `HashMap`), scheduling reuses the caller's
+//!   `Vec` (`plan_into`).
+//! - NO GPU data here: [`GpuTile`] is an opaque token resolved by the
+//!   backend (zero readback, zero CPU/GPU sync in this crate).
+//! - `tiles::TileId` (render tile) is unrelated to
+//!   `egui_tiles::TileId` (photo app dock panel).
 //!
 //! # Examples
 //!
@@ -48,7 +48,7 @@
 //! use tiles::{Padding, TileGrid, TileRegion};
 //!
 //! let grid = TileGrid::new(256, 1920, 1080, 1);
-//! // Coup de pinceau : bbox + rayon, élargie du padding, puis tuiles.
+//! // Brush stroke: bbox + radius, padded, then tiles.
 //! let stroke = TileRegion::new(100, 100, 50, 50).pad(Padding::new(8));
 //! let range = grid.invalidate(&stroke, 0, Padding::new(0));
 //! assert!(!range.is_empty());

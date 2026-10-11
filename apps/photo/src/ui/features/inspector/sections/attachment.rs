@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Section Pièce jointe : la sélection secondaire de l'arbre des
-//! calques (filtre live ou masque focalisé au clic). Nom, type,
-//! interrupteur on/off (bascule sans perdre réglages ni pixels) et,
-//! pour les filtres, curseurs de réglages (luminosité, contraste,
-//! rayon…) routés au worker en geste coalescé.
+//! Attachment section: the layer tree's secondary selection
+//! (live filter or mask focused by click). Name, type,
+//! on/off switch (toggles without losing settings or pixels) and,
+//! for filters, setting sliders (brightness, contrast,
+//! radius…) routed to the worker as a coalesced gesture.
 
 use super::super::InspectorAction;
 use crate::commands::PhotoUiContext;
@@ -27,7 +27,7 @@ use crate::ui::features::layers::types::{AttachmentRef, PhotoSubLayerInfo};
 use ui_kit::components::{Slider, Toggle};
 use ui_kit::primitives::{Text, divider};
 
-/// Plage d'un paramètre flottant de filtre, par clé du registre.
+/// Range of a float filter parameter, by registry key.
 fn param_range(key: &str) -> std::ops::RangeInclusive<f32> {
     match key {
         "brightness" | "contrast" => -100.0..=100.0,
@@ -38,7 +38,7 @@ fn param_range(key: &str) -> std::ops::RangeInclusive<f32> {
     }
 }
 
-/// Libellé d'un paramètre (clés du registre connues, repli = clé brute).
+/// Parameter label (known registry keys, fallback = raw key).
 fn param_label(key: &str, texts: crate::i18n::PhotoCatalog) -> String {
     match key {
         "brightness" => texts.get(PhotoTextKey::FilterParamBrightness).to_owned(),
@@ -50,7 +50,7 @@ fn param_label(key: &str, texts: crate::i18n::PhotoCatalog) -> String {
     }
 }
 
-/// Dessine la section et retourne les actions (routées au worker).
+/// Draws the section and returns the actions (routed to the worker).
 pub fn draw_attachment_section(
     ui: &mut egui::Ui,
     ctx: &PhotoUiContext,
@@ -85,7 +85,7 @@ pub fn draw_attachment_section(
             is_filter: sub.is_filter,
         });
     }
-    // Curseurs des paramètres du filtre (ordre stable : clés triées).
+    // Filter parameter sliders (stable order: sorted keys).
     if sub.is_filter {
         let mut keys: Vec<&String> = sub.params.keys().collect();
         keys.sort();

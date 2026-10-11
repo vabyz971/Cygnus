@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Point d'entrée de l'app Photo : boot eframe + thème Cygnus.
+//! Photo app entry point: eframe boot + Cygnus theme.
 //!
-//! Découpage :
-//! - `app`        : PhotoApp (orchestrateur : état + commandes + moteur)
-//! - `state`      : couches d'état (document, coquille, runtime)
-//! - `commands`   : PhotoAction + file + contexte UI
-//! - `layout`     : workspace (régions top/left/center/right/bottom)
-//! - `ui/`        : features métier, viewport, widgets plats
-//! - `persistence`: sauvegarde du workspace (indépendante du document)
+//! Breakdown:
+//! - `app`        : PhotoApp (orchestrator: state + commands + engine)
+//! - `state`      : state layers (document, shell, runtime)
+//! - `commands`   : PhotoAction + queue + UI context
+//! - `layout`     : workspace (top/left/center/right/bottom regions)
+//! - `ui/`        : domain features, viewport, flat widgets
+//! - `persistence`: workspace save (independent of the document)
 
 mod app;
 mod commands;

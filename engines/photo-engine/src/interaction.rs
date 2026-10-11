@@ -14,76 +14,76 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Surface d'interaction transitoire (Phase 6G.3P) : feedback de peinture
-//! pendant le drag, AVANT le commit définitif dans le document.
+//! Transient interaction surface (Phase 6G.3P): paint feedback during the
+//! drag, BEFORE the final commit into the document.
 //!
 //! ```text
 //! MouseDown → begin_stroke() → MouseMove* → update (overlay)
-//!     → MouseUp → commit (chemin permanent existant) → clear()
-//!     → annulation → clear() (document intact)
+//!     → MouseUp → commit (existing permanent path) → clear()
+//!     → cancel → clear() (document untouched)
 //! ```
 //!
-//! Règles :
+//! Rules:
 //!
-//! - espace CALQUE, mêmes points et mêmes paramètres que le commit : le
-//!   masque de couverture est bâti avec EXACTEMENT les primitives partagées
-//!   de `paint` (`stroke_bbox`, `stamp_polyline`), et l'union des masques est
-//!   idempotente — tamponner par morceaux donne le même masque qu'en une fois ;
-//! - l'overlay ne touche JAMAIS au document (ni snapshots, ni dirty, ni
-//!   worker) : le commit passe par le chemin `PaintStroke` existant, qui
-//!   reste la seule écriture permanente (équivalence prouvée par tests) ;
-//! - région bornée au trait (pas au calque) : mémoire et uploads en O(stroke),
-//!   jamais en O(document) ;
-//! - mode Paint : pixels exacts sur fond opaque (même formule source-over) ;
-//!   mode Erase : voile blanc indicatif (la gomme réelle a besoin de la base ;
-//!   le commit reste exact, seul le transitoire est indicatif) ;
-//! - affichage réservé aux transforms rigides identité/translation/échelle
-//!   ([`overlay_displayable`]) : rotation/skew désactivés côté présentation
-//!   (moteur exact quand même, porte d'extension documentée).
+//! - LAYER space, same points and parameters as the commit: the coverage
+//!   mask is built with EXACTLY the shared `paint` primitives (`stroke_bbox`,
+//!   `stamp_polyline`), and the mask union is idempotent — stamping in
+//!   pieces gives the same mask as in one go;
+//! - the overlay NEVER touches the document (no snapshots, no dirty, no
+//!   worker): the commit goes through the existing `PaintStroke` path,
+//!   which stays the only permanent write (test-proven equivalence);
+//! - stroke-bounded region (not layer): memory and uploads in O(stroke),
+//!   never O(document);
+//! - Paint mode: exact pixels on opaque background (same source-over formula);
+//!   Erase mode: indicative white veil (the real eraser needs the base;
+//!   the commit stays exact, only the transient is indicative);
+//! - display restricted to rigid identity/translation/scale transforms
+//!   ([`overlay_displayable`]): rotation/skew disabled presentation-side
+//!   (engine exact anyway, documented extension gate).
 
 use crate::document::Transform2D;
 use crate::paint::{
     BrushParams, StrokeMode, composite_coverage, resample_stroke, stamp_polyline, stroke_bbox,
 };
 
-/// Métriques d'interaction (Phase 6G.3P §13) : événements et volumes de
-/// travail, jamais de temps imposé (le matériel varie).
+/// Interaction metrics (Phase 6G.3P §13): event and work-volume counters,
+/// never imposed timings (hardware varies).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InteractionMetrics {
-    /// Points reçus (bruts, avant filtrage).
+    /// Received points (raw, before filtering).
     pub points_received: u64,
-    /// Points coalescés (dégénérés `< EPSILON` ou non finis — sans effet).
+    /// Coalesced points (degenerate `< EPSILON` or non-finite — no effect).
     pub points_coalesced: u64,
-    /// Soumissions de rendu (`render()` appelé).
+    /// Render submissions (`render()` called).
     pub submissions: u64,
-    /// Rendus effectués (== `submissions`, synchrone — documenté pour une
-    /// future version asynchrone où ils divergeraient).
+    /// Renders performed (== `submissions`, synchronous — documented for a
+    /// future async version where they would diverge).
     pub completions: u64,
-    /// Pixels (re)composés dans l'image overlay (cumul, bornes des segments).
+    /// Pixels (re)composited into the overlay image (cumulative, segment bounds).
     pub surface_pixels_written: u64,
-    /// Mur du dernier `render()` (µs, indicatif, jamais asserté en test).
+    /// Wall time of the last `render()` (µs, indicative, never asserted in tests).
     pub last_render_us: u128,
 }
 
-/// Image transitoire pour présentation : région + pixels + génération.
+/// Transient presentation image: region + pixels + generation.
 #[derive(Debug, Clone)]
 pub struct OverlayFrame {
-    /// Génération de la session qui l'a produite (cf. `is_current`).
+    /// Generation of the session that produced it (see `is_current`).
     pub generation: u64,
-    /// Origine région en coords calque absolues.
+    /// Region origin in absolute layer coords.
     pub x: i32,
-    /// Origine région en coords calque absolues.
+    /// Region origin in absolute layer coords.
     pub y: i32,
-    /// Largeur région (px).
+    /// Region width (px).
     pub width: u32,
-    /// Hauteur région (px).
+    /// Region height (px).
     pub height: u32,
-    /// Pixels RGBA8 de la région (stroke-only, voir docs du module).
+    /// Region RGBA8 pixels (stroke-only, see module docs).
     pub rgba: Vec<u8>,
 }
 
-/// Session de trait transitoire (un geste = une instance logique réarmée
-/// par `begin_stroke`).
+/// Transient stroke session (one gesture = one logical instance rearmed
+/// by `begin_stroke`).
 #[derive(Debug, Clone)]
 pub struct InteractionOverlay {
     brush: BrushParams,
@@ -95,11 +95,11 @@ pub struct InteractionOverlay {
     oy: i32,
     w: u32,
     h: u32,
-    /// Capacité allouée (`mask`/`image` font `cap_w × cap_h`, stride =
-    /// `cap_w`) : la région logique (`w × h`) croît sans recopie tant
-    /// qu'elle tient dans la capacité (croissance géométrique à la
-    /// réallocation) — un balayage ne recopie plus toute la région à
-    /// chaque frame (O(1) amorti au lieu de O(région)).
+    /// Allocated capacity (`mask`/`image` are `cap_w × cap_h`, stride =
+    /// `cap_w`): the logical region (`w × h`) grows without copying while
+    /// it fits in capacity (geometric growth on reallocation) — one sweep
+    /// no longer copies the whole region every frame (amortized O(1)
+    /// instead of O(region)).
     cap_w: u32,
     cap_h: u32,
     last: Option<(f32, f32)>,
@@ -109,7 +109,7 @@ pub struct InteractionOverlay {
 }
 
 impl InteractionOverlay {
-    /// Overlay vide (génération 0, aucun pixel).
+    /// Empty overlay (generation 0, no pixels).
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -136,9 +136,9 @@ impl InteractionOverlay {
         }
     }
 
-    /// Démarre un geste : réarme l'état, incrémente la génération (les
-    /// rendus taggés d'une génération antérieure deviennent périmés).
-    /// Retourne la nouvelle génération.
+    /// Starts a gesture: rearms state, bumps the generation (renders tagged
+    /// with an older generation become stale).
+    /// Returns the new generation.
     pub fn begin_stroke(&mut self, brush: BrushParams) -> u64 {
         self.brush = brush;
         self.rx = brush.radius;
@@ -155,33 +155,33 @@ impl InteractionOverlay {
         self.generation
     }
 
-    /// Génération courante.
+    /// Current generation.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Vrai si `generation` est la courante (résultat périmé ⇒ à jeter).
+    /// True if `generation` is current (stale result ⇒ discard).
     #[must_use]
     pub fn is_current(&self, generation: u64) -> bool {
         generation == self.generation
     }
 
-    /// Vrai si aucun dab (région vide).
+    /// True if no dabs (empty region).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.w == 0 || self.h == 0
     }
 
-    /// Métriques cumulées de la session.
+    /// Cumulative session metrics.
     #[must_use]
     pub fn metrics(&self) -> InteractionMetrics {
         self.metrics
     }
 
-    /// Supprime l'état (annulation ou après commit) : document intact par
-    /// construction (l'overlay n'y a jamais touché). La génération est
-    /// conservée (seul `begin_stroke` l'incrémente).
+    /// Clears state (cancel or after commit): document untouched by
+    /// construction (the overlay never touched it). The generation is kept
+    /// (only `begin_stroke` bumps it).
     pub fn clear(&mut self) {
         self.mask.clear();
         self.image.clear();
@@ -193,21 +193,21 @@ impl InteractionOverlay {
         self.dirty = false;
     }
 
-    /// Ajoute des points (coords calque absolues, MÊMES valeurs qu'au commit).
-    /// Tamponne uniquement les nouveaux segments depuis le dernier point
-    /// (union idempotente : chevauchements et doublons sans effet).
-    /// Retourne vrai si le masque a changé (présentation à rafraîchir).
-    /// Les points non finis sont ignorés un par un (le commit historique,
-    /// lui, produit un résultat implémentation-défini sur entrée adverse —
-    /// hors cas supportés, documenté) ; les segments dégénérés (`< EPSILON`,
-    /// comme le chemin permanent) sont coalescés et comptés.
+    /// Adds points (absolute layer coords, SAME values as at commit).
+    /// Only stamps new segments since the last point (idempotent union:
+    /// overlaps and duplicates have no effect). Returns true if the mask
+    /// changed (presentation to refresh). Non-finite points are ignored one
+    /// by one (the legacy commit yields implementation-defined results on
+    /// hostile input — outside supported cases, documented); degenerate
+    /// segments (`< EPSILON`, like the permanent path) are coalesced and
+    /// counted.
     ///
-    /// Lissage : `fresh` ([dernier connu] + nouveaux) passe par le MÊME
-    /// `resample_stroke` que le commit worker (subdivision + Chaikin) —
-    /// le transitoire montre des courbes, pas des segments, y compris en
-    /// balayage rapide (points épars). L'équivalence transitoire == commit
-    /// est préservée : mêmes entrées, même fonction (micro-écarts aux
-    /// jonctions de paquets, invisibles et remplacés au `MouseUp`).
+    /// Smoothing: `fresh` ([last known] + new) goes through the SAME
+    /// `resample_stroke` as the worker commit (subdivision + Chaikin) — the
+    /// transient shows curves, not segments, even on fast sweeps (sparse
+    /// points). Transient == commit equivalence is preserved: same inputs,
+    /// same function (micro-gaps at packet junctions, invisible and replaced
+    /// at `MouseUp`).
     pub fn add_points(&mut self, points: &[(f32, f32)]) -> bool {
         if points.is_empty()
             || !self.brush.radius.is_finite()
@@ -217,8 +217,8 @@ impl InteractionOverlay {
             return false;
         }
         self.metrics.points_received += points.len() as u64;
-        // Filtrage : finis et non dégénérés (même règle EPSILON que le
-        // chemin permanent — un segment nul ne tamponne rien de toute façon).
+        // Filtering: finite and non-degenerate (same EPSILON rule as the
+        // permanent path — a null segment stamps nothing anyway).
         let mut fresh: Vec<(f32, f32)> = Vec::with_capacity(points.len() + 1);
         if let Some(last) = self.last {
             fresh.push(last);
@@ -242,14 +242,14 @@ impl InteractionOverlay {
             }
             fresh.push((x, y));
         }
-        // Premier point d'un geste vide : amorcé comme disque isolé (comme
-        // le chemin permanent qui tamponne `points[0]`).
+        // First point of an empty gesture: primed as an isolated disc (like
+        // the permanent path stamping `points[0]`).
         if fresh.is_empty() {
             return false;
         }
-        // Même lissage que le commit (subdivision + Chaikin sur [dernier
-        // connu] + nouveaux) : les extrémités sont préservées, donc la
-        // continuité inter-paquets (`self.last`) est exacte.
+        // Same smoothing as the commit (subdivision + Chaikin on [last known]
+        // + new): endpoints are preserved, so inter-packet continuity
+        // (`self.last`) is exact.
         let fresh = resample_stroke(&fresh, self.brush.radius.max(2.0));
         let changed = self.stamp_fresh(&fresh);
         if let Some(&p) = fresh.last() {
@@ -258,8 +258,8 @@ impl InteractionOverlay {
         changed
     }
 
-    /// Tamponne `fresh` ([dernier connu] + nouveaux) en agrandissant la
-    /// région si besoin. Retourne vrai si des pixels ont changé.
+    /// Stamps `fresh` ([last known] + new), growing the region if needed.
+    /// Returns true if any pixels changed.
     fn stamp_fresh(&mut self, fresh: &[(f32, f32)]) -> bool {
         let rx = self.rx.max(0.5);
         let ry = self.ry.max(0.5);
@@ -272,9 +272,9 @@ impl InteractionOverlay {
             return false;
         }
         self.grow_to(nx0, ny0, nx1, ny1);
-        // Stride = capacité (la région logique `w × h` vit en haut à
-        // gauche de l'origine) ; les clips restent la région logique —
-        // le padding au-delà n'est jamais écrit ni lu.
+        // Stride = capacity (the logical `w × h` region lives at the top-left
+        // of the origin); clips stay the logical region — padding beyond is
+        // never written nor read.
         let stride = self.cap_w as usize;
         stamp_polyline(
             &mut self.mask,
@@ -289,9 +289,9 @@ impl InteractionOverlay {
             rx,
             ry,
         );
-        // Recomposite la zone étendue depuis le masque COMPLET (pas depuis
-        // l'image : chaque pixel final ne dépend que du masque final —
-        // exactitude indépendante de l'historique des morceaux).
+        // Recomposites the grown zone from the FULL mask (not from the image:
+        // each final pixel only depends on the final mask — history-independent
+        // exactness).
         let (dx0, dy0) = ((nx0 - self.ox).max(0), (ny0 - self.oy).max(0));
         let dx1 = (nx1 - self.ox).min(self.w as i32);
         let dy1 = (ny1 - self.oy).min(self.h as i32);
@@ -299,9 +299,9 @@ impl InteractionOverlay {
             let rw = self.cap_w as usize;
             let mask = &self.mask;
             if self.brush.mode == StrokeMode::Erase {
-                // Pas de base ici : voile blanc indicatif sur la couverture
-                // (le commit, lui, applique destination-out sur les vrais
-                // pixels — exact, documenté au module).
+                // No base here: indicative white veil over the coverage (the commit
+                // applies destination-out on the real pixels — exact, documented
+                // at module level).
                 for y in dy0..dy1 {
                     for x in dx0..dx1 {
                         let mi = (y as usize) * stride + (x as usize);
@@ -351,13 +351,13 @@ impl InteractionOverlay {
         true
     }
 
-    /// Agrandit la région logique (jamais réduite pendant un geste).
-    /// Zéro recopie tant que l'union tient dans la capacité allouée ;
-    /// sinon réallocation géométrique (×1.5 arrondi à 64 px) avec recopie
-    /// unique de l'ancien contenu. Le padding au-delà de la région
-    /// logique reste à zéro (jamais écrit : les clips de tamponnage sont
-    /// la région logique) et n'est jamais lu (`render` n'exporte que la
-    /// région logique).
+    /// Grows the logical region (never shrunk during a gesture). Zero copy
+    /// while the union fits the allocated capacity; else geometric
+    /// reallocation (×1.5 rounded to 64 px) with a single copy of the old
+    /// content. Padding beyond the logical region stays zero (never written:
+    /// stamping clips are the logical region)
+    /// and is never read (`render` only exports
+    /// the logical region).
     fn grow_to(&mut self, nx0: i32, ny0: i32, nx1: i32, ny1: i32) {
         if self.w == 0 || self.h == 0 {
             self.ox = nx0;
@@ -381,8 +381,8 @@ impl InteractionOverlay {
         {
             return;
         }
-        // Tient dans la capacité ? Région logique étendue, zéro recopie
-        // (l'indexation utilise déjà `ox`/`oy` + stride de capacité).
+        // Fits in capacity? Extended logical region, zero copy (indexing
+        // already uses `ox`/`oy` + capacity stride).
         if gx0 >= self.ox
             && gy0 >= self.oy
             && gx1 <= self.ox + self.cap_w as i32
@@ -392,8 +392,8 @@ impl InteractionOverlay {
             self.h = (gy1 - gy0) as u32;
             return;
         }
-        // Réallocation géométrique : l'amorti rend la recopie rare (un
-        // balayage monotone ne réalloue qu'en O(log)).
+        // Geometric reallocation: amortization makes copies rare (a monotone
+        // sweep only reallocates in O(log)).
         let grow = |need: i32| ((need as f32 * 1.5).ceil() as i32).max(need).max(64);
         let gw = grow(gx1 - gx0) as u32;
         let gh = grow(gy1 - gy0) as u32;
@@ -419,17 +419,17 @@ impl InteractionOverlay {
         self.image = image;
     }
 
-    /// Rend la frame transitoire (région logique entière, clone borné au
-    /// trait). `None` si vide. Taguée de la génération courante (cf.
-    /// `is_current`). Ne touche ni au document ni au worker.
+    /// Renders the transient frame (whole logical region, stroke-bounded
+    /// clone). `None` if empty. Tagged with the current generation (see
+    /// `is_current`). Touches neither the document nor the worker.
     pub fn render(&mut self) -> Option<OverlayFrame> {
         self.metrics.submissions += 1;
         if self.is_empty() {
             return None;
         }
         let t = std::time::Instant::now();
-        // Export contigu de la région logique (le stockage suit le
-        // stride de capacité) : le padding alloué ne voyage jamais.
+        // Contiguous export of the logical region (storage follows the
+        // capacity stride): allocated padding never travels.
         let (w, h) = (self.w as usize, self.h as usize);
         let stride = self.cap_w as usize;
         let mut rgba = vec![0u8; w * h * 4];
@@ -452,16 +452,16 @@ impl InteractionOverlay {
         Some(frame)
     }
 
-    /// Vrai si du nouveau contenu attend une présentation.
+    /// True if fresh content awaits presentation.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
         self.dirty && !self.is_empty()
     }
 
-    /// Géométrie de la frame courante `(x, y, w, h, génération)` SANS
-    /// cloner les pixels : permet à l'app de replacer sa texture en
-    /// cache à chaque frame (zoom/pan state-only) sans re-rendre.
-    /// `None` si vide (rien à afficher).
+    /// Current frame geometry `(x, y, w, h, generation)` WITHOUT cloning
+    /// pixels: lets the app re-place its texture in cache every frame
+    /// (state-only zoom/pan) without re-rendering. `None` if empty
+    /// (nothing to display).
     #[must_use]
     pub fn frame_geom(&self) -> Option<(i32, i32, u32, u32, u64)> {
         if self.is_empty() {
@@ -478,31 +478,31 @@ impl Default for InteractionOverlay {
     }
 }
 
-/// L'overlay est-il présentable pour cette transform ? Placements
-/// axe-alignés uniquement (identité, translation, échelle) : rotation et
-/// cisaillement exigeraient une rasterisation orientée côté présentation
-/// (porte d'extension — le moteur reste exact dans tous les cas, et le
-/// commit ne dépend jamais de ce gate).
+/// Is the overlay presentable for this transform? Axis-aligned
+/// placements only (identity, translation, scale): rotation and shear
+/// would require oriented rasterization presentation-side (extension
+/// gate — the engine stays exact in all cases, and the commit never
+/// depends on this gate).
 #[must_use]
 pub fn overlay_displayable(t: &Transform2D) -> bool {
     if t.has_skew() {
         return false;
     }
-    // Même epsilon que le chemin de rendu (rotations libres arrondies
-    // silencieusement = erreur visuelle).
+    // Same epsilon as the render path (freely rounded rotations = visual
+    // error).
     let rot = t.rotation_deg.rem_euclid(360.0);
     !(0.01..=359.99).contains(&rot)
 }
 
-/// Placement écran d'une frame overlay (maths pures, testées) : l'overlay
-/// (doc px, origine incluse) suit exactement la même mise à l'échelle que
-/// le preview, ancré au coin du dest preview.
+/// Screen placement of an overlay frame (pure, tested math): the overlay
+/// (doc px, origin included) follows exactly the same scaling as the
+/// preview, anchored to the preview dest corner.
 ///
-/// * `dest_min` : coin écran du rect preview dessiné ;
-/// * `screen_per_doc` : px écran par px document (même facteur que le preview) ;
-/// * `ox/oy/w/h` : région overlay en px document.
+/// * `dest_min`: screen corner of the drawn preview rect;
+/// * `screen_per_doc`: screen px per document px (same factor as preview);
+/// * `ox/oy/w/h`: overlay region in document px.
 ///
-/// Retourne `(x, y, w, h)` écran.
+/// Returns `(x, y, w, h)` screen.
 #[must_use]
 pub fn overlay_screen_rect(
     dest_min_x: f32,
@@ -535,8 +535,8 @@ mod tests {
         }
     }
 
-    /// Blit source-over d'une frame overlay sur un tampon doc (miroir de la
-    /// composition d'affichage : stroke-only par-dessus le composite).
+    /// Source-over blit of an overlay frame onto a doc buffer (mirrors the
+    /// display composition: stroke-only over the composite).
     fn blit_over(dst: &mut [u8], dst_w: u32, frame: &OverlayFrame) {
         for y in 0..frame.height {
             for x in 0..frame.width {
@@ -566,8 +566,8 @@ mod tests {
 
     #[test]
     fn feedback_non_vide_avant_commit() {
-        // §15 : MouseDown + MouseMove ⇒ overlay non vide AVANT tout MouseUp
-        // (aucun worker, aucun document touché ici — pur moteur).
+        // §15: MouseDown + MouseMove ⇒ non-empty overlay BEFORE any MouseUp
+        // (no worker, no document touched here — pure engine).
         let mut overlay = InteractionOverlay::new();
         assert!(overlay.is_empty());
         overlay.begin_stroke(brush_paint());
@@ -581,8 +581,8 @@ mod tests {
 
     #[test]
     fn morceaux_equivalent_appel_unique() {
-        // §5/§15 : 10 points en 1 fois == en 3 morceaux (continuité par
-        // dernier point, union idempotente) — y compris avec chevauchement.
+        // §5/§15: 10 points at once == in 3 pieces (continuity via last point,
+        // idempotent union) — including with overlap.
         let points: Vec<(f32, f32)> = (0..10).map(|i| (8.0 + i as f32 * 3.0, 30.0)).collect();
         let brush = brush_paint();
         let mut whole = InteractionOverlay::new();
@@ -594,7 +594,7 @@ mod tests {
         chunked.add_points(&points[0..4]);
         chunked.add_points(&points[3..7]);
         chunked.add_points(&points[5..10]);
-        // Chevauchement volontaire ([3..7] puis [5..10]) : idempotent.
+        // Deliberate overlap ([3..7] then [5..10]): idempotent.
         chunked.add_points(&points[4..6]);
         let chunked = chunked.render().expect("frame");
         assert_eq!(
@@ -606,15 +606,15 @@ mod tests {
 
     #[test]
     fn transient_proche_du_commit_avec_lissage() {
-        // §5 : overlay (transitoire) + commit permanent == référence, à la
-        // jonction de paquets près. Les deux passent par le MÊME
-        // `resample_stroke` que le worker (`PaintStroke`) : le transitoire
-        // montre les mêmes courbes que le commit. Seule différence
-        // structurelle : le Chaikin global élimine les points intérieurs
-        // (coins coupés) tandis que le découpage par paquets ancre chaque
-        // jonction (disque tamponné au point brut). L'écart est donc borné
-        // aux disques (rayon du pinceau) autour des points intérieurs —
-        // invisible, et remplacé par le commit exact au `MouseUp`.
+        // §5: overlay (transient) + permanent commit == reference,
+        // modulo the packet junction. Both go through the SAME
+        // `resample_stroke` as the worker (`PaintStroke`): the transient
+        // shows the same curves as the commit. Only structural difference:
+        // global Chaikin drops interior points (cut corners) while packet
+        // splitting anchors each junction (disc stamped at the raw point).
+        // The gap is therefore bounded by the discs (brush radius) around
+        // interior points — invisible, and replaced by the exact commit
+        // at `MouseUp`.
         use crate::paint::resample_stroke;
         for (brush, w, h) in [
             (brush_paint(), 64u32, 64u32),
@@ -631,8 +631,8 @@ mod tests {
         ] {
             let points: Vec<(f32, f32)> =
                 vec![(10.0, 10.0), (30.0, 25.0), (50.0, 10.0), (55.0, 40.0)];
-            // Référence : commit direct sur fond opaque (resample inclus,
-            // comme le bras `PaintStroke` du worker).
+            // Reference: direct commit on opaque background (resample included,
+            // like the worker's `PaintStroke` arm).
             let mut base = vec![0u8; w as usize * h as usize * 4];
             for px in base.chunks_exact_mut(4) {
                 px[0] = 200;
@@ -643,14 +643,14 @@ mod tests {
             let mut reference = base.clone();
             let smooth = resample_stroke(&points, brush.radius.max(2.0));
             paint_stroke_rgba(&mut reference, w, h, &smooth, &brush);
-            // Overlay morcelé (2 appels, jonction en `points[1]`).
+            // Fragmented overlay (2 calls, junction at `points[1]`).
             let mut overlay = InteractionOverlay::new();
             overlay.begin_stroke(brush);
             overlay.add_points(&points[0..2]);
             overlay.add_points(&points[2..4]);
             let frame = overlay.render().expect("frame");
-            // Recomposite overlay sur la base (même opération que l'affichage
-            // transitoire) et compare à la référence.
+            // Recomposite overlay over the base (same op as transient display)
+            // and compare to the reference.
             let mut shown = base.clone();
             blit_over(&mut shown, w, &frame);
             let mut ndiff = 0usize;
@@ -683,8 +683,8 @@ mod tests {
 
     #[test]
     fn cancel_ne_touche_rien() {
-        // §15 : cancel ⇒ overlay vide, aucune autre trace (le document n'est
-        // jamais touché par construction — ici : état interne réarmé).
+        // §15: cancel ⇒ empty overlay, no other trace (the document is never
+        // touched by construction — here: rearmed internal state).
         let mut overlay = InteractionOverlay::new();
         overlay.begin_stroke(brush_paint());
         overlay.add_points(&[(10.0, 10.0), (40.0, 40.0)]);
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn generation_rejette_perime() {
-        // §14 : complétion A arrivée après B ⇒ A jetée.
+        // §14: completion A arriving after B ⇒ A discarded.
         let mut overlay = InteractionOverlay::new();
         let generation_a = overlay.begin_stroke(brush_paint());
         overlay.add_points(&[(5.0, 5.0)]);
@@ -713,14 +713,14 @@ mod tests {
         let generation_b = overlay.begin_stroke(brush_paint());
         assert_ne!(generation_a, generation_b);
         assert!(!overlay.is_current(frame_a.generation), "A périmée après B");
-        // Nouvelle session repart vide (pas de résidu).
+        // New session restarts empty (no residue).
         assert!(overlay.is_empty());
     }
 
     #[test]
     fn gate_display_transforms() {
-        // §11 : identité/translation/échelle OK ; rotation/skew refusés côté
-        // présentation (moteur exact quand même).
+        // §11: identity/translation/scale OK; rotation/skew refused
+        // presentation-side (engine exact anyway).
         use crate::document::Transform2D;
         assert!(overlay_displayable(&Transform2D::default()));
         assert!(overlay_displayable(&Transform2D {
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn placement_ecran_suit_preview() {
-        // L'overlay suit la même échelle que le preview, ancré au coin.
+        // The overlay follows the same scale as the preview, anchored at the corner.
         assert_eq!(
             overlay_screen_rect(100.0, 50.0, 2.0, 10, 20, 30, 40),
             (120.0, 90.0, 60.0, 80.0)
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn points_degeneres_coalesces() {
-        // §8/§13 : points dupliqués et non finis comptés, sans effet.
+        // §8/§13: duplicated and non-finite points counted, no effect.
         let mut overlay = InteractionOverlay::new();
         overlay.begin_stroke(brush_paint());
         overlay.add_points(&[(10.0, 10.0), (10.0, 10.0), (f32::NAN, 0.0), (20.0, 20.0)]);
@@ -770,7 +770,7 @@ mod tests {
         assert_eq!(m.points_received, 4);
         assert_eq!(m.points_coalesced, 2, "doublon + NaN");
         assert!(!overlay.is_empty());
-        // Pinceau invalide : no-op total.
+        // Invalid brush: total no-op.
         let mut bad = InteractionOverlay::new();
         bad.begin_stroke(BrushParams {
             radius: 0.0,
@@ -784,9 +784,9 @@ mod tests {
 
     #[test]
     fn frame_geom_reexpose_sans_recloner() {
-        // Support du redraw persistant côté app : la géométrie reste
-        // disponible après `render()` (qui a consommé le dirty) sans
-        // toucher aux pixels, et disparaît au `clear()`.
+        // Persistent-redraw support app-side: geometry stays available after
+        // `render()` (which consumed the dirty) without touching pixels, and
+        // disappears at `clear()`.
         let mut overlay = InteractionOverlay::new();
         assert!(overlay.frame_geom().is_none());
         overlay.begin_stroke(brush_paint());
@@ -805,8 +805,8 @@ mod tests {
 
     #[test]
     fn region_bornee_au_trait_grands_documents() {
-        // 1920x1080, 2048², 4096² : un PETIT trait reste petit — la
-        // région overlay est en O(stroke), jamais en O(document).
+        // 1920x1080, 2048², 4096²: a SMALL stroke stays small — the overlay
+        // region is O(stroke), never O(document).
         for (doc_w, doc_h) in [(1920.0, 1080.0), (2048.0, 2048.0), (4096.0, 4096.0)] {
             let points = ligne(100.0, 100.0, 300.0, 250.0, 16);
             let mut overlay = InteractionOverlay::new();
@@ -832,16 +832,16 @@ mod tests {
                 frame.x >= 0 && frame.y >= 0,
                 "région dans l'espace document {doc_w}x{doc_h}"
             );
-            // Mémoire bornée : masque + image de la région seule.
+            // Bounded memory: region-only mask + image.
             assert_eq!(
                 frame.rgba.len(),
                 frame.width as usize * frame.height as usize * 4
             );
         }
     }
-    /// Mesure un geste : `add_points` incrémental (par paquets de 8, comme
-    /// un drag) + `render()` final. Retourne le mur total (µs) et la taille
-    /// de la région overlay. JAMAIS d'assert sur le mur (matériel variable).
+    /// Measures a gesture: incremental `add_points` (8-point packets, like
+    /// a drag) + final `render()`. Returns total wall time (µs) and the
+    /// overlay region size. NEVER assert on wall time (hardware varies).
     fn mesure_geste(points: &[(f32, f32)], radius: f32) -> (u128, u32, u32) {
         use std::time::Instant;
         let mut overlay = InteractionOverlay::new();
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     #[ignore = "mesure interactive (mur indicatif, rapport 6G.3P §13)"]
     fn perf_geste_court_1920() {
-        // Petit pinceau, diagonale 1920x1080 : le cas courant.
+        // Small brush, 1920x1080 diagonal: the common case.
         let points = ligne(100.0, 100.0, 1800.0, 950.0, 64);
         let (us, w, h) = mesure_geste(&points, 8.0);
         eprintln!("geste-court-1920 : {us} µs pour 64 pts r=8 (région {w}x{h})");
@@ -880,7 +880,7 @@ mod tests {
     #[test]
     #[ignore = "mesure interactive (mur indicatif, rapport 6G.3P §13)"]
     fn perf_geste_long_gros_pinceau() {
-        // Gros pinceau, traversée 2048² : borne haute de la région.
+        // Big brush, 2048² crossing: region upper bound.
         let points = ligne(0.0, 0.0, 2048.0, 2048.0, 512);
         let (us, w, h) = mesure_geste(&points, 64.0);
         eprintln!("geste-long-2048 : {us} µs pour 512 pts r=64 (région {w}x{h})");
@@ -889,9 +889,9 @@ mod tests {
     #[test]
     #[ignore = "mesure interactive (mur indicatif, rapport 6G.3P §13)"]
     fn perf_frame_drag_courant() {
-        // Vrai régime interactif : 8 pts + render PAR FRAME (10 frames),
-        // mur moyen comparé au budget 16 ms. L'overlay est préchauffé
-        // (région déjà allouée — comme en milieu de geste réel).
+        // True interactive regime: 8 pts + render PER FRAME (10 frames), average
+        // wall vs the 16 ms budget. The overlay is pre-warmed (region already
+        // allocated — like mid-gesture).
         use std::time::Instant;
         let mut overlay = InteractionOverlay::new();
         overlay.begin_stroke(BrushParams {
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     #[ignore = "mesure interactive (mur indicatif, rapport 6G.3P §13)"]
     fn perf_geste_coords_4096() {
-        // Coordonnées espace 4096² (placement exact à l'échelle, §10).
+        // 4096² space coordinates (exact scaled placement, §10).
         let points = ligne(10.0, 10.0, 4086.0, 4086.0, 256);
         let (us, w, h) = mesure_geste(&points, 12.0);
         let mut overlay = InteractionOverlay::new();
@@ -932,8 +932,8 @@ mod tests {
 
     #[test]
     fn gomme_voile_indicatif() {
-        // Erase : voile blanc sur la couverture (indicateur, commit exact par
-        // ailleurs) — jamais de pixel noir inventé.
+        // Erase: white veil over the coverage (indicator, exact commit
+        // elsewhere) — never an invented black pixel.
         let mut overlay = InteractionOverlay::new();
         overlay.begin_stroke(BrushParams {
             radius: 4.0,

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Overlays photo : cadre du document + curseur du pinceau
-//! par-dessus le viewport générique.
+//! Photo overlays: document frame + brush cursor
+//! over the generic viewport.
 //!
-//! Couche de composition : la géométrie vient de l'état UI (rectangle
-//! écran du document), le dessin des helpers agnostiques
-//! ([`draw_crosshair`](ui_kit::viewport::draw_crosshair)), le style du
-//! thème (aucune couleur ni taille en dur).
+//! Composition layer: geometry comes from UI state (document
+//! screen rect), drawing from agnostic helpers
+//! ([`draw_crosshair`](ui_kit::viewport::draw_crosshair)), styling from
+//! the theme (no hardcoded color or size).
 
 use crate::commands::PhotoUiContext;
 use ui_kit::viewport::draw_crosshair;
 
-/// Délimitation du document : cadre accentué autour du rectangle
-/// écran du DOCUMENT (`None` = pas d'image, rien à dessiner), avec
-/// ses dimensions en haut à gauche (`label`, ex. `"800 x 600"`).
+/// Document boundary: accented frame around the DOCUMENT's
+/// screen rect (`None` = no image, nothing to draw), with
+/// its dimensions at top left (`label`, e.g. `"800 x 600"`).
 pub fn draw_document_bounds(
     painter: &egui::Painter,
     ctx: &PhotoUiContext,
@@ -55,11 +55,11 @@ pub fn draw_document_bounds(
     }
 }
 
-/// Curseur du pinceau/gomme : cercle au diamètre du pinceau + point
-/// central (rendu `epaint` via le `Painter` egui — aucune dépendance
-/// supplémentaire requise). `radius_image` en pixels image, converti
-/// en pixels écran via `scale` (écran/image). Rien si hors image,
-/// rayon invalide ou curseur inconnu.
+/// Brush/eraser cursor: circle at the brush diameter + central
+/// dot (`epaint` rendering via the egui `Painter` — no extra
+/// dependency required). `radius_image` in image pixels, converted
+/// to screen pixels via `scale` (screen/image). Nothing when off-image,
+/// invalid radius, or unknown cursor.
 pub fn draw_brush_cursor(
     painter: &egui::Painter,
     ctx: &PhotoUiContext,
@@ -105,11 +105,11 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| {
                 let dest =
                     egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(200.0, 150.0));
-                // Bornes : avec et sans image, avec et sans libellé.
+                // Bounds: with and without image, with and without label.
                 draw_document_bounds(ui.painter(), &photo_ctx, Some(dest), Some("800 x 600"));
                 draw_document_bounds(ui.painter(), &photo_ctx, Some(dest), None);
                 draw_document_bounds(ui.painter(), &photo_ctx, None, None);
-                // Curseur : dedans, dehors, invalides — jamais de panic.
+                // Cursor: inside, outside, invalid — never a panic.
                 draw_brush_cursor(
                     ui.painter(),
                     &photo_ctx,

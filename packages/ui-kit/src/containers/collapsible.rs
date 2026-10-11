@@ -14,18 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Section repliable standard Cygnus.
+//! Standard Cygnus collapsible section.
 //!
-//! En-tête cliquable (chevron peint, sans glyphe) + contenu indenté.
-//! L'état ouvert/fermé est détenu par l'app via `&mut bool`, ce qui
-//! rend la bascule testable sans contexte UI.
+//! Clickable header (painted chevron, no glyph) + indented content.
+//! The open/closed state is owned by the app via `&mut bool`, which
+//! makes toggling testable without a UI context.
 
 use crate::theme::UiThemeExt;
 use crate::theme::typography::heading_text;
 
-/// Section repliable standard Cygnus.
+/// Standard Cygnus collapsible section.
 ///
-/// # Exemple
+/// # Example
 /// ```rust
 /// # use ui_kit::containers::Collapsible;
 /// # egui::__run_test_ui(|ui| {
@@ -41,13 +41,13 @@ pub struct Collapsible<'a> {
 }
 
 impl<'a> Collapsible<'a> {
-    /// Crée une section repliable avec le titre donné.
+    /// Creates a collapsible section with the given title.
     pub fn new(title: &'a str) -> Self {
         Self { title }
     }
 
-    /// Dessine le chevron d'ouverture (peint, sans glyphe).
-    /// Chevron ">" fermé, "v" ouvert.
+    /// Draws the disclosure chevron (painted, no glyph).
+    /// Chevron ">" closed, "v" open.
     fn paint_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool) {
         let theme = ui.cygnus_theme();
         let stroke = egui::Stroke::new(1.5, theme.colors.fg_secondary);
@@ -86,8 +86,8 @@ impl<'a> Collapsible<'a> {
         }
     }
 
-    /// Affiche l'en-tête puis, si ouvert, le contenu indenté.
-    /// Retourne la réponse de l'en-tête et, si ouvert, celle du corps.
+    /// Displays the header then, when open, the indented content.
+    /// Returns the header's response and, when open, the body's.
     pub fn show<R>(
         self,
         ui: &mut egui::Ui,
@@ -121,7 +121,7 @@ mod tests {
     fn collapsible_toggle() {
         let ctx = egui::Context::default();
 
-        // Fermé : le corps n'est pas affiché.
+        // Closed: the body is not displayed.
         let mut open = false;
         let mut body_shown = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -133,7 +133,7 @@ mod tests {
         assert!(!open);
         assert!(!body_shown);
 
-        // Ouvert : le corps est affiché.
+        // Open: the body is displayed.
         open = true;
         body_shown = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {

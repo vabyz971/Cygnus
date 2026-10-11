@@ -54,10 +54,10 @@ impl SocketType {
     pub fn color(self) -> [f32; 3] {
         match self {
             SocketType::Image => [0.65, 0.45, 0.95],  // violet
-            SocketType::Float => [0.55, 0.55, 0.55],  // gris
-            SocketType::Color => [0.95, 0.85, 0.25],  // jaune
-            SocketType::Vector => [0.30, 0.60, 0.95], // bleu
-            SocketType::Bool => [0.85, 0.35, 0.35],   // rouge
+            SocketType::Float => [0.55, 0.55, 0.55],  // gray
+            SocketType::Color => [0.95, 0.85, 0.25],  // yellow
+            SocketType::Vector => [0.30, 0.60, 0.95], // blue
+            SocketType::Bool => [0.85, 0.35, 0.35],   // red
         }
     }
 
@@ -292,22 +292,22 @@ impl Vec2 {
 // this one is for continuous design-space geometry.
 // ---------------------------------------------------------------------------
 
-/// Rectangle 2D en espace continu (`x0 <= x1`, `y0 <= y1` attendus ;
-/// vide ssi `x1 <= x0 || y1 <= y0`).
+/// 2D rectangle in continuous space (`x0 <= x1`, `y0 <= y1` expected;
+/// empty iff `x1 <= x0 || y1 <= y0`).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
-    /// Bord gauche.
+    /// Left edge.
     pub x0: f32,
-    /// Bord haut.
+    /// Top edge.
     pub y0: f32,
-    /// Bord droit.
+    /// Right edge.
     pub x1: f32,
-    /// Bord bas.
+    /// Bottom edge.
     pub y1: f32,
 }
 
 impl Rect {
-    /// Rectangle vide (aucune surface).
+    /// Empty rectangle (no area).
     pub const EMPTY: Self = Self {
         x0: 0.0,
         y0: 0.0,
@@ -315,13 +315,13 @@ impl Rect {
         y1: 0.0,
     };
 
-    /// Nouveau rectangle par bornes.
+    /// New rectangle from bounds.
     #[must_use]
     pub fn new(x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
         Self { x0, y0, x1, y1 }
     }
 
-    /// Nouveau rectangle par origine + dimensions.
+    /// New rectangle from origin + dimensions.
     #[must_use]
     pub fn from_xywh(x: f32, y: f32, w: f32, h: f32) -> Self {
         Self {
@@ -332,31 +332,31 @@ impl Rect {
         }
     }
 
-    /// Vrai si sans surface.
+    /// True if it has no area.
     #[must_use]
     pub fn is_empty(self) -> bool {
         !(self.x1 > self.x0 && self.y1 > self.y0)
     }
 
-    /// Vrai si toutes les composantes sont finies.
+    /// True if all components are finite.
     #[must_use]
     pub fn is_finite(self) -> bool {
         self.x0.is_finite() && self.y0.is_finite() && self.x1.is_finite() && self.y1.is_finite()
     }
 
-    /// Largeur (0 si vide).
+    /// Width (0 if empty).
     #[must_use]
     pub fn width(self) -> f32 {
         (self.x1 - self.x0).max(0.0)
     }
 
-    /// Hauteur (0 si vide).
+    /// Height (0 if empty).
     #[must_use]
     pub fn height(self) -> f32 {
         (self.y1 - self.y0).max(0.0)
     }
 
-    /// Aire (0 si vide ou non fini).
+    /// Area (0 if empty or non-finite).
     #[must_use]
     pub fn area(self) -> f32 {
         if !self.is_finite() {
@@ -365,13 +365,13 @@ impl Rect {
         self.width() * self.height()
     }
 
-    /// Vrai si le point est couvert (bornes min inclusives, max exclusives).
+    /// True if the point is covered (min bounds inclusive, max exclusive).
     #[must_use]
     pub fn contains(self, x: f32, y: f32) -> bool {
         !self.is_empty() && x >= self.x0 && y >= self.y0 && x < self.x1 && y < self.y1
     }
 
-    /// Englobant — vide + r = r.
+    /// Bounding union — empty + r = r.
     #[must_use]
     pub fn union(self, other: Self) -> Self {
         if self.is_empty() {
@@ -388,7 +388,7 @@ impl Rect {
         }
     }
 
-    /// Intersection — vide si disjoints.
+    /// Intersection — empty if disjoint.
     #[must_use]
     pub fn intersect(self, other: Self) -> Self {
         let rect = Self {
@@ -400,7 +400,7 @@ impl Rect {
         if rect.is_empty() { Self::EMPTY } else { rect }
     }
 
-    /// Élargit de `d` dans chaque direction (négatif = rétrécit).
+    /// Expands by `d` in each direction (negative = shrinks).
     #[must_use]
     pub fn expanded(self, d: f32) -> Self {
         if self.is_empty() {
@@ -421,12 +421,12 @@ impl Rect {
 // re-exported by `photo-engine` for compatibility.
 // ---------------------------------------------------------------------------
 
-/// Mode de fusion raster.
+/// Raster blend mode.
 ///
-/// La représentation sérialisée est le nom de la variante (« Normal »,
-/// « Multiply »…) — identique aux libellés historiques de l'app photo.
-/// Les ids numériques alimentent les shaders des backends (toute
-/// renumérotation casserait les caches et les projets).
+/// The serialized representation is the variant name ("Normal",
+/// "Multiply"…) — identical to the photo app's historical labels.
+/// Numeric ids feed the backends' shaders (any
+/// renumbering would break caches and projects).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum BlendMode {
     Normal,
@@ -444,7 +444,7 @@ impl std::fmt::Display for BlendMode {
 }
 
 impl BlendMode {
-    /// Ordre d'affichage dans les UI (listes déroulantes).
+    /// Display order in UIs (drop-down lists).
     pub const ALL: [BlendMode; 6] = [
         BlendMode::Normal,
         BlendMode::Multiply,
@@ -467,7 +467,7 @@ impl BlendMode {
         }
     }
 
-    /// Identifiant numérique (shaders + CPU). Ne pas renuméroter.
+    /// Numeric identifier (shaders + CPU). Do not renumber.
     #[must_use]
     pub fn id(self) -> u32 {
         match self {
@@ -481,15 +481,15 @@ impl BlendMode {
     }
 }
 
-/// Tampon RGBA8 partageable SANS copie (les apps en dérivent leurs
-/// textures via l'`Arc`).
+/// Shareable RGBA8 buffer with NO copy (apps derive their
+/// textures from it via the `Arc`).
 #[derive(Clone)]
 pub struct RgbaBuf {
-    /// Largeur en pixels.
+    /// Width in pixels.
     pub width: u32,
-    /// Hauteur en pixels.
+    /// Height in pixels.
     pub height: u32,
-    /// Pixels RGBA8 ligne par ligne, partagés.
+    /// Shared row-major RGBA8 pixels.
     pub data: Arc<[u8]>,
 }
 

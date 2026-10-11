@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,39 +14,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Panneau Historique : liste des pas undo/redo + état actuel.
+//! History panel: undo/redo step list + current state.
 //!
-//! `HistoryPanel` ne sait pas où il est affiché : le workspace
-//! (`crate::layout`, onglet dock titré « Historique ») décide du
-//! placement. Aucun envoi worker : tout remonte en
-//! [`HistoryPanelAction`]. Les libellés viennent du worker
-//! (`undo_labels`/`redo_labels` du snapshot) ; l'état actuel et le
-//! vide utilisent [`PhotoCatalog`](crate::i18n::PhotoCatalog).
+//! `HistoryPanel` does not know where it is displayed: the workspace
+//! (`crate::layout`, "History" dock tab) decides placement.
+//! No worker send: everything bubbles as
+//! [`HistoryPanelAction`]. Labels come from the worker
+//! (snapshot `undo_labels`/`redo_labels`); the current state and the
+//! empty state use [`PhotoCatalog`](crate::i18n::PhotoCatalog).
 
 use crate::commands::PhotoUiContext;
 use crate::i18n::{PhotoCatalog, PhotoTextKey};
 
-/// Action du panneau Historique (saut d'état, routée par `PhotoApp`
-/// vers le worker après conversion).
+/// History panel action (state jump, routed by `PhotoApp`
+/// to the worker after conversion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryPanelAction {
-    /// Reculer de `steps` pas (saut vers un état annulable).
+    /// Step back `steps` steps (jump to an undoable state).
     Back(u32),
-    /// Avancer de `steps` pas (saut vers un état rétablissable).
+    /// Step forward `steps` steps (jump to a redoable state).
     Forward(u32),
 }
 
-/// Panneau Historique (contenu de l'onglet, sans chrome).
+/// History panel (tab content, no chrome).
 pub struct HistoryPanel;
 
 impl HistoryPanel {
-    /// Dessine la liste et retourne les sauts demandés (au plus un
-    /// par frame : un seul clic possible).
+    /// Draws the list and returns the requested jumps (at most one
+    /// per frame: a single click possible).
     ///
-    /// Rangées undo (plus ancien d'abord, numérotées) puis rangées
-    /// redo (prochain en tête). La tête (dernier pas appliqué = état
-    /// actuel) porte le fond de sélection, non cliquable : pas de
-    /// rangée « état actuel » séparée. Défilement vertical.
+    /// Undo rows (oldest first, numbered) then redo
+    /// rows (next one first). The head (last applied step = current
+    /// state) carries the selection background, non-clickable: no
+    /// separate "current state" row. Vertical scrolling.
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
@@ -62,9 +62,9 @@ impl HistoryPanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut actions = Vec::new();
-                // État d'ouverture : tout annuler (inaccessible
-                // autrement : les rangées undo ne remontent qu'à
-                // leur propre tête).
+                // Opening state: undo everything (unreachable
+                // otherwise: undo rows only go back to
+                // their own head).
                 if !undo.is_empty()
                     && ui
                         .selectable_label(false, texts.get(PhotoTextKey::HistoryInitial))
@@ -75,8 +75,8 @@ impl HistoryPanel {
                 for (index, label) in undo.iter().enumerate() {
                     let row = format!("{}. {label}", index + 1);
                     if index + 1 == undo.len() {
-                        // Tête = état actuel : fond de sélection,
-                        // volontairement non cliquable.
+                        // Head = current state: selection background,
+                        // deliberately non-clickable.
                         let _ = ui.selectable_label(true, row);
                     } else if ui.selectable_label(false, row).clicked() {
                         actions.push(HistoryPanelAction::Back(back_steps_for_undo_click(
@@ -98,17 +98,17 @@ impl HistoryPanel {
     }
 }
 
-/// Pas en arrière pour un clic sur la rangée undo `clicked`
-/// (0 = plus ancien) parmi `undo_len` : la rangée cliquée devient la
-/// tête (tout ce qui suit est annulé), soit `undo_len - 1 - clicked.
-/// Cliquer le plus ancien = tout annuler.
+/// Steps back for a click on undo row `clicked`
+/// (0 = oldest) among `undo_len`: the clicked row becomes the
+/// head (everything after is undone), i.e. `undo_len - 1 - clicked.
+/// Clicking the oldest = undo everything.
 #[must_use]
 pub fn back_steps_for_undo_click(undo_len: usize, clicked: usize) -> u32 {
     undo_len.saturating_sub(clicked.saturating_add(1)).max(1) as u32
 }
 
-/// Pas en avant pour un clic sur la rangée redo `from_top` (0 =
-/// tête = prochain redo) : `from_top + 1`.
+/// Steps forward for a click on redo row `from_top` (0 =
+/// head = next redo): `from_top + 1`.
 #[must_use]
 pub fn forward_steps_for_redo_click(from_top: usize) -> u32 {
     u32::try_from(from_top.saturating_add(1)).unwrap_or(u32::MAX)
@@ -120,11 +120,11 @@ mod tests {
 
     #[test]
     fn clic_undo_rend_la_rangee_cliquee_tete() {
-        // 3 pas [A, B, C] : clic B (index 1) = annuler C seul, B en tête.
+        // 3 steps [A, B, C]: click B (index 1) = undo C alone, B at head.
         assert_eq!(back_steps_for_undo_click(3, 1), 1);
-        // Clic A (le plus ancien) = annuler B + C, A en tête.
+        // Click A (the oldest) = undo B + C, A at head.
         assert_eq!(back_steps_for_undo_click(3, 0), 2);
-        // Tête non cliquable en UI ; garde-fou : jamais zéro.
+        // Head non-clickable in UI; guard: never zero.
         assert_eq!(back_steps_for_undo_click(3, 2), 1);
         assert_eq!(back_steps_for_undo_click(1, 5), 1);
     }

@@ -14,16 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Crate partagé `preferences` — modèle de préférences persistant,
-//! détection matérielle et résolveur de raccourcis clavier.
+//! Shared `preferences` crate — persistent preferences model,
+//! hardware detection and keyboard-shortcut resolver.
 //!
-//! Utilisable par les trois apps de la suite :
-//! - [`model`] : [`Preferences`] sérialisable (JSON dans le dossier config),
-//!   sections Général / Rendu / Raccourcis ;
-//! - [`hardware`] : rapport CPU / RAM / GPU via wgpu (adaptateurs réels) ;
-//! - [`keybindings`] : parsing « Ctrl+Shift+S » et résolution
-//!   générique d'événements clavier vers identifiants d'action
-//!   (les enums d'actions vivent côté apps, ex. `PhotoShortcut`).
+//! Usable by the suite's three apps:
+//! - [`model`]: serializable [`Preferences`] (JSON in the config folder),
+//!   General / Render / Shortcuts sections;
+//! - [`hardware`]: CPU / RAM / GPU report via wgpu (real adapters);
+//! - [`keybindings`]: "Ctrl+Shift+S" parsing and generic
+//!   resolution of keyboard events to action ids
+//!   (action enums live on the apps' side, e.g. `PhotoShortcut`).
 
 pub mod hardware;
 pub mod keybindings;

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Conversion des actions de l'inspecteur en [`PhotoAction`].
+//! Converting inspector actions into [`PhotoAction`].
 
 use super::panel::InspectorAction;
 use crate::commands::PhotoAction;
 
-/// Convertit une action de l'inspecteur en action app.
+/// Converts an inspector action into an app action.
 pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
     match action {
         InspectorAction::ToggleAttachment {

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Barre haute : menus + modes/outils (toute la largeur).
+//! Top bar: menus + modes/tools (full width).
 //!
-//! Contenus délégués aux widgets métier (`menubar`, `modebar`) ; ici
-//! on ne fait que placer les `egui::Panel` et convertir les actions
-//! widget en [`PhotoAction`](crate::commands::PhotoAction).
+//! Contents delegated to the domain widgets (`menubar`, `modebar`); here
+//! we only place the `egui::Panel`s and convert the widget
+//! actions into [`PhotoAction`](crate::commands::PhotoAction).
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
@@ -27,7 +27,7 @@ use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
 };
 
-/// Convertit une action de menu en action app.
+/// Converts a menu action into an app action.
 fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
     match action {
         PhotoMenuAction::NewDocument => PhotoAction::OpenNewDocumentDialog,
@@ -60,7 +60,7 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
     }
 }
 
-/// Rangée 1 : barre de menus (Fichier, Édition, Calque…).
+/// Row 1: menu bar (File, Edit, Layer…).
 pub fn show_menu_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
@@ -94,8 +94,8 @@ pub fn show_menu_bar(
     actions
 }
 
-/// Rangée 2 : modes d'édition + paramètres de l'outil.
-/// Absente sans document ouvert.
+/// Row 2: edit modes + tool settings.
+/// Absent with no open document.
 pub fn show_mode_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
@@ -119,7 +119,7 @@ pub fn show_mode_bar(
                 ctx.shared.theme(),
                 texts,
             );
-            // Outil incompatible avec le nouveau mode : rebascule.
+            // Tool incompatible with the new mode: switch back.
             if let Some(mode) = chosen
                 && !mode.supports(doc.ui.tool)
             {

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,36 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Barre des modes et paramètres d'outils PHOTO (2e rangée haute,
-//! toute la largeur, widget métier).
+//! PHOTO mode and tool-settings bar (2nd top row,
+//! full width, domain widget).
 //!
-//! Rangée 1 : grands boutons de changement de mode (Vector, Pixel,
-//! Layout) puis séparateur. Rangée 2 : nom et paramètres de l'outil
-//! sélectionné (délégué à `super::optionsbar`). Le mode restreint les
-//! outils du rail (les outils de peinture vivent en Pixel ; Vector et
-//! Layout exposent déplacement, main et loupe en attendant leurs
-//! outils propres) : basculer de mode rebascule sur Déplacement si
-//! l'outil courant n'y existe pas.
+//! Row 1: large mode-switch buttons (Vector, Pixel,
+//! Layout) then a separator. Row 2: name and settings of the
+//! selected tool (delegated to `super::optionsbar`). The mode restricts
+//! the rail tools (paint tools live in Pixel; Vector and
+//! Layout expose move, hand, and zoom until their
+//! own tools land): switching modes falls back to Move when
+//! the current tool does not exist there.
 
 use super::optionsbar::draw_tool_options;
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use ui_kit::components::{Button, ButtonVariant};
 use ui_kit::theme::CygnusTheme;
 
-/// Mode d'édition du document (façon personas).
+/// Document edit mode (persona-style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PhotoEditMode {
-    /// Tracés vectoriels (déplacement, main, loupe pour l'instant).
+    /// Vector paths (move, hand, zoom for now).
     Vector,
-    /// Retouche pixels (tous les outils).
+    /// Pixel retouch (all tools).
     #[default]
     Pixel,
-    /// Mise en page (déplacement, main, loupe pour l'instant).
+    /// Page layout (move, hand, zoom for now).
     Layout,
 }
 
 impl PhotoEditMode {
-    /// Libellé du mode (ASCII).
+    /// Mode label (ASCII).
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -53,10 +53,10 @@ impl PhotoEditMode {
         }
     }
 
-    /// Tous les modes, pour l'affichage et les tests.
+    /// Every mode, for display and tests.
     pub const ALL: &[Self] = &[Self::Vector, Self::Pixel, Self::Layout];
 
-    /// Outils disponibles dans ce mode.
+    /// Tools available in this mode.
     #[must_use]
     pub fn tools(self) -> &'static [PhotoCanvasTool] {
         match self {
@@ -76,16 +76,16 @@ impl PhotoEditMode {
         }
     }
 
-    /// Vrai si l'outil est disponible dans ce mode.
+    /// True when the tool is available in this mode.
     #[must_use]
     pub fn supports(self, tool: PhotoCanvasTool) -> bool {
         self.tools().contains(&tool)
     }
 }
 
-/// Dessine la barre 2 rangées (modes puis paramètres de l'outil).
-/// Retourne le mode éventuellement choisi (l'app rebascule l'outil
-/// si besoin via [`PhotoEditMode::supports`]).
+/// Draws the 2-row bar (modes then tool settings).
+/// Returns the newly chosen mode, if any (the app falls the tool
+/// back when needed via [`PhotoEditMode::supports`]).
 pub fn draw_photo_modebar(
     ui: &mut egui::Ui,
     mode: &mut PhotoEditMode,
@@ -96,7 +96,7 @@ pub fn draw_photo_modebar(
     texts: crate::i18n::PhotoCatalog,
 ) -> Option<PhotoEditMode> {
     let mut chosen = None;
-    // Rangée 1 : grands boutons de mode
+    // Row 1: large mode buttons
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             for candidate in PhotoEditMode::ALL {
@@ -117,7 +117,7 @@ pub fn draw_photo_modebar(
         });
     });
     ui.separator();
-    // Rangée 2 : nom et paramètres de l'outil sélectionné.
+    // Row 2: selected tool name and settings.
     ui.horizontal(|ui| {
         draw_tool_options(ui, tool, brush, show_grid, theme, texts);
     });

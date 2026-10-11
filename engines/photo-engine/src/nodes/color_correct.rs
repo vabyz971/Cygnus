@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Effet Correction Couleur (saturation HSL simplifiée)
+//! Color Correction effect (simplified HSL saturation)
 
 use super::{Effect, NodeCtx, to_rgba8};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};

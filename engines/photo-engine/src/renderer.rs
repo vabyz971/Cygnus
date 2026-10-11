@@ -14,29 +14,29 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Rendu des apparences par calque avec CACHE CIBLÉ.
+//! Per-layer appearance rendering with a TARGETED CACHE.
 //!
-//! [`Renderer`] est l'orchestrateur unique du calcul d'apparence
-//! (source × live filters). Pour chaque calque :
+//! [`Renderer`] is the single orchestrator of appearance computation
+//! (source × live filters). Per layer:
 //!
-//! 1. clé de validité = (identité du calque, SIGNATURE ordonnée de sa
-//!    chaîne de filtres, identité physique de la source) ;
-//! 2. HIT → l'apparence mise en cache est retournée telle quelle :
-//!    ZÉRO recalcul, zéro dispatch compute, zéro allocation pixel ;
-//! 3. MISS → la chaîne est exécutée via [`crate::filters::render_chain`],
-//!    qui route chaque effet vers les COMPUTE SHADERS de [`crate::gpu`]
-//!    quand un adaptateur est disponible (fallback CPU rayon sinon),
-//!    puis le résultat (image pleine résolution + preview + miniature)
-//!    est inséré dans le cache.
+//! 1. validity key = (layer identity, ORDERED signature of its filter
+//!    chain, physical source identity);
+//! 2. HIT → the cached appearance is returned as is: ZERO recompute,
+//!    zero compute dispatch, zero pixel allocation;
+//! 3. MISS → the chain runs via [`crate::filters::render_chain`], which
+//!    routes each effect to [`crate::gpu`] COMPUTE SHADERS when an adapter
+//!    is available (rayon CPU fallback otherwise), then the result
+//!    (full-resolution image + preview + thumbnail) is inserted
+//!    into the cache.
 //!
-//! L'identité de la source est validée par comparaison de pointeurs Arc
-//! (avec keep-alive dans l'entrée pour empêcher toute réutilisation
-//! d'adresse — même défense ABA que le cache de textures UI).
+//! Source identity is validated by Arc pointer comparison (with entry
+//! keep-alive to prevent any address reuse — same ABA defense as the UI
+//! texture cache).
 //!
-//! Les compteurs [`Renderer::hits`]/[`Renderer::misses`] rendent le
-//! comportement observable : éditer le calque N ne doit provoquer qu'un
-//! MISS sur N, jamais sur ses voisins — c'est la promesse « cache GPU
-//! ciblé » du LayerTree.
+//! The [`Renderer::hits`]/[`Renderer::misses`] counters make the
+//! behavior observable: editing layer N must cause a single MISS on N,
+//! never on its neighbors — the LayerTree "targeted GPU cache"
+//! promise.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -46,34 +46,34 @@ use uuid::Uuid;
 
 use crate::document::{Appearance, Document, FilterLayer, LayerMask, PixelLayer, RgbaBuf};
 
-/// Entrée de cache pré-calculée HORS thread UI, transférable vers le
-/// document vivant.
+/// Cache entry pre-computed OFF the UI thread, transferable to the
+/// live document.
 ///
-/// Cas d'usage : l'activation/désactivation d'un filtre (shader) ou d'un
-/// masque change la signature → `appearance_hit` MISS → `appearance()`
-/// exécuterait `render_chain` + bake + preview/thumb EN PLEINE RÉSOLUTION
-/// sur le thread UI (freeze de plusieurs centaines de ms sur les grandes
-/// images). Au lieu de cela, l'app clone le document, applique le toggle
-/// sur le clone en `spawn_blocking`, exporte l'entrée chaude et l'insère
-/// dans le document vivant à la réception : `PreviewCache::sync()` HIT
-/// alors sans jamais toucher au pool depuis l'UI.
+/// Use case: toggling a filter (shader) or a mask changes the signature →
+/// `appearance_hit` MISS → `appearance()` would run `render_chain` + bake
+/// + preview/thumb at FULL RESOLUTION on the UI thread (multi-hundred-ms
+/// freeze on large images). Instead, the app clones the document, applies
+/// the toggle on the clone in `spawn_blocking`, exports the warm entry
+/// and inserts it into the live document on receipt:
+/// `PreviewCache::sync()` then HITs without ever touching the pool
+/// from the UI.
 ///
-/// Tous les champs sont des `Arc` (zéro copie pixel) : le transfert
-/// inter-threads est bon marché. `Send` requis pour `Task::perform`,
-/// `Debug` manuel (jamais de dump pixels dans les logs).
+/// All fields are `Arc`s (zero pixel copy): inter-thread transfer is
+/// cheap. `Send` required for `Task::perform`, manual `Debug` (never
+/// pixel dumps in logs).
 #[derive(Clone)]
 pub struct WarmedAppearance {
-    /// Signature ordonnée de la chaîne de filtres APRES toggle.
+    /// Ordered signature of the filter chain AFTER toggle.
     pub filter_signature: u64,
-    /// Source conservée vivante (validation par identité de pointeur).
+    /// Source kept alive (pointer-identity validation).
     pub source: Arc<DynamicImage>,
-    /// Image non masquée (chaîne de filtres seule).
+    /// Unmasked image (filter chain alone).
     pub unmasked: Arc<DynamicImage>,
-    /// Signature de la couverture de masques APRES toggle.
+    /// Mask-coverage signature AFTER toggle.
     pub mask_signature: u64,
-    /// Couverture combinée des masques actifs (`None` = aucun).
+    /// Combined coverage of active masks (`None` = none).
     pub mask_cover: Option<Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>>,
-    /// Apparence dérivée complète (image + preview + miniature).
+    /// Full derived appearance (image + preview + thumbnail).
     pub appearance: Appearance,
 }
 
@@ -93,82 +93,82 @@ impl std::fmt::Debug for WarmedAppearance {
     }
 }
 
-/// Entrée de cache : apparence dérivée + preuves de validité.
+/// Cache entry: derived appearance + validity proofs.
 ///
-/// L'image NON masquée (source × filtres) et la couverture de masques sont
-/// cacheées SÉPARÉMENT : peindre un masque ne ré-exécute jamais la chaîne
-/// de filtres, elle ne fait que recombiner la couverture avec l'image non
-/// masquée déjà chaude. La couverture séparée est aussi la donnée qu'un
-/// futur chemin shader échantillonnera directement au draw.
+/// The UNMASKED image (source × filters) and the mask coverage are cached
+/// SEPARATELY: painting a mask never re-runs the filter chain, it only
+/// recombines the coverage with the already-warm unmasked image. The
+/// separate coverage is also the data a future shader path will sample
+/// directly at draw time.
 struct CacheEntry {
-    /// Signature ordonnée de la chaîne de filtres au moment du calcul.
+    /// Ordered signature of the filter chain at compute time.
     filter_signature: u64,
-    /// Source conservée vivante : validation par identité de pointeur
-    /// (une peinture/remplacement produit un nouvel Arc → miss garanti).
+    /// Source kept alive: pointer-identity validation (a paint/replacement
+    /// yields a new Arc → guaranteed miss).
     source: Arc<DynamicImage>,
-    /// Image non masquée (chaîne de filtres seule), réutilisée quand seuls
-    /// les masques changent.
+    /// Unmasked image (filter chain alone), reused when only masks
+    /// change.
     unmasked: Arc<DynamicImage>,
-    /// Signature de la couverture de masques au moment du calcul.
+    /// Mask-coverage signature at compute time.
     mask_signature: u64,
-    /// Couverture combinée des masques actifs (`None` = aucun masque actif).
+    /// Combined coverage of active masks (`None` = no active mask).
     mask_cover: Option<Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>>,
     appearance: Appearance,
 }
 
-/// Cache d'apparences par calque, alimenté par la chaîne de rendu
-/// (compute shaders GPU lorsque disponibles, CPU rayon sinon).
+/// Per-layer appearance cache, fed by the render chain (GPU compute
+/// shaders when available, rayon CPU otherwise).
 #[derive(Default)]
 pub struct Renderer {
     entries: HashMap<Uuid, CacheEntry>,
     hits: u64,
     misses: u64,
-    /// Buffers `preview` (pleine résolution réduite) régénérés.
+    /// Regenerated `preview` buffers (reduced full resolution).
     preview_rebuilds: u64,
-    /// Miniatures `thumb` régénérées.
+    /// Regenerated `thumb` thumbnails.
     thumb_rebuilds: u64,
 }
 
-/// Compteurs d'apparences (observabilité, sans effet sur le rendu).
+/// Appearance counters (observability, no render effect).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct AppearanceStats {
-    /// Entrées resservies sans recalcul de chaîne.
+    /// Entries re-served without chain recompute.
     pub hits: u64,
-    /// Entrées recalculées (chaîne ré-exécutée).
+    /// Recomputed entries (chain re-run).
     pub misses: u64,
-    /// Buffers `preview` régénérés (resample inclus).
+    /// Regenerated `preview` buffers (resample included).
     pub preview_rebuilds: u64,
-    /// Miniatures `thumb` régénérées.
+    /// Regenerated `thumb` thumbnails.
     pub thumb_rebuilds: u64,
 }
 
 impl Renderer {
-    /// Renderer détaché du backend GPU : les effets resteront sur leur
-    /// chemin CPU même si un adaptateur apparaît plus tard. Réservé aux
-    /// tests déterministes ; privilégier [`Renderer::new`] en production.
+    /// Renderer detached from the GPU backend: effects stay on their CPU
+    /// path even if an adapter appears later. Reserved for deterministic
+    /// tests; prefer [`Renderer::new`] in production.
     pub fn without_gpu() -> Self {
         Self::default()
     }
 
-    /// Apparence dérivée du calque, depuis le cache si elle est encore
-    /// valide — sinon recalculée (GPU compute si disponible) et insérée.
+    /// Layer derived appearance, from cache when still valid — else
+    /// recomputed (GPU compute when available) and inserted.
     pub fn appearance(&mut self, layer: &PixelLayer) -> Appearance {
         // Le chemin MISS (render_chain + preview/thumb) est un calcul image
-        // lourd : exécuté sur le pool de rendu DÉDIÉ (jamais global) même
-        // quand il est déclenché par la synchronisation de l'UI. À chaud,
-        // le surcoût d'install est négligeable.
+        // The MISS path (render_chain + preview/thumb) is heavy image
+        // computation: runs on the DEDICATED render pool (never global) even
+        // when triggered by UI sync. When warm, install overhead is negligible.
         crate::render_pool::run_parallel(|| self.appearance_locked(layer))
     }
 
-    /// Corps de [`Renderer::appearance`] — jamais appelé directement.
+    /// [`Renderer::appearance`] body — never called directly.
     ///
-    /// L'image non masquée et la couverture sont réutilisées séparément :
-    /// une édition de masque ne ré-exécute jamais la chaîne de filtres.
-    /// Le pixels rendus restent identiques au chemin baké historique.
+    /// The unmasked image and the coverage are reused separately: a mask
+    /// edit never re-runs the filter chain. Rendered pixels stay identical
+    /// to the legacy baked path.
     ///
-    /// Si l'entrée est encore valide ([`appearance_hit`](Self::appearance_hit)),
-    /// l'apparence mémorisée est resservie telle quelle : aucun `bake`,
-    /// aucun resample `preview`/`thumb` — même buffers partagés.
+    /// If the entry is still valid ([`appearance_hit`](Self::appearance_hit)),
+    /// the remembered appearance is re-served as is: no `bake`, no
+    /// `preview`/`thumb` resample — same shared buffers.
     fn appearance_locked(&mut self, layer: &PixelLayer) -> Appearance {
         if let Some(cached) = self.appearance_hit(layer) {
             self.hits += 1;
@@ -184,7 +184,7 @@ impl Renderer {
                 entry.mask_cover = cover.clone();
                 cover
             }
-            // Inatteignable en pratique : `unmasked_image` crée l'entrée.
+            // Unreachable in practice: `unmasked_image` creates the entry.
             None => Self::fresh_cover(&layer.masks),
         };
         let baked = Self::bake(&unmasked, &mask_cover);
@@ -201,23 +201,23 @@ impl Renderer {
         appearance
     }
 
-    /// Image + miniature pour le cadre de réponse (Phase 6G.2 §2), SANS le
-    /// buffer `preview` : `appearance.preview` n'est lu par AUCUN chemin de
-    /// production (vérifié : seuls Debug/tests le touchent) alors que son
-    /// resample pleine taille domine le rebuild (≈ 1/3, mesuré).
+    /// Image + thumbnail for the response frame (Phase 6G.2 §2), WITHOUT the
+    /// `preview` buffer: `appearance.preview` is read by NO production path
+    /// (verified: only Debug/tests touch it) while its full-size resample
+    /// dominates the rebuild (≈ 1/3, measured).
     ///
-    /// Validité STRICTEMENT identique à [`Self::appearance_hit`] (filtres +
-    /// masques + identité source) : hit ⇒ mêmes `Arc`/buffers partagés,
-    /// compteurs `hits` partagés. Miss ⇒ chaîne via [`Self::unmasked_image`]
-    /// (compteur `misses` partagé) + couverture + bake + miniature
-    /// (`thumb_rebuilds`, pas `preview_rebuilds`), entrée mise à jour avec
-    /// un marqueur `preview` VIDE (documenté, jamais lu en production).
-    /// Pixels rendus bit-identiques au chemin complet.
+    /// Validity STRICTLY identical to [`Self::appearance_hit`] (filters +
+    /// masks + source identity): hit ⇒ same shared `Arc`s/buffers, shared
+    /// `hits` counters. Miss ⇒ chain via [`Self::unmasked_image`] (shared
+    /// `misses` counter) + coverage + bake + thumbnail (`thumb_rebuilds` not
+    /// `preview_rebuilds`), entry updated with an EMPTY `preview` marker
+    /// (documented, never read in production). Rendered pixels bit-identical
+    /// to the full path.
     pub fn appearance_frame(&mut self, layer: &PixelLayer) -> Option<(Arc<DynamicImage>, RgbaBuf)> {
         crate::render_pool::run_parallel(|| self.appearance_frame_locked(layer))
     }
 
-    /// Corps de [`Self::appearance_frame`] — jamais appelé directement.
+    /// [`Self::appearance_frame`] body — never called directly.
     fn appearance_frame_locked(
         &mut self,
         layer: &PixelLayer,
@@ -236,7 +236,7 @@ impl Renderer {
                 entry.mask_cover = cover.clone();
                 cover
             }
-            // Inatteignable en pratique : `unmasked_image` crée l'entrée.
+            // Unreachable in practice: `unmasked_image` creates the entry.
             None => Self::fresh_cover(&layer.masks),
         };
         let baked = Self::bake(&unmasked, &mask_cover);
@@ -245,8 +245,8 @@ impl Renderer {
         if let Some(entry) = self.entries.get_mut(&layer.id) {
             entry.appearance.image = Arc::clone(&baked);
             entry.appearance.thumb = thumb.clone();
-            // Marqueur VIDE : le `preview` pleine taille n'est pas dérivé
-            // ici (jamais lu en production — voir docs du module).
+            // EMPTY marker: the full-size `preview` is not derived here (never read
+            // in production — see module docs).
             entry.appearance.preview = RgbaBuf {
                 width: 0,
                 height: 0,
@@ -256,14 +256,14 @@ impl Renderer {
         Some((baked, thumb))
     }
 
-    /// Image NON masquée par les masques DU CALQUE (source × filtres, les
-    /// masques des sous-calques restant bakés dans la chaîne car ils
-    /// s'appliquent avant transform/fusion de chaque filtre).
+    /// Image NOT masked by the LAYER's masks (source × filters; sub-layer
+    /// masks stay baked into the chain since they apply before each filter's
+    /// transform/blend).
     ///
-    /// Peindre un masque de calque ne ré-exécute jamais la chaîne : l'appel
-    /// suivant retrouve la même image (même `Arc`) tant que source et
-    /// filtres sont inchangés. C'est aussi l'image qu'un futur chemin
-    /// shader combinera avec la couverture au draw.
+    /// Painting a layer mask never re-runs the chain: the next call finds
+    /// the same image (same `Arc`) while source and filters are unchanged.
+    /// It is also the image a future shader path will combine with coverage
+    /// at draw time.
     pub fn unmasked_image(&mut self, layer: &PixelLayer) -> Arc<DynamicImage> {
         let filter_signature = filters_signature(&layer.filter_layers);
         // perf-entry-api: use Entry to avoid double hashing on miss path
@@ -294,8 +294,8 @@ impl Renderer {
                     filter_signature,
                     source: Arc::clone(&layer.source_image),
                     unmasked: Arc::clone(&unmasked),
-                    // Forcée périmée : la couverture est (re)calculée par
-                    // l'appelant (`appearance_locked`) juste après.
+                    // Forced stale: the coverage is (re)computed by the caller
+                    // (`appearance_locked`) right after.
                     mask_signature: mask_signature(&layer.masks).wrapping_add(1),
                     mask_cover: None,
                     appearance: Appearance {
@@ -309,9 +309,9 @@ impl Renderer {
         }
     }
 
-    /// Couverture combinée des masques ACTIFS du calque (`None` = aucun),
-    /// cacheable séparément. Donnée pure destinée à être échantillonnée
-    /// directement par un shader au draw (aucune dépendance UI ici).
+    /// Combined coverage of the layer's ACTIVE masks (`None` = none),
+    /// separately cacheable. Pure data meant to be sampled directly by a
+    /// shader at draw time (no UI dependency here).
     pub fn mask_coverage(
         &mut self,
         layer: &PixelLayer,
@@ -333,8 +333,8 @@ impl Renderer {
         crate::document::compositing::combined_mask_coverage(masks).map(Arc::new)
     }
 
-    /// Combine une image non masquée avec une couverture : pixels identiques
-    /// à l'ancien chemin baké (`apply_layer_masks`).
+    /// Combines an unmasked image with a coverage: pixels identical to the
+    /// old baked path (`apply_layer_masks`).
     fn bake(
         unmasked: &Arc<DynamicImage>,
         cover: &Option<Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>>,
@@ -347,16 +347,16 @@ impl Renderer {
         }
     }
 
-    /// Lookup cache STRICT — aucune exécution, ni pool de rendu ni
-    /// `render_chain`. Retourne l'apparence seulement si l'entrée est
-    /// encore VALIDE (même signature de filtres, même source par identité
-    /// d'Arc), `None` sinon. Réservé à la synchronisation UI
-    /// (`PreviewCache::sync`) : pendant un geste (drag, slider…) où rien ne
-    /// change les pixels, chaque message re-valide ainsi tous les calques
-    /// sans jamais toucher au pool — le « rechargement de la vue » disparaît.
+    /// STRICT cache lookup — no execution, neither render pool nor
+    /// `render_chain`. Returns the appearance only if the entry is still
+    /// VALID (same filter signature, same source by Arc identity), `None`
+    /// otherwise. Reserved for UI sync (`PreviewCache::sync`): during a
+    /// gesture (drag, slider…) where no pixel changes, each message thus
+    /// revalidates every layer without ever touching the pool — the "view
+    /// reload" disappears.
     ///
-    /// Le `None` n'est pas une erreur : l'appelant doit alors basculer sur
-    /// [`Self::appearance`] (le seul chemin qui exécute la chaîne).
+    /// `None` is not an error: the caller must then fall back to
+    /// [`Self::appearance`] (the only path running the chain).
     pub fn appearance_hit(&mut self, layer: &PixelLayer) -> Option<Appearance> {
         let filter_signature = filters_signature(&layer.filter_layers);
         let mask_signature = mask_signature(&layer.masks);
@@ -372,10 +372,10 @@ impl Renderer {
         }
     }
 
-    /// Exporte l'entrée chaude d'un calque pour transfert inter-threads
-    /// (voir [`WarmedAppearance`]). Retourne `None` si le calque n'a pas
-    /// d'entrée (jamais calculée) — l'appelant doit d'abord passer par
-    /// [`Self::appearance`] sur le clone chauffé.
+    /// Exports a layer's warm entry for inter-thread transfer (see
+    /// [`WarmedAppearance`]). Returns `None` if the layer has no entry
+    /// (never computed) — the caller must first go through [`Self::appearance`]
+    /// on the warmed clone.
     pub fn export_warmed(&self, layer_id: Uuid) -> Option<WarmedAppearance> {
         self.entries.get(&layer_id).map(|e| WarmedAppearance {
             filter_signature: e.filter_signature,
@@ -387,10 +387,10 @@ impl Renderer {
         })
     }
 
-    /// Insère une entrée pré-calculée hors thread UI. L'insertion est
-    /// structurellement sûre : un futur `appearance_hit` ne HIT que si
-    /// signatures + identité de source correspondent — une entrée périmée
-    /// (édition concurrente) reste simplement inutilisée, jamais fausse.
+    /// Inserts an entry pre-computed off the UI thread. Insertion is
+    /// structurally safe: a future `appearance_hit` HITs only if signatures
+    /// + source identity match — a stale entry (concurrent edit) simply
+    /// goes unused, never wrong.
     pub fn insert_warmed(&mut self, layer_id: Uuid, warmed: WarmedAppearance) {
         self.entries.insert(
             layer_id,
@@ -405,14 +405,14 @@ impl Renderer {
         );
     }
 
-    /// Préremplit ce cache avec les entrées ACTUELLEMENT chaudes d'un autre
-    /// cache. Sert à réchauffer un `Document` clone (cache froid) à partir du
-    /// document VIVANT (cache chaud) avant une tâche de fond : la composite
-    /// du clone HIT alors au lieu de re-exécuter la chaîne de rendu complète.
+    /// Pre-fills this cache with another cache's CURRENTLY warm entries.
+    /// Used to warm a clone `Document` (cold cache) from the LIVE document
+    /// (warm cache) before a background task: the clone's composite then
+    /// HITs instead of re-running the full render chain.
     ///
-    /// Aucun recalcul : les `Appearance` sont clonées par `Arc` (zéro copie
-    /// pixel). Les entrées qui ne sont plus valides (signature/source
-    /// changées) seront simplement revalidées à la demande et écrasées.
+    /// No recompute: `Appearance`s are cloned by `Arc` (zero pixel copy).
+    /// Entries no longer valid (changed signature/source) are simply
+    /// revalidated on demand and overwritten.
     pub fn import_from(&mut self, src: &Renderer) {
         for (id, e) in &src.entries {
             self.entries.insert(
@@ -429,54 +429,54 @@ impl Renderer {
         }
     }
 
-    /// Invalide UNIQUEMENT l'apparence du calque donné (micro-édition
-    /// imposée manuellement ; normalement inutile : la signature suffit).
+    /// Invalidates ONLY the given layer's appearance (manually forced
+    /// micro-edit; normally useless: the signature suffices).
     pub fn invalidate_layer(&mut self, layer_id: Uuid) {
         self.entries.remove(&layer_id);
     }
 
-    /// Invalide tout le cache (opération structurelle, restauration…).
+    /// Invalidates the whole cache (structural op, restore…).
     pub fn invalidate_all(&mut self) {
         self.entries.clear();
     }
 
-    /// Élague les entrées des calques qui n'existent plus dans l'arbre.
-    /// À appeler après une suppression/groupement/duplication ou un undo
-    /// structurel — libère la VRAM/RAM des sous-arbres disparus.
+    /// Prunes entries of layers no longer in the tree. Call after a
+    /// deletion/grouping/duplication or a structural undo — frees the
+    /// VRAM/RAM of vanished subtrees.
     pub fn sync_tree(&mut self, doc: &Document) {
         let live: HashSet<Uuid> = doc.iter_pixels().into_iter().map(|l| l.id).collect();
         self.entries.retain(|id, _| live.contains(id));
     }
 
-    /// Nombre d'apparences actuellement en cache.
+    /// Number of appearances currently cached.
     pub fn cached_len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Apparences servies SANS recalcul depuis la construction (ou le
-    /// dernier reset des compteurs) — l'indicateur direct du cache ciblé.
+    /// Appearances served WITHOUT recompute since construction (or the last
+    /// counter reset) — the direct targeted-cache indicator.
     pub fn hits(&self) -> u64 {
         self.hits
     }
 
-    /// Apparences recalculées.
+    /// Recomputed appearances.
     pub fn misses(&self) -> u64 {
         self.misses
     }
 
-    /// Buffers `preview` régénérés depuis la construction (ou le dernier
-    /// reset) : resample inclus, même à signatures inchangées avant le
-    /// fast-path [`appearance_hit`](Self::appearance_hit).
+    /// Regenerated `preview` buffers since construction (or the last reset):
+    /// resample included, even at unchanged signatures before the
+    /// [`appearance_hit`](Self::appearance_hit) fast path.
     pub fn preview_rebuilds(&self) -> u64 {
         self.preview_rebuilds
     }
 
-    /// Miniatures `thumb` régénérées.
+    /// Regenerated `thumb` thumbnails.
     pub fn thumb_rebuilds(&self) -> u64 {
         self.thumb_rebuilds
     }
 
-    /// Compteurs groupés (observabilité par fenêtre).
+    /// Grouped counters (windowed observability).
     pub fn stats(&self) -> AppearanceStats {
         AppearanceStats {
             hits: self.hits,
@@ -486,7 +486,7 @@ impl Renderer {
         }
     }
 
-    /// Remet les compteurs à zéro (observabilité par fenêtre).
+    /// Resets counters to zero (windowed observability).
     pub fn reset_stats(&mut self) {
         self.hits = 0;
         self.misses = 0;
@@ -495,11 +495,11 @@ impl Renderer {
     }
 }
 
-/// Signature d'une liste de masques : nombre, id, état actif, inversion et
-/// version (la peinture remplace le buffer ET touche la version → MISS
-/// garanti). Le nom d'un masque en est EXCLU (renommer ne change pas les
-/// pixels). Utilisée pour la couverture cacheable SÉPARÉMENT de l'image.
-/// `pub(crate)` : réutilisée par `tile_key` (identité tuile) sans duplication.
+/// A mask list's signature: count, id, active state, inversion and version
+/// (paint replaces the buffer AND touches the version → guaranteed MISS).
+/// A mask's name is EXCLUDED (renaming changes no pixels). Used for the
+/// separately-cacheable coverage. `pub(crate)`: reused by `tile_key`
+/// (tile identity) without duplication.
 pub(crate) fn mask_signature(masks: &[LayerMask]) -> u64 {
     use std::hash::Hasher;
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -513,20 +513,20 @@ pub(crate) fn mask_signature(masks: &[LayerMask]) -> u64 {
     h.finish()
 }
 
-/// Signature ORDONNÉE d'une chaîne de sous-calques de filtres : deux chaînes
-/// ont la même signature ssi mêmes sous-calques (id, type, état actif,
-/// opacité, fusion, transform, masques) avec mêmes paramètres dans le même
-/// ordre. L'ordre est significatif — c'est une CHAÎNE de traitement, pas
-/// un ensemble.
+/// ORDERED signature of a filter sub-layer chain: two chains share it
+/// iff same sub-layers (id, type, active state, opacity, blend,
+/// transform, masks) with same parameters in the same order. Order is
+/// significant — this is a processing CHAIN,
+/// not a set.
 ///
-/// Les masques des sous-calques EN FONT PARTIE : ils sont bakés dans la
-/// chaîne par `composite_filter_layer`, donc toute édition (peinture,
-/// toggle, inversion) doit invalider le cache — la version du masque
-/// l'assure. (Les masques du CALQUE lui-même sont suivis séparément par
-/// [`mask_signature`].)
+/// Sub-layer masks are PART of it: they are baked into the chain by
+/// `composite_filter_layer`, so any edit (paint, toggle, inversion) must
+/// invalidate the cache — the mask version ensures it. (The LAYER's
+/// own masks are tracked separately
+/// by [`mask_signature`].)
 ///
-/// Déterministe entre processus (`DefaultHasher::new()` = clés fixes),
-/// indépendant de l'itération désordonnée de `HashMap` (clés triées).
+/// Deterministic across processes (`DefaultHasher::new()` = fixed keys),
+/// independent of `HashMap`'s unordered iteration (sorted keys).
 #[must_use]
 pub fn filters_signature(filters: &[FilterLayer]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
@@ -551,8 +551,8 @@ pub fn filters_signature(filters: &[FilterLayer]) -> u64 {
         ] {
             h.write_u32(v.to_bits());
         }
-        // Masques bakés dans l'apparence : id + état + version (la peinture
-        // remplace le buffer ET touche la version → MISS garanti).
+        // Masks baked into appearance: id + state + version (paint replaces the
+        // buffer AND touches the version → guaranteed MISS).
         h.write_usize(f.masks.len());
         for m in &f.masks {
             h.write(m.id.as_bytes());
@@ -560,7 +560,7 @@ pub fn filters_signature(filters: &[FilterLayer]) -> u64 {
             h.write_u8(u8::from(m.inverted));
             h.write_u64(m.version);
         }
-        // Params triés par clé : même contenu => même signature
+        // Params sorted by key: same content => same signature
         let mut keys: Vec<&str> = Vec::with_capacity(f.params.len());
         keys.extend(f.params.keys().map(String::as_str));
         keys.sort_unstable();
@@ -578,8 +578,8 @@ fn hash_param_value(
     value: &datatypes::ParamValue,
 ) {
     use std::hash::Hasher;
-    // Discriminant + bits bruts : f32 exclus de Hash std (NaN), on hashe
-    // leurs bits — deux valeurs égales au sens PartialEq ont les mêmes bits.
+    // Discriminant + raw bits: f32 excluded from std Hash (NaN), hash their
+    // bits — two PartialEq-equal values share the same bits.
     match value {
         datatypes::ParamValue::Float(v) => {
             h.write_u8(0);
@@ -645,14 +645,14 @@ mod tests {
         let a2 = r.appearance(&layer);
         assert_eq!((r.misses(), r.hits()), (1, 1));
         assert_eq!(r.cached_len(), 1);
-        // Même Arc d'image : aucun recopiage de pixels
+        // Same image Arc: no pixel copying
         assert!(Arc::ptr_eq(&a1.image, &a2.image));
     }
 
     #[test]
     fn seconde_lecture_ne_reconstruit_pas_preview_thumb() {
-        // Le fast-path appearance_hit ressert l'apparence mémorisée :
-        // aucun resample, compteurs de rebuilds inchangés.
+        // The appearance_hit fast path re-serves the remembered appearance: no
+        // resample, unchanged rebuild counters.
         let layer = layer_with_filter(10.0);
         let mut r = Renderer::default();
         let a1 = r.appearance(&layer);
@@ -660,7 +660,7 @@ mod tests {
         let a2 = r.appearance(&layer);
         assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (1, 1));
         assert_eq!((r.misses(), r.hits()), (1, 1));
-        // Mêmes buffers partagés, pas de clones de pixels.
+        // Same shared buffers, no pixel clones.
         assert!(Arc::ptr_eq(&a1.image, &a2.image));
         assert!(Arc::ptr_eq(&a1.thumb.data, &a2.thumb.data));
         assert!(Arc::ptr_eq(&a1.preview.data, &a2.preview.data));
@@ -673,13 +673,13 @@ mod tests {
         let mut r = Renderer::default();
         let _ = r.appearance(&layer);
         assert_eq!((r.misses(), r.hits()), (1, 0));
-        // Ajout d'un masque : chaîne épargnée (unmasked HIT), mais
-        // couverture + bake + preview/thumb à refaire une fois.
+        // Adding a mask: chain spared (unmasked HIT), but coverage + bake +
+        // preview/thumb to redo once.
         layer.masks.push(LayerMask::full(2, 2));
         let _ = r.appearance(&layer);
         assert_eq!((r.misses(), r.hits()), (1, 1));
         assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (2, 2));
-        // Relecture : tout est stable, aucun rebuild.
+        // Re-read: all stable, no rebuild.
         let _ = r.appearance(&layer);
         assert_eq!((r.preview_rebuilds(), r.thumb_rebuilds()), (2, 2));
     }
@@ -690,7 +690,7 @@ mod tests {
         let mut r = Renderer::default();
         let _ = r.appearance(&layer);
 
-        // Réglage du slider : même id de filtre, nouvelle valeur
+        // Slider setting: same filter id, new value
         let fid = layer.filter_layers[0].id;
         layer.filter_layers[0]
             .params
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(r.misses(), 2, "signature changée → recalcul");
         assert_eq!(r.hits(), 0);
 
-        // Relecture sans changement : retour au HIT
+        // Re-read with no change: back to HIT
         let _ = r.appearance(&layer);
         assert_eq!((r.misses(), r.hits()), (2, 1));
         let _ = fid;
@@ -707,8 +707,8 @@ mod tests {
 
     #[test]
     fn remplacer_la_source_invalide_memes_sans_filtres() {
-        // Chaîne vide : la signature ne bougera jamais — seule
-        // l'identité de la source peut détecter une peinture/un crop.
+        // Empty chain: the signature never moves — only source identity can
+        // detect a paint/crop.
         let mut layer = PixelLayer::new("peinture", solid(50));
         let mut r = Renderer::default();
         let avant = r.appearance(&layer);
@@ -730,7 +730,7 @@ mod tests {
         let _ = r.appearance(&layer);
         assert_eq!(r.misses(), 2);
 
-        // Et le résultat redevient la source pure (filtre court-circuité)
+        // And the result is pure source again (short-circuited filter)
         let out = r.appearance(&layer);
         let rgba = out.image.to_rgba8();
         let p = rgba.get_pixel(0, 0);
@@ -739,8 +739,8 @@ mod tests {
 
     #[test]
     fn cadre_partage_sans_preview() {
-        // Chemin cadre 6G.2 : image + miniature partagées, AUCUN preview
-        // dérivé (marqueur vide documenté), compteurs honnêtes.
+        // 6G.2 frame path: shared image + thumbnail, NO derived preview
+        // (documented empty marker), honest counters.
         let layer = layer_with_filter(10.0);
         let mut r = Renderer::default();
         let (img1, thumb1) = r.appearance_frame(&layer).expect("cadre");
@@ -754,7 +754,7 @@ mod tests {
             (thumb2.width, thumb2.height),
             "miniature stable"
         );
-        // Le chemin complet reste cohérent (HIT, image + miniature partagées).
+        // The full path stays consistent (HIT, shared image + thumbnail).
         let a = r.appearance(&layer);
         assert!(Arc::ptr_eq(&a.image, &img2));
         assert_eq!(
@@ -766,18 +766,18 @@ mod tests {
 
     #[test]
     fn apparence_chauffee_inseree_hit_sans_recalcul() {
-        // Simule le toggle async : le worker calcule sur son propre
-        // renderer, le vivant insère l'entrée et HIT sans exécuter.
+        // Simulates the async toggle: the worker computes on its own renderer,
+        // the live one inserts the entry and HITs without running.
         let mut layer = layer_with_filter(30.0);
         let mut worker = Renderer::default();
         let _ = worker.appearance(&layer);
 
-        // Toggle côté worker (désactivation du filtre).
+        // Worker-side toggle (filter disabling).
         layer.filter_layers[0].enabled = false;
         let _ = worker.appearance(&layer);
         let warmed = worker.export_warmed(layer.id).expect("entrée chaude");
 
-        // Vivant : cache froid, insertion puis HIT strict sans MISS.
+        // Live: cold cache, insertion then strict HIT with no MISS.
         let mut live = Renderer::default();
         live.insert_warmed(layer.id, warmed);
         let hit = live.appearance_hit(&layer);
@@ -788,19 +788,19 @@ mod tests {
             "aucune exécution côté vivant"
         );
 
-        // Entrée périmée (édition concurrente) : pas de faux HIT.
+        // Stale entry (concurrent edit): no false HIT.
         layer.filter_layers[0].enabled = true;
         assert!(live.appearance_hit(&layer).is_none());
     }
 
     #[test]
     fn toggle_masque_sans_touch_hit_apres_insertion() {
-        // Miroir d'`apply_toggle_flag` : worker et vivant basculent le
-        // même bit SANS `touch()` → même version → même signature → HIT.
+        // Mirror of `apply_toggle_flag`: worker and live flip the same bit
+        // WITHOUT `touch()` → same version → same signature → HIT.
         let mut layer = PixelLayer::new("m", solid(100));
         layer.masks.push(LayerMask::full(2, 2));
-        // Vivant = clone structurel (Arcs partagés, version copiée),
-        // comme un snapshot document.
+        // Live = structural clone (shared Arcs, copied version), like a
+        // document snapshot.
         let mut live = layer.clone();
         let mut worker = Renderer::default();
         let _ = worker.appearance(&layer);
@@ -817,8 +817,8 @@ mod tests {
             "même version des deux côtés → HIT"
         );
 
-        // Contrôle : un `touch()` intercalé (peinture) fait diverger →
-        // MISS sain, jamais de faux HIT sur des pixels périmés.
+        // Control: an interleaved `touch()` (paint) diverges → healthy MISS,
+        // never a false HIT on stale pixels.
         live.masks[0].touch();
         assert!(live_r.appearance_hit(&live).is_none());
     }
@@ -839,7 +839,7 @@ mod tests {
         }
         assert_eq!(r.cached_len(), 2);
 
-        // Suppression du calque 1 puis élagage
+        // Layer 1 removal then pruning
         let _removed = doc.remove(id1);
         r.sync_tree(&doc);
         assert_eq!(r.cached_len(), 1, "entrée orpheline supprimée");
@@ -847,8 +847,8 @@ mod tests {
 
     #[test]
     fn deux_calques_sont_cachees_independamment() {
-        // Le cœur de la promesse LayerTree : toucher le calque A ne
-        // re-exécute JAMAIS le calque B.
+        // The heart of the LayerTree promise: touching layer A NEVER
+        // re-runs layer B.
         let la = layer_with_filter(5.0);
         let lb = layer_with_filter(7.0);
         let mut r = Renderer::default();
@@ -864,10 +864,10 @@ mod tests {
         }
         let _ = r.appearance(&la_mod);
         let _ = r.appearance(&lb);
-        // lb n'a généré AUCUN nouveau miss
+        // lb generated NO new miss
         assert_eq!((r.misses(), r.hits()), (3, 1));
 
-        // Signature tests (pure partie)
+        // Signature tests (pure part)
         let s = filters_signature(&la.filter_layers);
         assert_eq!(s, filters_signature(&la.filter_layers));
     }
@@ -919,12 +919,12 @@ mod tests {
     fn masque_sous_calque_invalide_le_cache() {
         use crate::document::LayerMask;
         let base = vec![filter_of("brightness_contrast", 12.0)];
-        // Ajout d'un masque → signature différente
+        // Adding a mask → different signature
         let mut masked = base.clone();
         masked[0].masks.push(LayerMask::full(2, 2));
         assert_ne!(filters_signature(&base), filters_signature(&masked));
 
-        // Peinture (touch = nouvelle version) → signature différente
+        // Paint (touch = new version) → different signature
         let mut touched = masked.clone();
         touched[0].masks[0].touch();
         assert_ne!(filters_signature(&masked), filters_signature(&touched));
@@ -936,13 +936,13 @@ mod tests {
         use crate::document::compositing::combined_mask_coverage;
         use image::ImageBuffer;
 
-        // Aucun masque actif → pas de couverture.
+        // No active mask → no coverage.
         let mut vide = LayerMask::full(2, 2);
         vide.enabled = false;
         assert!(combined_mask_coverage(&[vide]).is_none());
         assert!(combined_mask_coverage(&[]).is_none());
 
-        // 128 × inversé(64→191) = 128*191/255 = 95 (tronqué).
+        // 128 × inverted(64→191) = 128*191/255 = 95 (truncated).
         let mut a = LayerMask::full(2, 2);
         a.image = Arc::new(ImageBuffer::from_pixel(2, 2, Rgba([128, 0, 0, 255])));
         let mut b = LayerMask::full(2, 2);
@@ -964,19 +964,19 @@ mod tests {
         let u1 = r.unmasked_image(&layer);
         assert_eq!((r.misses(), r.hits()), (1, 0));
 
-        // Peinture du masque : seule la couverture change, la chaîne NON.
+        // Mask paint: only the coverage changes, the chain does NOT.
         layer.masks[0].touch();
         let u2 = r.unmasked_image(&layer);
         assert_eq!((r.misses(), r.hits()), (1, 1));
         assert!(Arc::ptr_eq(&u1, &u2), "chaîne non ré-exécutée");
 
-        // La couverture, elle, est bien recalculée et mise en cache.
+        // The coverage itself is properly recomputed and cached.
         let c1 = r.mask_coverage(&layer).expect("couverture");
         let c2 = r.mask_coverage(&layer).expect("couverture");
         assert!(Arc::ptr_eq(&c1, &c2));
 
-        // L'apparence bakée reste correcte : source 100 + filtre 10,
-        // masque plein blanc → alpha 255.
+        // The baked appearance stays correct: source 100 + filter 10,
+        // full white mask → alpha 255.
         let a = r.appearance(&layer);
         let rgba = a.image.to_rgba8();
         assert_eq!(rgba.get_pixel(0, 0)[3], 255);

@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,21 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Workspace Photo : composition globale, sans logique de panels.
+//! Photo workspace: global composition, no panel logic.
 //!
 //! ```text
 //! PhotoWorkspace
 //!   ↓ Top / Central (Tree) / Bottom (+ overlays)
-//! Tile / Feature (contenu métier)
+//! Tile / Feature (domain content)
 //!   ↓
-//! ui-kit (style + conteneurs génériques)
+//! ui-kit (style + generic containers)
 //! ```
 //!
-//! Chaque région dessine son `egui::Panel` et délègue le contenu aux
-//! features ; les actions remontent en [`PhotoAction`](crate::commands::PhotoAction).
-//! Le workspace ne connaît ni calques, ni outils, ni moteurs.
-//! Les quatre panneaux métier (outils, canevas, inspecteur, calques)
-//! sont des tuiles `egui_tiles` (voir [`dock`]).
+//! Each region draws its `egui::Panel` and delegates content to the
+//! features; actions bubble up as [`PhotoAction`](crate::commands::PhotoAction).
+//! The workspace knows neither layers, nor tools, nor engines.
+//! The four domain panels (tools, canvas, inspector, layers)
+//! are `egui_tiles` tiles (see [`dock`]).
 
 pub mod bottom_bar;
 pub mod central_view;

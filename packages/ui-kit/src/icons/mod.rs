@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Icônes du design system : enum stable + registre.
+//! Design-system icons: stable enum + registry.
 //!
-//! Les apps utilisent [`Icon`] et [`IconRegistry`], jamais une
-//! bibliothèque d'icônes directement. La résolution passe par le module
-//! interne [`glyph`], seul contact du workspace avec
+//! Apps use [`Icon`] and [`IconRegistry`], never an icon library
+//! directly. Resolution goes through the internal [`glyph`]
+//! module, the workspace's only contact with
 //! `egui_material_icons::icons`.
 
 pub(crate) mod glyph;

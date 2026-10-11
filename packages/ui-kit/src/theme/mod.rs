@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Thème egui partagé de Cygnus : tokens, typographie et application.
+//! Shared Cygnus egui theme: tokens, typography and application.
 //!
-//! SEULE source de vérité pour les couleurs, espacements, rayons,
-//! tailles de texte, tailles de contrôles et bordures des 3 apps.
-//! Aucune couleur ni dimension codée en dur ailleurs.
+//! SINGLE source of truth for the 3 apps' colors, spacing, radii,
+//! text sizes, control sizes and borders.
+//! No hardcoded color or dimension anywhere else.
 
 pub mod borders;
 pub mod colors;
@@ -26,7 +26,7 @@ pub mod context;
 pub mod radius;
 pub mod sizes;
 pub mod spacing;
-// Nom imposé par la structure cible : `theme/theme.rs`.
+// Name imposed by the target structure: `theme/theme.rs`.
 #[allow(clippy::module_inception)]
 pub mod theme;
 pub mod typography;

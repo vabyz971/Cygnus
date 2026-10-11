@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Séparateur horizontal calibré sur le thème.
+//! Theme-calibrated horizontal separator.
 
 use crate::theme::CygnusTheme;
 
-/// Séparateur horizontal avec les espacements du thème.
+/// Horizontal separator with the theme's spacing.
 pub fn divider(ui: &mut egui::Ui, theme: &CygnusTheme) {
     ui.add_space(theme.spacing.xs);
     ui.separator();

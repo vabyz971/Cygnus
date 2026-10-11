@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Conversion des actions du panneau Historique en [`PhotoAction`].
+//! Converting History panel actions into [`PhotoAction`].
 
 use super::panel::HistoryPanelAction;
 use crate::commands::PhotoAction;
 
-/// Convertit une action du panneau en action app.
+/// Converts a panel action into an app action.
 pub fn history_panel_action_to_photo(action: HistoryPanelAction) -> PhotoAction {
     match action {
         HistoryPanelAction::Back(steps) => PhotoAction::HistoryBack(steps),

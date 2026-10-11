@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Dépendances réellement communes à l'UI (ni moteurs, ni documents).
+//! Dependencies truly shared by the UI (neither engines nor documents).
 
 pub mod ui_context;
 

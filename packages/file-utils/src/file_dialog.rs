@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Types de résultat pour les dialogues de sélection de fichiers
+//! Result types for file-selection dialogs
 
 use std::path::PathBuf;
 

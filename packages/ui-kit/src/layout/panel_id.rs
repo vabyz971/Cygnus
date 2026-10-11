@@ -14,33 +14,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Identifiants stables des panneaux du workspace.
+//! Stable workspace-panel ids.
 //!
-//! Les ids sont sérialisés dans les préférences : ne jamais renommer
-//! une variante sans gérer la migration (voir [`super::persistence`]).
+//! Ids are serialized into preferences: never rename a variant
+//! without handling migration (see [`super::persistence`]).
 
 use crate::i18n::TextKey;
 use serde::{Deserialize, Serialize};
 
-/// Panneau ancrable du workspace (stable entre versions).
+/// Dockable workspace panel (stable across versions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PanelId {
-    /// Barre d'outils.
+    /// Toolbar.
     Tools,
-    /// Liste des calques / clips / pistes.
+    /// Layer / clip / track list.
     Layers,
-    /// Inspecteur de propriétés.
+    /// Property inspector.
     Inspector,
-    /// Navigateur / miniature.
+    /// Navigator / thumbnail.
     Navigator,
-    /// Historique des actions.
+    /// Action history.
     History,
-    /// Ligne temporelle (video / audio).
+    /// Timeline (video / audio).
     Timeline,
 }
 
 impl PanelId {
-    /// Clé de traduction du titre du panneau.
+    /// Translation key of the panel's title.
     pub fn title_key(self) -> TextKey {
         match self {
             Self::Tools => TextKey::Tools,

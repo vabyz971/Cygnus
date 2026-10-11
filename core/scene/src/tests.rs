@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests du Scene Graph : création, hiérarchie, transforms monde,
-//! identifiants et révisions.
+//! Scene Graph tests: creation, hierarchy, world transforms,
+//! identifiers and revisions.
 
 use super::*;
 use crate::{Mask, NodeKind, Revision, SceneNodeId, ShapeKind, TextData};
@@ -64,12 +64,12 @@ fn ids_uniques_stables_et_ordonnes() {
     assert_ne!(a, b);
     assert!(a != SceneNodeId::nil());
 
-    // Round-trip via l'Uuid sous-jacent (persistance, ponts inter-moteurs).
+    // Round-trip via the underlying Uuid (persistence, inter-engine bridges).
     let rebuilt = SceneNodeId::from_uuid(a.as_uuid());
     assert_eq!(rebuilt, a);
     assert_eq!(rebuilt.as_uuid(), a.as_uuid());
 
-    // Utilisables comme clés (Hash + Ord).
+    // Usable as keys (Hash + Ord).
     let mut map = std::collections::HashMap::new();
     map.insert(a, "a");
     map.insert(b, "b");
@@ -119,9 +119,9 @@ fn rattachement_deplace_le_sous_arbre() {
     assert_eq!(scene.children_of(a), Some(&[][..]));
     assert_eq!(scene.children_of(b), Some(&[leaf][..]));
     assert_eq!(scene.node_revision(leaf), Some(rev));
-    // La nouvelle branche est estampillée avec la révision du déplacement…
+    // The new branch is stamped with the move's revision…
     assert_eq!(scene.node_revision(b), Some(rev));
-    // …et l'ancienne branche (sous-arbre amputé) avance à son tour.
+    // …and the old branch (amputated subtree) advances in turn.
     let rev_old = scene.node_revision(a).expect("exists");
     assert!(rev_old.is_newer_than(rev));
     assert_eq!(scene.tree_revision(), rev_old);
@@ -131,15 +131,15 @@ fn rattachement_deplace_le_sous_arbre() {
 fn rattachement_rejete_cycle_soi_meme_et_inconnus() {
     let (mut scene, root, child) = offset_scene();
 
-    // Soi-même.
+    // Itself.
     assert_eq!(scene.attach(root, root), None);
-    // Cycle : le parent sous son propre descendant.
+    // Cycle: the parent under its own descendant.
     assert_eq!(scene.attach(child, root), None);
-    // Inconnus.
+    // Unknown ones.
     assert_eq!(scene.attach(SceneNodeId::nil(), child), None);
     assert_eq!(scene.attach(root, SceneNodeId::nil()), None);
 
-    // Structure intacte après les rejets.
+    // Structure intact after the rejections.
     assert_eq!(scene.parent_of(child), Some(root));
     assert_eq!(scene.children_of(root), Some(&[child][..]));
 }
@@ -162,11 +162,11 @@ fn rattachement_meme_parent_deplace_en_fin() {
     let b = scene.create_child(root, NodeKind::Image).expect("ok");
     assert_eq!(scene.children_of(root), Some(&[a, b][..]));
 
-    // Même parent, autre position : déplacé en fin (réordre).
+    // Same parent but another position: moved to the end (reorder).
     let rev = scene.attach(root, a).expect("move ok");
     assert_eq!(scene.children_of(root), Some(&[b, a][..]));
     assert_eq!(scene.node_revision(a), Some(rev));
-    // Déjà dernier : sans effet.
+    // Already last: no effect.
     assert_eq!(scene.attach(root, a).expect("ok"), rev);
 }
 
@@ -184,13 +184,13 @@ fn detachement_redevient_racine_sous_arbre_conserve() {
     scene.detach(mid).expect("detach ok");
     assert_eq!(scene.parent_of(mid), None);
     assert!(scene.roots().contains(&mid));
-    // Sous-arbre intact sous le détaché.
+    // Subtree intact under the detached node.
     assert_eq!(scene.parent_of(leaf), Some(mid));
     assert_eq!(scene.depth(leaf), Some(1));
-    // L'ancien parent n'a plus d'enfant.
+    // The old parent has no children left.
     assert_eq!(scene.children_of(root), Some(&[][..]));
 
-    // Détacher une racine ou un inconnu : sans effet.
+    // Detaching a root or an unknown id: no effect.
     assert_eq!(scene.detach(root), None);
     assert_eq!(scene.detach(SceneNodeId::nil()), None);
 }
@@ -213,7 +213,7 @@ fn suppression_sous_arbre_recursive() {
     assert_eq!(scene.children_of(root), Some(&[other][..]));
     assert_eq!(scene.len(), 2);
 
-    // Inconnu : faux, sans effet.
+    // Unknown: false, no effect.
     assert!(!scene.remove_subtree(SceneNodeId::nil()));
 }
 
@@ -239,12 +239,12 @@ fn modification_transform_alloue_une_revision() {
     assert!(rev.is_newer_than(before));
     assert_eq!(scene.local_transform(child), Some(t));
 
-    // Même valeur : révision inchangée, pas de bump global.
+    // Same value: revision unchanged, no global bump.
     let again = scene.set_local_transform(child, t).expect("exists");
     assert_eq!(again, rev);
     assert_eq!(scene.tree_revision(), rev);
 
-    // Inconnu.
+    // Unknown.
     assert_eq!(scene.set_local_transform(SceneNodeId::nil(), t), None);
 }
 
@@ -293,7 +293,7 @@ fn world_transform_echelle_parent_dilate_enfant() {
     let (x, y) = scene.world_point(child, 0.0, 0.0).expect("exists");
     assert!(approx(x, 10.0), "{x}");
     assert!(approx(y, 21.0), "{y}");
-    // L'échelle traverse aussi les points locaux.
+    // Scale also carries local points along.
     let (x, y) = scene.world_point(child, 1.0, 1.0).expect("exists");
     assert!(approx(x, 12.0), "{x}");
     assert!(approx(y, 24.0), "{y}");
@@ -315,7 +315,7 @@ fn world_transform_rotation_parent_90_degres() {
     };
     scene.set_local_transform(child, tc).expect("ok");
 
-    // (10, 0) tourné à 90° (sens horaire, convention du moteur) → (0, 10).
+    // (10, 0) rotated by 90° (clockwise, engine convention) → (0, 10).
     let (x, y) = scene.world_point(child, 0.0, 0.0).expect("exists");
     assert!(approx(x, 0.0), "{x}");
     assert!(approx(y, 10.0), "{y}");
@@ -346,7 +346,7 @@ fn world_transform_groupes_imbriques_trois_niveaux() {
     };
     scene.set_local_transform(c, tc).expect("ok");
 
-    // Monde de c : 1 + (10 + 2·5) = 21 sur X.
+    // World of c: 1 + (10 + 2·5) = 21 on X.
     let (x, y) = scene.world_point(c, 0.0, 0.0).expect("exists");
     assert!(approx(x, 21.0), "{x}");
     assert!(approx(y, 0.0), "{y}");
@@ -380,7 +380,7 @@ fn visibilite_monde_propagee_par_et() {
     assert_eq!(scene.world_visible(child), Some(false));
     assert_eq!(scene.world_visible(root), Some(false));
 
-    // Réécrire la même valeur ne bumpe pas.
+    // Rewriting the same value does not bump.
     let rev = scene.node_revision(root).expect("exists");
     assert_eq!(scene.set_visible(root, false).expect("ok"), rev);
 }
@@ -392,14 +392,14 @@ fn opacite_monde_produit_et_bornee() {
     scene.set_opacity(child, 50.0).expect("ok");
     assert_eq!(scene.world_opacity(child), Some(25.0));
 
-    // Bornage à l'écriture.
+    // Clamping on write.
     scene.set_opacity(child, 150.0).expect("ok");
     assert_eq!(scene.opacity(child), Some(100.0));
     scene.set_opacity(child, -20.0).expect("ok");
     assert_eq!(scene.opacity(child), Some(0.0));
     assert_eq!(scene.world_opacity(child), Some(0.0));
 
-    // Inconnu.
+    // Unknown.
     assert_eq!(scene.set_opacity(SceneNodeId::nil(), 10.0), None);
 }
 
@@ -416,10 +416,10 @@ fn revisions_bumpent_ancetres_pas_les_freres() {
     let rev_left = scene.node_revision(left).expect("exists");
     let rev_root = scene.node_revision(root).expect("exists");
 
-    // Le touché et ses ancêtres avancent ensemble…
+    // The touched node and its ancestors advance together…
     assert!(rev_left.is_newer_than(rev_root_before));
     assert_eq!(rev_root, rev_left);
-    // …mais pas le frère.
+    // …but not the sibling.
     assert_eq!(scene.node_revision(right), Some(rev_right_before));
     assert_eq!(scene.tree_revision(), rev_left);
 }
@@ -434,23 +434,23 @@ fn masques_ajout_remplacement_retrait() {
     assert_eq!(scene.masks_of(child), Some(&[mask][..]));
     assert_eq!(scene.node_revision(child), Some(rev));
 
-    // Même masque : pas de bump.
+    // Same mask: no bump.
     assert_eq!(scene.add_mask(child, mask).expect("ok"), rev);
 
-    // Remplacement (inversion) : bump.
+    // Replacement (inversion): bump.
     let mut inverted = mask;
     inverted.inverted = true;
     let rev2 = scene.add_mask(child, inverted).expect("ok");
     assert!(rev2.is_newer_than(rev));
     assert_eq!(scene.masks_of(child), Some(&[inverted][..]));
 
-    // Retrait : bump ; retrait absent : sans bump.
+    // Removal: bump; absent removal: no bump.
     let rev3 = scene.remove_mask(child, target).expect("ok");
     assert!(rev3.is_newer_than(rev2));
     assert_eq!(scene.masks_of(child), Some(&[][..]));
     assert_eq!(scene.remove_mask(child, target).expect("ok"), rev3);
 
-    // Propriétaire inconnu.
+    // Unknown owner.
     assert_eq!(scene.add_mask(SceneNodeId::nil(), mask), None);
     assert_eq!(scene.remove_mask(SceneNodeId::nil(), target), None);
 }
@@ -462,13 +462,13 @@ fn metadonnees_pose_lecture_retrait() {
     assert_eq!(scene.meta(child, "role"), Some("hero"));
     assert_eq!(scene.meta(child, "absent"), None);
 
-    // Paire identique : pas de bump.
+    // Identical pair: no bump.
     assert_eq!(scene.set_meta(child, "role", "hero").expect("ok"), rev);
 
     let rev2 = scene.remove_meta(child, "role").expect("ok");
     assert!(rev2.is_newer_than(rev));
     assert_eq!(scene.meta(child, "role"), None);
-    // Clé absente : sans bump.
+    // Absent key: no bump.
     assert_eq!(scene.remove_meta(child, "role").expect("ok"), rev2);
 
     assert_eq!(scene.set_meta(SceneNodeId::nil(), "k", "v"), None);
@@ -499,7 +499,7 @@ fn toutes_les_natures_sont_representables() {
     } else {
         panic!("text expected");
     }
-    // TextData borne la taille.
+    // TextData clamps the size.
     assert!(approx(TextData::new("x", -5.0).font_size, 0.0));
 }
 

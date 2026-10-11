@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Utilitaires transverses du ui-kit egui (état de drag, animations…).
+//! Cross-cutting egui ui-kit utilities (drag state, animations…).
 
 pub mod drag_state;
 

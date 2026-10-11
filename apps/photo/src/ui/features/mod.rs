@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Fonctionnalités métier de l'app Photo, organisées par domaine.
+//! Photo app domain features, organized by domain.
 //!
-//! Chaque feature est indépendante : panneaux position-indépendants,
-//! actions remontées en [`PhotoAction`](crate::commands::PhotoAction),
-//! style exclusivement ui-kit.
+//! Each feature is independent: position-independent panels,
+//! actions bubbled as [`PhotoAction`](crate::commands::PhotoAction),
+//! ui-kit-only styling.
 
 pub mod history;
 pub mod inspector;

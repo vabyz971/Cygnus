@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Registre nodal vidéo LEGACY (bibliothèque de nœuds UI).
+//! LEGACY video node registry (UI node library).
 //!
-//! Conservé tel quel : il alimente l'éditeur nodal générique (`datatypes`)
-//! pendant que le modèle éditorial ([`Timeline`](crate::Timeline)) grandit
-//! à côté. Les deux coexistent — aucune suppression, migration douce.
+//! Kept as is: it feeds the generic node editor (`datatypes`)
+//! while the editorial model ([`Timeline`](crate::Timeline)) grows
+//! alongside. Both coexist — no deletion, gentle migration.
 
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
 
-/// Définitions nodales vidéo (inchangé — voir `timeline` pour le modèle).
+/// Video node definitions (unchanged — see `timeline` for the model).
 #[must_use]
 pub fn all_definitions() -> Vec<NodeDefinition> {
     vec![

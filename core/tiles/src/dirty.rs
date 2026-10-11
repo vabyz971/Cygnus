@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Ensemble sale : bitset dense par niveau, sans `HashMap`.
+//! Dirty set: dense per-level bitset, no `HashMap`.
 //!
-//! [`DirtyTiles`] suit les tuiles à recalculer avec O(1) par marquage et
-//! test, un compteur O(1) (`dirty_count`), et une itération déterministe
-//! en lignes — sans allocation après construction (les plages sont
-//! consommées par valeur, jamais collectées).
+//! [`DirtyTiles`] tracks tiles to recompute with O(1) marking and
+//! lookup, an O(1) counter (`dirty_count`), and deterministic
+//! row-major iteration — no allocation after construction (ranges are
+//! consumed by value, never collected).
 
 use crate::{TileGrid, TileId, TileRange};
 
-/// Tuiles sales d'une surface : un bitset par niveau mip.
+/// Dirty tiles of a surface: one bitset per mip level.
 ///
-/// Dimensionné une fois pour la surface (`DirtyTiles::new`) ; les
-/// marquages hors surface sont ignorés (faux) — le clipping appartient à
-/// [`TileGrid::invalidate`], la robustesse reste ici.
+/// Sized once for the surface (`DirtyTiles::new`);
+/// off-surface markings are ignored (false) — clipping belongs to
+/// [`TileGrid::invalidate`], robustness stays here.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DirtyTiles {
     levels: Vec<LevelBits>,
@@ -42,7 +42,7 @@ struct LevelBits {
 }
 
 impl DirtyTiles {
-    /// Nouvel ensemble vide dimensionné pour la grille.
+    /// New empty set sized for the grid.
     #[must_use]
     pub fn new(grid: &TileGrid) -> Self {
         let mut levels = Vec::with_capacity(usize::from(grid.level_count()));
@@ -54,26 +54,26 @@ impl DirtyTiles {
         Self { levels, count: 0 }
     }
 
-    /// Nombre de niveaux suivis.
+    /// Number of tracked levels.
     #[must_use]
     pub fn level_count(&self) -> usize {
         self.levels.len()
     }
 
-    /// Nombre de tuiles sales (O(1) — compteur maintenu).
+    /// Number of dirty tiles (O(1) — maintained counter).
     #[must_use]
     pub fn dirty_count(&self) -> u64 {
         self.count
     }
 
-    /// Vrai si aucune tuile sale.
+    /// True if no dirty tiles.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
 
-    /// Salit une tuile. Retourne vrai si nouvellement sale (faux si déjà
-    /// sale ou hors surface/niveau).
+    /// Marks a tile dirty. Returns true if newly dirty (false if already
+    /// dirty or off-surface/level).
     pub fn mark(&mut self, id: TileId) -> bool {
         let Some(bits) = self.levels.get_mut(usize::from(id.level)) else {
             return false;
@@ -93,8 +93,8 @@ impl DirtyTiles {
         true
     }
 
-    /// Salit une plage (sans allocation — itérée, jamais collectée).
-    /// Retourne le nombre de tuiles NOUVELLEMENT sales.
+    /// Marks a range dirty (no allocation — iterated, never collected).
+    /// Returns the number of NEWLY dirty tiles.
     pub fn mark_range(&mut self, range: TileRange) -> u64 {
         if range.is_empty() {
             return 0;
@@ -102,7 +102,7 @@ impl DirtyTiles {
         let Some(bits) = self.levels.get_mut(usize::from(range.level)) else {
             return 0;
         };
-        // Clipping rapide aux dimensions du niveau (lignes/colonnes).
+        // Fast clipping to the level dimensions (rows/columns).
         let nx = bits.nx as i64;
         let ny = bits.ny as i64;
         let x0 = (i64::from(range.x0)).clamp(0, nx - 1);
@@ -129,7 +129,7 @@ impl DirtyTiles {
         fresh
     }
 
-    /// Teste sans muter (faux hors surface/niveau).
+    /// Tests without mutating (false off-surface/level).
     #[must_use]
     pub fn is_dirty(&self, id: TileId) -> bool {
         let Some(bits) = self.levels.get(usize::from(id.level)) else {
@@ -142,9 +142,9 @@ impl DirtyTiles {
         bits.words[(index / 64) as usize] & (1u64 << (index % 64)) != 0
     }
 
-    /// Nettoie une tuile. Retourne l'état sale PRÉCÉDENT (faux si déjà
-    /// propre ou hors surface — le planificateur ne revoit jamais une
-    /// tuile nettoyée).
+    /// Cleans a tile. Returns the PREVIOUS dirty state (false if already
+    /// clean or off-surface — the scheduler never sees a cleaned
+    /// tile again).
     pub fn clear(&mut self, id: TileId) -> bool {
         let Some(bits) = self.levels.get_mut(usize::from(id.level)) else {
             return false;
@@ -163,7 +163,7 @@ impl DirtyTiles {
         true
     }
 
-    /// Nettoie tout (fin de passe complète).
+    /// Cleans everything (end of a full pass).
     pub fn clear_all(&mut self) {
         for bits in &mut self.levels {
             bits.words.fill(0);
@@ -171,7 +171,7 @@ impl DirtyTiles {
         self.count = 0;
     }
 
-    /// Itère les sales en lignes, niveau par niveau (sans allocation).
+    /// Iterates dirty tiles row-major, level by level (no allocation).
     #[must_use]
     pub fn iter_dirty(&self) -> DirtyIter<'_> {
         DirtyIter {
@@ -183,7 +183,7 @@ impl DirtyTiles {
     }
 }
 
-/// Itérateur des tuiles sales (lignes, niveaux croissants, sans allocation).
+/// Dirty-tile iterator (rows, ascending levels, no allocation).
 #[derive(Debug)]
 pub struct DirtyIter<'a> {
     dirty: &'a DirtyTiles,

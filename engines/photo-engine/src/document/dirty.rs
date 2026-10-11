@@ -14,71 +14,71 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Région sale (Phase 6D) : QUELLES zones ont été modifiées et nécessitent
-//! une reconstruction.
+//! Dirty region (Phase 6D): WHICH zones were modified and need
+//! rebuilding.
 //!
-//! [`DirtyRegion`] ne fait AUCUN compositing et ne connaît aucun filtre :
-//! une liste de rectangles en DOCUMENT SPACE (le même espace que les
-//! régions envoyées à `TileGrid` / `composite_region_with`).
+//! [`DirtyRegion`] does NO compositing and knows no filter: a list of
+//! rectangles in DOCUMENT SPACE (the same space as regions sent to
+//! `TileGrid` / `composite_region_with`).
 //!
-//! Séparation stricte (règle centrale 6D) :
+//! Strict separation (central 6D rule):
 //!
-//! - `SpatialScope` (Phase 6C, `compositing.rs`) : pour produire R, quelle
-//!   région D calculer (`D = R`, `D = R + halo`, `D = full`) ;
-//! - [`DirtyRegion`] (ici) : quelles zones sont modifiées ;
-//! - `TileCache` (`tile_cache.rs`) : réutiliser le résultat final de R.
+//! - `SpatialScope` (Phase 6C, `compositing.rs`): to produce R, which
+//!   region D to compute (`D = R`, `D = R + halo`, `D = full`);
+//! - [`DirtyRegion`] (here): which zones are modified;
+//! - `TileCache` (`tile_cache.rs`): reuse the final result of R.
 //!
-//! La logique `D = R + halo` ne vit PAS ici : l'appelant la résout via
-//! `scope_adjustment_window` (Phase 6C) et transmet des rectangles déjà
-//! exprimés en zones d'invalidation (voir
+//! The `D = R + halo` logic does NOT live here: the caller resolves it
+//! via `scope_adjustment_window` (Phase 6C) and passes rectangles
+//! already expressed as invalidation zones (see
 //! [`TileCache::mark_dirty_scope`](crate::document::tile_cache::TileCache::mark_dirty_scope)).
 //!
-//! Contrat (Phase 6G.2 §1) : après production du résultat, l'appelant
-//! consomme EXACTEMENT les zones rendues via [`DirtyRegion::consume`] —
-//! jamais avant (le dirty ne part que si le résultat existe), jamais plus
-//! large (les zones non rendues restent sales). `clear` total reste pour
-//! les réinitialisations. Sans consommation, les requêtes restent sales
-//! (re-rendu conservateur, jamais de pixel faux).
+//! Contract (Phase 6G.2 §1): after producing the result, the caller
+//! consumes EXACTLY the rendered zones via [`DirtyRegion::consume`] —
+//! never before (dirty only clears once the result exists), never more
+//! (unrendered zones stay dirty). Total `clear` remains for resets.
+//! Without consumption, requests stay dirty (conservative re-render,
+//! never wrong pixels).
 
 use tiles::TileRegion;
 
-/// Zones invalidées, en DOCUMENT SPACE.
+/// Invalidated zones, in DOCUMENT SPACE.
 ///
-/// Représentation volontairement simple (liste de rectangles, pas de
-/// bitset/quadtree/BVH) : la correction d'abord, l'optimisation plus tard.
-/// Les rectangles peuvent se chevaucher ; `clear` repart de zéro.
+/// Deliberately simple representation (rectangle list, no bitset /
+/// quadtree / BVH): correctness first, optimization later. Rectangles
+/// may overlap; `clear` starts over from zero.
 #[derive(Debug, Clone, Default)]
 pub struct DirtyRegion {
     rects: Vec<TileRegion>,
 }
 
 impl DirtyRegion {
-    /// Région vide (rien à reconstruire).
+    /// Empty region (nothing to rebuild).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Ajoute une zone invalidée (les rectangles vides sont ignorés).
+    /// Adds an invalidated zone (empty rectangles are ignored).
     pub fn add(&mut self, rect: TileRegion) {
         if !rect.is_empty() {
             self.rects.push(rect);
         }
     }
 
-    /// Oublie toutes les zones (réinitialisation, changement de périmètre).
+    /// Forgets all zones (reset, perimeter change).
     pub fn clear(&mut self) {
         self.rects.clear();
     }
 
-    /// Consomme les zones effectivement rendues (Phase 6G.2 §1) : soustrait
-    /// chaque rect rendu des zones sales (soustraction exacte, ≤ 4 morceaux
-    /// par rect). Retourne le nombre de zones sales entièrement soldées.
+    /// Consumes the actually rendered zones (Phase 6G.2 §1): subtracts each
+    /// rendered rect from the dirty zones (exact subtraction, ≤ 4 pieces
+    /// per rect). Returns the number of fully settled dirty zones.
     ///
-    /// Précisément ce qui a été produit disparaît, rien de plus : une zone
-    /// sale à cheval sur une tuile rendue et une autre reste sale sur la
-    /// partie non rendue (re-rendu ciblé à la prochaine frame, jamais de
-    /// pixel faux, jamais de re-rendu inutile).
+    /// Exactly what was produced disappears, nothing more: a zone
+    /// straddling a rendered tile and another stays dirty on its unrendered
+    /// part (targeted re-render next frame, never wrong pixels, never
+    /// useless re-renders).
     pub fn consume(&mut self, rendered: &[TileRegion]) -> u64 {
         if rendered.is_empty() || self.rects.is_empty() {
             return 0;
@@ -107,22 +107,22 @@ impl DirtyRegion {
         cleared
     }
 
-    /// Vrai si aucune zone invalidée.
+    /// True if no invalidated zone.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rects.is_empty()
     }
 
-    /// Nombre de rectangles suivis (observabilité, sans effet).
+    /// Number of tracked rectangles (observability, no effect).
     #[must_use]
     pub fn len(&self) -> usize {
         self.rects.len()
     }
 
-    /// Vrai si `rect` intersecte au moins une zone invalidée.
+    /// True if `rect` intersects at least one invalidated zone. It is the
     ///
-    /// C'est le seul test utilisé par `TileCache` : une tuile R est
-    /// réutilisable ssi `!dirty.intersects(R)` (ET garde de contenu OK).
+    /// only test used by `TileCache`: tile R is reusable iff `!dirty.intersects(R)`
+    /// (AND content guard OK).
     #[must_use]
     pub fn intersects(&self, rect: TileRegion) -> bool {
         if rect.is_empty() {
@@ -131,8 +131,8 @@ impl DirtyRegion {
         self.rects.iter().any(|d| !d.intersect(rect).is_empty())
     }
 
-    /// Union englobante des zones (`EMPTY` si vide) — pour choisir quoi
-    /// re-rendre en un passage.
+    /// Bounding union of the zones (`EMPTY` if empty) — to choose what to
+    /// re-render in one pass.
     #[must_use]
     pub fn bounds(&self) -> TileRegion {
         self.rects
@@ -140,16 +140,16 @@ impl DirtyRegion {
             .fold(TileRegion::EMPTY, |acc, r| acc.union(*r))
     }
 
-    /// Itération sur les zones (assemblage, diagnostics).
+    /// Iteration over zones (assembly, diagnostics).
     #[must_use]
     pub fn rects(&self) -> &[TileRegion] {
         &self.rects
     }
 }
 
-/// Soustrait `cut` de `rect` (géométrie entière exacte, ≤ 4 morceaux non
-/// vides : bandes gauche/droite sur toute la hauteur + bandes haut/bas sur
-/// la largeur restante). `cut` hors `rect` ⇒ `[rect]` ; recouvrement total
+/// Subtracts `cut` from `rect` (exact integer geometry, ≤ 4 non-empty
+/// pieces: left/right bands over the full height + top/bottom bands over
+/// the remaining width). `cut` outside `rect` ⇒ `[rect]`; total overlap
 /// ⇒ `[]`.
 fn subtract_rect(rect: TileRegion, cut: TileRegion) -> Vec<TileRegion> {
     let cut = rect.intersect(cut);
@@ -159,7 +159,7 @@ fn subtract_rect(rect: TileRegion, cut: TileRegion) -> Vec<TileRegion> {
     if cut == rect {
         return Vec::new();
     }
-    // Bornes en i64 (aucun dépassement sur des i32) ; largeurs saturées.
+    // i64 bounds (no overflow on i32); saturated widths.
     let (rx0, ry0) = (i64::from(rect.x), i64::from(rect.y));
     let (rx1, ry1) = (rx0 + i64::from(rect.width), ry0 + i64::from(rect.height));
     let (cx0, cy0) = (i64::from(cut.x), i64::from(cut.y));
@@ -226,17 +226,17 @@ mod tests {
     fn consume_exact() {
         let mut d = DirtyRegion::new();
         d.add(TileRegion::new(0, 0, 100, 100));
-        // Rendu partiel : reste une bande droite.
+        // Partial render: a right band remains.
         assert_eq!(d.consume(&[TileRegion::new(0, 0, 40, 100)]), 0);
         assert_eq!(d.rects(), &[TileRegion::new(40, 0, 60, 100)]);
-        // Recouvrement total : soldé.
+        // Total overlap: settled.
         assert_eq!(d.consume(&[TileRegion::new(0, 0, 100, 100)]), 1);
         assert!(d.is_empty());
-        // Hors zone : intact.
+        // Outside the zone: intact.
         d.add(TileRegion::new(0, 0, 10, 10));
         assert_eq!(d.consume(&[TileRegion::new(50, 50, 10, 10)]), 0);
         assert_eq!(d.len(), 1);
-        // Trou central : 4 morceaux, aire conservée.
+        // Center hole: 4 pieces, area preserved.
         let mut d = DirtyRegion::new();
         d.add(TileRegion::new(0, 0, 100, 100));
         assert_eq!(d.consume(&[TileRegion::new(40, 40, 20, 20)]), 0);
