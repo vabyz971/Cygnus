@@ -296,10 +296,13 @@ impl<'a> PhotoCanvas<'a> {
             }
         }
         // Move tool: accumulates the drag in image pixels and
-        // commits the total offset on release.
+        // commits the total offset on release (or click: zero
+        // offset, just clears — never leaves an orphaned stroke).
         if self.tool == PhotoCanvasTool::Move {
             self.stroke.extend(outcome.pointer_world.iter().copied());
-            if response.response.drag_stopped() && !self.stroke.is_empty() {
+            if (response.response.drag_stopped() || response.response.clicked())
+                && !self.stroke.is_empty()
+            {
                 let first = self.stroke.first().copied().unwrap_or(egui::Vec2::ZERO);
                 let last = self.stroke.last().copied().unwrap_or(first);
                 self.stroke.clear();
@@ -320,6 +323,14 @@ impl<'a> PhotoCanvas<'a> {
             self.stroke.clear();
             return outcome;
         }
+        if self.active_layer.is_none() {
+            // No target layer: no gesture possible — no overlay, no
+            // commit, no orphaned point (clicking without a layer is a
+            // silent no-op, never a one-frame flash).
+            self.stroke.clear();
+            outcome.pointer_world.clear();
+            return outcome;
+        }
         // Phase 6G.3P: the gesture is reported incrementally for
         // the transient overlay (the app feeds `InteractionOverlay`,
         // never the worker before commit — see `PhotoCanvasOutcome`).
@@ -327,7 +338,13 @@ impl<'a> PhotoCanvas<'a> {
         outcome.ink_points = outcome.pointer_world.clone();
         outcome.ink_dragging = response.response.dragged_by(egui::PointerButton::Primary);
         self.stroke.extend(outcome.pointer_world.iter().copied());
-        if response.response.drag_stopped() && !self.stroke.is_empty() {
+        // A plain click (press + release without a drag) commits a
+        // single dab: `drag_stopped()` alone is false without movement,
+        // which used to flash the overlay for one frame and orphan the
+        // point into the next stroke.
+        if (response.response.drag_stopped() || response.response.clicked())
+            && !self.stroke.is_empty()
+        {
             let points: Vec<(f32, f32)> = self.stroke.iter().map(|v| (v.x, v.y)).collect();
             self.stroke.clear();
             if let Some(layer) = self.active_layer {
@@ -501,6 +518,139 @@ mod tests {
         assert!(paint.points.len() >= 3, "tout le drag commis");
         assert!(stroke.is_empty(), "points vidés au commit");
         assert!(!paint.eraser);
+    }
+
+    #[test]
+    fn click_simple_commit_un_point_sans_orphelin() {
+        // Clic sans drag (appui + relâchement sans mouvement) : commet
+        // un point unique (dab), sans laisser de point orphelin — avant,
+        // `drag_stopped()` seul restait faux, l'overlay flashait une
+        // frame et le point polluait le geste suivant.
+        use std::cell::RefCell;
+
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let layer = uuid::Uuid::new_v4();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 600.0))))
+                        .tool(PhotoCanvasTool::Brush)
+                        .active_layer(Some(layer))
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+        let click_at = egui::pos2(400.0, 300.0);
+        let press = egui::Event::PointerButton {
+            pos: click_at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let release = egui::Event::PointerButton {
+            pos: click_at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        let _ = frame(vec![]);
+        let out = frame(vec![press]);
+        assert!(out.paint.is_none(), "appui seul : aucun commit");
+        let out = frame(vec![release]);
+        let paint = out.paint.expect("le clic commet un point");
+        assert_eq!(paint.layer, layer);
+        assert!(!paint.points.is_empty(), "au moins le point cliqué");
+        // Le geste suivant repart à zéro (pas de segment parasite vers
+        // l'ancien clic) : premier mouvement = nouveau geste.
+        let elsewhere = egui::pos2(100.0, 100.0);
+        let press_there = egui::Event::PointerButton {
+            pos: elsewhere,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let moved = egui::Event::PointerMoved(elsewhere + egui::vec2(30.0, 10.0));
+        let _ = frame(vec![press_there]);
+        let out = frame(vec![moved]);
+        let fresh_gesture = out.ink_gesture_started;
+        let release_there = egui::Event::PointerButton {
+            pos: elsewhere + egui::vec2(30.0, 10.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        let out = frame(vec![release_there]);
+        assert!(out.paint.is_some(), "le drag suivant commet");
+        assert!(stroke.is_empty(), "aucun point orphelin");
+        assert!(fresh_gesture, "nouveau geste après le clic (stroke vidé)");
+    }
+
+    #[test]
+    fn click_sans_calque_reste_silencieux() {
+        // Pinceau sans calque sélectionné : ni overlay, ni commit, ni
+        // orphelin (pas de flash d'une frame).
+        use std::cell::RefCell;
+
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 600.0))))
+                        .tool(PhotoCanvasTool::Brush)
+                        .active_layer(None)
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+        let at = egui::pos2(400.0, 300.0);
+        let press = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let release = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        let _ = frame(vec![]);
+        for events in [vec![press], vec![release], vec![]] {
+            let out = frame(events);
+            assert!(out.paint.is_none(), "jamais de commit sans calque");
+            assert!(out.pointer_world.is_empty(), "aucun point retenu");
+            assert!(out.ink_points.is_empty(), "aucun overlay");
+        }
+        assert!(stroke.is_empty(), "aucun orphelin");
     }
 
     #[test]
