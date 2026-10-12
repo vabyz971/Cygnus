@@ -39,13 +39,12 @@ use ui_kit::utils::ReorderDragState;
 use uuid::Uuid;
 
 /// Allocated height of a flattened row (never overlapping: the
-/// list allocates exactly this height per row). Values
-/// live in the theme (`sizes.layer_row`, `sizes.attachment_row`).
+/// list allocates exactly this height per row). All rows share the
+/// layer height: nested layers, filters and masks look like their
+/// parent rows (Affinity-style).
 pub fn row_height_for(theme: &CygnusTheme, kind: FlatRowKind) -> f32 {
-    match kind {
-        FlatRowKind::Layer => theme.sizes.layer_row,
-        FlatRowKind::Filter { .. } | FlatRowKind::Mask { .. } => theme.sizes.attachment_row,
-    }
+    let _ = kind;
+    theme.sizes.layer_row
 }
 
 /// Draws the semi-transparent ghost following the mouse during the drag.
@@ -67,23 +66,32 @@ fn draw_drag_ghost(
     let Some(pointer) = ui.ctx().pointer_latest_pos() else {
         return;
     };
+    // Full list-width ghost row at the cursor (Affinity-style: the
+    // dragged row travels at full width, never a small box).
     let theme = ui.cygnus_theme();
+    let list = ui.min_rect();
+    let height = row_height_for(&theme, row.kind);
     let rect = egui::Rect::from_min_size(
-        egui::pos2(pointer.x + 12.0, pointer.y - 16.0),
-        egui::vec2(200.0, 32.0),
+        egui::pos2(list.left(), pointer.y - height / 2.0),
+        egui::vec2(list.width(), height),
     );
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::new("photo_layer_drag_ghost"),
     ));
-    painter.rect_filled(rect, theme.radius.sm, theme.colors.item_selected);
+    painter.rect_filled(rect, 0.0, theme.colors.item_selected);
     painter.text(
-        rect.left_center() + egui::vec2(theme.spacing.sm, 0.0),
+        rect.left_center() + egui::vec2(theme.spacing.sm + row_depth_indent(row, &theme), 0.0),
         egui::Align2::LEFT_CENTER,
         flat_row_name(layers, row),
         egui::FontId::proportional(theme.typography.body_size),
         theme.colors.fg_primary,
     );
+}
+
+/// Indent of a row in pixels (mirrors the row content offset).
+fn row_depth_indent(row: &FlatRow, theme: &CygnusTheme) -> f32 {
+    row.depth as f32 * theme.spacing.lg
 }
 
 /// Converts a flattened-index drop into [`LayerDrop`] (checked
@@ -115,50 +123,61 @@ pub fn draw_layer_list(
     thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> (Vec<LayerItemAction>, Option<LayerDrop>) {
     let mut actions = Vec::new();
-    let rows: Vec<FlatRow> = flatten_layers(layers)
-        .into_iter()
-        .filter(|row| match row.kind {
-            FlatRowKind::Layer => true,
-            FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
-                attachments_open(ui, owner)
-            }
-        })
-        .collect();
+    let all_rows = flatten_layers(layers);
+    // Owners folded shut (attachments chevron): rows under them hide
+    // via their parent chain (see `visible_rows`). Engine-collapsed
+    // groups already prune their subtree in `flatten_layers`.
+    let mut closed: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    for row in &all_rows {
+        if row.kind == FlatRowKind::Layer && !attachments_open(ui, row.id) {
+            closed.insert(row.id);
+        }
+    }
+    let rows: Vec<FlatRow> = super::types::visible_rows(all_rows, &closed);
     let theme = ui.cygnus_theme();
     let drop = ReorderableList::new(&rows, theme.sizes.layer_row, drag_state).show_variable(
         ui,
         |row| row_height_for(&theme, row.kind),
         |row| row.nestable,
-        // Only layers move via DnD (attachments
-        // reorder with their row's up/down buttons).
-        |row| row.kind == FlatRowKind::Layer,
-        |ui, row, _index, _is_dragging| match row.kind {
-            FlatRowKind::Layer => {
-                if let Some(layer) = find_layer_in(layers, row.id) {
-                    actions.extend(draw_photo_layer_item(
-                        ui,
-                        layer,
-                        Some(layer.id) == sel.selected,
-                        rename,
-                        thumbs.get(&layer.id).copied(),
-                        row.depth,
-                        t,
-                    ));
-                }
+        // Every row is draggable (layers, filters, masks alike):
+        // drops resolve to exact reparent operations.
+        |_| true,
+        |ui, row, _index, is_dragging_this| {
+            // Origin row of the drag: keep the allocated space but
+            // draw nothing (the full-width ghost travels instead) —
+            // otherwise the row appears duplicated during the drag.
+            if is_dragging_this {
+                return;
             }
-            FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
-                if let Some((sub, _)) = find_attachment_in(layers, owner, row.id) {
-                    let focused_here = sel
-                        .focused
-                        .is_some_and(|focus| focus.owner == owner && focus.id == row.id);
-                    actions.extend(draw_attachment_row(
-                        ui,
-                        owner,
-                        sub,
-                        focused_here,
-                        row.depth,
-                        t,
-                    ));
+            match row.kind {
+                FlatRowKind::Layer => {
+                    if let Some(layer) = find_layer_in(layers, row.id) {
+                        actions.extend(draw_photo_layer_item(
+                            ui,
+                            layer,
+                            Some(layer.id) == sel.selected,
+                            rename,
+                            thumbs.get(&layer.id).copied(),
+                            row.depth,
+                            t,
+                        ));
+                    }
+                }
+                FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner, .. } => {
+                    if let Some((sub, _)) = find_attachment_in(layers, owner, row.id) {
+                        let focused_here = sel
+                            .focused
+                            .is_some_and(|focus| focus.owner == owner && focus.id == row.id);
+                        actions.extend(draw_attachment_row(
+                            ui,
+                            owner,
+                            sub,
+                            focused_here,
+                            row.depth,
+                            t,
+                            thumbs,
+                        ));
+                    }
                 }
             }
         },
@@ -228,8 +247,7 @@ mod tests {
             .sum();
         assert_eq!(total, 3.0 * theme.sizes.layer_row);
         assert!(rows.iter().all(|row| row.kind == FlatRowKind::Layer));
-        // One layer with a filter: 2 rows (layer + child), the
-        // horizontal band is gone — no more overflow.
+        // One layer with a filter: 2 uniform rows (layer + child).
         let mut doc = Document::new(8, 8);
         let mut pixels = PixelLayer::new("fond", Arc::new(image::DynamicImage::new_rgba8(4, 4)));
         pixels.filter_layers.push(photo_engine::FilterLayer::new(
@@ -245,7 +263,7 @@ mod tests {
             .iter()
             .map(|row| row_height_for(&theme, row.kind))
             .sum();
-        assert_eq!(total, theme.sizes.layer_row + theme.sizes.attachment_row);
+        assert_eq!(total, 2.0 * theme.sizes.layer_row);
     }
 
     #[test]

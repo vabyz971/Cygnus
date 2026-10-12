@@ -98,8 +98,15 @@ pub enum PhotoAction {
     DeleteLayer(Uuid),
     /// Duplicate layer `layer` (worker, context menu).
     DuplicateLayer(Uuid),
+    /// Duplicate a live filter (worker, context menu).
+    DuplicateFilter { layer: Uuid, filter: Uuid },
     /// Add a mask to the selected layer (worker, no-op if none).
     AddMaskToSelected,
+    /// Add a mask to a live filter's own pile (worker).
+    AddMaskToFilter {
+        /// Owning filter.
+        filter: Uuid,
+    },
     /// Add a live filter (worker).
     AddFilter { layer: Uuid, filter_type: String },
     /// Tune a float parameter of a live filter (worker, coalesced
@@ -118,7 +125,7 @@ pub enum PhotoAction {
     SelectLayer(Uuid),
     /// Focus an attachment (local UI state, owner selected too).
     FocusAttachment {
-        /// Owning layer.
+        /// Owner (layer id, or filter id for filter-owned masks).
         owner: Uuid,
         /// Targeted filter or mask.
         id: Uuid,
@@ -150,25 +157,48 @@ pub enum PhotoAction {
         /// True = before the target, false = after.
         before: bool,
     },
-    /// Nest a layer at the head of a group (worker).
-    MoveIntoGroup {
+    /// Nest a layer at the head of a parent (worker): group as-is,
+    /// pixel layer as a clipped child.
+    MoveIntoParent {
         /// Moved layer.
         layer: Uuid,
-        /// Host group.
-        group: Uuid,
+        /// Host parent (group or pixel layer).
+        parent: Uuid,
     },
     /// Collapse / expand a group (worker, no re-render).
     ToggleGroupCollapsed(Uuid),
     /// Toggle visibility (worker).
     ToggleLayerVisibility(Uuid),
+    /// Solo a layer (worker): only it and its ancestors stay visible.
+    IsolateLayer(Uuid),
     /// Set opacity (engine units 0..=100, worker).
     SetOpacity { layer: Uuid, opacity: f32 },
     /// Set the blend mode (worker).
     SetBlendMode { layer: Uuid, mode: BlendMode },
-    /// Move a filter within its stack (worker).
-    MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Move a mask within its stack (worker).
-    MoveMask { owner: Uuid, mask: Uuid, up: bool },
+    /// Move a live filter from one chain to another (worker, single
+    /// history entry): pixel or group chains, exact index.
+    MoveFilterTo {
+        /// Filter being moved.
+        filter: Uuid,
+        /// Source chain owner.
+        from: Uuid,
+        /// Destination chain owner.
+        to: Uuid,
+        /// Insertion index (clamped engine-side).
+        index: usize,
+    },
+    /// Move a mask from one pile to another (worker, single history
+    /// entry): layer, group, adjustment or filter piles, exact index.
+    MoveMaskTo {
+        /// Mask being moved.
+        mask: Uuid,
+        /// Source pile owner.
+        from: Uuid,
+        /// Destination pile owner.
+        to: Uuid,
+        /// Insertion index (clamped engine-side).
+        index: usize,
+    },
     /// Delete a filter (worker).
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Delete a mask (worker).

@@ -95,6 +95,78 @@ pub struct PhotoSubLayerInfo {
     /// masks. Only `Float`s travel (the registry's `Enum`/`Text`
     /// are not slider-editable).
     pub params: HashMap<String, f32>,
+    /// Masks owned by a live filter (empty for masks and for plain
+    /// layer piles): rendered indented one level deeper, focusable
+    /// with the filter as owner.
+    pub masks: Vec<PhotoSubLayerInfo>,
+    /// Grayscale thumbnail of a mask (black/white coverage preview);
+    /// `None` for filters (FX badge instead).
+    pub thumb: Option<PhotoLayerThumb>,
+}
+
+/// Displayed filter with its own masks, from an engine filter layer.
+fn sub_filter(f: &photo_engine::FilterLayer) -> PhotoSubLayerInfo {
+    PhotoSubLayerInfo {
+        id: f.id,
+        name: f.name.clone(),
+        is_filter: true,
+        enabled: f.enabled,
+        filter_type: f.type_id.clone(),
+        params: f
+            .params
+            .iter()
+            .filter_map(|(key, value)| value.as_float().map(|v| (key.clone(), v)))
+            .collect(),
+        masks: f.masks.iter().map(sub_mask).collect(),
+        thumb: None,
+    }
+}
+
+/// Displayed mask, from an engine mask (with a grayscale coverage
+/// thumbnail for its row).
+fn sub_mask(m: &photo_engine::LayerMask) -> PhotoSubLayerInfo {
+    PhotoSubLayerInfo {
+        id: m.id,
+        name: m.name.clone(),
+        is_filter: false,
+        enabled: m.enabled,
+        filter_type: String::new(),
+        params: HashMap::new(),
+        masks: Vec::new(),
+        thumb: mask_thumb(m),
+    }
+}
+
+/// Grayscale thumbnail of a mask buffer (nearest stride downscale,
+/// fits 48×32): black hides, white reveals. Cheap enough for the
+/// snapshot path (a few thousand samples at most).
+fn mask_thumb(m: &photo_engine::LayerMask) -> Option<PhotoLayerThumb> {
+    const MAX_W: u32 = 48;
+    const MAX_H: u32 = 32;
+    let (sw, sh) = (m.image.width(), m.image.height());
+    if sw == 0 || sh == 0 {
+        return None;
+    }
+    let stride = ((sw + MAX_W - 1) / MAX_W)
+        .max((sh + MAX_H - 1) / MAX_H)
+        .max(1);
+    let (w, h) = ((sw + stride - 1) / stride, (sh + stride - 1) / stride);
+    let src = m.image.as_raw();
+    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let sx = (x * stride).min(sw - 1) as usize;
+            let sy = (y * stride).min(sh - 1) as usize;
+            let v = src[(sy * sw as usize + sx) * 4];
+            rgba.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    Some(PhotoLayerThumb {
+        width: w,
+        height: h,
+        rgba,
+        version: m.version,
+    })
 }
 
 /// Designation of a focused attachment (secondary selection
@@ -174,10 +246,10 @@ pub struct PhotoLayerInfo {
     pub filters: Vec<PhotoSubLayerInfo>,
     /// Layer masks, for the HUD.
     pub masks: Vec<PhotoSubLayerInfo>,
-    /// Direct children (groups only, recursive): the UI shows
-    /// them indented under their parent, collapsed when `collapsed`.
-    /// Any layer may be a child of a group (free
-    /// engine-side nesting: `reorder_before` / `move_into`).
+    /// Direct children (groups and clipped pixel children alike,
+    /// recursive): the UI shows them indented under their parent,
+    /// collapsed when `collapsed`. Any layer may be a child of a
+    /// group or a pixel layer (free engine-side nesting).
     pub children: Vec<PhotoLayerInfo>,
     /// Collapsed group (engine state): the UI hides `children`.
     pub collapsed: bool,
@@ -223,48 +295,19 @@ impl PhotoLayerInfo {
                 pixels
                     .filter_layers
                     .iter()
-                    .map(|f| PhotoSubLayerInfo {
-                        id: f.id,
-                        name: f.name.clone(),
-                        is_filter: true,
-                        enabled: f.enabled,
-                        filter_type: f.type_id.clone(),
-                        params: f
-                            .params
-                            .iter()
-                            .filter_map(|(key, value)| value.as_float().map(|v| (key.clone(), v)))
-                            .collect(),
-                    })
-                    .collect(),
-                pixels
-                    .masks
-                    .iter()
-                    .map(|m| PhotoSubLayerInfo {
-                        id: m.id,
-                        name: m.name.clone(),
-                        is_filter: false,
-                        enabled: m.enabled,
-                        filter_type: String::new(),
-                        params: HashMap::new(),
-                    })
-                    .collect(),
+                    .map(sub_filter)
+                    .collect::<Vec<_>>(),
+                pixels.masks.iter().map(sub_mask).collect::<Vec<_>>(),
             ),
             LayerNode::Group(group) => (
-                Vec::new(),
                 group
-                    .masks
+                    .filter_layers
                     .iter()
-                    .map(|m| PhotoSubLayerInfo {
-                        id: m.id,
-                        name: m.name.clone(),
-                        is_filter: false,
-                        enabled: m.enabled,
-                        filter_type: String::new(),
-                        params: HashMap::new(),
-                    })
-                    .collect(),
+                    .map(sub_filter)
+                    .collect::<Vec<_>>(),
+                group.masks.iter().map(sub_mask).collect::<Vec<_>>(),
             ),
-            LayerNode::Adjustment(_) => (Vec::new(), Vec::new()),
+            LayerNode::Adjustment(adj) => (Vec::new(), adj.masks.iter().map(sub_mask).collect()),
         };
         let has_filters = !filters.is_empty();
         let has_masks = !masks.is_empty();
@@ -297,7 +340,15 @@ impl PhotoLayerInfo {
                     .rev()
                     .map(|child| Self::from_node_with_lookup(child, lookup))
                     .collect(),
-                LayerNode::Pixel(_) | LayerNode::Adjustment(_) => Vec::new(),
+                // Clipped children of a pixel layer (nesting): same
+                // indented display as group children.
+                LayerNode::Pixel(pixels) => pixels
+                    .children
+                    .iter()
+                    .rev()
+                    .map(|child| Self::from_node_with_lookup(child, lookup))
+                    .collect(),
+                LayerNode::Adjustment(_) => Vec::new(),
             },
             collapsed: match node {
                 LayerNode::Group(group) => group.collapsed,
@@ -323,8 +374,8 @@ impl PhotoLayerInfo {
 
 /// Hierarchical drop resolved to rows: what is moved, onto
 /// what, and where (before / inside / after). The panel converts it to
-/// worker commands (`ReorderNodes`, `MoveIntoGroup`); attachments
-/// do not move via DnD (documented no-op).
+/// worker commands (`ReorderNodes`, `MoveIntoParent`, `MoveFilterTo`,
+/// `MoveMaskTo`); every row kind is draggable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerDrop {
     /// Moved row.
@@ -362,17 +413,76 @@ pub fn find_layer_in_mut(layers: &mut [PhotoLayerInfo], id: Uuid) -> Option<&mut
     None
 }
 
-/// Finds an attachment `(info, is_filter)` by `(owner, id)`.
+/// Finds a live filter by id anywhere in the hierarchy (recursive
+/// over layers AND their filter chains).
+pub fn find_filter_in(layers: &[PhotoLayerInfo], id: Uuid) -> Option<(Uuid, &PhotoSubLayerInfo)> {
+    for layer in layers {
+        if let Some(f) = layer.filters.iter().find(|f| f.id == id) {
+            return Some((layer.id, f));
+        }
+        if let Some(found) = find_filter_in(&layer.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Finds the owning layer of an attachment id (a filter id resolves
+/// to its layer; a mask id resolves to its layer, whatever pile holds
+/// it — layer pile or filter pile).
+pub fn find_layer_of_attachment(layers: &[PhotoLayerInfo], id: Uuid) -> Option<Uuid> {
+    for layer in layers {
+        if layer.filters.iter().any(|f| f.id == id) {
+            return Some(layer.id);
+        }
+        if layer.masks.iter().any(|m| m.id == id) {
+            return Some(layer.id);
+        }
+        for f in &layer.filters {
+            if f.masks.iter().any(|m| m.id == id) {
+                return Some(layer.id);
+            }
+        }
+        if let Some(found) = find_layer_of_attachment(&layer.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Position of a filter in its owner's chain.
+pub fn find_filter_position(layers: &[PhotoLayerInfo], owner: Uuid, filter: Uuid) -> Option<usize> {
+    let porteur = find_layer_in(layers, owner)?;
+    porteur.filters.iter().position(|f| f.id == filter)
+}
+
+/// Position of a mask in its owner's pile (layer pile or live-filter
+/// pile — `owner` may be either id).
+pub fn find_mask_position(layers: &[PhotoLayerInfo], owner: Uuid, mask: Uuid) -> Option<usize> {
+    if let Some(porteur) = find_layer_in(layers, owner) {
+        return porteur.masks.iter().position(|m| m.id == mask);
+    }
+    let (_, filtre) = find_filter_in(layers, owner)?;
+    filtre.masks.iter().position(|m| m.id == mask)
+}
+
+/// Finds an attachment `(info, is_filter)` by `(owner, id)`. The owner
+/// may be a layer id (layer piles) or a filter id (filter-mask piles).
 pub fn find_attachment_in(
     layers: &[PhotoLayerInfo],
     owner: Uuid,
     id: Uuid,
 ) -> Option<(&PhotoSubLayerInfo, bool)> {
-    let porteur = find_layer_in(layers, owner)?;
-    if let Some(filtre) = porteur.filters.iter().find(|f| f.id == id) {
-        return Some((filtre, true));
+    if let Some(porteur) = find_layer_in(layers, owner) {
+        if let Some(filtre) = porteur.filters.iter().find(|f| f.id == id) {
+            return Some((filtre, true));
+        }
+        if let Some(masque) = porteur.masks.iter().find(|m| m.id == id) {
+            return Some((masque, false));
+        }
     }
-    porteur
+    let (_, filtre) = find_filter_in(layers, owner)?;
+    filtre
         .masks
         .iter()
         .find(|m| m.id == id)
@@ -385,7 +495,7 @@ pub fn flat_row_name(layers: &[PhotoLayerInfo], row: &FlatRow) -> String {
         FlatRowKind::Layer => find_layer_in(layers, row.id)
             .map(|layer| layer.name.clone())
             .unwrap_or_default(),
-        FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner } => {
+        FlatRowKind::Filter { owner } | FlatRowKind::Mask { owner, .. } => {
             find_attachment_in(layers, owner, row.id)
                 .map(|(sub, _)| sub.name.clone())
                 .unwrap_or_default()
@@ -429,15 +539,19 @@ pub fn snapshot_layers_with(
 pub enum FlatRowKind {
     /// Layer (pixels, group, adjustment).
     Layer,
-    /// Live filter owned by `owner`.
+    /// Live filter owned by `owner` (a layer id).
     Filter {
         /// Owning layer.
         owner: Uuid,
     },
-    /// Mask owned by `owner`.
+    /// Mask owned by `owner` (a layer id for layer piles, a filter
+    /// id for filter-mask piles); `layer` is the subtree root used
+    /// for attachment collapse gating.
     Mask {
-        /// Owning layer.
+        /// Immediate owner (layer or filter id).
         owner: Uuid,
+        /// Owning layer (collapse scope).
+        layer: Uuid,
     },
 }
 
@@ -450,19 +564,52 @@ pub struct FlatRow {
     pub kind: FlatRowKind,
     /// Indent depth (0 = root).
     pub depth: usize,
-    /// True when a layer may be dropped INSIDE (expanded groups).
+    /// Immediate container (layer for children/filters/layer-masks,
+    /// filter for filter-masks; `None` at the root). Used to
+    /// propagate collapse states down the visible rows.
+    pub parent: Option<Uuid>,
+    /// True when a layer may be dropped INSIDE (expanded groups and
+    /// pixel layers — clipped children, Affinity-style).
     pub nestable: bool,
 }
 
 /// Flattens the hierarchy for display: each layer then, when
-/// expanded, its recursive children, its filters and its masks
-/// (full rows, indented). Top of stack first.
+/// expanded, its recursive children, its filters (with their own
+/// masks as deeper rows) and its masks (full rows, indented). Top of
+/// stack first.
+///
+/// Attachment folding is NOT applied here (it needs egui memory):
+/// callers filter with [`visible_rows`] afterwards.
 pub fn flatten_layers(layers: &[PhotoLayerInfo]) -> Vec<FlatRow> {
     let mut out = Vec::new();
     for layer in layers {
         flatten_layer(layer, 0, &mut out);
     }
     out
+}
+
+/// Keeps only the rows no folded-shut ancestor hides: a row is
+/// dropped when any id on its parent chain sits in `closed`
+/// (attachments chevrons; engine-collapsed groups already prune
+/// their subtree in [`flatten_layers`]). The row itself always
+/// stays (folding hides contents, never the owner row).
+pub fn visible_rows(rows: Vec<FlatRow>, closed: &std::collections::HashSet<Uuid>) -> Vec<FlatRow> {
+    let parent_of: std::collections::HashMap<Uuid, Uuid> = rows
+        .iter()
+        .filter_map(|row| row.parent.map(|p| (row.id, p)))
+        .collect();
+    rows.into_iter()
+        .filter(|row| {
+            let mut cursor = row.parent;
+            while let Some(parent) = cursor {
+                if closed.contains(&parent) {
+                    return false;
+                }
+                cursor = parent_of.get(&parent).copied();
+            }
+            true
+        })
+        .collect()
 }
 
 /// Number of displayed rows for `layers` (without building them).
@@ -475,27 +622,83 @@ fn flatten_layer(layer: &PhotoLayerInfo, depth: usize, out: &mut Vec<FlatRow>) {
         id: layer.id,
         kind: FlatRowKind::Layer,
         depth,
-        nestable: layer.kind == PhotoLayerKind::Group && !layer.collapsed,
+        parent: None,
+        nestable: !layer.collapsed
+            && (layer.kind == PhotoLayerKind::Group || layer.kind == PhotoLayerKind::Pixel),
     });
     if layer.collapsed {
         return;
     }
+    flatten_children(layer, depth, layer.id, out);
+}
+
+/// Children, filters and masks of a layer (shared by group children
+/// and clipped pixel children alike).
+fn flatten_children(layer: &PhotoLayerInfo, depth: usize, parent: Uuid, out: &mut Vec<FlatRow>) {
     for child in &layer.children {
-        flatten_layer(child, depth + 1, out);
+        out.push(FlatRow {
+            id: child.id,
+            kind: FlatRowKind::Layer,
+            depth: depth + 1,
+            parent: Some(parent),
+            nestable: !child.collapsed
+                && (child.kind == PhotoLayerKind::Group || child.kind == PhotoLayerKind::Pixel),
+        });
+        if !child.collapsed {
+            flatten_children(child, depth + 1, child.id, out);
+        }
+        for filter in &child.filters {
+            flatten_filter(filter, child.id, depth + 1, out);
+        }
+        for mask in &child.masks {
+            out.push(FlatRow {
+                id: mask.id,
+                kind: FlatRowKind::Mask {
+                    owner: child.id,
+                    layer: layer.id,
+                },
+                depth: depth + 2,
+                parent: Some(child.id),
+                nestable: false,
+            });
+        }
     }
     for filter in &layer.filters {
-        out.push(FlatRow {
-            id: filter.id,
-            kind: FlatRowKind::Filter { owner: layer.id },
-            depth: depth + 1,
-            nestable: false,
-        });
+        flatten_filter(filter, layer.id, depth, out);
     }
     for mask in &layer.masks {
         out.push(FlatRow {
             id: mask.id,
-            kind: FlatRowKind::Mask { owner: layer.id },
+            kind: FlatRowKind::Mask {
+                owner: layer.id,
+                layer: layer.id,
+            },
             depth: depth + 1,
+            parent: Some(layer.id),
+            nestable: false,
+        });
+    }
+}
+
+/// A filter row plus its own mask rows. `owner` is the immediate
+/// owner layer, `depth` its depth.
+fn flatten_filter(filter: &PhotoSubLayerInfo, owner: Uuid, depth: usize, out: &mut Vec<FlatRow>) {
+    out.push(FlatRow {
+        id: filter.id,
+        kind: FlatRowKind::Filter { owner },
+        depth: depth + 1,
+        parent: Some(owner),
+        nestable: false,
+    });
+    for mask in &filter.masks {
+        out.push(FlatRow {
+            id: mask.id,
+            kind: FlatRowKind::Mask {
+                owner: filter.id,
+                layer: owner,
+            },
+            depth: depth + 2,
+            parent: Some(filter.id),
             nestable: false,
         });
     }
@@ -556,7 +759,7 @@ mod tests {
         let mut doc = Document::new(8, 8);
         let inner = LayerNode::Pixel(PixelLayer::new("dedans", test_image()));
         let inner_id = inner.id();
-        let group = GroupLayer::new("groupe", vec![inner]);
+        let group = photo_engine::GroupLayer::new("groupe", vec![inner]);
         let group_id = group.id;
         doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", test_image())));
         doc.push_layer(LayerNode::Group(group));
@@ -587,7 +790,7 @@ mod tests {
         assert!(rows[0].nestable, "groupe déplié = cible de dépôt");
         assert_eq!(rows[1].id, inner_id);
         assert_eq!(rows[1].depth, 1);
-        assert!(!rows[1].nestable);
+        assert!(rows[1].nestable, "pixel = cible de dépôt (enfant clippé)");
         assert_eq!(rows[2].depth, 0);
         assert_eq!(flattened_len(&snapshot_layers(&doc)), 3);
         // Collapsed: the child disappears, the group stays non-nestable.
@@ -627,5 +830,68 @@ mod tests {
         );
         assert_eq!(rows[1].id, filter_id);
         assert_eq!(rows[1].depth, 1);
+    }
+
+    #[test]
+    fn visible_rows_hides_folded_subtrees() {
+        use std::collections::HashSet;
+        let mut doc = Document::new(8, 8);
+        let mut parent = PixelLayer::new("parent", test_image());
+        parent
+            .children
+            .push(LayerNode::Pixel(PixelLayer::new("enfant", test_image())));
+        let mut f = photo_engine::FilterLayer::new("blur", "flou", HashMap::new());
+        f.masks.push(photo_engine::LayerMask::full(8, 8));
+        parent.filter_layers.push(f);
+        let pid = parent.id;
+        doc.push_layer(LayerNode::Pixel(parent));
+        let rows = flatten_layers(&snapshot_layers(&doc));
+        // Parent + enfant + filtre + masque du filtre = 4 lignes.
+        assert_eq!(rows.len(), 4);
+        // Rien de replié : tout visible.
+        let shown = visible_rows(rows.clone(), &HashSet::new());
+        assert_eq!(shown.len(), 4);
+        // Parent replié : lui seul reste.
+        let shown = visible_rows(rows.clone(), &HashSet::from([pid]));
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].id, pid);
+    }
+
+    #[test]
+    fn mask_thumb_rend_noir_et_blanc() {
+        // La miniature d'un masque code la couverture en gris (noir =
+        // masqué, blanc = révélé), aux bonnes dimensions bornées.
+        let mut m = photo_engine::LayerMask::full(4, 4);
+        let mut buf = image::ImageBuffer::from_pixel(4, 4, image::Rgba([255, 255, 255, 255]));
+        buf.put_pixel(0, 0, image::Rgba([0, 0, 0, 255]));
+        m.image = std::sync::Arc::new(buf);
+        let info = sub_mask(&m);
+        let thumb = info.thumb.expect("miniature");
+        assert_eq!((thumb.width, thumb.height), (4, 4));
+        assert_eq!(&thumb.rgba[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&thumb.rgba[4..8], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn profondeur_trois_sans_duplicat() {
+        // Three nested levels: grand + moyen + petit, exactly once
+        // each (no duplication at depth ≥ 2).
+        let mut doc = Document::new(8, 8);
+        let petit = PixelLayer::new("petit", test_image());
+        let pid = petit.id;
+        let moyen = photo_engine::GroupLayer::new("moyen", vec![LayerNode::Pixel(petit)]);
+        let mid = moyen.id;
+        let grand = photo_engine::GroupLayer::new("grand", vec![LayerNode::Group(moyen)]);
+        doc.push_layer(LayerNode::Group(grand));
+        let layers = snapshot_layers(&doc);
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].children.len(), 1);
+        assert_eq!(layers[0].children[0].children.len(), 1);
+        let rows = flatten_layers(&layers);
+        for r in &rows {
+            eprintln!("row {:?} depth={}", r.kind, r.depth);
+        }
+        assert_eq!(rows.len(), 3, "grand+moyen+petit, sans duplicat");
+        let _ = (pid, mid);
     }
 }

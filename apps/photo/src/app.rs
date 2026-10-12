@@ -26,7 +26,10 @@ use crate::layout::PhotoWorkspace;
 use crate::layout::dock::{PhotoDockTab, default_tree, ensure_tab, push_canvas_tab};
 use crate::persistence::{load_tree_or_default, load_workspace_or_default};
 use crate::state::{
-    OpenDocument, PhotoRuntimeState, PhotoShellState, PhotoUiState, apply_response,
+    OpenDocument, PhotoRuntimeState, PhotoShellState, PhotoUiState, apply_response, brush_luminance,
+};
+use crate::ui::features::layers::{
+    find_attachment_in, find_layer_in, find_layer_in_mut, find_layer_of_attachment,
 };
 use crate::ui::{PhotoEngineCommand, spawn_photo_engine_worker};
 use photo_engine::Document;
@@ -161,13 +164,14 @@ impl PhotoApp {
     /// Optimistic update of a layer in the local snapshot: the
     /// panel reflects the change from the current frame, the
     /// worker response (expensive recomposite) confirms next.
+    /// Recursive: nested layers update too.
     fn update_layer_opt(
         &mut self,
         id: uuid::Uuid,
         update: impl Fn(&mut crate::ui::PhotoLayerInfo),
     ) {
         if let Some(doc) = self.active_doc_mut_opt()
-            && let Some(layer) = doc.ui.layers.iter_mut().find(|layer| layer.id == id)
+            && let Some(layer) = find_layer_in_mut(&mut doc.ui.layers, id)
         {
             update(layer);
             doc.ui.needs_repaint = true;
@@ -265,10 +269,16 @@ impl PhotoApp {
             PhotoAction::DuplicateLayer(id) => {
                 self.send_active(PhotoEngineCommand::DuplicateLayer(id));
             }
+            PhotoAction::DuplicateFilter { layer, filter } => {
+                self.send_active(PhotoEngineCommand::DuplicateFilter { layer, filter });
+            }
             PhotoAction::AddMaskToSelected => {
                 if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::AddMask { layer: id });
                 }
+            }
+            PhotoAction::AddMaskToFilter { filter } => {
+                self.send_active(PhotoEngineCommand::AddMask { layer: filter });
             }
             PhotoAction::AddFilter { layer, filter_type } => {
                 self.send_active(PhotoEngineCommand::AddFilter { layer, filter_type });
@@ -304,8 +314,15 @@ impl PhotoApp {
             }
             PhotoAction::FocusAttachment { owner, id } => {
                 if let Some(doc) = self.active_doc_mut_opt() {
-                    doc.ui.selected = Some(owner);
-                    doc.ui.focused_attachment = Some(crate::ui::AttachmentRef { owner, id });
+                    // The selection is always a LAYER: a filter owner
+                    // resolves to its layer (filter-owned masks keep
+                    // their filter owner in the focus).
+                    let selected = find_layer_in(&doc.ui.layers, owner)
+                        .map(|_| owner)
+                        .or_else(|| find_layer_of_attachment(&doc.ui.layers, owner));
+                    doc.ui.selected = selected;
+                    doc.ui.focused_attachment =
+                        selected.map(|_| crate::ui::AttachmentRef { owner, id });
                 }
             }
             PhotoAction::ToggleFilter { layer, filter } => {
@@ -328,8 +345,8 @@ impl PhotoApp {
                     before,
                 });
             }
-            PhotoAction::MoveIntoGroup { layer, group } => {
-                self.send_active(PhotoEngineCommand::MoveIntoGroup { layer, group });
+            PhotoAction::MoveIntoParent { layer, parent } => {
+                self.send_active(PhotoEngineCommand::MoveIntoParent { layer, parent });
             }
             PhotoAction::ToggleGroupCollapsed(id) => {
                 self.send_active(PhotoEngineCommand::ToggleGroupCollapsed(id));
@@ -339,6 +356,9 @@ impl PhotoApp {
                 // confirms (recomposites) right after.
                 self.update_layer_opt(id, |layer| layer.visible = !layer.visible);
                 self.send_active(PhotoEngineCommand::ToggleLayerVisibility(id));
+            }
+            PhotoAction::IsolateLayer(id) => {
+                self.send_active(PhotoEngineCommand::IsolateLayer(id));
             }
             PhotoAction::SetOpacity { layer, opacity } => {
                 // Optimistic: the slider follows the gesture without waiting for
@@ -350,11 +370,31 @@ impl PhotoApp {
                 self.update_layer_opt(layer, |info| info.blend_mode = mode);
                 self.send_active(PhotoEngineCommand::SetBlendMode { layer, mode });
             }
-            PhotoAction::MoveFilter { layer, filter, up } => {
-                self.send_active(PhotoEngineCommand::MoveFilter { layer, filter, up });
+            PhotoAction::MoveFilterTo {
+                filter,
+                from,
+                to,
+                index,
+            } => {
+                self.send_active(PhotoEngineCommand::MoveFilterTo {
+                    filter,
+                    from,
+                    to,
+                    index,
+                });
             }
-            PhotoAction::MoveMask { owner, mask, up } => {
-                self.send_active(PhotoEngineCommand::MoveMask { owner, mask, up });
+            PhotoAction::MoveMaskTo {
+                mask,
+                from,
+                to,
+                index,
+            } => {
+                self.send_active(PhotoEngineCommand::MoveMaskTo {
+                    mask,
+                    from,
+                    to,
+                    index,
+                });
             }
             PhotoAction::RemoveFilter { layer, filter } => {
                 self.send_active(PhotoEngineCommand::RemoveFilter { layer, filter });
@@ -397,25 +437,31 @@ impl PhotoApp {
             PhotoAction::CommitStroke(paint) => {
                 // Focused mask of the selected layer: the stroke
                 // goes into the mask (white/black), otherwise into
-                // the layer source (historical behavior).
+                // the layer source (historical behavior). The focused
+                // mask may live in a filter-owned pile: its layer must
+                // be the selection.
                 let mask_target = self.active_doc_opt().and_then(|doc| {
                     let focus = doc.ui.focused_attachment?;
-                    if Some(focus.owner) != doc.ui.selected {
+                    let focus_layer = find_layer_in(&doc.ui.layers, focus.owner)
+                        .map(|_| focus.owner)
+                        .or_else(|| find_layer_of_attachment(&doc.ui.layers, focus.owner))?;
+                    if Some(focus_layer) != doc.ui.selected {
                         return None;
                     }
-                    doc.ui
-                        .layers
-                        .iter()
-                        .find(|layer| layer.id == focus.owner)
-                        .filter(|layer| layer.masks.iter().any(|m| m.id == focus.id))
-                        .map(|_| focus.id)
+                    find_attachment_in(&doc.ui.layers, focus.owner, focus.id)
+                        .filter(|(_, is_filter)| !is_filter)
+                        .map(|_| (focus.owner, focus.id))
                 });
-                if let Some(mask) = mask_target {
+                if let Some((owner, mask)) = mask_target {
+                    // Mask painting ignores hue: the eraser always hides
+                    // (black) and a dark brush color hides like the
+                    // eraser, while a bright one reveals.
+                    let hide = paint.eraser || brush_luminance(paint.color) < 128.0;
                     self.send_active(PhotoEngineCommand::PaintMask {
-                        owner: paint.layer,
+                        owner,
                         mask,
                         points: paint.points,
-                        eraser: paint.eraser,
+                        eraser: hide,
                         radius: paint.radius,
                         opacity: paint.opacity,
                     });
@@ -913,6 +959,116 @@ mod tests {
             assert!(
                 start.elapsed() < Duration::from_secs(30),
                 "peinture masque attendue"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn commit_stroke_on_filter_mask_paints_filter_mask() {
+        // Full filter-mask flow: filter → mask on the filter → focus
+        // the mask → brush stroke lands in the FILTER's pile (white
+        // reveals), selection stays on the layer.
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        app.open_sized_tab(16, 16);
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if !app.active_doc_opt().expect("doc").ui.layers.is_empty() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let id = app.active_doc_opt().expect("doc").ui.layers[0].id;
+        app.handle_action(&ctx, PhotoAction::SelectLayer(id));
+        app.handle_action(
+            &ctx,
+            PhotoAction::AddFilter {
+                layer: id,
+                filter_type: String::from("brightness_contrast"),
+            },
+        );
+        let start = Instant::now();
+        let fid = loop {
+            app.poll(&ctx);
+            if let Some(filtre) = app
+                .active_doc_opt()
+                .expect("doc")
+                .ui
+                .layers
+                .iter()
+                .find(|layer| layer.id == id)
+                .and_then(|layer| layer.filters.first())
+            {
+                break filtre.id;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "filtre attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Focus the filter, add a mask to ITS pile.
+        app.handle_action(&ctx, PhotoAction::FocusAttachment { owner: id, id: fid });
+        app.handle_action(&ctx, PhotoAction::AddMaskToFilter { filter: fid });
+        let start = Instant::now();
+        let mid = loop {
+            app.poll(&ctx);
+            let doc = app.active_doc_opt().expect("doc");
+            // Selection stayed on the layer (never on the filter).
+            assert_eq!(doc.ui.selected, Some(id));
+            if let Some(mask) = doc
+                .ui
+                .layers
+                .iter()
+                .find(|layer| layer.id == id)
+                .and_then(|layer| layer.filters.iter().find(|f| f.id == fid))
+                .and_then(|filtre| filtre.masks.first())
+            {
+                break mask.id;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "masque attendu");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Focus the filter-owned mask, paint: must go as PaintMask
+        // with the FILTER as owner.
+        app.handle_action(
+            &ctx,
+            PhotoAction::FocusAttachment {
+                owner: fid,
+                id: mid,
+            },
+        );
+        // Selection resolved back to the layer.
+        assert_eq!(app.active_doc_opt().expect("doc").ui.selected, Some(id));
+        app.handle_action(
+            &ctx,
+            PhotoAction::CommitStroke(crate::ui::PaintRequest {
+                layer: id,
+                points: vec![(4.0, 4.0), (8.0, 8.0)],
+                eraser: false,
+                radius: 3.0,
+                color: [255, 0, 0],
+                opacity: 1.0,
+            }),
+        );
+        let start = Instant::now();
+        loop {
+            app.poll(&ctx);
+            if app
+                .active_doc_opt()
+                .expect("doc")
+                .ui
+                .history_undo
+                .iter()
+                .any(|label| label == "Peindre le masque")
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "peinture masque de filtre attendue"
             );
             std::thread::sleep(Duration::from_millis(10));
         }

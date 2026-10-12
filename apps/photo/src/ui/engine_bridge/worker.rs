@@ -173,8 +173,9 @@ fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
 fn history_label(op: &str) -> String {
     String::from(match op {
         "toggle_visibility" => "Visibilité",
+        "isolate_layer" => "Isoler",
         "reorder_nodes" => "Réordonner",
-        "move_into_group" => "Déplacer dans le groupe",
+        "move_into_parent" => "Imbriquer",
         "toggle_collapsed" => "Replier / déplier",
         "set_opacity" => "Opacité",
         "set_blend_mode" => "Fusion",
@@ -184,13 +185,16 @@ fn history_label(op: &str) -> String {
         "open_image" => "Ouvrir une image",
         "add_empty_layer" => "Nouveau calque",
         "duplicate_layer" => "Dupliquer",
+        "duplicate_filter" => "Dupliquer le filtre",
         "delete_layer" => "Supprimer",
         "add_filter" => "Ajouter un filtre",
         "rename_layer" => "Renommer",
         "add_mask" => "Ajouter un masque",
         "remove_mask" => "Supprimer le masque",
         "move_filter" => "Déplacer le filtre",
+        "move_filter_to" => "Déplacer le filtre",
         "move_mask" => "Déplacer le masque",
+        "move_mask_to" => "Déplacer le masque",
         "remove_filter" => "Supprimer le filtre",
         "flip_horizontal" => "Miroir horizontal",
         "flip_vertical" => "Miroir vertical",
@@ -662,6 +666,17 @@ impl EngineWorker {
                     .map_or(DirtyMark::Global, mark_for_node);
                 Mutation::changed(invalidation).with_dirty(dirty)
             }
+            PhotoEngineCommand::IsolateLayer(id) => {
+                if self.document.find(id).is_none() {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                if !self.document.isolate(id) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                Mutation::changed(invalidation)
+            }
             PhotoEngineCommand::ReorderNodes {
                 dragged,
                 target,
@@ -679,13 +694,14 @@ impl EngineWorker {
                 }
                 Mutation::changed(invalidation)
             }
-            PhotoEngineCommand::MoveIntoGroup { layer, group } => {
-                // Drop inside a group: insert at the head of the children.
-                if !self.document.can_move_into(layer, group) {
+            PhotoEngineCommand::MoveIntoParent { layer, parent } => {
+                // Drop inside a parent: insert at the head of the children
+                // (group as-is, pixel layer as a clipped child).
+                if !self.document.can_move_into_parent(layer, parent) {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                if !self.document.move_into(layer, group) {
+                if !self.document.move_into_parent(layer, parent) {
                     self.undo.pop();
                     return Mutation::unchanged();
                 }
@@ -826,16 +842,48 @@ impl EngineWorker {
                 if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
                     return Mutation::unchanged();
                 }
-                // Gesture smoothing (1 point/frame): corners softened before
-                // rasterization (same conservative bbox for the dirty).
-                let points = photo_engine::paint::resample_stroke(&points, radius.max(2.0));
-                let is_pixel = matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Pixel(_))
-                );
-                if !is_pixel {
+                // Carrier transform: UI points arrive in DOCUMENT pixels
+                // (canvas mapping) but rasterization happens in LAYER
+                // pixels. Identity (fresh layers) skips conversion exactly
+                // (bit-identical legacy path); otherwise every point goes
+                // through the inverse transform so the stroke lands at the
+                // cursor — same as the transient overlay.
+                let (layer_transform, layer_w, layer_h) = match self.document.find(layer) {
+                    Some(photo_engine::LayerNode::Pixel(pixels)) => (
+                        pixels.transform,
+                        pixels.dimensions().0,
+                        pixels.dimensions().1,
+                    ),
+                    _ => return Mutation::unchanged(),
+                };
+                let is_identity = layer_transform == photo_engine::Transform2D::default();
+                let to_local = |p: (f32, f32)| -> Option<(f32, f32)> {
+                    if is_identity {
+                        Some(p)
+                    } else {
+                        layer_transform.doc_to_local(layer_w as f32, layer_h as f32, p.0, p.1)
+                    }
+                };
+                let local: Vec<(f32, f32)> = points.iter().filter_map(|&p| to_local(p)).collect();
+                if local.is_empty() {
                     return Mutation::unchanged();
                 }
+                // Brush radii in layer space (ellipse under scale;
+                // absolute: a mirrored axis keeps a positive radius).
+                let (rx, ry) = if is_identity {
+                    (radius, radius)
+                } else {
+                    (
+                        radius / layer_transform.scale_x.abs(),
+                        radius / layer_transform.scale_y.abs(),
+                    )
+                };
+                if !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
+                    return Mutation::unchanged();
+                }
+                // Gesture smoothing (1 point/frame): corners softened before
+                // rasterization (same conservative bbox for the dirty).
+                let points = photo_engine::paint::resample_stroke(&local, rx.max(ry).max(2.0));
                 self.push_history(None);
                 let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
                 else {
@@ -855,7 +903,15 @@ impl EngineWorker {
                         photo_engine::paint::StrokeMode::Paint
                     },
                 };
-                photo_engine::paint::paint_stroke_rgba(&mut buffer, width, height, &points, &brush);
+                photo_engine::paint::paint_stroke_ellipse(
+                    &mut buffer,
+                    width,
+                    height,
+                    &points,
+                    &brush,
+                    rx,
+                    ry,
+                );
                 if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
                     // Defensive re-read after the history push.
                     if let Some(photo_engine::LayerNode::Pixel(pixels)) =
@@ -935,11 +991,45 @@ impl EngineWorker {
                 if !known {
                     return Mutation::unchanged();
                 }
+                // Source-space owners (pixel layers, pixel-parented
+                // filters): UI points arrive in DOCUMENT pixels but the
+                // mask buffer is carrier-sized — convert through the
+                // carrier transform (identity fast path, bit-identical
+                // legacy), with elliptical radii under scale. Canvas-
+                // space owners (groups, adjustments): direct mapping.
+                let space = self.document.mask_paint_space(owner);
+                let is_identity = space
+                    .map(|(t, _, _)| t == photo_engine::Transform2D::default())
+                    .unwrap_or(true);
+                let to_local = |p: (f32, f32)| -> Option<(f32, f32)> {
+                    // Canvas-space owner, or identity carrier:
+                    // document pixels are already mask pixels.
+                    if is_identity {
+                        return Some(p);
+                    }
+                    match space {
+                        None => Some(p),
+                        Some((t, w, h)) => t.doc_to_local(w as f32, h as f32, p.0, p.1),
+                    }
+                };
+                let local: Vec<(f32, f32)> = points.iter().filter_map(|&p| to_local(p)).collect();
+                if local.is_empty() {
+                    return Mutation::unchanged();
+                }
+                let (rx, ry) = match space {
+                    Some((t, _, _)) if !is_identity => {
+                        (radius / t.scale_x.abs(), radius / t.scale_y.abs())
+                    }
+                    _ => (radius, radius),
+                };
+                if !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
+                    return Mutation::unchanged();
+                }
                 self.push_history(None);
-                let points = photo_engine::paint::resample_stroke(&points, radius.max(2.0));
+                let points = photo_engine::paint::resample_stroke(&local, rx.max(ry).max(2.0));
                 if self
                     .document
-                    .paint_mask(owner, mask, &points, radius, opacity, !eraser)
+                    .paint_mask(owner, mask, &points, rx, ry, opacity, !eraser)
                     .is_err()
                 {
                     self.undo.pop();
@@ -984,6 +1074,22 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 self.document.duplicate(id);
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::DuplicateFilter { layer, filter } => {
+                if self
+                    .document
+                    .find(layer)
+                    .and_then(|n| n.filter_layers())
+                    .is_none_or(|chain| !chain.iter().any(|f| f.id == filter))
+                {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                if self.document.duplicate_filter(layer, filter).is_none() {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::DeleteLayer(id) => {
@@ -1132,13 +1238,22 @@ impl EngineWorker {
             PhotoEngineCommand::AddMask { layer } => {
                 // Validation without a held borrow (the history push
                 // borrows `self` mutably: no borrow held).
-                // `masks_of_mut` (not `masks_of`): adjustments
-                // expose an empty slice but refuse insertion.
+                // `masks_of_mut` covers layers, groups, adjustments and
+                // live filters alike.
                 if self.document.masks_of_mut(layer).is_none() {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                let (width, height) = (self.document.width.max(1), self.document.height.max(1));
+                // Masks live in the CARRIER space (source pixels for
+                // pixel layers and filters — the compositing guard rail
+                // ignores anything else): a document-sized mask on a
+                // smaller imported layer would silently never apply, and
+                // paint at the canvas edge. Groups/adjustments sample in
+                // canvas space: document size (unchanged).
+                let (width, height) = self
+                    .document
+                    .mask_owner_dims(layer)
+                    .unwrap_or((self.document.width.max(1), self.document.height.max(1)));
                 if let Some(masks) = self.document.masks_of_mut(layer) {
                     let mut mask = photo_engine::LayerMask::full(width, height);
                     mask.name = format!("Masque {}", masks.len() + 1);
@@ -1236,27 +1351,54 @@ impl EngineWorker {
             PhotoEngineCommand::MoveFilter { layer, filter, up } => {
                 // `move_filter` mutates: first validate via an immutable
                 // read (position + bounds), then record history, then mutate.
+                // Pixel and group chains alike (`filter_layers()`).
                 let movable = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
-                        match pixels.filter_layers.iter().position(|f| f.id == filter) {
+                    Some(node) => match node.filter_layers() {
+                        Some(chain) => match chain.iter().position(|f| f.id == filter) {
                             Some(idx) => {
                                 let other = if up {
                                     idx.checked_add(1)
                                 } else {
                                     idx.checked_sub(1)
                                 };
-                                other.is_some_and(|o| o < pixels.filter_layers.len())
+                                other.is_some_and(|o| o < chain.len())
                             }
                             None => false,
-                        }
-                    }
-                    _ => false,
+                        },
+                        None => false,
+                    },
+                    None => false,
                 };
                 if !movable {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
                 self.document.move_filter(layer, filter, up);
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::MoveFilterTo {
+                filter,
+                from,
+                to,
+                index,
+            } => {
+                // Cross-chain move (reparent): single history entry.
+                if self
+                    .document
+                    .find(from)
+                    .and_then(|n| n.filter_layers())
+                    .is_none_or(|chain| !chain.iter().any(|f| f.id == filter))
+                {
+                    return Mutation::unchanged();
+                }
+                if self.document.find(to).is_none() {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                if !self.document.move_filter_to(filter, from, to, index) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::MoveMask { owner, mask, up } => {
@@ -1282,12 +1424,38 @@ impl EngineWorker {
                 touch_mask_owner(&mut self.document, owner);
                 Mutation::changed(invalidation)
             }
+            PhotoEngineCommand::MoveMaskTo {
+                mask,
+                from,
+                to,
+                index,
+            } => {
+                // Cross-pile move (reparent): single history entry.
+                if self
+                    .document
+                    .masks_of(from)
+                    .is_none_or(|pile| !pile.iter().any(|m| m.id == mask))
+                {
+                    return Mutation::unchanged();
+                }
+                if self.document.masks_of(to).is_none() {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                if !self.document.move_mask_to(mask, from, to, index) {
+                    self.undo.pop();
+                    return Mutation::unchanged();
+                }
+                touch_mask_owner(&mut self.document, from);
+                touch_mask_owner(&mut self.document, to);
+                Mutation::changed(invalidation)
+            }
             PhotoEngineCommand::RemoveFilter { layer, filter } => {
                 let present = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
-                        pixels.filter_layers.iter().any(|f| f.id == filter)
-                    }
-                    _ => false,
+                    Some(node) => node
+                        .filter_layers()
+                        .is_some_and(|chain| chain.iter().any(|f| f.id == filter)),
+                    None => false,
                 };
                 if !present {
                     return Mutation::unchanged();
@@ -1397,6 +1565,256 @@ mod tests {
     }
 
     #[test]
+    fn paint_stroke_lands_at_cursor_on_moved_layer() {
+        // Moved layer (offset 20,10): a dab aimed at DOCUMENT (50,40)
+        // must paint LAYER pixel (30,30) — not (50,40). The old path
+        // fed document points straight into the layer buffer (50,30
+        // px off here).
+        use image::GenericImageView;
+        let mut doc = Document::new(100, 100);
+        let mut layer = PixelLayer::new("moved", Arc::new(image::DynamicImage::new_rgba8(60, 60)));
+        layer.transform.offset_x = 20.0;
+        layer.transform.offset_y = 10.0;
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        apply_command(
+            &mut doc,
+            PhotoEngineCommand::PaintStroke {
+                layer: id,
+                points: vec![(50.0, 40.0)],
+                eraser: false,
+                radius: 3.0,
+                color: [255, 255, 255],
+                opacity: 1.0,
+            },
+        );
+        let pixels = match doc.find(id).expect("layer") {
+            LayerNode::Pixel(p) => p.source_image.to_rgba8(),
+            _ => panic!("pixels attendus"),
+        };
+        assert!(
+            pixels.get_pixel(30, 30)[3] > 0,
+            "dab at the cursor-mapped layer pixel"
+        );
+        assert_eq!(
+            pixels.get_pixel(50, 40)[3],
+            0,
+            "no paint at the raw document coords"
+        );
+    }
+
+    #[test]
+    fn paint_stroke_small_imported_layer_in_big_document() {
+        // Import case: 60×40 image in a 200×150 document (identity
+        // transform, top-left). A dab at document (30,20) paints layer
+        // (30,20) — and the composite shows it at document (30,20).
+        use image::GenericImageView;
+        let mut doc = Document::new(200, 150);
+        let layer = PixelLayer::new("import", Arc::new(image::DynamicImage::new_rgba8(60, 40)));
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        apply_command(
+            &mut doc,
+            PhotoEngineCommand::PaintStroke {
+                layer: id,
+                points: vec![(30.0, 20.0)],
+                eraser: false,
+                radius: 3.0,
+                color: [255, 0, 0],
+                opacity: 1.0,
+            },
+        );
+        let pixels = match doc.find(id).expect("layer") {
+            LayerNode::Pixel(p) => p.source_image.to_rgba8(),
+            _ => panic!("pixels attendus"),
+        };
+        assert!(pixels.get_pixel(30, 20)[0] > 0, "red dab in the layer");
+        let composite = doc.composite().expect("composite");
+        let p = composite.get_pixel(30, 20);
+        assert!(p[0] > 0 && p[3] > 0, "dab visible at the document cursor");
+    }
+
+    #[test]
+    fn add_mask_on_small_imported_layer_is_carrier_sized() {
+        // Import case: 60×40 image in a 200×150 document. The mask
+        // must be 60×40 (carrier space — the compositing guard rail
+        // ignores anything else), not a document-sized "cover".
+        let mut doc = Document::new(200, 150);
+        let layer = PixelLayer::new(
+            "import",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(60, 40, image::Rgba([200, 30, 30, 255])),
+            )),
+        );
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        apply_command(&mut doc, PhotoEngineCommand::AddMask { layer: id });
+        let mask = &doc.masks_of(id).expect("masks")[0];
+        assert_eq!(
+            (mask.image.width(), mask.image.height()),
+            (60, 40),
+            "mask in carrier space, not document cover"
+        );
+    }
+
+    #[test]
+    fn paint_mask_on_small_imported_layer_lands_at_cursor() {
+        // The reported bug: black brush on the mask of a 60×40 image
+        // in a 200×150 document painted "in cover" (canvas edge).
+        // A dab at document (30,20) must darken mask pixel (30,20)
+        // and hide the composite there — while (100,100) stays shown.
+        use image::GenericImageView;
+        let mut doc = Document::new(200, 150);
+        let layer = PixelLayer::new(
+            "import",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(60, 40, image::Rgba([200, 30, 30, 255])),
+            )),
+        );
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        apply_command(&mut doc, PhotoEngineCommand::AddMask { layer: id });
+        let mid = doc.masks_of(id).expect("masks")[0].id;
+        apply_command(
+            &mut doc,
+            PhotoEngineCommand::PaintMask {
+                owner: id,
+                mask: mid,
+                points: vec![(30.0, 20.0)],
+                eraser: true,
+                radius: 4.0,
+                opacity: 1.0,
+            },
+        );
+        let mask = &doc.masks_of(id).expect("masks")[0];
+        assert!(
+            mask.image.get_pixel(30, 20)[0] < 128,
+            "mask darkened at the cursor-mapped pixel"
+        );
+        let composite = doc.composite_preview().expect("composite");
+        let hidden = composite.get_pixel(30, 20);
+        eprintln!(
+            "DBG hidden={:?} maskc={:?}",
+            hidden.0,
+            mask.image.get_pixel(30, 20).0
+        );
+        eprintln!(
+            "DBG masks={:?}",
+            doc.masks_of(id).map(|m| m
+                .iter()
+                .map(|x| (x.enabled, x.version, (x.image.width(), x.image.height())))
+                .collect::<Vec<_>>())
+        );
+        if let Some(app) = doc.appearance_image(id) {
+            use image::GenericImageView;
+            eprintln!("DBG appearance={:?}", app.get_pixel(30, 20).0);
+        }
+        assert_eq!(hidden[3], 0, "composite hidden under the dab");
+        let shown = composite.get_pixel(10, 10);
+        assert!(shown[3] > 0, "image pixels outside the dab stay visible");
+    }
+
+    #[test]
+    fn paint_mask_on_moved_layer_follows_carrier() {
+        // Same conversion through a non-identity carrier: offset
+        // (20,10) — document (50,40) darkens mask pixel (30,30).
+        let mut doc = Document::new(100, 100);
+        let mut layer = PixelLayer::new(
+            "moved",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(60, 60, image::Rgba([200, 30, 30, 255])),
+            )),
+        );
+        layer.transform.offset_x = 20.0;
+        layer.transform.offset_y = 10.0;
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        apply_command(&mut doc, PhotoEngineCommand::AddMask { layer: id });
+        let mid = doc.masks_of(id).expect("masks")[0].id;
+        apply_command(
+            &mut doc,
+            PhotoEngineCommand::PaintMask {
+                owner: id,
+                mask: mid,
+                points: vec![(50.0, 40.0)],
+                eraser: true,
+                radius: 3.0,
+                opacity: 1.0,
+            },
+        );
+        let mask = &doc.masks_of(id).expect("masks")[0];
+        assert!(
+            mask.image.get_pixel(30, 30)[0] < 128,
+            "mask darkened at the carrier-mapped pixel"
+        );
+        assert_eq!(
+            mask.image.get_pixel(50, 40)[0],
+            255,
+            "no paint at the raw document coords"
+        );
+    }
+
+    #[test]
+    fn duplicate_filter_command_clones_above() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::AddFilter {
+            layer: id,
+            filter_type: String::from("brightness_contrast"),
+        });
+        let fid = match worker.document.find(id).expect("layer") {
+            photo_engine::LayerNode::Pixel(pixels) => pixels.filter_layers[0].id,
+            _ => panic!("pixels attendus"),
+        };
+        worker.apply(PhotoEngineCommand::DuplicateFilter {
+            layer: id,
+            filter: fid,
+        });
+        let chain = match worker.document.find(id).expect("layer") {
+            photo_engine::LayerNode::Pixel(pixels) => &pixels.filter_layers,
+            _ => panic!("pixels attendus"),
+        };
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].id, fid);
+        assert_ne!(chain[1].id, fid);
+        assert_eq!(chain[1].type_id, chain[0].type_id);
+        assert_eq!(
+            worker.undo.last().map(|s| s.label.as_str()),
+            Some("Dupliquer le filtre")
+        );
+        // Unknown filter: no-op, no history.
+        let undo_len = worker.undo.len();
+        worker.apply(PhotoEngineCommand::DuplicateFilter {
+            layer: id,
+            filter: Uuid::new_v4(),
+        });
+        assert_eq!(worker.undo.len(), undo_len);
+    }
+
+    #[test]
+    fn isolate_layer_command_solos_and_labels() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let ids: Vec<Uuid> = worker.document.root.iter().map(LayerNode::id).collect();
+        let response = worker.apply(PhotoEngineCommand::IsolateLayer(ids[1]));
+        assert!(
+            matches!(
+                response,
+                PhotoEngineResponse::LayersChanged { .. }
+                    | PhotoEngineResponse::StateChanged { .. }
+            ),
+            "une réponse d'état après isolation"
+        );
+        assert!(worker.document.find(ids[1]).expect("cible").visible());
+        assert!(!worker.document.find(ids[0]).expect("voisin").visible());
+        assert!(!worker.document.find(ids[2]).expect("voisin").visible());
+        assert_eq!(worker.undo.last().map(|s| s.label.as_str()), Some("Isoler"));
+        // Inconnu : sans effet, sans historique.
+        let undo_len = worker.undo.len();
+        worker.apply(PhotoEngineCommand::IsolateLayer(Uuid::new_v4()));
+        assert_eq!(worker.undo.len(), undo_len);
+    }
+
+    #[test]
     fn reorder_nodes_moves_by_ids() {
         // Display [top, middle, bottom]; "top" before "bottom"
         // (root order: just above the bottom = bottom of stack
@@ -1457,9 +1875,9 @@ mod tests {
         });
         let fond = worker.document.root[0].id();
         let groupe = worker.document.root[1].id();
-        worker.apply(PhotoEngineCommand::MoveIntoGroup {
+        worker.apply(PhotoEngineCommand::MoveIntoParent {
             layer: fond,
-            group: groupe,
+            parent: groupe,
         });
         let layers = snapshot_layers(&worker.document);
         assert_eq!(layers.len(), 1, "tout est dans le groupe");
@@ -1551,9 +1969,9 @@ mod tests {
         );
         apply_command(
             &mut doc,
-            PhotoEngineCommand::MoveIntoGroup {
+            PhotoEngineCommand::MoveIntoParent {
                 layer: target,
-                group: Uuid::new_v4(),
+                parent: Uuid::new_v4(),
             },
         );
         let names: Vec<String> = snapshot_layers(&doc)
@@ -2007,9 +2425,9 @@ mod tests {
             (FullInvalidation, Composite)
         );
         assert_eq!(
-            render_routing(&PhotoEngineCommand::MoveIntoGroup {
+            render_routing(&PhotoEngineCommand::MoveIntoParent {
                 layer: id,
-                group: other,
+                parent: other,
             }),
             (FullInvalidation, Composite)
         );
@@ -3683,7 +4101,9 @@ mod single_pass_tests {
         // the first render's scope detection absorbs it.
         let _ = worker.mutate(PhotoEngineCommand::PaintStroke {
             layer: id,
-            points: vec![(8.0, 8.0)],
+            // DOCUMENT coords: layer pixel (8,8) sits at doc (28,20)
+            // through the (20,12) offset.
+            points: vec![(28.0, 20.0)],
             eraser: false,
             radius: 3.0,
             color: [0, 0, 255],
@@ -3696,7 +4116,8 @@ mod single_pass_tests {
             (bounds.area()) < (64 * 64),
             "marquage précis, pas global : {bounds:?}"
         );
-        // Footprint: box [5,11]² + offset (20,12) = [25,31]×[17,23].
+        // Footprint: doc box [25,31]×[17,23] (layer box [5,11]²
+        // through the (20,12) offset).
         assert!(dirty.intersects(TileRegion::new(20, 12, 16, 16)));
         assert!(!dirty.intersects(TileRegion::new(48, 48, 16, 16)));
     }

@@ -33,6 +33,7 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
             PhotoAction::AddFilter { layer, filter_type }
         }
         LayerPanelAction::AddMask => PhotoAction::AddMaskToSelected,
+        LayerPanelAction::AddMaskToFilter(filter) => PhotoAction::AddMaskToFilter { filter },
         LayerPanelAction::Delete => PhotoAction::DeleteSelectedLayer,
         LayerPanelAction::Select(id) => PhotoAction::SelectLayer(id),
         LayerPanelAction::SelectAttachment { owner, id } => {
@@ -52,11 +53,12 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
             target,
             before,
         },
-        LayerPanelAction::MoveIntoGroup { layer, group } => {
-            PhotoAction::MoveIntoGroup { layer, group }
+        LayerPanelAction::MoveIntoParent { layer, parent } => {
+            PhotoAction::MoveIntoParent { layer, parent }
         }
         LayerPanelAction::ToggleCollapsed(id) => PhotoAction::ToggleGroupCollapsed(id),
         LayerPanelAction::ToggleVisibility(id) => PhotoAction::ToggleLayerVisibility(id),
+        LayerPanelAction::IsolateLayer(id) => PhotoAction::IsolateLayer(id),
         LayerPanelAction::DeleteLayer(id) => PhotoAction::DeleteLayer(id),
         LayerPanelAction::DuplicateLayer(id) => PhotoAction::DuplicateLayer(id),
         LayerPanelAction::FlipHorizontalSelected => PhotoAction::FlipHorizontalSelected,
@@ -66,12 +68,33 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
             PhotoAction::RotateCounterclockwiseSelected
         }
         LayerPanelAction::CropSelectedToDocument => PhotoAction::CropSelectedToDocument,
-        LayerPanelAction::MoveFilter { layer, filter, up } => {
-            PhotoAction::MoveFilter { layer, filter, up }
-        }
-        LayerPanelAction::MoveMask { owner, mask, up } => PhotoAction::MoveMask { owner, mask, up },
+        LayerPanelAction::MoveFilterTo {
+            filter,
+            from,
+            to,
+            index,
+        } => PhotoAction::MoveFilterTo {
+            filter,
+            from,
+            to,
+            index,
+        },
+        LayerPanelAction::MoveMaskTo {
+            mask,
+            from,
+            to,
+            index,
+        } => PhotoAction::MoveMaskTo {
+            mask,
+            from,
+            to,
+            index,
+        },
         LayerPanelAction::RemoveFilter { layer, filter } => {
             PhotoAction::RemoveFilter { layer, filter }
+        }
+        LayerPanelAction::DuplicateFilter { layer, filter } => {
+            PhotoAction::DuplicateFilter { layer, filter }
         }
         LayerPanelAction::RemoveMask { owner, mask } => PhotoAction::RemoveMask { owner, mask },
         LayerPanelAction::SetOpacity { layer, opacity } => {
@@ -106,13 +129,13 @@ mod tests {
             }
         );
         assert_eq!(
-            layer_panel_action_to_photo(LayerPanelAction::MoveIntoGroup {
+            layer_panel_action_to_photo(LayerPanelAction::MoveIntoParent {
                 layer: id,
-                group: id
+                parent: id
             }),
-            PhotoAction::MoveIntoGroup {
+            PhotoAction::MoveIntoParent {
                 layer: id,
-                group: id
+                parent: id
             }
         );
         assert_eq!(
@@ -130,6 +153,16 @@ mod tests {
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::DuplicateLayer(id)),
             PhotoAction::DuplicateLayer(id)
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::DuplicateFilter {
+                layer: id,
+                filter: id
+            }),
+            PhotoAction::DuplicateFilter {
+                layer: id,
+                filter: id
+            }
         );
         assert_eq!(
             layer_panel_action_to_photo(LayerPanelAction::AddFilter {
@@ -192,6 +225,38 @@ mod tests {
                 layer: id,
                 mode: photo_engine::BlendMode::Screen,
             }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::MoveFilterTo {
+                filter: id,
+                from: id,
+                to: id,
+                index: 0,
+            }),
+            PhotoAction::MoveFilterTo {
+                filter: id,
+                from: id,
+                to: id,
+                index: 0,
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::MoveMaskTo {
+                mask: id,
+                from: id,
+                to: id,
+                index: 1,
+            }),
+            PhotoAction::MoveMaskTo {
+                mask: id,
+                from: id,
+                to: id,
+                index: 1,
+            }
+        );
+        assert_eq!(
+            layer_panel_action_to_photo(LayerPanelAction::AddMaskToFilter(id)),
+            PhotoAction::AddMaskToFilter { filter: id }
         );
     }
 }

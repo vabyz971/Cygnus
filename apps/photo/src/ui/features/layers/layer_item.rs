@@ -29,6 +29,7 @@
 
 use super::types::{LayerTexts, LayerThumbView, PhotoLayerInfo, PhotoSubLayerInfo};
 use crate::i18n::PhotoTextKey;
+use std::collections::HashMap;
 use ui_kit::components::{IconButton, menu_row, menu_style};
 use ui_kit::i18n::TextKey;
 use ui_kit::icons::{Icon, IconRegistry};
@@ -77,8 +78,12 @@ pub enum LayerItemAction {
     },
     /// Confirm the rename (name already trimmed, non-empty).
     RenameCommit { layer: Uuid, name: String },
+    /// Duplicate a live filter (context menu).
+    DuplicateFilter { layer: Uuid, filter: Uuid },
     /// Toggle visibility.
     ToggleVisibility(Uuid),
+    /// Solo this layer (Alt+click on the eye, or context menu).
+    IsolateLayer(Uuid),
     /// Delete this layer.
     DeleteLayer(Uuid),
     /// Duplicate this layer.
@@ -96,10 +101,6 @@ pub enum LayerItemAction {
     CropSelectedToDocument,
     /// Collapse / expand a group (engine state, no re-render).
     ToggleCollapsed(Uuid),
-    /// Move a filter within its stack.
-    MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Move a mask within its stack.
-    MoveMask { owner: Uuid, mask: Uuid, up: bool },
     /// Delete a filter.
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Delete a mask.
@@ -108,9 +109,11 @@ pub enum LayerItemAction {
 
 /// Collapsed/expanded state of a layer's attachments (tree):
 /// egui memory, open by default. Read by the list (row filtering)
-/// and toggled by the owner row's chevron.
+/// and toggled by the owner row's chevron. The id is Ui-independent
+/// (`Id::new`, never `make_persistent_id`): reads happen in the list
+/// Ui while writes happen in row scopes, whose ids differ per row.
 pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
-    let id = ui.make_persistent_id(("photo_attachments_open", owner));
+    let id = egui::Id::new(("photo_attachments_open", owner));
     egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
         .map(|state| state.is_open())
         .unwrap_or(true)
@@ -119,7 +122,7 @@ pub fn attachments_open(ui: &egui::Ui, owner: Uuid) -> bool {
 /// Toggles the state above (stored even on first click: `load`
 /// alone yields `None` with no persisted state, which would freeze the chevron).
 pub fn set_attachments_open(ui: &egui::Ui, owner: Uuid, open: bool) {
-    let id = ui.make_persistent_id(("photo_attachments_open", owner));
+    let id = egui::Id::new(("photo_attachments_open", owner));
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
     if state.is_open() != open {
@@ -210,27 +213,37 @@ pub fn draw_photo_layer_item(
                 actions.push(LayerItemAction::ToggleVisibility(layer.id));
                 ui.close();
             }
+            if menu_row(ui, &theme, texts.get(PhotoTextKey::IsolateLayer)) {
+                actions.push(LayerItemAction::IsolateLayer(layer.id));
+                ui.close();
+            }
             if menu_row(ui, &theme, catalog.get(TextKey::Delete)) {
                 actions.push(LayerItemAction::DeleteLayer(layer.id));
                 ui.close();
             }
         });
 
-    // Selection background across the full row width.
-    if selected || row_resp.hovered() {
+    // Row background across the full row width: always filled
+    // (square, no rounding) so rows read as cards; selected and
+    // hovered states tint it.
+    {
         let bg = if selected {
             theme.colors.item_selected
-        } else {
+        } else if row_resp.hovered() {
             theme.colors.item_hover
+        } else {
+            theme.colors.bg_secondary
         };
-        ui.painter().rect_filled(row_rect, theme.radius.sm, bg);
+        ui.painter().rect_filled(row_rect, 0.0, bg);
     }
 
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         // Hierarchical indent (one notch per level).
         ui.add_space(depth as f32 * theme.spacing.lg);
-        // Collapse/expand chevron (groups with children) or
-        // equivalent space to align columns.
+        // Single disclosure column (Affinity-style): groups fold their
+        // whole subtree (children AND attachments — collapsing hides
+        // both), other rows fold their attachments; otherwise a spacer
+        // keeps the eye column aligned.
         if layer.kind == super::types::PhotoLayerKind::Group && !layer.children.is_empty() {
             let chevron = if layer.collapsed {
                 Icon::ExpandMore
@@ -248,12 +261,9 @@ pub fn draw_photo_layer_item(
             {
                 actions.push(LayerItemAction::ToggleCollapsed(layer.id));
             }
-        } else {
-            ui.add_space(theme.sizes.icon_button);
-        }
-        // Attachment chevron (egui-demo-style tree): collapse /
-        // expand of the filter + mask rows under their owner.
-        if layer.has_filters || layer.has_masks {
+        } else if layer.has_filters || layer.has_masks {
+            // Attachment chevron (egui-demo-style tree): collapse /
+            // expand of the filter + mask rows under their owner.
             let open = attachments_open(ui, layer.id);
             let chevron = if open {
                 Icon::ExpandLess
@@ -279,12 +289,22 @@ pub fn draw_photo_layer_item(
         } else {
             Icon::VisibilityOff
         };
+        // Alt+click isolates (solo); plain click toggles.
+        let alt_held = ui.input(|input| input.modifiers.alt);
         if IconButton::new(vis_icon)
-            .tooltip(texts.get(PhotoTextKey::ShowHideLayer))
+            .tooltip(if alt_held {
+                texts.get(PhotoTextKey::IsolateLayer)
+            } else {
+                texts.get(PhotoTextKey::ShowHideLayer)
+            })
             .show(ui, &theme)
             .clicked()
         {
-            actions.push(LayerItemAction::ToggleVisibility(layer.id));
+            if alt_held {
+                actions.push(LayerItemAction::IsolateLayer(layer.id));
+            } else {
+                actions.push(LayerItemAction::ToggleVisibility(layer.id));
+            }
         }
         // Layer viewer: pixel thumbnail when available,
         // else symbolic vignette (framed type icon).
@@ -348,9 +368,9 @@ pub fn draw_photo_layer_item(
 /// Child row of an attachment (live filter or mask): selectable
 /// tree node (click = focus for editing, see
 /// [`LayerItemAction::SelectAttachment`]), on/off eye, indented under
-/// its owner. Returns the actions (routed to the worker by the app).
-/// Neither renamable nor DnD-movable (order via the
-/// up/down buttons, as before).
+/// its owner, with the same context menu as layers (toggle,
+/// duplicate for filters, delete). Returns the actions (routed to
+/// the worker by the app).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_attachment_row(
     ui: &mut egui::Ui,
@@ -359,9 +379,11 @@ pub fn draw_attachment_row(
     selected: bool,
     depth: usize,
     t: LayerTexts,
+    thumbs: &HashMap<Uuid, LayerThumbView>,
 ) -> Vec<LayerItemAction> {
     let theme = ui.cygnus_theme();
     let texts = t.texts;
+    let catalog = t.catalog;
     let mut actions = Vec::new();
     let sub_id = sub.id;
     let is_filter = sub.is_filter;
@@ -374,20 +396,69 @@ pub fn draw_attachment_row(
     if row_resp.clicked() {
         actions.push(LayerItemAction::SelectAttachment { owner, id: sub_id });
     }
-    // Selection background across the full row width.
-    if selected || row_resp.hovered() {
+    // Right click: same context menu as layers (visibility,
+    // duplicate for filters, delete).
+    egui::Popup::context_menu(&row_resp)
+        .style(menu_style(&theme))
+        .show(|ui| {
+            let visibility_label = if enabled {
+                catalog.get(TextKey::Hide)
+            } else {
+                catalog.get(TextKey::Show)
+            };
+            if menu_row(ui, &theme, visibility_label) {
+                if is_filter {
+                    actions.push(LayerItemAction::ToggleFilter {
+                        layer: owner,
+                        filter: sub_id,
+                    });
+                } else {
+                    actions.push(LayerItemAction::ToggleMask {
+                        owner,
+                        mask: sub_id,
+                    });
+                }
+                ui.close();
+            }
+            if is_filter && menu_row(ui, &theme, catalog.get(TextKey::Duplicate)) {
+                actions.push(LayerItemAction::DuplicateFilter {
+                    layer: owner,
+                    filter: sub_id,
+                });
+                ui.close();
+            }
+            ui.separator();
+            if menu_row(ui, &theme, catalog.get(TextKey::Delete)) {
+                if is_filter {
+                    actions.push(LayerItemAction::RemoveFilter {
+                        layer: owner,
+                        filter: sub_id,
+                    });
+                } else {
+                    actions.push(LayerItemAction::RemoveMask {
+                        owner,
+                        mask: sub_id,
+                    });
+                }
+                ui.close();
+            }
+        });
+    // Row background across the full row width: always filled
+    // (square, no rounding) so rows read as cards; selected and
+    // hovered states tint it.
+    {
         let bg = if selected {
             theme.colors.item_selected
-        } else {
+        } else if row_resp.hovered() {
             theme.colors.item_hover
+        } else {
+            theme.colors.bg_secondary
         };
-        ui.painter().rect_filled(row_rect, theme.radius.sm, bg);
+        ui.painter().rect_filled(row_rect, 0.0, bg);
     }
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.add_space(depth as f32 * theme.spacing.lg);
-        // Chevron column (empty here: aligned with layers).
-        ui.add_space(theme.sizes.icon_button);
-        // Attachment chevron column (empty: aligned).
+        // Single disclosure column (empty here: aligned with layers).
         ui.add_space(theme.sizes.icon_button);
         // On/off eye (toggles without losing settings or pixels).
         let vis_icon = if enabled {
@@ -416,43 +487,47 @@ pub fn draw_attachment_row(
                 });
             }
         }
+        // Type badge at 0.8× layer-thumbnail scale, centered in the
+        // same column as layer thumbnails (same visual as layer rows:
+        // reordering is drag & drop now, no arrow buttons). Masks show
+        // their grayscale coverage thumbnail once synced.
         if is_filter {
-            ui.label(
-                egui::RichText::new("FX")
-                    .size(theme.typography.caption_size)
-                    .color(theme.colors.accent),
+            ui.add_sized(
+                egui::vec2(theme.sizes.layer_thumb, theme.sizes.layer_thumb),
+                egui::Button::new(
+                    egui::RichText::new("FX")
+                        .size(theme.typography.body_size * 0.8)
+                        .color(theme.colors.accent),
+                )
+                .frame(true),
+            );
+        } else if let Some(view) = thumbs.get(&sub_id).copied() {
+            ui.add(
+                egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
+                    .fit_to_exact_size(egui::vec2(
+                        theme.sizes.layer_thumb,
+                        theme.sizes.layer_thumb,
+                    )),
             );
         } else {
-            ui.label(IconRegistry::new().colored(
-                Icon::Mask,
-                theme.typography.caption_size,
-                theme.colors.fg_secondary,
-            ));
+            ui.add_sized(
+                egui::vec2(theme.sizes.layer_thumb, theme.sizes.layer_thumb),
+                egui::Button::new(
+                    IconRegistry::new().sized(Icon::Mask, theme.typography.icon_size * 0.8),
+                )
+                .frame(true),
+            );
         }
         ui.add_space(theme.spacing.xs);
         ui.add(
-            egui::Label::new(
-                egui::RichText::new(name)
-                    .size(theme.typography.caption_size)
-                    .color(theme.colors.fg_secondary),
-            )
-            .truncate(),
+            egui::Label::new(egui::RichText::new(name).size(theme.typography.body_size)).truncate(),
         );
-        let (up_tip, down_tip, del_tip) = if is_filter {
-            (
-                texts.get(PhotoTextKey::MoveFilterUp),
-                texts.get(PhotoTextKey::MoveFilterDown),
-                texts.get(PhotoTextKey::DeleteFilter),
-            )
+        let del_tip = if is_filter {
+            texts.get(PhotoTextKey::DeleteFilter)
         } else {
-            (
-                texts.get(PhotoTextKey::MoveMaskUp),
-                texts.get(PhotoTextKey::MoveMaskDown),
-                texts.get(PhotoTextKey::DeleteMask),
-            )
+            texts.get(PhotoTextKey::DeleteMask)
         };
-        // Up/down: no arrows in the icon registry —
-        // small ASCII text buttons ("^"/"v"), never unicode.
+        // Delete at the row end (reordering is drag & drop).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if IconButton::new(Icon::Close)
                 .tooltip(del_tip)
@@ -468,36 +543,6 @@ pub fn draw_attachment_row(
                     actions.push(LayerItemAction::RemoveMask {
                         owner,
                         mask: sub_id,
-                    });
-                }
-            }
-            if ui.small_button("v").on_hover_text(down_tip).clicked() {
-                if is_filter {
-                    actions.push(LayerItemAction::MoveFilter {
-                        layer: owner,
-                        filter: sub_id,
-                        up: false,
-                    });
-                } else {
-                    actions.push(LayerItemAction::MoveMask {
-                        owner,
-                        mask: sub_id,
-                        up: false,
-                    });
-                }
-            }
-            if ui.small_button("^").on_hover_text(up_tip).clicked() {
-                if is_filter {
-                    actions.push(LayerItemAction::MoveFilter {
-                        layer: owner,
-                        filter: sub_id,
-                        up: true,
-                    });
-                } else {
-                    actions.push(LayerItemAction::MoveMask {
-                        owner,
-                        mask: sub_id,
-                        up: true,
                     });
                 }
             }
@@ -616,6 +661,34 @@ mod tests {
     }
 
     #[test]
+    fn attachments_state_shared_across_ui_scopes() {
+        // Production layout: the list filters rows in the outer Ui
+        // while the chevron writes from a row `scope_builder` child
+        // Ui (different Ui ids). The state id must be Ui-independent
+        // or collapsing never hides anything.
+        use uuid::Uuid;
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let owner = Uuid::new_v4();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert!(attachments_open(ui, owner));
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap()),
+                    |ui| {
+                        set_attachments_open(ui, owner, false);
+                    },
+                );
+                assert!(
+                    !attachments_open(ui, owner),
+                    "toggle from a row scope hides the rows"
+                );
+            });
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
     fn attachment_rows_render_without_panic_and_report_nothing() {
         use uuid::Uuid;
         let ctx = egui::Context::default();
@@ -642,10 +715,13 @@ mod tests {
                             (String::from("brightness"), 0.0),
                             (String::from("contrast"), 0.0),
                         ]),
+                        masks: Vec::new(),
+                        thumb: None,
                     },
                     false,
                     1,
                     texts,
+                    &std::collections::HashMap::new(),
                 );
                 assert!(fx.is_empty(), "aucun clic sans interaction");
                 let mk = draw_attachment_row(
@@ -658,10 +734,13 @@ mod tests {
                         enabled: false,
                         filter_type: String::new(),
                         params: std::collections::HashMap::new(),
+                        masks: Vec::new(),
+                        thumb: None,
                     },
                     false,
                     1,
                     texts,
+                    &std::collections::HashMap::new(),
                 );
                 assert!(mk.is_empty(), "aucun clic sans interaction");
             });

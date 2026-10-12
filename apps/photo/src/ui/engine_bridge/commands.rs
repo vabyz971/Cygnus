@@ -37,6 +37,9 @@ use uuid::Uuid;
 pub enum PhotoEngineCommand {
     /// Toggle a layer's visibility.
     ToggleLayerVisibility(Uuid),
+    /// Solo a layer (Affinity-style isolate): only it and its
+    /// ancestor chain stay visible. Single history entry.
+    IsolateLayer(Uuid),
     /// Reorder by ids (hierarchical before/after drop: same
     /// parent or not — free nesting via the engine's `reorder_before`).
     ReorderNodes {
@@ -47,12 +50,13 @@ pub enum PhotoEngineCommand {
         /// True = before the target, false = after.
         before: bool,
     },
-    /// Nest a layer at a group's head (engine `move_into`).
-    MoveIntoGroup {
+    /// Nest a layer at a parent's head (engine `move_into_parent`:
+    /// group as-is, pixel layer as a clipped child).
+    MoveIntoParent {
         /// Moved layer.
         layer: Uuid,
-        /// Host group.
-        group: Uuid,
+        /// Host parent (group or pixel layer).
+        parent: Uuid,
     },
     /// Collapse / expand a group (display only: snapshot without
     /// a new composite).
@@ -134,6 +138,8 @@ pub enum PhotoEngineCommand {
     AddEmptyLayer,
     /// Duplicate a layer (new ids, inserted above).
     DuplicateLayer(Uuid),
+    /// Duplicate a live filter (new id, inserted above in its chain).
+    DuplicateFilter { layer: Uuid, filter: Uuid },
     /// Horizontal mirror of the pixel layer (O004, destructive + history).
     FlipHorizontal(Uuid),
     /// Vertical mirror of the pixel layer (O004).
@@ -189,8 +195,36 @@ pub enum PhotoEngineCommand {
     },
     /// Move a filter within its layer's stack (`up` = toward the displayed top).
     MoveFilter { layer: Uuid, filter: Uuid, up: bool },
+    /// Move a live filter from one chain to another (pixel or group
+    /// chains, same owner allowed for exact reordering): detached from
+    /// `from`, inserted at clamped `index` in `to`. Identity, params
+    /// and its own masks travel along. Single history entry.
+    MoveFilterTo {
+        /// Filter being moved.
+        filter: Uuid,
+        /// Source chain owner (pixel layer or group).
+        from: Uuid,
+        /// Destination chain owner (pixel layer or group).
+        to: Uuid,
+        /// Insertion index in the destination chain (clamped).
+        index: usize,
+    },
     /// Move a mask within its owner's stack.
     MoveMask { owner: Uuid, mask: Uuid, up: bool },
+    /// Move a mask from one pile to another (layer, group, adjustment
+    /// or live-filter piles): detached from `from`, inserted at clamped
+    /// `index` in `to`. Pixels, enabled state and inversion travel
+    /// along. Single history entry.
+    MoveMaskTo {
+        /// Mask being moved.
+        mask: Uuid,
+        /// Source pile owner (layer or filter id).
+        from: Uuid,
+        /// Destination pile owner (layer or filter id).
+        to: Uuid,
+        /// Insertion index in the destination pile (clamped).
+        index: usize,
+    },
     /// Delete a filter from a pixel layer.
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Export the composite (format inferred from the extension: png, jpg,
@@ -233,8 +267,9 @@ impl PhotoEngineCommand {
     pub fn op_name(&self) -> &'static str {
         match self {
             Self::ToggleLayerVisibility(_) => "toggle_visibility",
+            Self::IsolateLayer(_) => "isolate_layer",
             Self::ReorderNodes { .. } => "reorder_nodes",
-            Self::MoveIntoGroup { .. } => "move_into_group",
+            Self::MoveIntoParent { .. } => "move_into_parent",
             Self::ToggleGroupCollapsed(_) => "toggle_collapsed",
             Self::SetOpacity { .. } => "set_opacity",
             Self::SetBlendMode { .. } => "set_blend_mode",
@@ -248,6 +283,7 @@ impl PhotoEngineCommand {
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
             Self::DuplicateLayer(_) => "duplicate_layer",
+            Self::DuplicateFilter { .. } => "duplicate_filter",
             Self::FlipHorizontal(_) => "flip_horizontal",
             Self::FlipVertical(_) => "flip_vertical",
             Self::RotateClockwise(_) => "rotate_clockwise",
@@ -259,10 +295,12 @@ impl PhotoEngineCommand {
             Self::AddMask { .. } => "add_mask",
             Self::RemoveMask { .. } => "remove_mask",
             Self::MoveFilter { .. } => "move_filter",
+            Self::MoveFilterTo { .. } => "move_filter_to",
             Self::ToggleFilter { .. } => "toggle_filter",
             Self::SetFilterParam { .. } => "set_filter_param",
             Self::ToggleMask { .. } => "toggle_mask",
             Self::MoveMask { .. } => "move_mask",
+            Self::MoveMaskTo { .. } => "move_mask_to",
             Self::RemoveFilter { .. } => "remove_filter",
             Self::Export { .. } => "export",
             Self::SaveProject { .. } => "save_project",
@@ -299,7 +337,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         PhotoEngineCommand::ToggleLayerVisibility(_) => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
-        PhotoEngineCommand::ReorderNodes { .. } | PhotoEngineCommand::MoveIntoGroup { .. } => {
+        PhotoEngineCommand::IsolateLayer(_) => {
+            (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
+        }
+        PhotoEngineCommand::ReorderNodes { .. } | PhotoEngineCommand::MoveIntoParent { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
         PhotoEngineCommand::SetOpacity { layer, .. } => (
@@ -330,16 +371,19 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::CropToDocument(_)
         | PhotoEngineCommand::AddEmptyLayer
         | PhotoEngineCommand::DuplicateLayer(_)
+        | PhotoEngineCommand::DuplicateFilter { .. }
         | PhotoEngineCommand::DeleteLayer(_)
         | PhotoEngineCommand::AddFilter { .. }
         | PhotoEngineCommand::SetFilterParam { .. }
         | PhotoEngineCommand::ToggleFilter { .. }
         | PhotoEngineCommand::ToggleMask { .. }
         | PhotoEngineCommand::MoveFilter { .. }
+        | PhotoEngineCommand::MoveFilterTo { .. }
         | PhotoEngineCommand::RemoveFilter { .. }
         | PhotoEngineCommand::AddMask { .. }
         | PhotoEngineCommand::RemoveMask { .. }
         | PhotoEngineCommand::MoveMask { .. }
+        | PhotoEngineCommand::MoveMaskTo { .. }
         | PhotoEngineCommand::Undo
         | PhotoEngineCommand::Redo
         | PhotoEngineCommand::UndoSteps { .. }

@@ -76,12 +76,19 @@ impl InspectorPanel {
             return Vec::new();
         };
         // Lone layer: empty panel (layer settings live
-        // in the Layers panel). Only a focused attachment
-        // (owner = selection, existing id) shows its section.
+        // in the Layers panel). Only a focused attachment shows
+        // its section: owner = selection, or one of its filters
+        // (filter-owned masks).
         let Some(focus) = focused else {
             return Vec::new();
         };
-        if focus.owner != layer.id {
+        let owner_is_layer = focus.owner == layer.id;
+        let owner_is_filter = crate::ui::features::layers::types::find_filter_in(
+            std::slice::from_ref(layer),
+            focus.owner,
+        )
+        .is_some();
+        if !owner_is_layer && !owner_is_filter {
             return Vec::new();
         }
         let Some((sub, _)) = find_attachment_in(std::slice::from_ref(layer), focus.owner, focus.id)

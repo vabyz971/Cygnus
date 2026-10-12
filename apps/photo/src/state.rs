@@ -342,31 +342,57 @@ fn upload_layer_thumb(
 /// appearance changed, purges the gone ones. Shared by both
 /// state arms (`LayersChanged` and `StateChanged`). Historical `!=` guard
 /// UNCHANGED (including version downgrade on undo — behavior preserved
-/// byte-for-byte).
+/// byte-for-byte). Recursive over nested layers AND mask piles (mask
+/// grayscale previews + child thumbnails).
 fn sync_thumbs(ctx: &egui::Context, ui: &mut PhotoUiState) {
-    // By index (no borrow held on `layers`): the upload borrows
-    // `ui` mutably via the shared helper. Bounded clone (48×32 thumbnail).
-    for index in 0..ui.layers.len() {
-        let pending = {
-            let layer = &ui.layers[index];
-            match layer.thumb.as_ref() {
-                Some(thumb)
-                    if ui
-                        .thumb_cache
-                        .get(&layer.id)
-                        .is_none_or(|cached| cached.version != thumb.version) =>
-                {
-                    Some((layer.id, thumb.clone()))
-                }
-                _ => None,
+    // Collect first (no borrow held on `layers`): the upload borrows
+    // `ui` mutably via the shared helper. Bounded clones (48×32 max).
+    let mut pending: Vec<(Uuid, PhotoLayerThumb)> = Vec::new();
+    let mut live: Vec<Uuid> = Vec::new();
+    fn collect(
+        layers: &[crate::ui::PhotoLayerInfo],
+        cache: &std::collections::HashMap<Uuid, CachedLayerThumb>,
+        pending: &mut Vec<(Uuid, PhotoLayerThumb)>,
+        live: &mut Vec<Uuid>,
+    ) {
+        for layer in layers {
+            live.push(layer.id);
+            if let Some(thumb) = layer.thumb.as_ref()
+                && cache
+                    .get(&layer.id)
+                    .is_none_or(|cached| cached.version != thumb.version)
+            {
+                pending.push((layer.id, thumb.clone()));
             }
-        };
-        if let Some((id, thumb)) = pending {
-            upload_layer_thumb(ctx, ui, id, &thumb);
+            collect_sub(&layer.filters, cache, pending, live);
+            collect_sub(&layer.masks, cache, pending, live);
+            collect(&layer.children, cache, pending, live);
         }
     }
-    ui.thumb_cache
-        .retain(|id, _| ui.layers.iter().any(|layer| layer.id == *id));
+    fn collect_sub(
+        subs: &[crate::ui::features::layers::PhotoSubLayerInfo],
+        cache: &std::collections::HashMap<Uuid, CachedLayerThumb>,
+        pending: &mut Vec<(Uuid, PhotoLayerThumb)>,
+        live: &mut Vec<Uuid>,
+    ) {
+        for sub in subs {
+            if let Some(thumb) = sub.thumb.as_ref() {
+                live.push(sub.id);
+                if cache
+                    .get(&sub.id)
+                    .is_none_or(|cached| cached.version != thumb.version)
+                {
+                    pending.push((sub.id, thumb.clone()));
+                }
+            }
+            collect_sub(&sub.masks, cache, pending, live);
+        }
+    }
+    collect(&ui.layers, &ui.thumb_cache, &mut pending, &mut live);
+    for (id, thumb) in &pending {
+        upload_layer_thumb(ctx, ui, *id, thumb);
+    }
+    ui.thumb_cache.retain(|id, _| live.contains(id));
 }
 
 /// Applies a worker response to a document's UI state.
@@ -395,15 +421,19 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.history_redo = redo_labels;
             // TEMPORARY INSTRUMENTATION.
             ui.responses_applied += 1;
-            if ui
-                .selected
-                .is_some_and(|id| !ui.layers.iter().any(|layer| layer.id == id))
-            {
+            // Recursive lookup: nested selections survive worker
+            // responses (a top-level-only check used to clear them).
+            if ui.selected.is_some_and(|id| {
+                crate::ui::features::layers::find_layer_in(&ui.layers, id).is_none()
+            }) {
                 ui.selected = None;
             }
-            // Orphaned focus (owner gone): dropped too.
+            // Orphaned focus (owner gone): dropped too. Owners may be
+            // layers or live filters (filter-owned masks).
             if ui.focused_attachment.is_some_and(|focus| {
                 crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
+                    && crate::ui::features::layers::find_filter_in(&ui.layers, focus.owner)
+                        .is_none()
             }) {
                 ui.focused_attachment = None;
             }
@@ -473,15 +503,19 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.history_redo = redo_labels;
             // TEMPORARY INSTRUMENTATION.
             ui.responses_applied += 1;
-            if ui
-                .selected
-                .is_some_and(|id| !ui.layers.iter().any(|layer| layer.id == id))
-            {
+            // Recursive lookup: nested selections survive worker
+            // responses (a top-level-only check used to clear them).
+            if ui.selected.is_some_and(|id| {
+                crate::ui::features::layers::find_layer_in(&ui.layers, id).is_none()
+            }) {
                 ui.selected = None;
             }
-            // Orphaned focus (owner gone): dropped too.
+            // Orphaned focus (owner gone): dropped too. Owners may be
+            // layers or live filters (filter-owned masks).
             if ui.focused_attachment.is_some_and(|focus| {
                 crate::ui::features::layers::find_layer_in(&ui.layers, focus.owner).is_none()
+                    && crate::ui::features::layers::find_filter_in(&ui.layers, focus.owner)
+                        .is_none()
             }) {
                 ui.focused_attachment = None;
             }
@@ -542,6 +576,13 @@ pub fn sample_preview_color(preview: &PreviewImage, x: f32, y: f32) -> Option<[u
         .get(offset..offset + 3)
         .and_then(|pixel| <&[u8] as TryInto<&[u8; 3]>>::try_into(pixel).ok())
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+}
+
+/// Perceived luminance of an RGB brush color (same Rec. 601 weights
+/// as the engine): below 128 the brush hides like the eraser when
+/// painting into a mask.
+pub fn brush_luminance(color: [u8; 3]) -> f32 {
+    0.299 * color[0] as f32 + 0.587 * color[1] as f32 + 0.114 * color[2] as f32
 }
 
 #[cfg(test)]

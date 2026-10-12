@@ -63,20 +63,14 @@ pub enum PhotoTextKey {
     ToggleFilterEnabled,
     /// Enable / disable the mask (eye).
     ToggleMaskEnabled,
-    /// Move the filter up.
-    MoveFilterUp,
-    /// Move the filter down.
-    MoveFilterDown,
     /// Delete the filter.
     DeleteFilter,
-    /// Move the mask up.
-    MoveMaskUp,
-    /// Move the mask down.
-    MoveMaskDown,
     /// Delete the mask.
     DeleteMask,
     /// Show / hide (layer eye).
     ShowHideLayer,
+    /// Solo a layer (isolate it).
+    IsolateLayer,
     /// Empty list (layers header).
     NoLayers,
     /// No layer selected (inspector).
@@ -263,13 +257,10 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::CollapseAttachments,
     PhotoTextKey::ToggleFilterEnabled,
     PhotoTextKey::ToggleMaskEnabled,
-    PhotoTextKey::MoveFilterUp,
-    PhotoTextKey::MoveFilterDown,
     PhotoTextKey::DeleteFilter,
-    PhotoTextKey::MoveMaskUp,
-    PhotoTextKey::MoveMaskDown,
     PhotoTextKey::DeleteMask,
     PhotoTextKey::ShowHideLayer,
+    PhotoTextKey::IsolateLayer,
     PhotoTextKey::NoLayers,
     PhotoTextKey::NoLayerSelected,
     PhotoTextKey::FilterLiveLabel,
@@ -374,13 +365,10 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CollapseAttachments => "Replier les effets",
         PhotoTextKey::ToggleFilterEnabled => "Activer / désactiver le filtre",
         PhotoTextKey::ToggleMaskEnabled => "Activer / désactiver le masque",
-        PhotoTextKey::MoveFilterUp => "Monter le filtre",
-        PhotoTextKey::MoveFilterDown => "Descendre le filtre",
         PhotoTextKey::DeleteFilter => "Supprimer le filtre",
-        PhotoTextKey::MoveMaskUp => "Monter le masque",
-        PhotoTextKey::MoveMaskDown => "Descendre le masque",
         PhotoTextKey::DeleteMask => "Supprimer le masque",
         PhotoTextKey::ShowHideLayer => "Afficher / masquer",
+        PhotoTextKey::IsolateLayer => "Solo",
         PhotoTextKey::NoLayers => "Aucun calque",
         PhotoTextKey::NoLayerSelected => "Aucun calque selectionne",
         PhotoTextKey::FilterLiveLabel => "Filtre live",
@@ -485,13 +473,10 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CollapseAttachments => "Collapse effects",
         PhotoTextKey::ToggleFilterEnabled => "Enable / disable filter",
         PhotoTextKey::ToggleMaskEnabled => "Enable / disable mask",
-        PhotoTextKey::MoveFilterUp => "Move filter up",
-        PhotoTextKey::MoveFilterDown => "Move filter down",
         PhotoTextKey::DeleteFilter => "Delete filter",
-        PhotoTextKey::MoveMaskUp => "Move mask up",
-        PhotoTextKey::MoveMaskDown => "Move mask down",
         PhotoTextKey::DeleteMask => "Delete mask",
         PhotoTextKey::ShowHideLayer => "Show / hide",
+        PhotoTextKey::IsolateLayer => "Solo",
         PhotoTextKey::NoLayers => "No layers",
         PhotoTextKey::NoLayerSelected => "No layer selected",
         PhotoTextKey::FilterLiveLabel => "Live filter",

@@ -396,6 +396,73 @@ mod tests {
     use crate::ui::PhotoEngineCommand;
 
     #[test]
+    fn pointer_maps_through_capped_thumbnail() {
+        // Mismatched import case: 1920×1080 document shown through an
+        // 800×450 capped thumbnail (k = 2.4). Clicking the dest center
+        // must report the document center (960, 540) — not thumbnail
+        // pixels, not a shifted position.
+        use std::cell::RefCell;
+
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let layer = uuid::Uuid::new_v4();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+        let mapping = CanvasMapping {
+            origin: egui::Vec2::ZERO,
+            thumb_to_doc: 2.4,
+        };
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 450.0))))
+                        .tool(PhotoCanvasTool::Brush)
+                        .active_layer(Some(layer))
+                        .mapping(mapping)
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+        let out = frame(vec![]);
+        let dest = out.dest_rect.expect("dest");
+        let center = dest.center();
+        let press = egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let _ = frame(vec![press]);
+        // Move beyond the click threshold so egui counts a drag.
+        let at = center + egui::vec2(30.0, 20.0);
+        let out = frame(vec![egui::Event::PointerMoved(at)]);
+        assert!(!out.pointer_world.is_empty(), "drag reports a position");
+        // Hand-derived expectation (independent arithmetic): dest is
+        // 784 wide for the 800 px thumbnail (scale 0.98), k = 2.4.
+        // thumb = ((430-8)/0.98, (320-79.5)/0.98) ≈ (430.6, 245.4),
+        // doc = thumb × 2.4 ≈ (1033, 589).
+        for p in &out.pointer_world {
+            assert!(
+                (p.x - 1033.0).abs() < 6.0 && (p.y - 589.0).abs() < 6.0,
+                "mapped near the aimed document point, got ({}, {})",
+                p.x,
+                p.y
+            );
+        }
+    }
+
+    #[test]
     fn canvas_mapping_miniature_vers_document() {
         // 2x thumbnail (downscaled infinite plane) with a (20, 10) thumbnail-px origin.
         let mapping = CanvasMapping {

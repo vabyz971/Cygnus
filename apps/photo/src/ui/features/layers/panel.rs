@@ -27,8 +27,8 @@
 use super::layer_item::{LayerItemAction, LayerRenameState};
 use super::layer_list::draw_layer_list;
 use super::types::{
-    FlatRowKind, LayerDrop, LayerTexts, LayerThumbView, LayerTreeSelection, PhotoLayerInfo,
-    find_layer_in,
+    FlatRow, FlatRowKind, LayerDrop, LayerTexts, LayerThumbView, LayerTreeSelection,
+    PhotoLayerInfo, find_filter_in, find_filter_position, find_layer_in, find_mask_position,
 };
 use crate::commands::PhotoUiContext;
 use photo_engine::BlendMode;
@@ -100,17 +100,45 @@ pub enum LayerPanelAction {
         /// True = before the target, false = after.
         before: bool,
     },
-    /// Nest a layer at a group's head (drop inside).
-    MoveIntoGroup {
+    /// Nest a layer at a parent's head (drop inside a group or a
+    /// pixel layer).
+    MoveIntoParent {
         /// Moved layer.
         layer: Uuid,
-        /// Host group.
-        group: Uuid,
+        /// Host parent (group or pixel layer).
+        parent: Uuid,
     },
+    /// Move a live filter to another chain at an exact index (DnD
+    /// reparent, Affinity-style).
+    MoveFilterTo {
+        /// Filter being moved.
+        filter: Uuid,
+        /// Source chain owner.
+        from: Uuid,
+        /// Destination chain owner.
+        to: Uuid,
+        /// Insertion index (clamped engine-side).
+        index: usize,
+    },
+    /// Move a mask to another pile at an exact index (DnD reparent).
+    MoveMaskTo {
+        /// Mask being moved.
+        mask: Uuid,
+        /// Source pile owner (layer or filter id).
+        from: Uuid,
+        /// Destination pile owner (layer or filter id).
+        to: Uuid,
+        /// Insertion index (clamped engine-side).
+        index: usize,
+    },
+    /// Add a mask to the focused filter's own pile.
+    AddMaskToFilter(Uuid),
     /// Collapse / expand a group (no re-render).
     ToggleCollapsed(Uuid),
     /// Toggle a layer's visibility (eye).
     ToggleVisibility(Uuid),
+    /// Solo a layer (only it stays visible).
+    IsolateLayer(Uuid),
     /// Delete a layer (row cross).
     DeleteLayer(Uuid),
     /// Duplicate a layer (row context menu).
@@ -125,10 +153,8 @@ pub enum LayerPanelAction {
     RotateCounterclockwiseSelected,
     /// Crop to document (same).
     CropSelectedToDocument,
-    /// Move a filter within its stack.
-    MoveFilter { layer: Uuid, filter: Uuid, up: bool },
-    /// Move a mask within its stack.
-    MoveMask { owner: Uuid, mask: Uuid, up: bool },
+    /// Duplicate a live filter (context menu).
+    DuplicateFilter { layer: Uuid, filter: Uuid },
     /// Delete a filter.
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Delete a mask.
@@ -169,8 +195,11 @@ impl LayersPanel {
     }
 }
 
-/// Affinity-style header: opacity (worker-coalesced slider) +
-/// the selection's blend mode. Without a selection, controls are
+/// Affinity-style header: opacity (worker-coalesced slider +
+/// compact value field) + the selection's blend mode (compact
+/// combo). Two grid rows share one label column so controls align;
+/// the combo and the value field stay small, the slider fills the
+/// rest. Without a selection, controls are
 /// disabled (never implicitly adopting the layer above); visibility
 /// is set at each row's eye, never here.
 fn draw_selection_header(
@@ -182,54 +211,70 @@ fn draw_selection_header(
 ) -> Vec<LayerPanelAction> {
     let texts = t.texts;
     let mut actions = Vec::new();
-    let Some(layer) = selected.and_then(|id| layers.iter().find(|item| item.id == id)) else {
-        if layers.is_empty() {
-            Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
-        } else {
-            // Inert but visible controls (no targeted layer).
-            ui.add_enabled_ui(false, |ui| {
-                let mut opacity = 100.0;
-                Slider::new(
-                    texts.get(crate::i18n::PhotoTextKey::OpacityLabel),
-                    0.0..=100.0,
-                )
-                .show(ui, theme, &mut opacity);
-                let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
-                let mut choice = 0;
-                Select::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel), &options).show(
-                    ui,
-                    theme,
-                    &mut choice,
+    // Recursive lookup: nested (child) layers drive the header too.
+    let target = selected.and_then(|id| find_layer_in(layers, id));
+    let (mut opacity, mut choice, enabled) = match target {
+        Some(layer) => (
+            layer.opacity,
+            BlendMode::ALL
+                .iter()
+                .position(|mode| *mode == layer.blend_mode)
+                .unwrap_or(0),
+            true,
+        ),
+        None => (100.0, 0, false),
+    };
+    let before_opacity = opacity;
+    let before_choice = choice;
+    if layers.is_empty() {
+        Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
+        ui.separator();
+        return actions;
+    }
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::Grid::new("layer_header_params")
+            .num_columns(2)
+            .spacing(egui::vec2(theme.spacing.sm, theme.spacing.xs))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(texts.get(crate::i18n::PhotoTextKey::OpacityLabel))
+                        .size(theme.typography.body_size)
+                        .color(theme.colors.fg_secondary),
                 );
+                ui.horizontal(|ui| {
+                    Slider::new("", 0.0..=100.0).show(ui, theme, &mut opacity);
+                    // Compact value field (derived token width).
+                    ui.add_sized(
+                        egui::vec2(theme.sizes.icon_button * 2.0, theme.sizes.button_sm),
+                        egui::DragValue::new(&mut opacity)
+                            .range(0.0..=100.0)
+                            .speed(0.5),
+                    );
+                });
+                ui.end_row();
+                ui.label(
+                    egui::RichText::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel))
+                        .size(theme.typography.body_size)
+                        .color(theme.colors.fg_secondary),
+                );
+                let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
+                Select::new("", &options).show(ui, theme, &mut choice);
+                ui.end_row();
             });
-        }
+    });
+    let Some(layer) = target else {
         ui.separator();
         return actions;
     };
     // Engine units 0..=100 (like the inspector).
-    let mut opacity = layer.opacity;
-    Slider::new(
-        texts.get(crate::i18n::PhotoTextKey::OpacityLabel),
-        0.0..=100.0,
-    )
-    .show(ui, theme, &mut opacity);
-    if opacity != layer.opacity {
+    if opacity != before_opacity && opacity != layer.opacity {
         actions.push(LayerPanelAction::SetOpacity {
             layer: layer.id,
             opacity,
         });
     }
-    let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
-    let mut choice = BlendMode::ALL
-        .iter()
-        .position(|mode| *mode == layer.blend_mode)
-        .unwrap_or(0);
-    Select::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel), &options).show(
-        ui,
-        theme,
-        &mut choice,
-    );
     if let Some(mode) = BlendMode::ALL.get(choice)
+        && choice != before_choice
         && *mode != layer.blend_mode
     {
         actions.push(LayerPanelAction::SetBlendMode {
@@ -241,37 +286,165 @@ fn draw_selection_header(
     actions
 }
 
-/// Converts a hierarchical drop into a panel action: before/after
-/// between layers ⇒ `ReorderNodes` (same parent or not), inside an
-/// expanded group ⇒ `MoveIntoGroup`. Attachments do not
-/// move via DnD (`None`: their order is set with their row
-/// buttons), nor does a drop inside a non-group
-/// (guard: `can_nest` already forbids it list-side).
+/// Converts a hierarchical drop into a panel action, following the
+/// DnD mapping table (`egui-bounded-dnd` skill): layers reorder
+/// (before/after) or nest (into a group or pixel layer); filters move
+/// between chains at the exact indicated index; masks move between
+/// piles at the exact indicated index. Drops onto the dragged row
+/// itself are ignored. The engine re-validates everything (cycles,
+/// unknown ids) — the UI never trusts itself alone.
 fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanelAction> {
-    if drop.dragged.kind != FlatRowKind::Layer {
+    use FlatRowKind as Kind;
+    if drop.dragged.id == drop.target.id {
         return None;
     }
-    match (drop.target.kind, drop.position) {
-        (FlatRowKind::Layer, DropPosition::Before) => Some(LayerPanelAction::ReorderNodes {
+    // Chain length of a layer's filter pile.
+    let chain_len =
+        |owner: Uuid| -> Option<usize> { find_layer_in(layers, owner).map(|l| l.filters.len()) };
+    // Length of a mask pile owned by a layer or a filter.
+    let pile_len = |owner: Uuid| -> Option<usize> {
+        if let Some(porteur) = find_layer_in(layers, owner) {
+            return Some(porteur.masks.len());
+        }
+        find_filter_in(layers, owner).map(|(_, f)| f.masks.len())
+    };
+    // Owning layer of any attachment row (filter rows carry it, mask
+    // rows resolve through their owner chain).
+    let row_layer = |row: FlatRow| -> Option<Uuid> {
+        match row.kind {
+            Kind::Layer => Some(row.id),
+            Kind::Filter { owner } => Some(owner),
+            Kind::Mask { layer, .. } => Some(layer),
+        }
+    };
+    match (drop.dragged.kind, drop.target.kind, drop.position) {
+        // --- Dragged layer: reorder, or nest into a group/pixel. ---
+        (Kind::Layer, Kind::Layer, DropPosition::Before) => Some(LayerPanelAction::ReorderNodes {
             dragged: drop.dragged.id,
             target: drop.target.id,
             before: true,
         }),
-        (FlatRowKind::Layer, DropPosition::After) => Some(LayerPanelAction::ReorderNodes {
+        (Kind::Layer, Kind::Layer, DropPosition::After) => Some(LayerPanelAction::ReorderNodes {
             dragged: drop.dragged.id,
             target: drop.target.id,
             before: false,
         }),
-        (FlatRowKind::Layer, DropPosition::Into) => {
-            let groupe = find_layer_in(layers, drop.target.id)?;
-            (groupe.kind == super::types::PhotoLayerKind::Group).then_some(
-                LayerPanelAction::MoveIntoGroup {
+        (Kind::Layer, Kind::Layer, DropPosition::Into) => {
+            let target = find_layer_in(layers, drop.target.id)?;
+            (target.kind == super::types::PhotoLayerKind::Group
+                || target.kind == super::types::PhotoLayerKind::Pixel)
+                .then_some(LayerPanelAction::MoveIntoParent {
                     layer: drop.dragged.id,
-                    group: drop.target.id,
-                },
-            )
+                    parent: drop.target.id,
+                })
         }
-        _ => None,
+        // Onto an attachment row: apply to its owner layer.
+        (Kind::Layer, Kind::Filter { .. } | Kind::Mask { .. }, DropPosition::Before) => {
+            Some(LayerPanelAction::ReorderNodes {
+                dragged: drop.dragged.id,
+                target: row_layer(drop.target)?,
+                before: true,
+            })
+        }
+        (Kind::Layer, Kind::Filter { .. } | Kind::Mask { .. }, _) => {
+            Some(LayerPanelAction::ReorderNodes {
+                dragged: drop.dragged.id,
+                target: row_layer(drop.target)?,
+                before: false,
+            })
+        }
+        // --- Dragged filter: move between chains at the exact index. ---
+        (Kind::Filter { owner: from }, Kind::Layer, DropPosition::Before) => {
+            Some(LayerPanelAction::MoveFilterTo {
+                filter: drop.dragged.id,
+                from,
+                to: drop.target.id,
+                index: 0,
+            })
+        }
+        (Kind::Filter { owner: from }, Kind::Layer, _) => Some(LayerPanelAction::MoveFilterTo {
+            filter: drop.dragged.id,
+            from,
+            to: drop.target.id,
+            index: chain_len(drop.target.id)?,
+        }),
+        (Kind::Filter { owner: from }, Kind::Filter { owner: to }, DropPosition::Before) => {
+            Some(LayerPanelAction::MoveFilterTo {
+                filter: drop.dragged.id,
+                from,
+                to,
+                index: find_filter_position(layers, to, drop.target.id)?,
+            })
+        }
+        (Kind::Filter { owner: from }, Kind::Filter { owner: to }, _) => {
+            // After: target index + 1 in snapshot coordinates — the
+            // engine normalizes the removal shift itself.
+            let index = find_filter_position(layers, to, drop.target.id)? + 1;
+            Some(LayerPanelAction::MoveFilterTo {
+                filter: drop.dragged.id,
+                from,
+                to,
+                index,
+            })
+        }
+        // Onto a mask row: join its owner layer's chain (append).
+        (Kind::Filter { owner: from }, Kind::Mask { layer, .. }, _) => {
+            Some(LayerPanelAction::MoveFilterTo {
+                filter: drop.dragged.id,
+                from,
+                to: layer,
+                index: chain_len(layer)?,
+            })
+        }
+        // --- Dragged mask: move between piles at the exact index. ---
+        (Kind::Mask { owner: from, .. }, Kind::Layer, DropPosition::Before) => {
+            Some(LayerPanelAction::MoveMaskTo {
+                mask: drop.dragged.id,
+                from,
+                to: drop.target.id,
+                index: 0,
+            })
+        }
+        (Kind::Mask { owner: from, .. }, Kind::Layer, _) => Some(LayerPanelAction::MoveMaskTo {
+            mask: drop.dragged.id,
+            from,
+            to: drop.target.id,
+            index: pile_len(drop.target.id)?,
+        }),
+        (Kind::Mask { owner: from, .. }, Kind::Filter { owner: _ }, DropPosition::Before) => {
+            Some(LayerPanelAction::MoveMaskTo {
+                mask: drop.dragged.id,
+                from,
+                to: drop.target.id,
+                index: 0,
+            })
+        }
+        (Kind::Mask { owner: from, .. }, Kind::Filter { .. }, _) => {
+            Some(LayerPanelAction::MoveMaskTo {
+                mask: drop.dragged.id,
+                from,
+                to: drop.target.id,
+                index: pile_len(drop.target.id)?,
+            })
+        }
+        (Kind::Mask { owner: from, .. }, Kind::Mask { owner: to, .. }, DropPosition::Before) => {
+            Some(LayerPanelAction::MoveMaskTo {
+                mask: drop.dragged.id,
+                from,
+                to,
+                index: find_mask_position(layers, to, drop.target.id)?,
+            })
+        }
+        (Kind::Mask { owner: from, .. }, Kind::Mask { owner: to, .. }, _) => {
+            // Same normalization rule as filter chains (engine-side).
+            let index = find_mask_position(layers, to, drop.target.id)? + 1;
+            Some(LayerPanelAction::MoveMaskTo {
+                mask: drop.dragged.id,
+                from,
+                to,
+                index,
+            })
+        }
     }
 }
 
@@ -332,6 +505,9 @@ fn draw_layers_panel(
             LayerItemAction::ToggleVisibility(id) => {
                 actions.push(LayerPanelAction::ToggleVisibility(id));
             }
+            LayerItemAction::IsolateLayer(id) => {
+                actions.push(LayerPanelAction::IsolateLayer(id));
+            }
             LayerItemAction::DeleteLayer(id) => actions.push(LayerPanelAction::DeleteLayer(id)),
             LayerItemAction::DuplicateLayer(id) => {
                 actions.push(LayerPanelAction::DuplicateLayer(id));
@@ -354,14 +530,11 @@ fn draw_layers_panel(
             LayerItemAction::ToggleCollapsed(id) => {
                 actions.push(LayerPanelAction::ToggleCollapsed(id));
             }
-            LayerItemAction::MoveFilter { layer, filter, up } => {
-                actions.push(LayerPanelAction::MoveFilter { layer, filter, up });
-            }
-            LayerItemAction::MoveMask { owner, mask, up } => {
-                actions.push(LayerPanelAction::MoveMask { owner, mask, up });
-            }
             LayerItemAction::RemoveFilter { layer, filter } => {
                 actions.push(LayerPanelAction::RemoveFilter { layer, filter });
+            }
+            LayerItemAction::DuplicateFilter { layer, filter } => {
+                actions.push(LayerPanelAction::DuplicateFilter { layer, filter });
             }
             LayerItemAction::RemoveMask { owner, mask } => {
                 actions.push(LayerPanelAction::RemoveMask { owner, mask });
@@ -403,7 +576,23 @@ fn draw_layers_panel(
                 .show(ui, theme)
                 .clicked()
             {
-                actions.push(LayerPanelAction::AddMask);
+                // A focused filter owns the new mask (its own pile);
+                // otherwise the selected layer does.
+                let filter_focus = sel.focused.and_then(|focus| {
+                    sel.selected
+                        .and_then(|owner| find_layer_in(layers, owner))
+                        .and_then(|porteur| {
+                            porteur
+                                .filters
+                                .iter()
+                                .find(|f| f.id == focus.id)
+                                .map(|f| f.id)
+                        })
+                });
+                match filter_focus {
+                    Some(filter) => actions.push(LayerPanelAction::AddMaskToFilter(filter)),
+                    None => actions.push(LayerPanelAction::AddMask),
+                }
             }
             // Filter-add context menu (Affinity-style: no
             // modal, the catalog opens at the button).
@@ -544,6 +733,7 @@ mod tests {
             id,
             kind: FlatRowKind::Layer,
             depth,
+            parent: None,
             nestable,
         }
     }
@@ -594,12 +784,12 @@ mod tests {
         );
         assert_eq!(
             action,
-            Some(LayerPanelAction::MoveIntoGroup {
+            Some(LayerPanelAction::MoveIntoParent {
                 layer: dragged,
-                group: group_id,
+                parent: group_id,
             })
         );
-        // Inside a pixel layer: refused (guard).
+        // Inside a pixel layer: clipped child (Affinity-style nesting).
         let pixel_id = layers[0].children[0].id;
         assert_eq!(
             convert_drop(
@@ -610,21 +800,60 @@ mod tests {
                     position: DropPosition::Into,
                 },
             ),
-            None
+            Some(LayerPanelAction::MoveIntoParent {
+                layer: dragged,
+                parent: pixel_id,
+            })
         );
-        // Moved attachment: refused (order via buttons).
+        // Dragged filter onto a layer row: exact chain placement.
+        let mut doc2 = photo_engine::Document::new(8, 8);
+        doc2.push_layer(photo_engine::LayerNode::Pixel(
+            photo_engine::PixelLayer::new(
+                "a",
+                std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+            ),
+        ));
+        doc2.push_layer(photo_engine::LayerNode::Pixel(
+            photo_engine::PixelLayer::new(
+                "b",
+                std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
+            ),
+        ));
+        let layers2 = snapshot_layers(&doc2);
+        // Top of stack first: layers2[0] = "b", layers2[1] = "a".
+        let (bid, aid) = (layers2[0].id, layers2[1].id);
+        let fid = uuid::Uuid::new_v4();
+        // Before a layer row: index 0 of its chain.
         assert_eq!(
             convert_drop(
-                &layers,
+                &layers2,
                 LayerDrop {
                     dragged: FlatRow {
-                        id: Uuid::new_v4(),
-                        kind: FlatRowKind::Filter { owner: group_id },
+                        id: fid,
+                        kind: FlatRowKind::Filter { owner: aid },
                         depth: 1,
+                        parent: Some(aid),
                         nestable: false,
                     },
-                    target: flat_layer(group_id, 0, true),
+                    target: flat_layer(bid, 0, false),
                     position: DropPosition::Before,
+                },
+            ),
+            Some(LayerPanelAction::MoveFilterTo {
+                filter: fid,
+                from: aid,
+                to: bid,
+                index: 0,
+            })
+        );
+        // Drop onto itself: ignored.
+        assert_eq!(
+            convert_drop(
+                &layers2,
+                LayerDrop {
+                    dragged: flat_layer(bid, 0, false),
+                    target: flat_layer(bid, 0, false),
+                    position: DropPosition::After,
                 },
             ),
             None
