@@ -453,8 +453,8 @@ fn reorder_adjacent_sans_effet_est_noop() {
 fn move_into_groupe_et_imbrication() {
     let (mut doc, id1, id2, id3, id4, gid_a, gid_b) = groupe_imbrique();
 
-    assert!(doc.can_move_into(id1, gid_b));
-    assert!(doc.move_into(id1, gid_b));
+    assert!(doc.can_move_into_parent(id1, gid_b));
+    assert!(doc.move_into_parent(id1, gid_b));
     let groupe_a = match doc.find(gid_a).expect("groupe A") {
         LayerNode::Group(groupe) => groupe,
         _ => unreachable!("groupe A"),
@@ -478,8 +478,8 @@ fn move_into_groupe_et_imbrication() {
 #[test]
 fn move_into_premier_enfant_est_noop() {
     let (mut doc, id1, _, _, _, _, gid_b) = groupe_imbrique();
-    assert!(doc.move_into(id1, gid_b));
-    assert!(!doc.move_into(id1, gid_b));
+    assert!(doc.move_into_parent(id1, gid_b));
+    assert!(!doc.move_into_parent(id1, gid_b));
 }
 
 #[test]
@@ -490,12 +490,12 @@ fn drops_illegaux_refuses() {
     assert!(!doc.reorder_before(gid_a, gid_a, true));
     assert!(!doc.can_reorder_before(gid_a, id3));
     assert!(!doc.reorder_before(gid_a, id3, false));
-    assert!(!doc.can_move_into(gid_a, gid_a));
-    assert!(!doc.move_into(gid_a, gid_a));
-    assert!(!doc.can_move_into(gid_a, gid_b));
-    assert!(!doc.move_into(gid_a, gid_b));
-    assert!(!doc.can_move_into(id3, id3));
-    assert!(!doc.move_into(id3, id3));
+    assert!(!doc.can_move_into_parent(gid_a, gid_a));
+    assert!(!doc.move_into_parent(gid_a, gid_a));
+    assert!(!doc.can_move_into_parent(gid_a, gid_b));
+    assert!(!doc.move_into_parent(gid_a, gid_b));
+    assert!(!doc.can_move_into_parent(id3, id3));
+    assert!(!doc.move_into_parent(id3, id3));
 }
 
 #[test]
@@ -811,31 +811,31 @@ fn peinture_masque_noircit_ou_blanchit_le_canal_r() {
     pixels.masks.push(masque);
     let id = pixels.id;
     doc.push_layer(LayerNode::Pixel(pixels));
-    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.0, false)
+    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.5, 1.0, false)
         .expect("peinture noire");
     let valeur = doc.pixel_layer(id).expect("calque").masks[0]
         .image
         .get_pixel(1, 1)[0];
     assert!(valeur < 128, "noirci : {valeur}");
     // The (white) brush reveals again.
-    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.0, true)
+    doc.paint_mask(id, mid, &[(1.0, 1.0)], 1.5, 1.5, 1.0, true)
         .expect("peinture blanche");
     let valeur = doc.pixel_layer(id).expect("calque").masks[0]
         .image
         .get_pixel(1, 1)[0];
     assert!(valeur > 200, "reblanchi : {valeur}");
     // Guard rails: empty, invalid radius, unknowns.
-    assert!(doc.paint_mask(id, mid, &[], 1.5, 1.0, true).is_err());
+    assert!(doc.paint_mask(id, mid, &[], 1.5, 1.5, 1.0, true).is_err());
     assert!(
-        doc.paint_mask(id, mid, &[(1.0, 1.0)], 0.0, 1.0, true)
+        doc.paint_mask(id, mid, &[(1.0, 1.0)], 0.0, 1.5, 1.0, true)
             .is_err()
     );
     assert!(
-        doc.paint_mask(id, Uuid::new_v4(), &[(1.0, 1.0)], 1.5, 1.0, true)
+        doc.paint_mask(id, Uuid::new_v4(), &[(1.0, 1.0)], 1.5, 1.5, 1.0, true)
             .is_err()
     );
     assert!(
-        doc.paint_mask(Uuid::new_v4(), mid, &[(1.0, 1.0)], 1.5, 1.0, true)
+        doc.paint_mask(Uuid::new_v4(), mid, &[(1.0, 1.0)], 1.5, 1.5, 1.0, true)
             .is_err()
     );
 }
@@ -4491,4 +4491,129 @@ fn helpers_hierarchiques_et_add_child() {
     // own subtree.
     assert!(!doc.can_reorder_before(pid, cid));
     assert!(doc.can_reorder_before(cid, pid));
+}
+
+#[test]
+fn move_into_parent_pixel_et_gardefous() {
+    // Into pixel = enfant clippé ; ajustement refuse ; cycle refusé.
+    let img = solid(2, 2, [10, 10, 10, 255]);
+    let mut doc = Document::new(4, 4);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("p", arc(&img))));
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("q", arc(&img))));
+    doc.push_layer(LayerNode::Adjustment(AdjustmentLayer::new("a", vec![])));
+    let (pid, qid, aid) = (doc.root[0].id(), doc.root[1].id(), doc.root[2].id());
+    assert!(doc.can_move_into_parent(qid, pid));
+    assert!(doc.move_into_parent(qid, pid));
+    let LayerNode::Pixel(p) = doc.find(pid).expect("parent") else {
+        panic!("pixel attendu");
+    };
+    assert_eq!(p.children.len(), 1);
+    assert_eq!(p.children[0].id(), qid);
+    // Ajustement : ni destination ni contenu déplaçable dedans.
+    assert!(!doc.can_move_into_parent(pid, aid));
+    assert!(!doc.move_into_parent(pid, aid));
+    // Cycle : le parent ne rejoint pas son enfant.
+    assert!(!doc.can_move_into_parent(pid, qid));
+    assert!(!doc.move_into_parent(pid, qid));
+    // Rendu : l'enfant clippé transparaît sur le parent.
+    let out = doc.composite_preview().expect("composite");
+    assert_eq!(px(&out, 0, 0)[3], 255);
+}
+
+#[test]
+fn move_filter_to_reparente_avec_index() {
+    let img = solid(2, 2, [100, 100, 100, 255]);
+    let mut doc = Document::new(2, 2);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("b", arc(&img))));
+    let (ida, idb) = (doc.root[0].id(), doc.root[1].id());
+    let mk = |t: &str| FilterLayer::neutral(t, Default::default());
+    let fa1 = doc.add_filter(ida, mk("brightness_contrast")).expect("fa1");
+    let fa2 = doc.add_filter(ida, mk("color_correct")).expect("fa2");
+    let fb1 = doc.add_filter(idb, mk("brightness_contrast")).expect("fb1");
+    // Cross-chaînes à l'index 0 : [fa1_moved, fb1].
+    assert!(doc.move_filter_to(fa1, ida, idb, 0));
+    let order_b: Vec<Uuid> = match doc.find(idb).expect("b") {
+        LayerNode::Pixel(l) => l.filter_layers.iter().map(|f| f.id).collect(),
+        _ => panic!("pixel attendu"),
+    };
+    assert_eq!(order_b, vec![fa1, fb1]);
+    let order_a: Vec<Uuid> = match doc.find(ida).expect("a") {
+        LayerNode::Pixel(l) => l.filter_layers.iter().map(|f| f.id).collect(),
+        _ => panic!("pixel attendu"),
+    };
+    assert_eq!(order_a, vec![fa2]);
+    // Même chaîne, placement exact : fa2 après fb1 → index 2.
+    assert!(doc.move_filter_to(fa2, ida, idb, 2));
+    let order_b: Vec<Uuid> = match doc.find(idb).expect("b") {
+        LayerNode::Pixel(l) => l.filter_layers.iter().map(|f| f.id).collect(),
+        _ => panic!("pixel attendu"),
+    };
+    assert_eq!(order_b, vec![fa1, fb1, fa2]);
+    // No-op même place : refusé (pas d'historique).
+    assert!(!doc.move_filter_to(fa1, idb, idb, 0));
+    // Inconnus : refusés.
+    assert!(!doc.move_filter_to(Uuid::new_v4(), ida, idb, 0));
+    assert!(!doc.move_filter_to(fa1, idb, Uuid::new_v4(), 0));
+    // Identité et réglages préservés.
+    let f = doc.find_filter_layer(fa1).expect("filtre déplacé");
+    assert_eq!(f.type_id, "brightness_contrast");
+    assert!(f.enabled);
+}
+
+#[test]
+fn move_mask_to_reparente_entre_piles() {
+    let img = solid(2, 2, [10, 10, 10, 255]);
+    let mut doc = Document::new(2, 2);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("b", arc(&img))));
+    let (ida, idb) = (doc.root[0].id(), doc.root[1].id());
+    // Masque sur A + filtre sur B portant un masque.
+    doc.masks_of_mut(ida)
+        .expect("pile A")
+        .push(LayerMask::full(2, 2));
+    let fb = doc
+        .add_filter(idb, FilterLayer::neutral("blur", Default::default()))
+        .expect("filtre B");
+    let mid_a = doc.masks_of(ida).expect("pile A")[0].id;
+    // A → B (pile de calque), index 0.
+    assert!(doc.move_mask_to(mid_a, ida, idb, 0));
+    assert!(doc.masks_of(ida).expect("pile A").is_empty());
+    assert_eq!(doc.masks_of(idb).expect("pile B").len(), 1);
+    // B → filtre de B (pile de filtre).
+    let mid_b = doc.masks_of(idb).expect("pile B")[0].id;
+    assert!(doc.move_mask_to(mid_b, idb, fb, 0));
+    assert!(doc.masks_of(idb).expect("pile B").is_empty());
+    assert_eq!(doc.find_filter_layer(fb).expect("filtre").masks.len(), 1);
+    assert_eq!(doc.mask_owner_of(mid_b), Some(fb));
+    // No-op même place : refusé.
+    assert!(!doc.move_mask_to(mid_b, fb, fb, 0));
+    // Inconnus : refusés.
+    assert!(!doc.move_mask_to(Uuid::new_v4(), fb, ida, 0));
+    assert!(!doc.move_mask_to(mid_b, fb, Uuid::new_v4(), 0));
+}
+
+#[test]
+fn isolate_montre_seul_la_cible_et_ses_ancetres() {
+    // Trois racines + un enfant : solo sur l'enfant → lui et son
+    // parent visibles, le reste masqué.
+    let img = solid(2, 2, [10, 10, 10, 255]);
+    let mut doc = Document::new(4, 4);
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
+    let mut g = GroupLayer::new(
+        "g",
+        vec![LayerNode::Pixel(PixelLayer::new("enfant", arc(&img)))],
+    );
+    let gid = g.id;
+    let eid = g.children[0].id();
+    doc.push_layer(LayerNode::Group(g));
+    doc.push_layer(LayerNode::Pixel(PixelLayer::new("c", arc(&img))));
+    let cid = doc.root[2].id();
+    assert!(doc.isolate(eid));
+    assert!(!doc.find(doc.root[0].id()).expect("a").visible());
+    assert!(doc.find(gid).expect("g").visible());
+    assert!(doc.find(eid).expect("enfant").visible());
+    assert!(!doc.find(cid).expect("c").visible());
+    // Inconnu : refusé.
+    assert!(!doc.isolate(Uuid::new_v4()));
 }

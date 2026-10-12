@@ -517,6 +517,11 @@ pub fn load(path: &Path) -> Result<LoadedProject, String> {
 
     let mut document = Document::new(file.width.max(1), file.height.max(1));
     document.restore(file.width, file.height, root);
+    // Legacy projects stored document-sized masks on every owner:
+    // re-home pixel/filter masks into their carrier source space
+    // (content copied top-left — exact for zero-offset layers,
+    // silence-breaking otherwise).
+    document.normalize_mask_spaces();
 
     Ok(LoadedProject {
         document,
@@ -774,6 +779,40 @@ mod tests {
         assert!(!m.enabled);
         assert!(m.inverted);
         assert_eq!(m.image.get_pixel(0, 0)[0], 0);
+    }
+
+    #[test]
+    fn legacy_document_sized_mask_rehomed_to_carrier() {
+        // Pre-fix projects stored document-sized ("cover") masks on
+        // every owner: on load the pixel mask is re-homed into carrier
+        // space (60×40), content copied top-left (exact for zero-offset
+        // layers — old paints shared the layer origin).
+        let mut doc = Document::new(200, 150);
+        let mut layer = PixelLayer::new("import", red_img());
+        let mut mask = crate::document::LayerMask::full(200, 150);
+        mask.image = std::sync::Arc::new({
+            let mut buf = RgbaImage::from_pixel(200, 150, image::Rgba([255, 255, 255, 255]));
+            // Inside the 3×2 carrier bounds: survives the re-home.
+            buf.put_pixel(1, 0, image::Rgba([0, 0, 0, 255]));
+            buf
+        });
+        layer.masks.push(mask);
+        doc.push_layer(LayerNode::Pixel(layer));
+        let path = temp_path("mask-rehome");
+        save(&path, &doc).expect("sauvegarde");
+        let loaded = load(&path).expect("chargement");
+        std::fs::remove_file(&path).ok();
+        let Some(LayerNode::Pixel(l)) = loaded.document.root.first() else {
+            panic!("pixel attendu");
+        };
+        let m = l.masks.first().expect("masque préservé");
+        assert_eq!((m.image.width(), m.image.height()), (3, 2));
+        assert_eq!(m.image.get_pixel(1, 0)[0], 0, "marque conservée");
+        assert_eq!(
+            m.image.get_pixel(0, 0)[0],
+            255,
+            "contenu hors marque inchangé"
+        );
     }
 
     /// Nested document: clipped child + group filter + adjustment mask

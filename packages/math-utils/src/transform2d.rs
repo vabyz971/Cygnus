@@ -167,6 +167,47 @@ impl Transform2D {
         [(0.0, 0.0), (w0, 0.0), (w0, h0), (0.0, h0)].map(|(x, y)| self.local_to_doc(w0, h0, x, y))
     }
 
+    /// Inverse of [`Self::local_to_doc`]: doc (canvas) pixels back to
+    /// local image pixels (top-left origin). Used to commit brush
+    /// strokes into moved/rotated/scaled layers at the cursor position
+    /// (painting without it lands offset by the layer transform).
+    /// `None` when degenerate (non-invertible shear/scale) — callers
+    /// fall back to a translation-only mapping, never a silent offset.
+    #[must_use]
+    pub fn doc_to_local(&self, w0: f32, h0: f32, dx: f32, dy: f32) -> Option<(f32, f32)> {
+        if !dx.is_finite() || !dy.is_finite() {
+            return None;
+        }
+        let sx = self.scale_x;
+        let sy = self.scale_y;
+        if sx.abs() < 1e-6 || sy.abs() < 1e-6 {
+            return None;
+        }
+        let kx = self.skew_x.to_radians().tan();
+        let ky = self.skew_y.to_radians().tan();
+        if !kx.is_finite() || !ky.is_finite() {
+            return None;
+        }
+        let cx = w0 / 2.0;
+        let cy = h0 / 2.0;
+        // Undo offset, then inverse rotation.
+        let px = dx - (cx * sx + self.offset_x);
+        let py = dy - (cy * sy + self.offset_y);
+        let rad = self.rotation_deg.to_radians();
+        let (cos, sin) = (rad.cos(), rad.sin());
+        let qx = px * cos + py * sin;
+        let qy = -px * sin + py * cos;
+        // Undo shear×scale: [[1, kx], [ky, 1]]^-1, then divide scales.
+        let det = 1.0 - kx * ky;
+        if det.abs() < 1e-6 {
+            return None;
+        }
+        let ux = (qx - kx * qy) / det;
+        let uy = (qy - ky * qx) / det;
+        let (x, y) = (ux / sx + cx, uy / sy + cy);
+        (x.is_finite() && y.is_finite()).then_some((x, y))
+    }
+
     /// (m00, m01, m10, m11) — the shear×scale matrix, BEFORE rotation.
     /// Used both by rendering (compositing) and by any future
     /// corner/handle computation. ONLY place where `tan()` is applied.
@@ -187,5 +228,75 @@ impl Transform2D {
     #[must_use]
     pub fn has_skew(&self) -> bool {
         self.skew_x.abs() > 0.001 || self.skew_y.abs() > 0.001
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: (f32, f32), b: (f32, f32)) -> bool {
+        (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3
+    }
+
+    #[test]
+    fn doc_to_local_roundtrips() {
+        // Identity, translation, scale, rotation, skew: forward then
+        // back lands on the starting pixel.
+        let cases = [
+            Transform2D::default(),
+            Transform2D {
+                offset_x: 120.0,
+                offset_y: -45.0,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                scale_x: 2.0,
+                scale_y: 0.5,
+                offset_x: 10.0,
+                offset_y: 20.0,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                rotation_deg: 30.0,
+                offset_x: -15.0,
+                offset_y: 40.0,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                skew_x: 12.0,
+                skew_y: -6.0,
+                scale_x: 1.5,
+                ..Transform2D::default()
+            },
+        ];
+        for t in cases {
+            for (x, y) in [(0.0, 0.0), (800.0, 600.0), (123.25, 456.75)] {
+                let (dx, dy) = t.local_to_doc(800.0, 600.0, x, y);
+                let back = t.doc_to_local(800.0, 600.0, dx, dy).expect("inversible");
+                assert!(close(back, (x, y)), "{t:?} ({x},{y}) -> {back:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn doc_to_local_rejects_degenerate() {
+        assert!(
+            Transform2D::default()
+                .doc_to_local(10.0, 10.0, f32::NAN, 0.0)
+                .is_none()
+        );
+        let flat = Transform2D {
+            scale_x: 0.0,
+            ..Transform2D::default()
+        };
+        assert!(flat.doc_to_local(10.0, 10.0, 5.0, 5.0).is_none());
+        let skewed = Transform2D {
+            skew_x: 45.0,
+            skew_y: 45.0,
+            ..Transform2D::default()
+        };
+        // kx*ky = 1 → det = 0.
+        assert!(skewed.doc_to_local(10.0, 10.0, 5.0, 5.0).is_none());
     }
 }

@@ -347,6 +347,25 @@ impl Renderer {
         }
     }
 
+    /// Baked image alone for the worker response frame (no `preview`
+    /// buffer — read by no production path): same reuse as
+    /// [`Self::appearance`] (a mask edit never re-runs the filter
+    /// chain), AND refreshes the entry's baked image + thumbnail so a
+    /// later [`Self::appearance`] HIT serves the new pixels. Without
+    /// this, the entry would keep a pre-edit bake while carrying the
+    /// post-edit signatures — a stale HIT (mask paint invisible in the
+    /// composite until an unrelated MISS).
+    pub fn baked_image_only(&mut self, layer: &PixelLayer) -> Option<Arc<DynamicImage>> {
+        let unmasked = self.unmasked_image(layer);
+        let cover = self.mask_coverage(layer);
+        let baked = Self::bake(&unmasked, &cover);
+        if let Some(entry) = self.entries.get_mut(&layer.id) {
+            entry.appearance.image = Arc::clone(&baked);
+            entry.appearance.thumb = crate::document::thumb_buf(&baked);
+        }
+        Some(baked)
+    }
+
     /// STRICT cache lookup — no execution, neither render pool nor
     /// `render_chain`. Returns the appearance only if the entry is still
     /// VALID (same filter signature, same source by Arc identity), `None`

@@ -1,4 +1,4 @@
-use super::compositing::{apply_coverage, needs_fallback_in, scope_half_extents};
+use super::compositing::{needs_fallback_in, scope_half_extents};
 use super::model::{
     Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask, LayerNode, PixelLayer,
     RgbaBuf, Transform2D,
@@ -250,41 +250,159 @@ impl Document {
         true
     }
 
-    /// Moves `dragged` to the head of `group`'s children.
-    pub fn move_into(&mut self, dragged: Uuid, group: Uuid) -> bool {
-        if !self.can_move_into(dragged, group) || self.is_noop_move_into(dragged, group) {
+    /// Moves `dragged` to the head of `parent`'s children — a group
+    /// (existing behavior) or a pixel layer (clipped child, Affinity-style).
+    /// Adjustments accept no children.
+    pub fn move_into_parent(&mut self, dragged: Uuid, parent: Uuid) -> bool {
+        if !self.can_move_into_parent(dragged, parent) || self.is_noop_move_into(dragged, parent) {
             return false;
         }
         let Some(node) = self.remove(dragged) else {
             return false;
         };
-        let Some(LayerNode::Group(groupe)) = self.find_mut(group) else {
-            // group gone? restore at the end
+        let Some(children) = self.find_mut(parent).and_then(LayerNode::children_mut) else {
+            // parent gone? restore at the end
             self.push_layer(node);
             return false;
         };
-        groupe.children.insert(0, node);
+        children.insert(0, node);
+        self.touch_pixel(parent);
         true
     }
 
-    /// Is head-of-group insertion structurally valid?
+    /// Is head-of-children insertion structurally valid? The destination
+    /// accepts children (group or pixel layer, never an adjustment) and
+    /// must not sit inside the dragged subtree (no cycles).
     #[must_use]
-    pub fn can_move_into(&self, dragged: Uuid, group: Uuid) -> bool {
-        if dragged == group {
+    pub fn can_move_into_parent(&self, dragged: Uuid, parent: Uuid) -> bool {
+        if dragged == parent {
             return false;
         }
         if self.find(dragged).is_none() {
             return false;
         }
-        let Some(LayerNode::Group(_groupe)) = self.find(group) else {
+        let Some(dest) = self.find(parent) else {
             return false;
         };
+        if !matches!(dest, LayerNode::Pixel(_) | LayerNode::Group(_)) {
+            return false;
+        }
         if let Some(dragged_node) = self.find(dragged)
-            && Self::contains_id(dragged_node.children(), group)
+            && Self::contains_id(dragged_node.children(), parent)
         {
             return false;
         }
         true
+    }
+
+    /// Moves a live filter from one chain to another (pixel or group
+    /// chains, same owner allowed for exact reordering): detached from
+    /// `from`, inserted at clamped `index` in `to`. Identity, params,
+    /// enabled state and its own masks are preserved. One history entry
+    /// worth of mutation (single call). Pixel owners are touched
+    /// (appearance invalidation); groups carry no cached appearance.
+    pub fn move_filter_to(&mut self, filter: Uuid, from: Uuid, to: Uuid, index: usize) -> bool {
+        if !matches!(
+            self.find(to),
+            Some(LayerNode::Pixel(_) | LayerNode::Group(_))
+        ) {
+            return false;
+        }
+        // Source slot (immutable read; nothing mutates before removal).
+        let (pos, len) = match self.find(from) {
+            Some(node) => match node.filter_layers() {
+                Some(chain) => match chain.iter().position(|f| f.id == filter) {
+                    Some(pos) => (pos, chain.len()),
+                    None => return false,
+                },
+                None => return false,
+            },
+            None => return false,
+        };
+        // Post-removal coordinates: detaching shifts later slots down.
+        let index = if from == to && index > pos {
+            index - 1
+        } else {
+            index
+        };
+        if from == to && index.min(len - 1) == pos {
+            return false; // net no-change
+        }
+        let mut moved = match self.find_mut(from) {
+            Some(LayerNode::Pixel(l)) => l.filter_layers.remove(pos),
+            Some(LayerNode::Group(g)) => g.filter_layers.remove(pos),
+            _ => return false, // unreachable (validated above)
+        };
+        // Fresh coverage versions travel along (thumbnails recompute).
+        for m in &mut moved.masks {
+            m.touch();
+        }
+        let Some(dest) = self.find_mut(to) else {
+            return false; // unreachable (validated above)
+        };
+        let Some(chain) = dest.filter_layers_mut() else {
+            return false; // unreachable (validated above)
+        };
+        chain.insert(index.min(chain.len()), moved);
+        self.touch_pixel(from);
+        self.touch_pixel(to);
+        true
+    }
+
+    /// Moves a mask from one pile to another (layer, group, adjustment
+    /// or live-filter piles): detached from `from_owner`, inserted at
+    /// clamped `index` in `to_owner`. Pixels, enabled state and inversion
+    /// are preserved. Pixel owners (or the pixel parent of a filter
+    /// owner) are touched on both sides.
+    pub fn move_mask_to(
+        &mut self,
+        mask: Uuid,
+        from_owner: Uuid,
+        to_owner: Uuid,
+        index: usize,
+    ) -> bool {
+        // Piles validated before detaching (no restore path needed).
+        if self.masks_of(to_owner).is_none() {
+            return false;
+        }
+        let (pos, len) = match self.masks_of(from_owner) {
+            Some(pile) => match pile.iter().position(|m| m.id == mask) {
+                Some(pos) => (pos, pile.len()),
+                None => return false,
+            },
+            None => return false,
+        };
+        // Post-removal coordinates (same shift rule as filter chains).
+        let index = if from_owner == to_owner && index > pos {
+            index - 1
+        } else {
+            index
+        };
+        if from_owner == to_owner && index.min(len - 1) == pos {
+            return false; // net no-change
+        }
+        let Some(from_pile) = self.masks_of_mut(from_owner) else {
+            return false; // unreachable (validated above)
+        };
+        let mut moved = from_pile.remove(pos);
+        moved.touch();
+        let Some(to_pile) = self.masks_of_mut(to_owner) else {
+            return false; // unreachable (validated above)
+        };
+        to_pile.insert(index.min(to_pile.len()), moved);
+        self.touch_mask_owner_tree(from_owner);
+        self.touch_mask_owner_tree(to_owner);
+        true
+    }
+
+    /// Invalidates the rendered owner of a mask pile: the node itself
+    /// when it is a layer, else the pixel parent of a filter owner.
+    fn touch_mask_owner_tree(&mut self, owner: Uuid) {
+        if self.find(owner).is_some() {
+            self.touch_pixel(owner);
+        } else if let Some(parent) = self.find_filter_parent(owner) {
+            self.touch_pixel(parent);
+        }
     }
 
     /// Nests `node` at the head of `parent`'s children (group, or pixel
@@ -342,6 +460,38 @@ impl Document {
             }
         }
         false
+    }
+
+    /// Solos a layer (Affinity-style isolate): only `id` and its
+    /// ancestor chain stay visible, everything else is hidden. The
+    /// target's own children keep their flags. Single history entry
+    /// (undo restores all visibilities at once). Returns false when
+    /// `id` is unknown.
+    pub fn isolate(&mut self, id: Uuid) -> bool {
+        if self.find(id).is_none() {
+            return false;
+        }
+        for node in &mut self.root {
+            if node.id() == id || Self::contains_id(node.children(), id) {
+                Self::reveal_path(node, id);
+            } else {
+                node.set_visible(false);
+            }
+        }
+        true
+    }
+
+    /// Makes `node` visible and reveals the child path down to `id`.
+    fn reveal_path(node: &mut LayerNode, id: Uuid) {
+        node.set_visible(true);
+        if let Some(children) = node.children_mut() {
+            for child in children.iter_mut() {
+                if child.id() == id || Self::contains_id(child.children(), id) {
+                    Self::reveal_path(child, id);
+                    break;
+                }
+            }
+        }
     }
 
     /// Groups the given nodes (same siblings) into a new group inserted
@@ -486,6 +636,12 @@ impl Document {
     /// `Erase`: eraser on mask = black, not destination-out). Coverage
     /// = R channel (see `mask_coverage`).
     ///
+    /// `points` live in the MASK space (carrier source pixels for pixel
+    /// layers and filters — the caller converts document pixels via the
+    /// carrier transform, like [`crate::paint::commit_stroke`]);
+    /// `rx`/`ry` are the elliptical brush radii in that same space (a
+    /// document circle under a non-uniform carrier scale).
+    ///
     /// # Errors
     /// Returns an error if the carrier or the mask is not found.
     pub fn paint_mask(
@@ -493,11 +649,12 @@ impl Document {
         owner_id: Uuid,
         mask_id: Uuid,
         points: &[(f32, f32)],
-        radius: f32,
+        rx: f32,
+        ry: f32,
         opacity: f32,
         whiten: bool,
     ) -> Result<(), String> {
-        if points.is_empty() || !radius.is_finite() || radius <= 0.0 {
+        if points.is_empty() || !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
             return Err("trait vide".into());
         }
         let Some(masks) = self.masks_of_mut(owner_id) else {
@@ -510,12 +667,12 @@ impl Document {
         let mut buffer = mask.image.as_raw().to_vec();
         let v = if whiten { 255 } else { 0 };
         let brush = crate::paint::BrushParams {
-            radius,
+            radius: rx.max(ry),
             color: [v, v, v],
             opacity: opacity.clamp(0.0, 1.0),
             mode: crate::paint::StrokeMode::Paint,
         };
-        crate::paint::paint_stroke_rgba(&mut buffer, w, h, points, &brush);
+        crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry);
         let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
             return Err("rastérisation impossible".into());
         };
@@ -956,6 +1113,78 @@ impl Document {
         self.find_filter_layer_mut(owner_id).map(|f| &mut f.masks)
     }
 
+    /// Carrier dimensions for a NEW mask on `owner` (`None` = document
+    /// space: groups and adjustments sample their masks in canvas space).
+    /// Pixel layers and live filters own SOURCE-space masks (same
+    /// dimensions as the carrier image — the compositing guard rail
+    /// ignores anything else, so a document-sized mask on a smaller
+    /// layer would silently never apply).
+    pub fn mask_owner_dims(&self, owner_id: Uuid) -> Option<(u32, u32)> {
+        if let Some(pixels) = self.pixel_layer(owner_id) {
+            return Some(pixels.dimensions());
+        }
+        if self.find_filter_layer(owner_id).is_some() {
+            let parent = self.find_filter_parent(owner_id)?;
+            return Some(self.pixel_layer(parent)?.dimensions());
+        }
+        None
+    }
+
+    /// Paint space of `owner`'s masks: carrier transform + carrier
+    /// dimensions for pixel layers and pixel-parented filters (their
+    /// masks live in source space and follow the carrier transform);
+    /// `None` = document space (groups, adjustments — legacy direct
+    /// mapping, untouched).
+    pub fn mask_paint_space(&self, owner_id: Uuid) -> Option<(Transform2D, u32, u32)> {
+        if let Some(pixels) = self.pixel_layer(owner_id) {
+            let (w, h) = pixels.dimensions();
+            return Some((pixels.transform, w, h));
+        }
+        if self.find_filter_layer(owner_id).is_some() {
+            let parent = self.find_filter_parent(owner_id)?;
+            let carrier = self.pixel_layer(parent)?;
+            let (w, h) = carrier.dimensions();
+            return Some((carrier.transform, w, h));
+        }
+        None
+    }
+
+    /// Re-homes legacy document-sized masks into their carrier source
+    /// space (project load): pixel layers and their filters get
+    /// carrier-sized masks, content copied top-left (exact for the
+    /// common zero-offset case — old paints were stored in document
+    /// coords sharing the layer origin; strictly better than the
+    /// compositing guard rail's silent no-op otherwise). Groups and
+    /// adjustments keep document-space masks by design.
+    pub fn normalize_mask_spaces(&mut self) {
+        Self::normalize_node_masks(&mut self.root);
+    }
+
+    fn normalize_node_masks(nodes: &mut [LayerNode]) {
+        for node in nodes.iter_mut() {
+            match node {
+                LayerNode::Pixel(pixels) => {
+                    let (w, h) = pixels.dimensions();
+                    for mask in pixels.masks.iter_mut() {
+                        rehome_mask(mask, w, h);
+                    }
+                    for filter in pixels.filter_layers.iter_mut() {
+                        for mask in filter.masks.iter_mut() {
+                            rehome_mask(mask, w, h);
+                        }
+                    }
+                    Self::normalize_node_masks(&mut pixels.children);
+                }
+                LayerNode::Group(group) => {
+                    // Group (and group-filter) masks are canvas-space by
+                    // design: left as stored.
+                    Self::normalize_node_masks(&mut group.children);
+                }
+                LayerNode::Adjustment(_) => {}
+            }
+        }
+    }
+
     // -- History commands ------------------------------------------------
 
     /// Applies `command.new` to the document and returns the INVERSE
@@ -1098,12 +1327,7 @@ impl Document {
     /// background task — see the app worker).
     pub fn appearance_image_only(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
         let layer = self.pixel_layer(id)?;
-        let mut cache = self.cache.borrow_mut();
-        let unmasked = cache.unmasked_image(layer);
-        match cache.mask_coverage(layer) {
-            None => Some(unmasked),
-            Some(cover) => Some(apply_coverage(unmasked, &cover)),
-        }
+        self.cache.borrow_mut().baked_image_only(layer)
     }
 
     /// Image + thumbnail for the response frame (Phase 6G.2 §2): never
@@ -1708,4 +1932,24 @@ fn mask_owner_in(nodes: &[LayerNode], mask_id: Uuid) -> Option<Uuid> {
         }
     }
     None
+}
+
+/// Re-homes one mask buffer into carrier dimensions (see
+/// [`Document::normalize_mask_spaces`]): already matching sizes are
+/// untouched; otherwise a fresh revealed (`full`) buffer receives the
+/// top-left overlap of the old content.
+fn rehome_mask(mask: &mut LayerMask, w: u32, h: u32) {
+    let (mw, mh) = (mask.image.width(), mask.image.height());
+    if (mw, mh) == (w.max(1), h.max(1)) || w == 0 || h == 0 {
+        return;
+    }
+    let mut fresh = ImageBuffer::from_pixel(w, h, Rgba([255, 255, 255, 255]));
+    let (cw, ch) = (mw.min(w), mh.min(h));
+    for y in 0..ch {
+        for x in 0..cw {
+            fresh.put_pixel(x, y, *mask.image.get_pixel(x, y));
+        }
+    }
+    mask.image = Arc::new(fresh);
+    mask.touch();
 }
