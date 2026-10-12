@@ -73,6 +73,10 @@ impl IconButton {
     }
 
     /// Displays the button and returns the egui response.
+    ///
+    /// Hover/pressed fills come from the theme (scoped visuals, like
+    /// [`Button`](super::button::Button)): idle stays transparent,
+    /// hover shows `item_hover`, pressed darkens it.
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme) -> egui::Response {
         let registry = IconRegistry::new();
         let color = if self.selected {
@@ -80,11 +84,25 @@ impl IconButton {
         } else {
             theme.colors.fg_secondary
         };
-        let response = ui.add(
-            egui::Button::new(registry.colored(self.icon, theme.typography.icon_size, color))
-                .frame(false)
-                .min_size(egui::vec2(theme.sizes.icon_button, theme.sizes.icon_button)),
-        );
+        let response = ui
+            .scope(|ui| {
+                let widgets = &mut ui.visuals_mut().widgets;
+                widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
+                widgets.hovered.bg_fill = theme.colors.item_hover;
+                widgets.hovered.fg_stroke = egui::Stroke::new(1.0, theme.colors.fg_primary);
+                widgets.active.bg_fill = theme.colors.item_selected;
+                ui.add(
+                    egui::Button::new(registry.colored(
+                        self.icon,
+                        theme.typography.icon_size,
+                        color,
+                    ))
+                    .frame(false)
+                    .corner_radius(theme.radius.sm)
+                    .min_size(egui::vec2(theme.sizes.icon_button, theme.sizes.icon_button)),
+                )
+            })
+            .inner;
         match self.tooltip {
             Some(tip) => response.on_hover_text(tip),
             None => response,

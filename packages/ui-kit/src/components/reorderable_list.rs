@@ -91,11 +91,16 @@ pub fn draw_drop_indicator(
             .map_or(ui.min_rect().top(), |(_, top)| top + row_height)
     });
     let theme = ui.cygnus_theme();
-    ui.painter().hline(
-        egui::Rangef::new(left, right),
-        y,
-        egui::Stroke::new(2.0, theme.colors.drop_indicator),
-    );
+    let stroke = egui::Stroke::new(theme.borders.selected, theme.colors.drop_indicator);
+    let painter = ui.painter();
+    painter.hline(egui::Rangef::new(left, right), y, stroke);
+    for x in [left, right] {
+        painter.circle_filled(
+            egui::pos2(x, y),
+            theme.borders.selected,
+            theme.colors.drop_indicator,
+        );
+    }
 }
 
 /// Hierarchical drop: indexes into `items` + position relative
@@ -232,6 +237,10 @@ impl<'a, T> ReorderableList<'a, T> {
     /// inside (middle third); `can_drag` tells which rows can be
     /// dragged; the others only get before/after (halves). Returns
     /// the hierarchical drop.
+    ///
+    /// Rows are separated by a theme `xxs` gap so the drop indicator
+    /// line always sits on empty background, never straddling two
+    /// row edges (see `paint_variable_indicator`).
     pub fn show_variable(
         self,
         ui: &mut egui::Ui,
@@ -248,6 +257,7 @@ impl<'a, T> ReorderableList<'a, T> {
         let total = self.items.len();
         let drag = self.drag_state;
         let items = self.items;
+        let row_gap = ui.cygnus_theme().spacing.xxs;
 
         let mut stopped = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -280,6 +290,11 @@ impl<'a, T> ReorderableList<'a, T> {
                 // `allocate` advance (a drift of a few px per row →
                 // offset clicks and drops, see test).
                 ui.advance_cursor_after_rect(rect);
+                // Breathing room between rows (not after the last one):
+                // the drop indicator lives in this gap.
+                if index + 1 < total {
+                    ui.add_space(row_gap);
+                }
             }
         });
 
@@ -332,6 +347,8 @@ fn drop_position_in(pos: egui::Pos2, rect: &egui::Rect, nestable: bool) -> DropP
 
 /// Variable drop indicator: background on the target (`Into`),
 /// insertion line otherwise (target top, or list bottom at the end).
+/// The line is drawn thicker with round end dots so it stays visible
+/// in the inter-row gap (it must never blend into a row edge).
 fn paint_variable_indicator(
     ui: &mut egui::Ui,
     drag: &ReorderDragState,
@@ -357,11 +374,20 @@ fn paint_variable_indicator(
             rows.last()
                 .map_or(panel_rect.top(), |(_, rect)| rect.bottom())
         });
-    ui.painter().hline(
+    let stroke = egui::Stroke::new(theme.borders.selected, theme.colors.drop_indicator);
+    let painter = ui.painter();
+    painter.hline(
         egui::Rangef::new(panel_rect.left(), panel_rect.right()),
         y,
-        egui::Stroke::new(2.0, theme.colors.drop_indicator),
+        stroke,
     );
+    for x in [panel_rect.left(), panel_rect.right()] {
+        painter.circle_filled(
+            egui::pos2(x, y),
+            theme.borders.selected,
+            theme.colors.drop_indicator,
+        );
+    }
 }
 
 #[cfg(test)]

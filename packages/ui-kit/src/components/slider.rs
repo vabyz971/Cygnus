@@ -56,6 +56,10 @@ impl<'a> Slider<'a> {
     }
 
     /// Displays the slider, updates `value`, returns the egui response.
+    ///
+    /// The raw egui value box is hidden (`show_value(false)`): callers
+    /// that need precise entry add their own compact field (single
+    /// value display, never duplicated).
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme, value: &mut f32) -> egui::Response {
         ui.horizontal(|ui| {
             ui.label(
@@ -63,7 +67,7 @@ impl<'a> Slider<'a> {
                     .size(theme.typography.body_size)
                     .color(theme.colors.fg_secondary),
             );
-            let mut slider = egui::Slider::new(value, self.range);
+            let mut slider = egui::Slider::new(value, self.range).show_value(false);
             if let Some(step) = self.step {
                 slider = slider.step_by(step);
             }

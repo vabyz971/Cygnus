@@ -37,10 +37,9 @@ pub struct CygnusSizes {
     pub input_height: f32,
     /// Square icon-button size (28px).
     pub icon_button: f32,
-    /// Photo layer-row height (44px).
+    /// Photo layer-row height (44px, shared by nested layers,
+    /// filters and masks for one uniform look).
     pub layer_row: f32,
-    /// Attachment-row height (30px).
-    pub attachment_row: f32,
     /// Square layer thumbnail (28px).
     pub layer_thumb: f32,
     /// Square toolbar tool button (28px).
@@ -67,7 +66,6 @@ impl CygnusSizes {
             input_height: 30.0,
             icon_button: 28.0,
             layer_row: 44.0,
-            attachment_row: 30.0,
             layer_thumb: 28.0,
             tool_button: 28.0,
             preset_card: 90.0,
