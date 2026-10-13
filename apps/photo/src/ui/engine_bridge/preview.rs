@@ -319,6 +319,25 @@ impl EngineWorker {
                 photo_engine::document::RenderWorker::scope_request(scope, 1.0),
             )
         };
+        // Full-frame bypass: when the marked-dirty coverage dominates
+        // a multi-tile scope, per-tile windowed re-renders redo the
+        // same whole-image work per tile (a rotated layer spans every
+        // dependency window: prepare_top rotates the full image per
+        // tile). One full-frame legacy composite is ~tiles× cheaper
+        // with bit-identical bytes. Small scopes always stay tiled
+        // (exact tile-metric tests live there).
+        let scope_px = u64::from(scope.w.max(1)) * u64::from(scope.h.max(1));
+        let dirty_px = u64::from(self.render_worker.cache().dirty().bounds().area());
+        if scope_px > 4 * 256 * 256 && dirty_px * 2 >= scope_px {
+            let (preview, timings) =
+                render_preview_timed_with(&self.document, self.clip_to_doc, frame);
+            self.render_worker.cache_mut().clear_dirty();
+            return (
+                preview,
+                timings,
+                photo_engine::document::RenderWorkerStats::default(),
+            );
+        }
         let t_composite = std::time::Instant::now();
         let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
         let mut worker_stats = photo_engine::document::RenderWorkerStats::default();

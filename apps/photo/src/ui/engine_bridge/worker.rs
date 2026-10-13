@@ -1755,22 +1755,6 @@ mod tests {
         );
         let composite = doc.composite_preview().expect("composite");
         let hidden = composite.get_pixel(30, 20);
-        eprintln!(
-            "DBG hidden={:?} maskc={:?}",
-            hidden.0,
-            mask.image.get_pixel(30, 20).0
-        );
-        eprintln!(
-            "DBG masks={:?}",
-            doc.masks_of(id).map(|m| m
-                .iter()
-                .map(|x| (x.enabled, x.version, (x.image.width(), x.image.height())))
-                .collect::<Vec<_>>())
-        );
-        if let Some(app) = doc.appearance_image(id) {
-            use image::GenericImageView;
-            eprintln!("DBG appearance={:?}", app.get_pixel(30, 20).0);
-        }
         assert_eq!(hidden[3], 0, "composite hidden under the dab");
         let shown = composite.get_pixel(10, 10);
         assert!(shown[3] > 0, "image pixels outside the dab stay visible");
@@ -2457,6 +2441,44 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(restored.offset_x, 0.0);
+    }
+
+    #[test]
+    fn set_transform_big_scope_matches_legacy_bytes() {
+        // Full-frame bypass: a transform dirtying a multi-tile scope
+        // renders legacy full-frame — byte-identical to
+        // `render_preview` (pixels), without per-tile windowed work.
+        let (w, h) = (600u32, 500u32);
+        let mut buf = image::RgbaImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                buf.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([(x * 255 / w) as u8, (y * 255 / h) as u8, 128, 255]),
+                );
+            }
+        }
+        let mut doc = Document::new(w, h);
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+            "fond",
+            Arc::new(image::DynamicImage::ImageRgba8(buf)),
+        )));
+        let mut worker = EngineWorker::new(doc);
+        let id = worker.document.root[0].id();
+        let mut t = photo_engine::Transform2D::default();
+        t.rotation_deg = 30.0;
+        let response = worker.apply(PhotoEngineCommand::SetTransform {
+            layer: id,
+            transform: t,
+            commit: true,
+        });
+        let preview = match response {
+            PhotoEngineResponse::LayersChanged { preview, .. } => preview.expect("preview"),
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        };
+        let reference = render_preview(&worker.document, false).expect("reference");
+        assert_eq!(preview, reference, "bypass = legacy bytes");
     }
 
     #[test]
