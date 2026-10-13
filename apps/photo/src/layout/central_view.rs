@@ -28,12 +28,174 @@
 
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::i18n::{PhotoCatalog, PhotoTextKey};
-use crate::state::{OpenDocument, sample_preview_color};
+use crate::state::{OpenDocument, PreviewGeom, sample_preview_color};
+use crate::ui::features::layers::find_layer_in;
+use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
-    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasTool, clear_ink, draw_brush_cursor,
-    draw_cached_ink, draw_document_bounds, feed_ink_frame, ink_tool_active,
+    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasTool, TransformDrag, clear_ink,
+    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds,
+    draw_transform_overlay, feed_ink_frame, frame_corners, hit_test_topmost, ink_tool_active,
+    point_in_quad, screen_to_doc,
 };
 use ui_kit::components::{menu_row, menu_style};
+use ui_kit::prelude::UiThemeExt;
+
+/// Transform overlay driver (Move tool): draws the selected pixel
+/// layer's frame + handles, runs handle gestures (live
+/// `SetTransform`, one history entry per drag, `Escape` = undo) and
+/// click-to-select (topmost layer, empty click deselects). Body drags
+/// are left to the canvas legacy path (`MoveLayer` on release).
+fn draw_transform_content(
+    ui: &mut egui::Ui,
+    doc: &mut OpenDocument,
+    response: Option<&egui::Response>,
+    pointer_world: &[egui::Vec2],
+    hover_pos: Option<egui::Pos2>,
+    dest_rect: Option<egui::Rect>,
+    geom: Option<PreviewGeom>,
+    mapping: &CanvasMapping,
+) -> Vec<PhotoAction> {
+    let mut actions = Vec::new();
+    let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let origin = geom.map(|g| g.origin).unwrap_or(egui::Vec2::ZERO);
+    let thumb_w = geom.map(|g| g.thumb_size.x).unwrap_or(0.0);
+    let to_screen = |doc_pt: (f32, f32)| -> Option<egui::Pos2> {
+        doc_to_screen(doc_pt, dest_rect?, origin, mapping.thumb_to_doc, thumb_w)
+    };
+    // Hover in document pixels (screen fallback: the drag packets
+    // only flow while dragging).
+    let hover_doc = hover_pos
+        .and_then(|pos| screen_to_doc(pos, dest_rect?, origin, mapping.thumb_to_doc, thumb_w));
+    let press_doc = pointer_world.last().map(|v| (v.x, v.y));
+
+    // --- Active gesture -------------------------------------------------
+    if doc.ui.transform_drag.is_some() {
+        if escaped {
+            // Cancel: the coalesced frames form a single entry —
+            // undo only when at least one frame was applied.
+            if let Some(drag) = doc.ui.transform_drag.take() {
+                if drag.sent != drag.start {
+                    actions.push(PhotoAction::Undo);
+                }
+                doc.ui.needs_repaint = true;
+            }
+            return actions;
+        }
+        // Release ends the drag (`drag_stopped`); a plain click can
+        // never be in flight here (gestures only begin on drag).
+        let stopped = response.is_some_and(|r| r.drag_stopped() || r.clicked());
+        if stopped {
+            if let Some(drag) = doc.ui.transform_drag.take() {
+                actions.push(PhotoAction::SetTransform {
+                    layer: drag.layer,
+                    transform: drag.sent,
+                    commit: true,
+                });
+                doc.ui.needs_repaint = true;
+            }
+            return actions;
+        }
+        ui.output_mut(|o| {
+            o.cursor_icon = egui::CursorIcon::Grabbing;
+        });
+        if let Some(pointer) = press_doc {
+            if let Some(drag) = doc.ui.transform_drag.as_mut() {
+                let next = drag.resolve(pointer);
+                if next != drag.sent {
+                    drag.sent = next;
+                    actions.push(PhotoAction::SetTransform {
+                        layer: drag.layer,
+                        transform: next,
+                        commit: false,
+                    });
+                    doc.ui.needs_repaint = true;
+                }
+            }
+        }
+        // Draw from the sent transform (no snapshot lag mid-gesture).
+        if let Some(drag) = doc.ui.transform_drag.as_ref() {
+            let corners = frame_corners(&drag.sent, drag.dims);
+            let mut quad = [egui::Pos2::ZERO; 4];
+            let mut ok = true;
+            for (i, screen) in quad.iter_mut().enumerate() {
+                match to_screen(corners[i]) {
+                    Some(p) => *screen = p,
+                    None => ok = false,
+                }
+            }
+            if ok {
+                let theme = ui.cygnus_theme();
+                draw_transform_overlay(ui.painter(), theme, quad, None);
+            }
+        }
+        return actions;
+    }
+
+    // --- Idle ------------------------------------------------------------
+    // Overlay target: visible selected pixel layer with carrier dims.
+    let target = doc.ui.selected.and_then(|id| {
+        find_layer_in(&doc.ui.layers, id).filter(|info| {
+            info.kind == PhotoLayerKind::Pixel && info.visible && info.dims.is_some()
+        })
+    });
+    if let Some(info) = target {
+        let transform = info.transform;
+        let dims = info.dims.expect("filtered");
+        let layer = info.id;
+        let corners = frame_corners(&transform, dims);
+        let quad = corners.map(|c| to_screen(c));
+        if let [Some(a), Some(b), Some(c), Some(d)] = quad {
+            let theme = ui.cygnus_theme();
+            let hovered = draw_transform_overlay(ui.painter(), theme, [a, b, c, d], hover_pos);
+            if let Some(handle) = hovered {
+                ui.output_mut(|o| {
+                    o.cursor_icon = handle.cursor();
+                });
+            } else if let Some(at) = hover_doc
+                && point_in_quad(at, corners)
+            {
+                ui.output_mut(|o| {
+                    o.cursor_icon = egui::CursorIcon::Grab;
+                });
+            }
+            // Press on a handle: begin the gesture (body presses stay
+            // with the legacy path).
+            if response.is_some_and(|r| r.drag_started())
+                && let (Some(handle), Some(grab)) = (hovered, press_doc)
+            {
+                if let Some(drag) = TransformDrag::begin(layer, dims, transform, Some(handle), grab)
+                {
+                    doc.ui.transform_drag = Some(drag);
+                    doc.ui.needs_repaint = true;
+                }
+            }
+        }
+    }
+    // Click (no drag): select topmost under the cursor, empty = deselect.
+    if response.is_some_and(|r| r.clicked())
+        && let Some(at) = hover_doc.or(press_doc)
+    {
+        match hit_test_topmost(&doc.ui.layers, at) {
+            Some(hit) => {
+                if doc.ui.selected != Some(hit) {
+                    actions.push(PhotoAction::SelectLayer(hit));
+                }
+            }
+            None => {
+                if doc.ui.selected.is_some() {
+                    doc.ui.selected = None;
+                    doc.ui.needs_repaint = true;
+                }
+            }
+        }
+    }
+    if escaped && !doc.ui.stroke.is_empty() {
+        // Cancel the uncommitted legacy body drag.
+        doc.ui.stroke.clear();
+        doc.ui.needs_repaint = true;
+    }
+    actions
+}
 
 /// Document canvas + overlays + eyedropper (dock tab content,
 /// no `CentralPanel`).
@@ -220,6 +382,22 @@ pub fn draw_canvas_content(
         if let Some(color) = sampled {
             doc.ui.brush.color = color;
         }
+    }
+    // Transform overlay (Move tool): bounding box + scale/rotate
+    // handles of the selected pixel layer (handles drive live
+    // `SetTransform`; body drags stay owned by the canvas legacy
+    // path). Click selects the topmost layer under the cursor.
+    if doc.ui.tool == PhotoCanvasTool::Move {
+        actions.extend(draw_transform_content(
+            ui,
+            doc,
+            outcome.response.as_ref(),
+            &outcome.pointer_world,
+            outcome.hover_pos,
+            outcome.dest_rect,
+            geom,
+            &mapping,
+        ));
     }
     // Overlays: EXACT document frame inside the thumbnail (stable
     // when a layer leaves the frame or the thumbnail downscales) with NO

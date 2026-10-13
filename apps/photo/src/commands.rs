@@ -219,6 +219,13 @@ pub enum PhotoAction {
     CommitStroke(PaintRequest),
     /// Move a pixel layer (select tool, worker).
     MoveLayer { layer: Uuid, dx: f32, dy: f32 },
+    /// Replace a pixel layer's transform (canvas transform overlay,
+    /// worker). `commit` ends the drag gesture (history boundary).
+    SetTransform {
+        layer: Uuid,
+        transform: photo_engine::Transform2D,
+        commit: bool,
+    },
     /// Reopen a closed dock tab (tools, inspector, layers).
     ShowDockTab(PhotoDockTab),
     /// Restore the default dock layout.

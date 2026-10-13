@@ -40,6 +40,7 @@ pub mod optionsbar;
 mod probes;
 pub mod thumb_worker;
 pub mod toolbar;
+pub mod transform_overlay;
 pub mod viewport;
 
 pub use create_document::{
@@ -63,6 +64,10 @@ pub use ink_overlay::{
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;
+pub use transform_overlay::{
+    TransformDrag, doc_to_screen, draw_transform_overlay, frame_corners, hit_test_topmost,
+    point_in_quad, screen_to_doc,
+};
 pub use viewport::{
     CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool,
     draw_brush_cursor, draw_document_bounds,

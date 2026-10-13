@@ -31,7 +31,7 @@ use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
     CreateDocumentDialogState, ExportDialogState, LayerRenameState, PhotoBrushSettings,
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PhotoLayerThumb,
-    PreviewImage,
+    PreviewImage, TransformDrag,
 };
 use photo_engine::RenderRevision;
 use std::collections::HashMap;
@@ -159,6 +159,8 @@ pub struct PhotoUiState {
     pub brush: PhotoBrushSettings,
     /// Layers panel drag state.
     pub drag_state: ReorderDragState,
+    /// Canvas transform gesture (Move tool overlay, `None` = idle).
+    pub transform_drag: Option<TransformDrag>,
     /// Inline layer rename (double-click).
     pub rename: LayerRenameState,
     /// History depths (undo/redo buttons).

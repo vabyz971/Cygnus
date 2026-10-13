@@ -479,6 +479,17 @@ impl PhotoApp {
             PhotoAction::MoveLayer { layer, dx, dy } => {
                 self.send_active(PhotoEngineCommand::MoveLayer { layer, dx, dy });
             }
+            PhotoAction::SetTransform {
+                layer,
+                transform,
+                commit,
+            } => {
+                self.send_active(PhotoEngineCommand::SetTransform {
+                    layer,
+                    transform,
+                    commit,
+                });
+            }
             PhotoAction::ShowHelp => {
                 self.shell.help_open = true;
             }

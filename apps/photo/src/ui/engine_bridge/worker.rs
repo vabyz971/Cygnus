@@ -54,6 +54,9 @@ pub struct EngineWorker {
     pub(crate) pending_label: Option<&'static str>,
     /// Layer of the last `SetOpacity` (slider coalescing).
     pub(crate) coalesced_opacity_layer: Option<Uuid>,
+    /// Layer of the in-progress transform gesture (`SetTransform`
+    /// coalescing: one history entry per drag, released on commit).
+    pub(crate) coalesced_transform_layer: Option<Uuid>,
     /// Preview clipped to the document (View menu, default: infinite plane).
     pub(crate) clip_to_doc: bool,
     /// Revision of the last produced composite (stale renders
@@ -182,6 +185,7 @@ fn history_label(op: &str) -> String {
         "paint_stroke" => "Coup de pinceau",
         "paint_mask" => "Peindre le masque",
         "move_layer" => "Déplacer",
+        "set_transform" => "Transformer",
         "open_image" => "Ouvrir une image",
         "add_empty_layer" => "Nouveau calque",
         "duplicate_layer" => "Dupliquer",
@@ -217,6 +221,7 @@ impl EngineWorker {
             redo: Vec::new(),
             pending_label: None,
             coalesced_opacity_layer: None,
+            coalesced_transform_layer: None,
             clip_to_doc: false,
             revision: RenderRevision::default(),
             pending_tile_plan: None,
@@ -259,6 +264,10 @@ impl EngineWorker {
         });
         self.redo.clear();
         self.coalesced_opacity_layer = coalesce_layer;
+        // A discrete step (or an opacity gesture) ends any
+        // in-progress transform gesture: the next `SetTransform`
+        // opens a fresh entry.
+        self.coalesced_transform_layer = None;
     }
 
     /// Destructive edit of a pixel layer (mirror, rotation):
@@ -297,6 +306,7 @@ impl EngineWorker {
         });
         self.document.restore_snapshot(step.snapshot);
         self.coalesced_opacity_layer = None;
+        self.coalesced_transform_layer = None;
         true
     }
 
@@ -311,6 +321,7 @@ impl EngineWorker {
         });
         self.document.restore_snapshot(step.snapshot);
         self.coalesced_opacity_layer = None;
+        self.coalesced_transform_layer = None;
         true
     }
 
@@ -792,6 +803,56 @@ impl EngineWorker {
                 };
                 Mutation::changed(invalidation).with_dirty(dirty)
             }
+            PhotoEngineCommand::SetTransform {
+                layer,
+                transform,
+                commit,
+            } => {
+                // Guards: pixel layer, finite values.
+                let current = match self.document.find(layer) {
+                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
+                        (pixels.transform, pixels.dimensions())
+                    }
+                    _ => return Mutation::unchanged(),
+                };
+                if !transform.is_finite() {
+                    if commit {
+                        self.coalesced_transform_layer = None;
+                    }
+                    return Mutation::unchanged();
+                }
+                if transform == current.0 {
+                    // No change: release the slot on commit, no history.
+                    if commit {
+                        self.coalesced_transform_layer = None;
+                    }
+                    return Mutation::unchanged();
+                }
+                // Coalescing: one history entry per drag gesture
+                // (frames share the slot, `commit` releases it).
+                if self.coalesced_transform_layer != Some(layer) {
+                    self.push_history(None);
+                }
+                self.coalesced_transform_layer = (!commit).then_some(layer);
+                let (old_t, (w, h)) = current;
+                if let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
+                {
+                    pixels.transform = transform;
+                    pixels.touch();
+                }
+                // Precise marking: union of before/after footprints
+                // (+ exact filter spread), like `MoveLayer`.
+                let spread = match self.document.find(layer) {
+                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
+                        photo_engine::tiles::appearance_spread(&pixels.filter_layers)
+                    }
+                    _ => photo_engine::tiles::Padding::ZERO,
+                };
+                let dirty = DirtyMark::Region(photo_engine::tiles::layer_move_dirty_region(
+                    &old_t, &transform, w, h, spread,
+                ));
+                Mutation::changed(invalidation).with_dirty(dirty)
+            }
             PhotoEngineCommand::Undo => {
                 if !self.apply_undo_step() {
                     return Mutation::unchanged();
@@ -1216,6 +1277,7 @@ impl EngineWorker {
                         self.undo.clear();
                         self.redo.clear();
                         self.coalesced_opacity_layer = None;
+                        self.coalesced_transform_layer = None;
                         self.thumb_store.clear();
                         self.thumb_pending.clear();
                         self.thumb_fresh.clear();
@@ -2353,6 +2415,95 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!((restored.offset_x, restored.offset_y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn set_transform_gesture_is_one_entry_until_commit() {
+        // Drag frames coalesce: a whole gesture = one history entry;
+        // `commit` releases the slot so the next gesture opens another.
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        let frame = |worker: &mut EngineWorker, dx: f32, commit: bool| {
+            let mut t = photo_engine::Transform2D::default();
+            t.offset_x = dx;
+            worker.apply(PhotoEngineCommand::SetTransform {
+                layer: id,
+                transform: t,
+                commit,
+            });
+        };
+        frame(&mut worker, 10.0, false);
+        frame(&mut worker, 20.0, false);
+        frame(&mut worker, 30.0, false);
+        assert_eq!(worker.undo.len(), 1, "frames coalesced");
+        frame(&mut worker, 30.0, true);
+        assert_eq!(worker.undo.len(), 1, "commit adds no entry");
+        frame(&mut worker, 40.0, false);
+        assert_eq!(worker.undo.len(), 2, "new gesture after commit");
+        assert_eq!(
+            worker.undo.last().map(|s| s.label.as_str()),
+            Some("Transformer")
+        );
+        let current = match worker.document.find(id).expect("present") {
+            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            _ => panic!("pixels attendus"),
+        };
+        assert_eq!(current.offset_x, 40.0);
+        // Undo twice: back to the pre-gesture state.
+        worker.apply(PhotoEngineCommand::Undo);
+        worker.apply(PhotoEngineCommand::Undo);
+        let restored = match worker.document.find(id).expect("present") {
+            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            _ => panic!("pixels attendus"),
+        };
+        assert_eq!(restored.offset_x, 0.0);
+    }
+
+    #[test]
+    fn set_transform_guards_and_precise_dirty() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        // Unknown layer, non-finite, unchanged: no-op, no history.
+        worker.apply(PhotoEngineCommand::SetTransform {
+            layer: Uuid::new_v4(),
+            transform: photo_engine::Transform2D::default(),
+            commit: true,
+        });
+        let mut nan = photo_engine::Transform2D::default();
+        nan.offset_x = f32::NAN;
+        worker.apply(PhotoEngineCommand::SetTransform {
+            layer: id,
+            transform: nan,
+            commit: true,
+        });
+        worker.apply(PhotoEngineCommand::SetTransform {
+            layer: id,
+            transform: photo_engine::Transform2D::default(),
+            commit: true,
+        });
+        assert_eq!(worker.undo.len(), 0);
+        // Small move: bounded region, not the whole document.
+        // `mutate` alone (without `respond`): the marking is
+        // observable before the render absorbs it (same pattern as
+        // the precise-paint test).
+        let mut t = photo_engine::Transform2D::default();
+        t.offset_x = 5.0;
+        t.offset_y = 3.0;
+        let _ = worker.mutate(PhotoEngineCommand::SetTransform {
+            layer: id,
+            transform: t,
+            commit: true,
+        });
+        assert_eq!(worker.undo.len(), 1);
+        // Precise marking via the tile cache (same observation as
+        // `MoveLayer`): bounded union of before/after footprints.
+        let dirty = worker.render_worker.cache().dirty();
+        assert!(!dirty.is_empty(), "marked");
+        assert!(
+            dirty.bounds().area() < 64,
+            "bounded footprint, not global: {:?}",
+            dirty.bounds()
+        );
     }
 
     #[test]

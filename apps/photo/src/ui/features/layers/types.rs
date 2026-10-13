@@ -267,6 +267,10 @@ pub struct PhotoLayerInfo {
     /// screen placement (layer→document), translation/scale only
     /// when `overlay_live` is true.
     pub transform: photo_engine::Transform2D,
+    /// Carrier dimensions in source pixels (`Some` for pixel layers
+    /// only): canvas transform overlay geometry (corners via
+    /// `transform.doc_corners`) and click hit-testing.
+    pub dims: Option<(u32, u32)>,
 }
 
 impl PhotoLayerInfo {
@@ -367,6 +371,10 @@ impl PhotoLayerInfo {
                 LayerNode::Group(_) | LayerNode::Adjustment(_) => {
                     photo_engine::Transform2D::default()
                 }
+            },
+            dims: match node {
+                LayerNode::Pixel(pixels) => Some(pixels.dimensions()),
+                LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
             },
         }
     }

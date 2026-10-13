@@ -111,6 +111,19 @@ pub enum PhotoEngineCommand {
         /// Vertical offset in document pixels.
         dy: f32,
     },
+    /// Replace a pixel layer's transform wholesale (canvas transform
+    /// overlay: move/scale/rotate handles). Absolute values, not
+    /// deltas — consecutive drag frames keep only the latest
+    /// (batch fold). `commit` ends the gesture: the coalescing slot
+    /// is released so the next gesture opens a new history entry.
+    SetTransform {
+        /// Target pixel layer.
+        layer: Uuid,
+        /// New transform (document space).
+        transform: photo_engine::Transform2D,
+        /// True on release (gesture boundary).
+        commit: bool,
+    },
     /// Paint into a mask (brush = white/reveals, eraser =
     /// black/hides — Affinity convention, brush color
     /// ignored). Points in image pixels, like `PaintStroke`.
@@ -279,6 +292,7 @@ impl PhotoEngineCommand {
             Self::RedoSteps { .. } => "redo_steps",
             Self::PaintStroke { .. } => "paint_stroke",
             Self::MoveLayer { .. } => "move_layer",
+            Self::SetTransform { .. } => "set_transform",
             Self::PaintMask { .. } => "paint_mask",
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
@@ -351,6 +365,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
         PhotoEngineCommand::MoveLayer { layer, .. } => (
+            RenderEvent::NodeInvalidated(*layer),
+            RenderInvalidation::Composite,
+        ),
+        PhotoEngineCommand::SetTransform { layer, .. } => (
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::Composite,
         ),
@@ -550,6 +568,22 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
             ) if prev == layer => {
                 *dx += *ndx;
                 *dy += *ndy;
+                true
+            }
+            (
+                Some(PhotoEngineCommand::SetTransform {
+                    layer: prev,
+                    transform: prev_t,
+                    commit: prev_c,
+                }),
+                PhotoEngineCommand::SetTransform {
+                    layer,
+                    transform,
+                    commit,
+                },
+            ) if prev == layer => {
+                *prev_t = *transform;
+                *prev_c = *commit;
                 true
             }
             _ => false,
