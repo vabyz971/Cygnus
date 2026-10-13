@@ -463,6 +463,78 @@ mod tests {
     }
 
     #[test]
+    fn move_drag_commits_offset_on_release() {
+        // Legacy body path: press, drag, release with the Move tool
+        // commits the accumulated document-space offset (owned by
+        // the overlay at release, same values).
+        use std::cell::RefCell;
+
+        let ctx = egui::Context::default();
+        ui_kit::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let layer = uuid::Uuid::new_v4();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 450.0))))
+                        .tool(PhotoCanvasTool::Move)
+                        .active_layer(Some(layer))
+                        .mapping(CanvasMapping::identity())
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+        let out = frame(vec![]);
+        let center = out.dest_rect.expect("dest").center();
+        let press = egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        };
+        let _ = frame(vec![press]);
+        // Drag beyond the click threshold, then release.
+        let at = center + egui::vec2(30.0, 20.0);
+        // Multi-frame drag (production-like gesture packets).
+        let mid = frame(vec![egui::Event::PointerMoved(at)]);
+        assert!(mid.move_layer.is_none(), "no commit mid-drag");
+        assert!(!mid.pointer_world.is_empty(), "drag reports positions");
+        let at2 = center + egui::vec2(60.0, 40.0);
+        let mid2 = frame(vec![egui::Event::PointerMoved(at2)]);
+        assert!(mid2.move_layer.is_none(), "no commit mid-drag");
+        let release = egui::Event::PointerButton {
+            pos: at2,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        };
+        let out = frame(vec![release]);
+        let commit = out.move_layer.expect("release commits the move");
+        assert_eq!(commit.layer, layer);
+        // Identity mapping, dest scale 0.98: doc delta ≈ screen delta.
+        // (The press packet carries no position: the stroke spans the
+        // moved packets only.)
+        assert!(
+            (commit.dx - 30.0 / 0.98).abs() < 2.0 && (commit.dy - 20.0 / 0.98).abs() < 2.0,
+            "offset follows the drag: ({}, {})",
+            commit.dx,
+            commit.dy
+        );
+    }
+
+    #[test]
     fn canvas_mapping_miniature_vers_document() {
         // 2x thumbnail (downscaled infinite plane) with a (20, 10) thumbnail-px origin.
         let mapping = CanvasMapping {

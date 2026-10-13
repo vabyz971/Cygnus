@@ -509,10 +509,32 @@ pub fn draw_transform_overlay(
     theme: ui_kit::theme::CygnusTheme,
     quad: [egui::Pos2; 4],
     hover: Option<egui::Pos2>,
+    quiet: bool,
 ) -> Option<TransformHandle> {
     let half = theme.spacing.sm;
     let stroke = egui::Stroke::new(theme.borders.medium, theme.colors.accent);
     painter.add(egui::Shape::closed_line(quad.to_vec(), stroke));
+    // Center pivot (always drawn: the rotation reference).
+    let center = egui::pos2((quad[0].x + quad[2].x) / 2.0, (quad[0].y + quad[2].y) / 2.0);
+    painter.line_segment(
+        [
+            center + egui::vec2(-half, 0.0),
+            center + egui::vec2(half, 0.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            center + egui::vec2(0.0, -half),
+            center + egui::vec2(0.0, half),
+        ],
+        stroke,
+    );
+    if quiet {
+        // Active drag: frame + pivot only — adornments stay out of
+        // the way while the content moves under the pointer.
+        return None;
+    }
     // Edge midpoints.
     for edge in Edge::ALL {
         let (a, b) = edge.ends();
@@ -536,28 +558,12 @@ pub fn draw_transform_overlay(
         painter.rect_stroke(rect, theme.radius.xs, stroke, egui::StrokeKind::Middle);
     }
     // Rotation knob + stem.
-    let center = egui::pos2((quad[0].x + quad[2].x) / 2.0, (quad[0].y + quad[2].y) / 2.0);
     let mid_top = egui::pos2((quad[0].x + quad[1].x) / 2.0, (quad[0].y + quad[1].y) / 2.0);
     if let Some((knob, _)) = rotate_knob(quad, half * 6.0) {
         painter.line_segment([mid_top, knob], stroke);
         painter.circle_filled(knob, half, theme.colors.bg_primary);
         painter.circle_stroke(knob, half, stroke);
     }
-    // Center pivot.
-    painter.line_segment(
-        [
-            center + egui::vec2(-half, 0.0),
-            center + egui::vec2(half, 0.0),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            center + egui::vec2(0.0, -half),
-            center + egui::vec2(0.0, half),
-        ],
-        stroke,
-    );
     let knob = rotate_knob(quad, half * 6.0).map(|(k, _)| k)?;
     hover.and_then(|at| hit_handle(quad, knob, at, half * 2.5))
 }

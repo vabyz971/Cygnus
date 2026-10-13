@@ -77,6 +77,7 @@ fn draw_transform_content(
                 if drag.sent != drag.start {
                     actions.push(PhotoAction::Undo);
                 }
+                doc.ui.stroke.clear();
                 doc.ui.needs_repaint = true;
             }
             return actions;
@@ -86,6 +87,10 @@ fn draw_transform_content(
         let stopped = response.is_some_and(|r| r.drag_stopped() || r.clicked());
         if stopped {
             if let Some(drag) = doc.ui.transform_drag.take() {
+                // The overlay owns this drag end to end: drop the
+                // legacy body's release commit (same gesture, one
+                // history entry via the transform commit).
+                actions.retain(|a| !matches!(a, PhotoAction::MoveLayer { .. }));
                 actions.push(PhotoAction::SetTransform {
                     layer: drag.layer,
                     transform: drag.sent,
@@ -125,7 +130,7 @@ fn draw_transform_content(
             }
             if ok {
                 let theme = ui.cygnus_theme();
-                draw_transform_overlay(ui.painter(), theme, quad, None);
+                draw_transform_overlay(ui.painter(), theme, quad, None, true);
             }
         }
         return actions;
@@ -146,7 +151,8 @@ fn draw_transform_content(
         let quad = corners.map(|c| to_screen(c));
         if let [Some(a), Some(b), Some(c), Some(d)] = quad {
             let theme = ui.cygnus_theme();
-            let hovered = draw_transform_overlay(ui.painter(), theme, [a, b, c, d], hover_pos);
+            let hovered =
+                draw_transform_overlay(ui.painter(), theme, [a, b, c, d], hover_pos, false);
             if let Some(handle) = hovered {
                 ui.output_mut(|o| {
                     o.cursor_icon = handle.cursor();
@@ -158,13 +164,40 @@ fn draw_transform_content(
                     o.cursor_icon = egui::CursorIcon::Grab;
                 });
             }
-            // Press on a handle: begin the gesture (body presses stay
-            // with the legacy path).
+            // Press: handles begin a transform gesture; anywhere
+            // else on a layer begins a body move (press-selects
+            // first, so the drag always owns the layer under the
+            // pointer — the legacy release commit is dropped).
             if response.is_some_and(|r| r.drag_started())
-                && let (Some(handle), Some(grab)) = (hovered, press_doc)
+                && let Some(grab) = press_doc
             {
-                if let Some(drag) = TransformDrag::begin(layer, dims, transform, Some(handle), grab)
+                if let Some(handle) = hovered {
+                    if let Some(drag) =
+                        TransformDrag::begin(layer, dims, transform, Some(handle), grab)
+                    {
+                        doc.ui.transform_drag = Some(drag);
+                        doc.ui.needs_repaint = true;
+                    }
+                } else if let Some(hit) = hit_test_topmost(&doc.ui.layers, grab) {
+                    if doc.ui.selected != Some(hit) {
+                        actions.push(PhotoAction::SelectLayer(hit));
+                    }
+                    let space = find_layer_in(&doc.ui.layers, hit).and_then(|info| {
+                        (info.kind == PhotoLayerKind::Pixel && info.visible)
+                            .then(|| info.dims.map(|d| (d, info.transform)))
+                            .flatten()
+                    });
+                    if let Some((hdims, htransform)) = space
+                        && let Some(drag) = TransformDrag::begin(hit, hdims, htransform, None, grab)
+                    {
+                        doc.ui.transform_drag = Some(drag);
+                        doc.ui.needs_repaint = true;
+                    }
+                } else if info.visible
+                    && let Some(drag) = TransformDrag::begin(layer, dims, transform, None, grab)
                 {
+                    // Empty press: legacy parity — the drag moves the
+                    // selected layer (owned here, single commit).
                     doc.ui.transform_drag = Some(drag);
                     doc.ui.needs_repaint = true;
                 }
@@ -205,6 +238,19 @@ pub fn draw_canvas_content(
     ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
+    // Tool switch mid-gesture: finalize the transform (keeps user
+    // work, single history entry) instead of orphaning the drag.
+    if doc.ui.tool != PhotoCanvasTool::Move
+        && let Some(drag) = doc.ui.transform_drag.take()
+    {
+        actions.push(PhotoAction::SetTransform {
+            layer: drag.layer,
+            transform: drag.sent,
+            commit: true,
+        });
+        doc.ui.stroke.clear();
+        doc.ui.needs_repaint = true;
+    }
     let texture = doc.ui.texture_cache.texture();
     // Infinite plane: the thumbnail may extend past the document (layer
     // moved out of frame) and be downscaled (1600 px cap) — the
