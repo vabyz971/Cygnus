@@ -29,5 +29,8 @@
 pub mod canvas;
 pub mod overlays;
 
-pub use canvas::{CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasTool};
+pub use canvas::{
+    CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasOutcome,
+    PhotoCanvasTool,
+};
 pub use overlays::{draw_brush_cursor, draw_document_bounds};

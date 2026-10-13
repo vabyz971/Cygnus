@@ -32,14 +32,84 @@ use crate::state::{OpenDocument, PreviewGeom, sample_preview_color};
 use crate::ui::features::layers::find_layer_in;
 use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
-    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasTool, TransformDrag, clear_ink,
-    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds,
-    draw_transform_overlay, feed_ink_frame, frame_corners, hit_test_topmost, ink_tool_active,
-    point_in_quad, screen_to_doc,
+    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasOutcome, PhotoCanvasTool,
+    StabilityAction, StableView, TransformDrag, clear_ink, doc_to_screen, draw_brush_cursor,
+    draw_cached_ink, draw_document_bounds, draw_transform_overlay, feed_ink_frame, frame_corners,
+    hit_test_topmost, ink_tool_active, point_in_quad, screen_to_doc, stability_action,
 };
 use ui_kit::components::{menu_row, menu_style};
 use ui_kit::prelude::UiThemeExt;
 
+/// View-stability driver (all tools): keeps the document's
+/// on-screen size across scope changes (see [`StableView`]). Pure
+/// decision in [`stabilize_factor`]; here only the viewport actuation
+/// (counter-zoom around the document center, which always coincides
+/// with the symmetric scope's center).
+fn stabilize_viewport(
+    doc: &mut OpenDocument,
+    outcome: &PhotoCanvasOutcome,
+    geom: Option<PreviewGeom>,
+    mapping: &CanvasMapping,
+    pre_zoom: f32,
+    pre_offset: egui::Vec2,
+) {
+    let Some(g) = geom else { return };
+    let Some(dest) = outcome.dest_rect else {
+        return;
+    };
+    if g.thumb_size.x <= 0.0 || mapping.thumb_to_doc <= f32::EPSILON {
+        return;
+    }
+    let screen_per_doc = dest.width() / g.thumb_size.x / mapping.thumb_to_doc.max(f32::EPSILON);
+    if !screen_per_doc.is_finite() || screen_per_doc <= 0.0 {
+        return;
+    }
+    let full = (g.full_size.x as u32, g.full_size.y as u32);
+    let doc_size = (g.doc_size.x as u32, g.doc_size.y as u32);
+    let user_drove = doc.ui.viewport.zoom() != pre_zoom || doc.ui.viewport.offset() != pre_offset;
+    let base = doc.ui.stable_view;
+    // Document replaced (or first frame): re-baseline, never fight it.
+    match stability_action(base, full, doc_size, screen_per_doc, user_drove) {
+        StabilityAction::Rebaseline => {
+            doc.ui.stable_view = Some(StableView {
+                screen_per_doc,
+                full,
+                doc: doc_size,
+            });
+            return;
+        }
+        StabilityAction::Hold => return,
+        StabilityAction::Compensate(factor) => {
+            // Anchor: document center on screen (fixed point of the zoom).
+            let anchor = doc_to_screen(
+                (g.doc_size.x / 2.0, g.doc_size.y / 2.0),
+                dest,
+                g.origin,
+                mapping.thumb_to_doc,
+                g.thumb_size.x,
+            );
+            let before = doc.ui.viewport.zoom();
+            doc.ui.viewport.zoom_by(factor, anchor);
+            if doc.ui.viewport.zoom() != before {
+                // Settling takes effect next frame (repaint requested);
+                // predict the baseline so float dust cannot loop.
+                doc.ui.stable_view = Some(StableView {
+                    screen_per_doc: screen_per_doc * factor,
+                    full,
+                    doc: doc_size,
+                });
+                doc.ui.needs_repaint = true;
+            } else {
+                // Clamped at the zoom bounds: accept the view as is.
+                doc.ui.stable_view = Some(StableView {
+                    screen_per_doc,
+                    full,
+                    doc: doc_size,
+                });
+            }
+        }
+    }
+}
 /// Transform overlay driver (Move tool): draws the selected pixel
 /// layer's frame + handles, runs handle gestures (live
 /// `SetTransform`, one history entry per drag, `Escape` = undo) and
@@ -106,14 +176,27 @@ fn draw_transform_content(
         if let Some(pointer) = press_doc {
             if let Some(drag) = doc.ui.transform_drag.as_mut() {
                 let next = drag.resolve(pointer);
+                // Live follow, throttled: the outline tracks every
+                // frame locally (60 fps feedback); the worker
+                // re-renders at most ~25/s (its queue folds anyway, but
+                // a saturated worker would lag the preview seconds
+                // behind the pointer on big documents). Release always
+                // sends.
+                let due = doc
+                    .ui
+                    .last_transform_send
+                    .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(40));
                 if next != drag.sent {
                     drag.sent = next;
-                    actions.push(PhotoAction::SetTransform {
-                        layer: drag.layer,
-                        transform: next,
-                        commit: false,
-                    });
                     doc.ui.needs_repaint = true;
+                    if due {
+                        doc.ui.last_transform_send = Some(std::time::Instant::now());
+                        actions.push(PhotoAction::SetTransform {
+                            layer: drag.layer,
+                            transform: next,
+                            commit: false,
+                        });
+                    }
                 }
             }
         }
@@ -262,6 +345,10 @@ pub fn draw_canvas_content(
             thumb_to_doc: g.thumb_to_doc(),
         })
         .unwrap_or_else(CanvasMapping::identity);
+    // Viewport state before the canvas mutates it (user-driven
+    // zoom/pan detector for the stabilizer below).
+    let pre_zoom = doc.ui.viewport.zoom();
+    let pre_offset = doc.ui.viewport.offset();
     let outcome = PhotoCanvas::new(&mut doc.ui.stroke)
         .texture(texture)
         .tool(doc.ui.tool)
@@ -270,6 +357,12 @@ pub fn draw_canvas_content(
         .brush(doc.ui.brush)
         .mapping(mapping)
         .show(ui, &mut doc.ui.viewport);
+    // View stability: a scope change (layer moved/rotated out of
+    // frame grows the infinite plane and refits the thumbnail) must
+    // never rescale the document on screen — counter-zoom around the
+    // document center instead. Skipped when the user drove zoom/pan
+    // (re-baseline) or the document itself was replaced.
+    stabilize_viewport(doc, &outcome, geom, &mapping, pre_zoom, pre_offset);
     // Stroke commit: routed to the worker by the app.
     let committed = outcome.paint.is_some();
     if let Some(paint) = outcome.paint {

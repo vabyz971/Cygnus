@@ -682,6 +682,67 @@ mod tests {
     }
 
     #[test]
+    fn stabilize_factor_holds_without_scope_change() {
+        let base = StableView {
+            screen_per_doc: 1.5,
+            full: (800, 600),
+            doc: (800, 600),
+        };
+        // Same scope (even with float dust): hold.
+        assert_eq!(stabilize_factor(base, (800, 600), 1.5), None);
+        assert_eq!(stabilize_factor(base, (800, 600), 1.503), None);
+        // Undecidable inputs: hold.
+        assert_eq!(stabilize_factor(base, (1600, 1200), 0.0), None);
+        assert_eq!(stabilize_factor(base, (1600, 1200), f32::NAN), None);
+    }
+
+    #[test]
+    fn stabilize_factor_restores_baseline_size() {
+        let base = StableView {
+            screen_per_doc: 2.0,
+            full: (800, 600),
+            doc: (800, 600),
+        };
+        // Scope doubled (layer out of frame), document shrunk to
+        // half on screen: zoom ×2 restores it.
+        assert_eq!(stabilize_factor(base, (1600, 1200), 1.0), Some(2.0));
+        // Clamped per frame (×10 jump settles progressively).
+        assert_eq!(stabilize_factor(base, (8000, 6000), 0.05), Some(5.0));
+    }
+
+    #[test]
+    fn stability_action_matrix() {
+        let base = StableView {
+            screen_per_doc: 2.0,
+            full: (800, 600),
+            doc: (800, 600),
+        };
+        // No anchor yet, document replaced, user drove: re-baseline.
+        assert_eq!(
+            stability_action(None, (800, 600), (800, 600), 2.0, false),
+            StabilityAction::Rebaseline
+        );
+        assert_eq!(
+            stability_action(Some(base), (800, 600), (1024, 768), 2.0, false),
+            StabilityAction::Rebaseline
+        );
+        assert_eq!(
+            stability_action(Some(base), (1600, 1200), (800, 600), 1.0, true),
+            StabilityAction::Rebaseline
+        );
+        // Same scope, settled: hold.
+        assert_eq!(
+            stability_action(Some(base), (800, 600), (800, 600), 2.0, false),
+            StabilityAction::Hold
+        );
+        // Scope grew, view untouched: compensate.
+        assert_eq!(
+            stability_action(Some(base), (1600, 1200), (800, 600), 1.0, false),
+            StabilityAction::Compensate(2.0)
+        );
+    }
+
+    #[test]
     fn hit_test_topmost_prefers_top_and_children() {
         let mut doc = Document::new(200, 200);
         let fond = PixelLayer::new("fond", Arc::new(image::DynamicImage::new_rgba8(200, 200)));
@@ -701,4 +762,70 @@ mod tests {
         // Outside everything: none.
         assert_eq!(hit_test_topmost(&layers, (500.0, 500.0)), None);
     }
+}
+
+/// View-stability baseline: the document's on-screen size anchor.
+/// A scope change (layer moved/rotated out of frame grows the
+/// infinite plane) refits the thumbnail and would visibly rescale
+/// the document — the viewer counter-zooms instead (same document
+/// pixels on screen, no user-zoom hijack).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StableView {
+    /// Screen pixels per document pixel at baseline.
+    pub screen_per_doc: f32,
+    /// Full-plane dimensions (scope-change detector).
+    pub full: (u32, u32),
+    /// Document dimensions (document-replacement detector).
+    pub doc: (u32, u32),
+}
+
+/// Zoom factor restoring the baseline document size (`None` = hold:
+/// same scope, settled, or undecidable inputs). Clamped per frame
+/// so a huge jump settles over frames instead of snapping.
+pub fn stabilize_factor(base: StableView, full: (u32, u32), screen_per_doc: f32) -> Option<f32> {
+    if full != base.full
+        && screen_per_doc.is_finite()
+        && screen_per_doc > 0.0
+        && base.screen_per_doc > 0.0
+    {
+        let f = (base.screen_per_doc / screen_per_doc).clamp(0.2, 5.0);
+        if (f - 1.0).abs() > 0.005 {
+            return Some(f);
+        }
+    }
+    None
+}
+
+/// Viewer decision for one frame (pure, unit-tested; actuation lives
+/// in the layout): re-baseline when the view has no anchor yet, the
+/// document was replaced, or the user drove zoom/pan; compensate
+/// when only the scope (infinite plane) moved.
+pub fn stability_action(
+    base: Option<StableView>,
+    full: (u32, u32),
+    doc: (u32, u32),
+    screen_per_doc: f32,
+    user_drove: bool,
+) -> StabilityAction {
+    let Some(base) = base else {
+        return StabilityAction::Rebaseline;
+    };
+    if base.doc != doc || user_drove {
+        return StabilityAction::Rebaseline;
+    }
+    match stabilize_factor(base, full, screen_per_doc) {
+        Some(factor) => StabilityAction::Compensate(factor),
+        None => StabilityAction::Hold,
+    }
+}
+
+/// One frame's stability decision (see [`stability_action`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StabilityAction {
+    /// Adopt the current view as the new anchor.
+    Rebaseline,
+    /// Counter-zoom by the factor (document center fixed).
+    Compensate(f32),
+    /// Nothing to do.
+    Hold,
 }
