@@ -136,6 +136,19 @@ impl<'de> Deserialize<'de> for Transform2D {
 }
 
 impl Transform2D {
+    /// True when every field is finite (guard rail for worker
+    /// commands carrying externally built transforms).
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        self.offset_x.is_finite()
+            && self.offset_y.is_finite()
+            && self.rotation_deg.is_finite()
+            && self.scale_x.is_finite()
+            && self.scale_y.is_finite()
+            && self.skew_x.is_finite()
+            && self.skew_y.is_finite()
+    }
+
     /// Local image point (px, origin at top-left corner) → doc
     /// (canvas coordinates, doc center = (doc_w/2, doc_h/2)). Same
     /// convention as the canvas draw: the offset is the
@@ -276,6 +289,31 @@ mod tests {
                 let back = t.doc_to_local(800.0, 600.0, dx, dy).expect("inversible");
                 assert!(close(back, (x, y)), "{t:?} ({x},{y}) -> {back:?}");
             }
+        }
+    }
+
+    #[test]
+    fn is_finite_covers_all_fields() {
+        assert!(Transform2D::default().is_finite());
+        for t in [
+            Transform2D {
+                offset_x: f32::INFINITY,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                rotation_deg: f32::NAN,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                scale_y: f32::NAN,
+                ..Transform2D::default()
+            },
+            Transform2D {
+                skew_x: f32::INFINITY,
+                ..Transform2D::default()
+            },
+        ] {
+            assert!(!t.is_finite(), "{t:?}");
         }
     }
 
