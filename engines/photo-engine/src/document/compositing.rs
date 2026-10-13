@@ -553,7 +553,7 @@ pub fn prepare_top(item: &DrawItem<'_>) -> (ImageBuffer<Rgba<u8>, Vec<u8>>, f32,
                     let p10 = buf.get_pixel((x0 + 1).min(buf.width() - 1), y0);
                     let p01 = buf.get_pixel(x0, (y0 + 1).min(buf.height() - 1));
                     let p11 = buf.get_pixel(
-                        (x0 + 1).min(buf.height() - 1),
+                        (x0 + 1).min(buf.width() - 1),
                         (y0 + 1).min(buf.height() - 1),
                     );
                     for c in 0..4 {
@@ -1605,5 +1605,95 @@ mod downsample_tests {
             DynamicImage::ImageRgba8(ImageBuffer::from_pixel(100, 80, Rgba([1, 2, 3, 255])));
         let kept = preview_buf(&small);
         assert_eq!((kept.width, kept.height), (100, 80));
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+
+    /// Non-square arbitrary rotation samples the right texels:
+    /// regression test for the p11 corner clamped by height instead
+    /// of width (invisible on square layers, streaks otherwise).
+    /// Independent naive reference (plain inverse-map bilinear over
+    /// the same bbox convention).
+    #[test]
+    fn rotation_arbitraire_non_carree_echantillonne_juste() {
+        let (w0, h0) = (7u32, 4u32);
+        let mut state = 11u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+        let img = DynamicImage::ImageRgba8(ImageBuffer::from_fn(w0, h0, |_, _| {
+            Rgba([next(), next(), next(), 255])
+        }));
+        let t = Transform2D {
+            rotation_deg: 30.0,
+            ..Transform2D::default()
+        };
+        let (buf, _, _) = prepare_top(&DrawItem::new(&img, t));
+        // Naive reference: same bbox, same inverse map, written plainly.
+        let corners = t.doc_corners(w0 as f32, h0 as f32);
+        let min_x = corners.iter().map(|c| c.0).fold(f32::MAX, f32::min);
+        let min_y = corners.iter().map(|c| c.1).fold(f32::MAX, f32::min);
+        let max_x = corners.iter().map(|c| c.0).fold(f32::MIN, f32::max);
+        let max_y = corners.iter().map(|c| c.1).fold(f32::MIN, f32::max);
+        assert_eq!(buf.width(), (max_x - min_x).ceil().max(1.0) as u32);
+        assert_eq!(buf.height(), (max_y - min_y).ceil().max(1.0) as u32);
+        let rad = 30.0f32.to_radians();
+        let (cos, sin) = (rad.cos(), rad.sin());
+        let (cx, cy) = (w0 as f32 / 2.0, h0 as f32 / 2.0);
+        // Same convention as the implementation: destination relative
+        // to the bbox center (ceil-snapped), not the frame center.
+        let (bx, by) = (buf.width() as f32 / 2.0, buf.height() as f32 / 2.0);
+        let rgba = img.to_rgba8();
+        let sample = |x: u32, y: u32| rgba.get_pixel(x, y).0;
+        let mut mismatches = 0;
+        for (x, y, px) in buf.enumerate_pixels() {
+            // Destination -> source (rotation about the center).
+            let dx = x as f32 - bx;
+            let dy = y as f32 - by;
+            let sx = dx * cos + dy * sin + cx;
+            let sy = -dx * sin + dy * cos + cy;
+            // Validity band: within 1e-3 of the guard thresholds the
+            // two implementations may disagree by 1 ulp on branch —
+            // skip those pixels (the p11 regression lives strictly
+            // inside, where x0 + 1 exceeds h - 1 with weight).
+            let edge = sx < 1e-3
+                || sy < 1e-3
+                || sx > w0 as f32 - 1.0 - 1e-3
+                || sy > h0 as f32 - 1.0 - 1e-3;
+            if edge {
+                continue;
+            }
+            if sx < 0.0 || sy < 0.0 || sx >= w0 as f32 - 1.0 || sy >= h0 as f32 - 1.0 {
+                assert_eq!(px.0, [0, 0, 0, 0], "hors source = transparent");
+                continue;
+            }
+            let (x0, y0) = (sx.floor() as u32, sy.floor() as u32);
+            let (fx, fy) = (sx - x0 as f32, sy - y0 as f32);
+            let (w1, h1) = (w0 - 1, h0 - 1);
+            let pa = sample(x0, y0);
+            let pb = sample((x0 + 1).min(w1), y0);
+            let pc = sample(x0, (y0 + 1).min(h1));
+            let pd = sample((x0 + 1).min(w1), (y0 + 1).min(h1));
+            let mut expected = [0u8; 4];
+            for c in 0..4 {
+                expected[c] = (pa[c] as f32 * (1.0 - fx) * (1.0 - fy)
+                    + pb[c] as f32 * fx * (1.0 - fy)
+                    + pc[c] as f32 * (1.0 - fx) * fy
+                    + pd[c] as f32 * fx * fy)
+                    .round() as u8;
+            }
+            for c in 0..4 {
+                if (px.0[c] as i16 - expected[c] as i16).abs() > 2 {
+                    mismatches += 1;
+                }
+            }
+        }
+        assert_eq!(mismatches, 0, "texels échantillonnés comme la référence");
     }
 }
