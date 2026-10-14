@@ -34,6 +34,8 @@ use uuid::Uuid;
 pub enum PhotoLayerKind {
     /// Pixel layer.
     Pixel,
+    /// Vector layer.
+    Vector,
     /// Layer group.
     Group,
     /// Adjustment layer.
@@ -43,6 +45,7 @@ pub enum PhotoLayerKind {
 /// Every variant, for exhaustiveness tests.
 pub const ALL_PHOTO_LAYER_KINDS: &[PhotoLayerKind] = &[
     PhotoLayerKind::Pixel,
+    PhotoLayerKind::Vector,
     PhotoLayerKind::Group,
     PhotoLayerKind::Adjustment,
 ];
@@ -52,6 +55,7 @@ impl PhotoLayerKind {
     pub fn icon(self) -> Icon {
         match self {
             Self::Pixel => Icon::ImageIcon,
+            Self::Vector => Icon::Shape,
             Self::Group => Icon::Layers,
             Self::Adjustment => Icon::Settings,
         }
@@ -61,6 +65,7 @@ impl PhotoLayerKind {
     pub fn icon_label(self, texts: cygnus_i18n::PhotoCatalog) -> &'static str {
         match self {
             Self::Pixel => texts.get(cygnus_i18n::PhotoTextKey::LayerKindPixel),
+            Self::Vector => texts.get(cygnus_i18n::PhotoTextKey::LayerKindVector),
             Self::Group => texts.get(cygnus_i18n::PhotoTextKey::LayerKindGroup),
             Self::Adjustment => texts.get(cygnus_i18n::PhotoTextKey::LayerKindAdjustment),
         }
@@ -70,6 +75,7 @@ impl PhotoLayerKind {
     pub fn from_node(node: &LayerNode) -> Self {
         match node {
             LayerNode::Pixel(_) => Self::Pixel,
+            LayerNode::Vector(_) => Self::Vector,
             LayerNode::Group(_) => Self::Group,
             LayerNode::Adjustment(_) => Self::Adjustment,
         }
@@ -303,6 +309,14 @@ impl PhotoLayerInfo {
                     .collect::<Vec<_>>(),
                 pixels.masks.iter().map(sub_mask).collect::<Vec<_>>(),
             ),
+            LayerNode::Vector(vector) => (
+                vector
+                    .filter_layers
+                    .iter()
+                    .map(sub_filter)
+                    .collect::<Vec<_>>(),
+                vector.masks.iter().map(sub_mask).collect::<Vec<_>>(),
+            ),
             LayerNode::Group(group) => (
                 group
                     .filter_layers
@@ -316,7 +330,7 @@ impl PhotoLayerInfo {
         let has_filters = !filters.is_empty();
         let has_masks = !masks.is_empty();
         // Thumbnail served by the resolver (zero hot recompute):
-        // only pixels have one.
+        // only pixels have one (vectors follow with appearance thumbs).
         let thumb = match node {
             LayerNode::Pixel(pixels) => lookup(node.id()).map(|buf| PhotoLayerThumb {
                 width: buf.width,
@@ -324,7 +338,7 @@ impl PhotoLayerInfo {
                 rgba: buf.data.to_vec(),
                 version: pixels.appearance_version,
             }),
-            LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+            LayerNode::Vector(_) | LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
         };
         Self {
             id: node.id(),
@@ -352,11 +366,12 @@ impl PhotoLayerInfo {
                     .rev()
                     .map(|child| Self::from_node_with_lookup(child, lookup))
                     .collect(),
-                LayerNode::Adjustment(_) => Vec::new(),
+                // Vectors and adjustments are childless in v1.
+                LayerNode::Vector(_) | LayerNode::Adjustment(_) => Vec::new(),
             },
             collapsed: match node {
                 LayerNode::Group(group) => group.collapsed,
-                LayerNode::Pixel(_) | LayerNode::Adjustment(_) => false,
+                LayerNode::Pixel(_) | LayerNode::Vector(_) | LayerNode::Adjustment(_) => false,
             },
             thumb,
             selected: false,
@@ -364,17 +379,23 @@ impl PhotoLayerInfo {
                 LayerNode::Pixel(pixels) => {
                     photo_engine::interaction::overlay_displayable(&pixels.transform)
                 }
+                LayerNode::Vector(vector) => {
+                    photo_engine::interaction::overlay_displayable(&vector.transform)
+                }
                 LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
             },
             transform: match node {
                 LayerNode::Pixel(pixels) => pixels.transform,
+                LayerNode::Vector(vector) => vector.transform,
                 LayerNode::Group(_) | LayerNode::Adjustment(_) => {
                     photo_engine::Transform2D::default()
                 }
             },
             dims: match node {
                 LayerNode::Pixel(pixels) => Some(pixels.dimensions()),
-                LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+                // Vectors are resolution-independent (bounds via the
+                // engine when the canvas overlay follows).
+                LayerNode::Vector(_) | LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
             },
         }
     }

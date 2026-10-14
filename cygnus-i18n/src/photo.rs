@@ -201,6 +201,8 @@ pub enum PhotoTextKey {
     LayerKindGroup,
     /// "Adjustment" kind.
     LayerKindAdjustment,
+    /// "Vector" kind.
+    LayerKindVector,
     /// Help: file/export paragraph.
     HelpFileText,
     /// Add a mask.
@@ -327,6 +329,7 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::LayerKindPixel,
     PhotoTextKey::LayerKindGroup,
     PhotoTextKey::LayerKindAdjustment,
+    PhotoTextKey::LayerKindVector,
 ];
 
 impl PhotoCatalog {
@@ -441,6 +444,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::LayerKindPixel => "Pixels",
         PhotoTextKey::LayerKindGroup => "Groupe",
         PhotoTextKey::LayerKindAdjustment => "Reglage",
+        PhotoTextKey::LayerKindVector => "Vecteur",
         PhotoTextKey::AddMask => "Ajouter un masque",
         PhotoTextKey::DeleteLayer => "Supprimer le calque",
         PhotoTextKey::CropPreviewToDocument => "Rogner l'apercu au document",
@@ -547,6 +551,7 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::LayerKindPixel => "Pixels",
         PhotoTextKey::LayerKindGroup => "Group",
         PhotoTextKey::LayerKindAdjustment => "Adjustment",
+        PhotoTextKey::LayerKindVector => "Vector",
         PhotoTextKey::AddMask => "Add mask",
         PhotoTextKey::DeleteLayer => "Delete layer",
         PhotoTextKey::CropPreviewToDocument => "Crop preview to document",
