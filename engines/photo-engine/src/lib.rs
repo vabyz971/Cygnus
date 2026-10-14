@@ -32,6 +32,7 @@ pub mod registry;
 pub mod render_overlay;
 pub mod render_pool;
 pub mod renderer;
+pub mod scene;
 pub mod thumb_cache;
 pub mod tile_key;
 pub mod tiles;
@@ -48,6 +49,10 @@ pub use history::UndoAction;
 pub use registry::{all_definitions, definition_for};
 pub use render_overlay::effect_overlay;
 pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};
+pub use scene::{
+    AdjustmentLayer as SceneAdjustmentLayer, GroupLayer as SceneGroupLayer, Layer, LayerContent,
+    LayerEffect, RasterLayer as SceneRasterLayer, TextLayer, VectorLayer, VectorPath,
+};
 pub use thumb_cache::ThumbnailKey;
 pub use tile_key::{
     BackendTag, CPU_KERNEL_VERSION, GPU_KERNEL_VERSION, GPU_PIXEL_THRESHOLD, TILE_FLAGS_NONE,
