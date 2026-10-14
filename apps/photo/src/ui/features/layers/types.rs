@@ -390,9 +390,17 @@ impl PhotoLayerInfo {
             transform: match node {
                 LayerNode::Pixel(pixels) => pixels.transform,
                 LayerNode::Vector(vector) => vector.transform,
-                LayerNode::Group(_) | LayerNode::Adjustment(_) => {
-                    photo_engine::Transform2D::default()
+                // Virtual placement (bounds origin as offset): display
+                // and hit-test only — never committed (group moves go
+                // through child translation, see `translate_by`).
+                LayerNode::Group(group) => {
+                    let region = photo_engine::tiles::group_footprint(group);
+                    let mut placed = photo_engine::Transform2D::default();
+                    placed.offset_x = region.x as f32;
+                    placed.offset_y = region.y as f32;
+                    placed
                 }
+                LayerNode::Adjustment(_) => photo_engine::Transform2D::default(),
             },
             dims: match node {
                 LayerNode::Pixel(pixels) => Some(pixels.dimensions()),
@@ -401,7 +409,14 @@ impl PhotoLayerInfo {
                 // origin-normalized at creation, so the frame matches
                 // the placed raster like a pixel source).
                 LayerNode::Vector(vector) => vector.raster_dims(),
-                LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+                // Groups have no stored transform: the frame is the
+                // children union (virtual placement, recomputed per
+                // snapshot — same visuals as pixels/vectors).
+                LayerNode::Group(group) => {
+                    let region = photo_engine::tiles::group_footprint(group);
+                    (region.width > 0 && region.height > 0).then_some((region.width, region.height))
+                }
+                LayerNode::Adjustment(_) => None,
             },
             paths: match node {
                 LayerNode::Vector(vector) => Some(vector.vector.paths.clone()),

@@ -739,6 +739,34 @@ fn flip_est_destructif_et_symetrique() {
 }
 
 #[test]
+fn groupe_translate_enfants_et_masques() {
+    // Group with a moved child + a mask: translating the group
+    // shifts children (recursive) and canvas-space masks.
+    let red = solid(2, 2, [255, 0, 0, 255]);
+    let child = pixel_node(&red, 100.0, BlendMode::Normal, 0.0, 0.0);
+    let mut group = GroupLayer::new("g", vec![child]);
+    group.masks.push(LayerMask::full(4, 4));
+    let mut node = LayerNode::Group(group);
+    assert!(node.translate_by(3.0, -2.0));
+    match &node {
+        LayerNode::Group(g) => {
+            match &g.children[0] {
+                LayerNode::Pixel(p) => {
+                    assert_eq!((p.transform.offset_x, p.transform.offset_y), (3.0, -2.0));
+                }
+                _ => panic!("enfant pixel attendu"),
+            }
+            // Mask shifted right 3 (column 0 revealed-white), up 2.
+            assert_eq!(g.masks[0].coverage_at(3, 0), 1.0);
+        }
+        _ => panic!("groupe attendu"),
+    }
+    // Empty childless group without masks: no-op.
+    let mut vide = LayerNode::Group(GroupLayer::new("vide", Vec::new()));
+    assert!(!vide.translate_by(1.0, 1.0));
+}
+
+#[test]
 fn rotation_echange_les_dimensions_et_garde_le_centre() {
     let mut doc = Document::new(8, 8);
     // 3×1: red | green | blue.

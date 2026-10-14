@@ -116,6 +116,7 @@ pub fn show_mode_bar(
                 doc.ui.tool,
                 &mut doc.ui.brush,
                 &mut doc.ui.show_grid,
+                doc.ui.preview_clip,
                 ctx.shared.theme(),
                 texts,
             );
@@ -125,8 +126,8 @@ pub fn show_mode_bar(
             {
                 actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
             }
-            if outcome.center_view {
-                actions.push(PhotoAction::ZoomReset);
+            if outcome.toggle_mask {
+                actions.push(PhotoAction::TogglePreviewClip);
             }
         });
     actions

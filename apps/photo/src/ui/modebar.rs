@@ -90,13 +90,13 @@ impl PhotoEditMode {
 }
 
 /// Mode-bar outcome for one frame: persona switch and/or
-/// recenter request.
+/// out-of-document masking toggle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ModeBarOutcome {
     /// Newly chosen persona, if any.
     pub mode: Option<PhotoEditMode>,
-    /// Recenter the canvas on the document, if requested.
-    pub center_view: bool,
+    /// Mask toggle pressed (out-of-document content on/off).
+    pub toggle_mask: bool,
 }
 
 /// Draws the 2-row bar (modes then tool settings).
@@ -108,6 +108,7 @@ pub fn draw_photo_modebar(
     tool: PhotoCanvasTool,
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
+    preview_clip: bool,
     theme: &CygnusTheme,
     texts: cygnus_i18n::PhotoCatalog,
 ) -> ModeBarOutcome {
@@ -131,15 +132,19 @@ pub fn draw_photo_modebar(
                 }
             }
             ui.separator();
-            // Recenter the document in the viewport (fit + centered,
-            // like the Zoom 100% command): next to the personas so a
-            // lost canvas is one click away.
-            if Button::new(texts.get(cygnus_i18n::PhotoTextKey::CenterView))
-                .variant(ButtonVariant::Secondary)
+            // Mask toggle (out-of-document content on/off, same
+            // framing either way): next to the personas, active
+            // state visible like a persona.
+            if Button::new(texts.get(cygnus_i18n::PhotoTextKey::MaskView))
+                .variant(if preview_clip {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Secondary
+                })
                 .show(ui, theme)
                 .clicked()
             {
-                outcome.center_view = true;
+                outcome.toggle_mask = true;
             }
         });
     });
@@ -195,6 +200,7 @@ mod tests {
                     PhotoCanvasTool::Brush,
                     &mut brush,
                     &mut show_grid,
+                    false,
                     &theme,
                     texts,
                 );

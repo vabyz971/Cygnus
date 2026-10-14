@@ -121,6 +121,29 @@ impl AppearanceFrameCache {
     }
 }
 
+/// Zeroes pixels outside the document frame (clip-to-doc
+/// display): same plane dimensions and origin as the infinite
+/// mode, so toggling the clip never refits the view — out-of-frame
+/// content is masked, not cropped away.
+fn mask_outside_doc(
+    raster: &mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    origin_x: f32,
+    origin_y: f32,
+    doc_w: u32,
+    doc_h: u32,
+) {
+    let (w, h) = (raster.width(), raster.height());
+    let x0 = origin_x.ceil().max(0.0) as u32;
+    let y0 = origin_y.ceil().max(0.0) as u32;
+    let x1 = (origin_x + doc_w as f32).floor().min(w as f32).max(0.0) as u32;
+    let y1 = (origin_y + doc_h as f32).floor().min(h as f32).max(0.0) as u32;
+    for (x, y, px) in raster.enumerate_pixels_mut() {
+        if x < x0 || x >= x1 || y < y0 || y >= y1 {
+            *px = image::Rgba([0, 0, 0, 0]);
+        }
+    }
+}
+
 /// Downscales a composite to the `PREVIEW_MAX_DIMENSION` cap WITHOUT
 /// ever upscaling (`thumbnail` upscales small composites, which
 /// inflates the texture and skews the thumbnail→document scale).
@@ -156,8 +179,8 @@ fn capped_preview(image: image::DynamicImage) -> (image::DynamicImage, u64) {
 
 /// Computes the composite preview (capped at `PREVIEW_MAX_DIMENSION`).
 /// Expensive: call only on a background thread.
-/// `clip_to_doc` = preview clipped to the document (else infinite plane with
-/// the document origin in `origin_*`).
+/// `clip_to_doc` masks out-of-document pixels (same framing as the
+/// infinite plane — no refit jump when toggling).
 pub fn render_preview(document: &Document, clip_to_doc: bool) -> Option<PreviewImage> {
     render_preview_timed(document, clip_to_doc).0
 }
@@ -185,27 +208,48 @@ fn render_preview_timed_with(
     let doc_height = document.height.max(1);
     if clip_to_doc {
         let t_composite = std::time::Instant::now();
-        let cropped = document.composite();
+        let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
+        let composite =
+            document.composite_preview_with_stats(&|id| frame.image(id), &mut composite_stats);
         let composite_us = t_composite.elapsed().as_micros();
-        let Some(cropped) = cropped else {
+        let Some(composite) = composite else {
             return (None, PreviewTimings::default());
         };
+        let (full_w, full_h) = (composite.width(), composite.height());
+        // Same plane geometry as the infinite mode (framing
+        // identical — toggling the clip never refits the view).
+        let (origin_x, origin_y) = document
+            .preview_geometry_with(&|id| frame.image(id))
+            .map(|(_, _, ox, oy)| (ox, oy))
+            .unwrap_or((0.0, 0.0));
+        // Mask (not crop): pixels outside the document frame go
+        // transparent, dimensions and origin stay plane-sized.
+        let mut raster = composite.to_rgba8();
+        mask_outside_doc(&mut raster, origin_x, origin_y, doc_width, doc_height);
         let t_thumb = std::time::Instant::now();
-        let (capped, _) = capped_preview(cropped);
+        let (capped, _) = capped_preview(image::DynamicImage::ImageRgba8(raster));
         let raster = capped.to_rgba8();
         let (w, h) = (raster.width(), raster.height());
         let thumb_us = t_thumb.elapsed().as_micros();
-        // `composite()` centers the document (symmetric extents): the
-        // frame equals the buffer except when content is smaller than the document.
+        let kx = if full_w > 0 {
+            w as f32 / full_w as f32
+        } else {
+            1.0
+        };
+        let ky = if full_h > 0 {
+            h as f32 / full_h as f32
+        } else {
+            1.0
+        };
         return (
             Some(PreviewImage {
                 width: w,
                 height: h,
                 rgba: raster.into_raw(),
-                full_width: w,
-                full_height: h,
-                origin_x: (w as f32 - doc_width as f32) / 2.0,
-                origin_y: (h as f32 - doc_height as f32) / 2.0,
+                full_width: full_w,
+                full_height: full_h,
+                origin_x: origin_x * kx,
+                origin_y: origin_y * ky,
                 doc_width,
                 doc_height,
             }),
@@ -213,11 +257,11 @@ fn render_preview_timed_with(
                 composite_us,
                 thumb_us,
                 geometry_us: 0,
-                blend_us: 0,
-                layers_blended: 0,
-                pixels_processed: 0,
-                scope_px: u64::from(w) * u64::from(h),
-                full_px: u64::from(w) * u64::from(h),
+                blend_us: composite_stats.blend_us,
+                layers_blended: composite_stats.layers_blended,
+                pixels_processed: composite_stats.pixels_processed,
+                scope_px: composite_stats.scope_px,
+                full_px: u64::from(full_w) * u64::from(full_h),
                 preview_px: u64::from(w) * u64::from(h),
                 preview_resize_pixels: 0,
             },
@@ -307,24 +351,14 @@ impl EngineWorker {
         let doc_width = self.document.width.max(1);
         let doc_height = self.document.height.max(1);
         let resolve = |id: Uuid| frame.image(id);
-        // Extent + request per mode (same spaces as legacy):
-        // clipped ⇒ document viewport; infinite plane ⇒ request covering the
-        // scope (DOCUMENT SPACE via `scope_request`). Scale 1.0: display
-        // zoom stays state-only canvas-side (AGENTS.md).
-        let (scope, request) = if self.clip_to_doc {
-            let scope = photo_engine::document::ScopeGeom::document(doc_width, doc_height);
-            let request = photo_engine::document::RenderRequest::new(
-                TileRegion::new(0, 0, doc_width, doc_height),
-                1.0,
-            );
-            (scope, request)
-        } else {
-            let scope = self.render_worker.scope_for(&self.document, &resolve);
-            (
-                scope,
-                photo_engine::document::RenderWorker::scope_request(scope, 1.0),
-            )
-        };
+        // Clipped and infinite share the plane scope (identical
+        // framing — the clip only masks, never refits). Scale 1.0:
+        // display zoom stays state-only canvas-side (AGENTS.md).
+        let scope = self.render_worker.scope_for(&self.document, &resolve);
+        let (scope, request) = (
+            scope,
+            photo_engine::document::RenderWorker::scope_request(scope, 1.0),
+        );
         // Full-frame bypass: when the marked-dirty coverage dominates
         // a multi-tile scope, per-tile windowed re-renders redo the
         // same whole-image work per tile (a rotated layer spans every
@@ -364,20 +398,40 @@ impl EngineWorker {
         // full viewports); legacy reasons the same way over its buffer.
         let composite = assembled.image;
         if self.clip_to_doc {
+            // Mask (not crop): same plane framing as the infinite
+            // mode — toggling the clip never refits the view.
+            let (full_w, full_h) = (composite.width(), composite.height());
+            let (origin_x, origin_y) = self
+                .document
+                .preview_geometry_with(&|id| frame.image(id))
+                .map(|(_, _, ox, oy)| (ox, oy))
+                .unwrap_or((0.0, 0.0));
+            let mut raster = composite.to_rgba8();
+            mask_outside_doc(&mut raster, origin_x, origin_y, doc_width, doc_height);
             let t_thumb = std::time::Instant::now();
-            let (preview, resize_px) = capped_preview(composite);
+            let (preview, resize_px) = capped_preview(image::DynamicImage::ImageRgba8(raster));
             let raster = preview.to_rgba8();
             let (w, h) = (raster.width(), raster.height());
             let thumb_us = t_thumb.elapsed().as_micros();
+            let kx = if full_w > 0 {
+                w as f32 / full_w as f32
+            } else {
+                1.0
+            };
+            let ky = if full_h > 0 {
+                h as f32 / full_h as f32
+            } else {
+                1.0
+            };
             return (
                 Some(PreviewImage {
                     width: w,
                     height: h,
                     rgba: raster.into_raw(),
-                    full_width: w,
-                    full_height: h,
-                    origin_x: (w as f32 - doc_width as f32) / 2.0,
-                    origin_y: (h as f32 - doc_height as f32) / 2.0,
+                    full_width: full_w,
+                    full_height: full_h,
+                    origin_x: origin_x * kx,
+                    origin_y: origin_y * ky,
                     doc_width,
                     doc_height,
                 }),

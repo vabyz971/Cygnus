@@ -235,8 +235,8 @@ pub enum PhotoTextKey {
     NodeHint,
     /// Node tool contextual help.
     NodeHintText,
-    /// Recenter the canvas on the document (mode bar).
-    CenterView,
+    /// Mask out-of-document content (mode bar toggle).
+    MaskView,
 }
 
 /// Photo catalog bound to a language.
@@ -353,7 +353,7 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::ShapeStar,
     PhotoTextKey::NodeHint,
     PhotoTextKey::NodeHintText,
-    PhotoTextKey::CenterView,
+    PhotoTextKey::MaskView,
 ];
 
 impl PhotoCatalog {
@@ -484,7 +484,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ShapeStar => "Étoile",
         PhotoTextKey::NodeHint => "Nœuds",
         PhotoTextKey::NodeHintText => "Glisser : déplacer le nœud — molette : zoom",
-        PhotoTextKey::CenterView => "Centrer",
+        PhotoTextKey::MaskView => "Masquer",
     }
 }
 
@@ -599,7 +599,7 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ShapeStar => "Star",
         PhotoTextKey::NodeHint => "Nodes",
         PhotoTextKey::NodeHintText => "Drag: move node — wheel: zoom",
-        PhotoTextKey::CenterView => "Center",
+        PhotoTextKey::MaskView => "Mask",
     }
 }
 

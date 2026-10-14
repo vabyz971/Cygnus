@@ -427,12 +427,15 @@ fn draw_transform_content(
     }
 
     // --- Idle ------------------------------------------------------------
-    // Overlay target: visible selected pixel or vector layer with
-    // carrier dims (vectors are origin-normalized: same geometry).
+    // Overlay target: visible pixel, vector or group layer with
+    // carrier dims (vectors origin-normalized, groups on a virtual
+    // bounds placement — same frame visuals everywhere).
     let target = doc.ui.selected.and_then(|id| {
         find_layer_in(&doc.ui.layers, id).filter(|info| {
-            matches!(info.kind, PhotoLayerKind::Pixel | PhotoLayerKind::Vector)
-                && info.visible
+            matches!(
+                info.kind,
+                PhotoLayerKind::Pixel | PhotoLayerKind::Vector | PhotoLayerKind::Group
+            ) && info.visible
                 && info.dims.is_some()
         })
     });
@@ -442,10 +445,15 @@ fn draw_transform_content(
         let layer = info.id;
         let corners = frame_corners(&transform, dims);
         let quad = corners.map(|c| to_screen(c));
+        // Groups show the frame with no handles (body moves only —
+        // scale/rotate of a group is a follow-up).
+        let hover_for_handles = (info.kind != PhotoLayerKind::Group)
+            .then_some(hover_pos)
+            .flatten();
         if let [Some(a), Some(b), Some(c), Some(d)] = quad {
             let theme = ui.cygnus_theme();
             let hovered =
-                draw_transform_overlay(ui.painter(), theme, [a, b, c, d], hover_pos, false);
+                draw_transform_overlay(ui.painter(), theme, [a, b, c, d], hover_for_handles, false);
             if let Some(handle) = hovered {
                 ui.output_mut(|o| {
                     o.cursor_icon = handle.cursor();
@@ -476,8 +484,10 @@ fn draw_transform_content(
                         actions.push(PhotoAction::SelectLayer(hit));
                     }
                     let space = find_layer_in(&doc.ui.layers, hit).and_then(|info| {
-                        (matches!(info.kind, PhotoLayerKind::Pixel | PhotoLayerKind::Vector)
-                            && info.visible)
+                        (matches!(
+                            info.kind,
+                            PhotoLayerKind::Pixel | PhotoLayerKind::Vector | PhotoLayerKind::Group
+                        ) && info.visible)
                             .then(|| info.dims.map(|d| (d, info.transform)))
                             .flatten()
                     });

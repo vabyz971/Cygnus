@@ -227,6 +227,39 @@ impl LayerMask {
         self.version = next_appearance_version();
     }
 
+    /// Shifts the coverage buffer by rounded `(dx, dy)` (group moves:
+    /// canvas-space masks follow their carrier; revealed pixels stay
+    /// revealed-white like [`Self::full`]).
+    pub fn shift_by(&mut self, dx: f32, dy: f32) {
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let (w, h) = (self.image.width() as i32, self.image.height() as i32);
+        let (ox, oy) = (dx.round() as i32, dy.round() as i32);
+        let mut shifted =
+            ImageBuffer::from_pixel(w.max(1) as u32, h.max(1) as u32, Rgba([255, 255, 255, 255]));
+        let src = self.image.as_raw();
+        let dst = shifted.as_flat_samples_mut().samples;
+        let stride = w as usize * 4;
+        for y in 0..h {
+            let sy = y - oy;
+            if sy < 0 || sy >= h {
+                continue;
+            }
+            for x in 0..w {
+                let sx = x - ox;
+                if sx < 0 || sx >= w {
+                    continue;
+                }
+                let s = (sy as usize * stride) + (sx as usize * 4);
+                let d = (y as usize * stride) + (x as usize * 4);
+                dst[d..d + 4].copy_from_slice(&src[s..s + 4]);
+            }
+        }
+        self.image = Arc::new(shifted);
+        self.touch();
+    }
+
     /// 0.0..=1.0 coverage at pixel (x,y), accounting for `inverted`.
     /// Callers must check `enabled` first (returns 1.0 when disabled).
     #[inline]
@@ -631,10 +664,11 @@ impl LayerNode {
         self.masks_mut()?.iter_mut().find(|m| m.id == id)
     }
 
-    /// Shifts the layer transform by `(dx, dy)` document pixels (move
-    /// tool). Only pixel and vector layers carry a transform: groups and
-    /// adjustments return `false` (no-op). Returns `true` if the
-    /// layer was moved.
+    /// Shifts the layer transform by `(dx, dy)` document pixels (move tool).
+    /// Pixel and vector layers carry a transform; groups move
+    /// as a unit (children translated recursively, canvas-space
+    /// masks shifted); adjustments return `false` (no-op). Returns
+    /// `true` if the layer was moved.
     pub fn translate_by(&mut self, dx: f32, dy: f32) -> bool {
         match self {
             LayerNode::Pixel(l) => {
@@ -649,7 +683,17 @@ impl LayerNode {
                 v.touch();
                 true
             }
-            LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
+            LayerNode::Group(g) => {
+                let mut moved = false;
+                for child in &mut g.children {
+                    moved |= child.translate_by(dx, dy);
+                }
+                for mask in &mut g.masks {
+                    mask.shift_by(dx, dy);
+                }
+                moved || !g.masks.is_empty()
+            }
+            LayerNode::Adjustment(_) => false,
         }
     }
 

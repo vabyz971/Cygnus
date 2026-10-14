@@ -817,13 +817,22 @@ impl EngineWorker {
                 transform,
                 commit,
             } => {
-                // Guards: pixel/vector layer, finite values.
+                // Guards: pixel/vector layer (stored transform +
+                // raster dims), group (virtual bounds placement),
+                // finite values.
                 let current = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => {
                         (pixels.transform, pixels.dimensions())
                     }
                     Some(photo_engine::LayerNode::Vector(vector)) => {
                         (vector.transform, vector.raster_dims().unwrap_or((1, 1)))
+                    }
+                    Some(photo_engine::LayerNode::Group(group)) => {
+                        let region = photo_engine::tiles::group_footprint(group);
+                        let mut placed = photo_engine::Transform2D::default();
+                        placed.offset_x = region.x as f32;
+                        placed.offset_y = region.y as f32;
+                        (placed, (region.width.max(1), region.height.max(1)))
                     }
                     _ => return Mutation::unchanged(),
                 };
@@ -849,7 +858,33 @@ impl EngineWorker {
                 }
                 self.coalesced_transform_layer = (!commit).then_some(layer);
                 let (old_t, (w, h)) = current;
-                if let Some(node) = self.document.find_mut(layer) {
+                // Groups carry no stored transform: the overlay
+                // commits a virtual placement, so apply the offset
+                // DELTA to the contents (children + canvas-space
+                // masks) instead of storing it.
+                if matches!(
+                    self.document.find(layer),
+                    Some(photo_engine::LayerNode::Group(_))
+                ) {
+                    let region = match self.document.find(layer) {
+                        Some(photo_engine::LayerNode::Group(group)) => {
+                            photo_engine::tiles::group_footprint(group)
+                        }
+                        _ => photo_engine::tiles::TileRegion::EMPTY,
+                    };
+                    let dx = transform.offset_x - region.x as f32;
+                    let dy = transform.offset_y - region.y as f32;
+                    if let Some(photo_engine::LayerNode::Group(group)) =
+                        self.document.find_mut(layer)
+                    {
+                        for child in &mut group.children {
+                            child.translate_by(dx, dy);
+                        }
+                        for mask in &mut group.masks {
+                            mask.shift_by(dx, dy);
+                        }
+                    }
+                } else if let Some(node) = self.document.find_mut(layer) {
                     match node {
                         photo_engine::LayerNode::Pixel(pixels) => {
                             pixels.transform = transform;
@@ -1634,11 +1669,12 @@ impl EngineWorker {
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
             PhotoEngineCommand::SetPreviewClip { clip } => {
-                // Display preference: no history snapshot.
-                // Pixels unchanged (same R ⇒ same render in both modes):
-                // no marking, scope detection covers the rest.
+                // Display preference: no history snapshot. The scope
+                // changes (plane ↔ document), so the composite MUST
+                // re-render now — global marking, not None (stale tiles
+                // would freeze the view until the next edit).
                 self.clip_to_doc = clip;
-                Mutation::changed(invalidation).with_dirty(DirtyMark::None)
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
             }
         }
     }
@@ -2635,7 +2671,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_clip_crops_to_document_without_history() {
+    fn preview_clip_masks_without_refit_nor_history() {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
         // Off-frame layer: the infinite-plane preview extends past the document.
@@ -2657,15 +2693,41 @@ mod tests {
         assert!(wide.full_width > wide.doc_width, "plan infini plus large");
         assert!((wide.origin_x - 2.0).abs() < 1.0, "origine exacte");
         let undo_len = worker.undo.len();
-        // Clipping: preview at document dimensions, no history.
+        // Clipping masks (no history, immediate re-render): same
+        // framing as the plane — no refit jump.
         worker.apply(PhotoEngineCommand::SetPreviewClip { clip: true });
         assert_eq!(worker.undo.len(), undo_len, "pas de snapshot");
         let clipped = match worker.apply(PhotoEngineCommand::Refresh) {
             PhotoEngineResponse::LayersChanged { preview, .. } => preview.expect("apercu rogne"),
             other => panic!("reponse inattendue : {other:?}"),
         };
-        assert_eq!(clipped.full_width, clipped.doc_width);
-        assert_eq!(clipped.full_height, clipped.doc_height);
+        assert_eq!(clipped.full_width, wide.full_width, "même cadrage");
+        assert_eq!(clipped.full_height, wide.full_height, "même cadrage");
+        assert_eq!(clipped.origin_x, wide.origin_x, "même origine");
+        assert_eq!(clipped.origin_y, wide.origin_y, "même origine");
+        // Inside the document: identical pixels; outside: masked.
+        let (fw, ox, doc) = (wide.full_width, wide.origin_x, wide.doc_width);
+        let inside_same = wide
+            .rgba
+            .chunks_exact(4)
+            .zip(clipped.rgba.chunks_exact(4))
+            .enumerate()
+            .filter(|(i, _)| {
+                let x = (*i as u32 % fw) as f32;
+                x >= ox && x < ox + doc as f32
+            })
+            .all(|(_, (a, b))| a == b);
+        assert!(inside_same, "pixels du document intacts");
+        let outside_masked = clipped
+            .rgba
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(i, _)| {
+                let x = (*i as u32 % fw) as f32;
+                x < ox || x >= ox + doc as f32
+            })
+            .all(|(_, b)| b[3] == 0);
+        assert!(outside_masked, "hors cadre masqué");
     }
 
     #[test]
@@ -4527,6 +4589,48 @@ mod single_pass_tests {
                 assert_eq!(v.transform.offset_x, before + 5.0);
             }
             _ => panic!("calque vecteur attendu"),
+        }
+    }
+
+    #[test]
+    fn transform_sur_groupe_deplace_enfants() {
+        use photo_engine::{GroupLayer, LayerNode, PixelLayer};
+        let img = std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4));
+        let mut doc = Document::new(32, 32);
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", img.clone())));
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new("b", img.clone())));
+        // Group the two layers directly (the UI groups through commands).
+        let children = std::mem::take(&mut doc.root);
+        let group = GroupLayer::new("g", children);
+        let group_id = group.id;
+        doc.push_layer(LayerNode::Group(group));
+        let mut worker = EngineWorker::new(doc);
+        // Virtual placement: current bounds origin + (4, 2).
+        let region = match &worker.test_document().root[0] {
+            LayerNode::Group(g) => photo_engine::tiles::group_footprint(g),
+            _ => panic!("groupe attendu"),
+        };
+        let mut placement = photo_engine::Transform2D::default();
+        placement.offset_x = region.x as f32 + 4.0;
+        placement.offset_y = region.y as f32 + 2.0;
+        worker.apply(PhotoEngineCommand::SetTransform {
+            layer: group_id,
+            transform: placement,
+            commit: true,
+        });
+        match &worker.test_document().root[0] {
+            LayerNode::Group(g) => {
+                assert_eq!(g.children.len(), 2);
+                for node in &g.children {
+                    let t = worker.test_document().transform_of(node.id());
+                    assert_eq!(
+                        t.map(|t| (t.offset_x, t.offset_y)),
+                        Some((4.0, 2.0)),
+                        "enfant déplacé du delta"
+                    );
+                }
+            }
+            _ => panic!("groupe attendu"),
         }
     }
 
