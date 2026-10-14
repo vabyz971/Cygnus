@@ -23,8 +23,8 @@
 //! so plan the split in a dedicated PR — no external API must change).
 //!
 //! Hybrid architecture:
-//! - [`Document`] owns a [`LayerNode`] tree: pixel layers,
-//!   groups and adjustment layers, nestable at will.
+//! - [`Document`] owns a [`LayerNode`] tree: pixel, vector, group
+//!   and adjustment layers, nestable at will.
 //! - Each [`PixelLayer`] keeps its SOURCE image intact; edits live
 //!   in [`FilterLayer`] sub-layers (Affinity-style),
 //!   evaluated sequentially (see [`crate::filters`]).
@@ -376,10 +376,74 @@ impl AdjustmentLayer {
     }
 }
 
-/// Tree node: pixel layer, group or adjustment.
+/// Vector layer: resolution-independent paths (scene model),
+/// rasterized on demand for the CPU preview.
+///
+/// Like a pixel layer (own transform, blend, live-filter chain,
+/// masks, appearance version) but the source is curves, never
+/// pixels: zoom stays crisp, `to_legacy` round-trips through the
+/// unified [`crate::scene::Layer`]. No children in v1 (nesting
+/// arrives with groups-over-vectors).
+#[derive(Clone, Debug)]
+pub struct VectorLayer {
+    pub id: Uuid,
+    pub name: String,
+    /// Curve source (paths + flat fill).
+    pub vector: crate::scene::VectorLayer,
+    pub transform: Transform2D,
+    /// 0..=100
+    pub opacity: f32,
+    pub blend_mode: BlendMode,
+    pub visible: bool,
+    /// Live-filter sub-layers applied to the rasterized appearance
+    /// (same order as pixel/group chains).
+    pub filter_layers: Vec<FilterLayer>,
+    /// Canvas-space coverage masks (like groups, NOT source-space:
+    /// the raster is bounds-shifted per appearance).
+    pub masks: Vec<LayerMask>,
+    /// Bumped on every vector/filter mutation (appearance invalidation).
+    pub appearance_version: u64,
+}
+
+impl VectorLayer {
+    /// Create a vector layer from a scene payload.
+    pub fn new(name: impl Into<String>, vector: crate::scene::VectorLayer) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            vector,
+            transform: Transform2D::default(),
+            opacity: 100.0,
+            blend_mode: BlendMode::Normal,
+            visible: true,
+            filter_layers: Vec::new(),
+            masks: Vec::new(),
+            appearance_version: next_appearance_version(),
+        }
+    }
+
+    /// Raster bounds origin folded into a placement transform
+    /// (appearance image is bounds-shifted; user transform applies
+    /// on top, like pixels).
+    pub fn placement(&self) -> Option<Transform2D> {
+        let bounds = crate::vector_bounds(&self.vector)?;
+        let mut t = self.transform;
+        t.offset_x += bounds.x0.floor();
+        t.offset_y += bounds.y0.floor();
+        Some(t)
+    }
+
+    /// Bumps the appearance version (call after any vector/filter mutation).
+    pub fn touch(&mut self) {
+        self.appearance_version = next_appearance_version();
+    }
+}
+
+/// Tree node: pixel, vector, group or adjustment layer.
 #[derive(Clone, Debug)]
 pub enum LayerNode {
     Pixel(PixelLayer),
+    Vector(VectorLayer),
     Group(GroupLayer),
     Adjustment(AdjustmentLayer),
 }
@@ -388,6 +452,7 @@ impl LayerNode {
     pub fn id(&self) -> Uuid {
         match self {
             LayerNode::Pixel(l) => l.id,
+            LayerNode::Vector(v) => v.id,
             LayerNode::Group(g) => g.id,
             LayerNode::Adjustment(a) => a.id,
         }
@@ -396,6 +461,7 @@ impl LayerNode {
     pub fn name(&self) -> &str {
         match self {
             LayerNode::Pixel(l) => &l.name,
+            LayerNode::Vector(v) => &v.name,
             LayerNode::Group(g) => &g.name,
             LayerNode::Adjustment(a) => &a.name,
         }
@@ -404,6 +470,7 @@ impl LayerNode {
     pub fn set_name(&mut self, name: String) {
         match self {
             LayerNode::Pixel(l) => l.name = name,
+            LayerNode::Vector(v) => v.name = name,
             LayerNode::Group(g) => g.name = name,
             LayerNode::Adjustment(a) => a.name = name,
         }
@@ -412,6 +479,7 @@ impl LayerNode {
     pub fn visible(&self) -> bool {
         match self {
             LayerNode::Pixel(l) => l.visible,
+            LayerNode::Vector(v) => v.visible,
             LayerNode::Group(g) => g.visible,
             LayerNode::Adjustment(a) => a.visible,
         }
@@ -420,6 +488,7 @@ impl LayerNode {
     pub fn set_visible(&mut self, visible: bool) {
         match self {
             LayerNode::Pixel(l) => l.visible = visible,
+            LayerNode::Vector(v) => v.visible = visible,
             LayerNode::Group(g) => g.visible = visible,
             LayerNode::Adjustment(a) => a.visible = visible,
         }
@@ -428,6 +497,7 @@ impl LayerNode {
     pub fn opacity(&self) -> f32 {
         match self {
             LayerNode::Pixel(l) => l.opacity,
+            LayerNode::Vector(v) => v.opacity,
             LayerNode::Group(g) => g.opacity,
             LayerNode::Adjustment(a) => a.opacity,
         }
@@ -437,6 +507,7 @@ impl LayerNode {
         let clamped = opacity.clamp(0.0, 100.0);
         match self {
             LayerNode::Pixel(l) => l.opacity = clamped,
+            LayerNode::Vector(v) => v.opacity = clamped,
             LayerNode::Group(g) => g.opacity = clamped,
             LayerNode::Adjustment(a) => a.opacity = clamped,
         }
@@ -446,6 +517,7 @@ impl LayerNode {
     pub fn blend_mode(&self) -> Option<BlendMode> {
         match self {
             LayerNode::Pixel(l) => Some(l.blend_mode),
+            LayerNode::Vector(v) => Some(v.blend_mode),
             LayerNode::Group(g) => Some(g.blend_mode),
             LayerNode::Adjustment(_) => None,
         }
@@ -454,16 +526,18 @@ impl LayerNode {
     pub fn set_blend_mode(&mut self, mode: BlendMode) {
         match self {
             LayerNode::Pixel(l) => l.blend_mode = mode,
+            LayerNode::Vector(v) => v.blend_mode = mode,
             LayerNode::Group(g) => g.blend_mode = mode,
             LayerNode::Adjustment(_) => {}
         }
     }
 
-    /// Filter chain of an ADJUSTMENT layer (pixels carry [`FilterLayer`]
-    /// sub-layers — see `PixelLayer::filter_layers`).
+    /// Filter chain of an ADJUSTMENT layer (pixels, vectors and groups
+    /// carry [`FilterLayer`] sub-layers — see `PixelLayer::filter_layers`).
     pub fn filters(&self) -> Option<&Vec<FilterNode>> {
         match self {
             LayerNode::Pixel(_) => None,
+            LayerNode::Vector(_) => None,
             LayerNode::Adjustment(a) => Some(&a.filters),
             LayerNode::Group(_) => None,
         }
@@ -472,16 +546,17 @@ impl LayerNode {
     pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterNode>> {
         match self {
             LayerNode::Pixel(_) => None,
+            LayerNode::Vector(_) => None,
             LayerNode::Adjustment(a) => Some(&mut a.filters),
             LayerNode::Group(_) => None,
         }
     }
 
-    /// All coverage masks of a pixel layer, group or
-    /// adjustment.
+    /// All coverage masks of a pixel, vector, group or adjustment layer.
     pub fn masks(&self) -> &[LayerMask] {
         match self {
             LayerNode::Pixel(l) => &l.masks,
+            LayerNode::Vector(v) => &v.masks,
             LayerNode::Group(g) => &g.masks,
             LayerNode::Adjustment(a) => &a.masks,
         }
@@ -490,17 +565,19 @@ impl LayerNode {
     pub fn masks_mut(&mut self) -> Option<&mut Vec<LayerMask>> {
         match self {
             LayerNode::Pixel(l) => Some(&mut l.masks),
+            LayerNode::Vector(v) => Some(&mut v.masks),
             LayerNode::Group(g) => Some(&mut g.masks),
             LayerNode::Adjustment(a) => Some(&mut a.masks),
         }
     }
 
     /// Content children (nesting): pixel layers (clipped by the parent
-    /// alpha) and groups. Adjustments have no children
+    /// alpha) and groups. Adjustments and vectors have no children
     /// (`&[]` / `None`).
     pub fn children(&self) -> &[LayerNode] {
         match self {
             LayerNode::Pixel(l) => &l.children,
+            LayerNode::Vector(_) => &[],
             LayerNode::Group(g) => &g.children,
             LayerNode::Adjustment(_) => &[],
         }
@@ -509,17 +586,19 @@ impl LayerNode {
     pub fn children_mut(&mut self) -> Option<&mut Vec<LayerNode>> {
         match self {
             LayerNode::Pixel(l) => Some(&mut l.children),
+            LayerNode::Vector(_) => None,
             LayerNode::Group(g) => Some(&mut g.children),
             LayerNode::Adjustment(_) => None,
         }
     }
 
-    /// Filter sub-layers ([`FilterLayer`]): pixel layers and groups.
-    /// Adjustments carry plain [`FilterNode`]s (see
+    /// Filter sub-layers ([`FilterLayer`]): pixel, vector and group
+    /// layers. Adjustments carry plain [`FilterNode`]s (see
     /// [`Self::filters`]).
     pub fn filter_layers(&self) -> Option<&Vec<FilterLayer>> {
         match self {
             LayerNode::Pixel(l) => Some(&l.filter_layers),
+            LayerNode::Vector(v) => Some(&v.filter_layers),
             LayerNode::Group(g) => Some(&g.filter_layers),
             LayerNode::Adjustment(_) => None,
         }
@@ -528,6 +607,7 @@ impl LayerNode {
     pub fn filter_layers_mut(&mut self) -> Option<&mut Vec<FilterLayer>> {
         match self {
             LayerNode::Pixel(l) => Some(&mut l.filter_layers),
+            LayerNode::Vector(v) => Some(&mut v.filter_layers),
             LayerNode::Group(g) => Some(&mut g.filter_layers),
             LayerNode::Adjustment(_) => None,
         }
@@ -543,7 +623,7 @@ impl LayerNode {
     }
 
     /// Shifts the layer transform by `(dx, dy)` document pixels (move
-    /// tool). Only pixel layers carry a transform: groups and
+    /// tool). Only pixel and vector layers carry a transform: groups and
     /// adjustments return `false` (no-op). Returns `true` if the
     /// layer was moved.
     pub fn translate_by(&mut self, dx: f32, dy: f32) -> bool {
@@ -552,6 +632,12 @@ impl LayerNode {
                 l.transform.offset_x += dx;
                 l.transform.offset_y += dy;
                 l.touch();
+                true
+            }
+            LayerNode::Vector(v) => {
+                v.transform.offset_x += dx;
+                v.transform.offset_y += dy;
+                v.touch();
                 true
             }
             LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
@@ -593,6 +679,19 @@ impl LayerNode {
                 for c in &mut g.children {
                     c.regenerate_ids();
                 }
+            }
+            LayerNode::Vector(v) => {
+                v.id = Uuid::new_v4();
+                for f in &mut v.filter_layers {
+                    f.id = Uuid::new_v4();
+                    for m in &mut f.masks {
+                        m.id = Uuid::new_v4();
+                    }
+                }
+                for m in &mut v.masks {
+                    m.id = Uuid::new_v4();
+                }
+                v.touch();
             }
             LayerNode::Adjustment(a) => {
                 a.id = Uuid::new_v4();

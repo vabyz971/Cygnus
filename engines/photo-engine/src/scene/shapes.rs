@@ -39,6 +39,9 @@ fn closed_path(vertices: Vec<Vec2>) -> VectorLayer {
         }],
         // Opaque black until the style slice (fills/gradients).
         fill: [0, 0, 0, 255],
+        filter_layers: Vec::new(),
+        masks: Vec::new(),
+        appearance_version: 0,
     }
 }
 

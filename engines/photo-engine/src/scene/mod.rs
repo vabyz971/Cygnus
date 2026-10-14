@@ -41,12 +41,19 @@ use uuid::Uuid;
 use crate::document::{
     AdjustmentLayer as LegacyAdjustment, BlendMode, FilterLayer, FilterNode,
     GroupLayer as LegacyGroup, LayerMask, LayerNode, PixelLayer as LegacyPixel, Transform2D,
+    VectorLayer as LegacyVector,
 };
 use datatypes::Vec2;
 
 pub mod pen;
 pub mod rasterize;
 pub mod shapes;
+
+pub use pen::{
+    PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, quad_point,
+    translate,
+};
+pub use rasterize::{rasterize, rasterize_bounds, vector_bounds};
 
 /// Non-destructive layer effect (spec §5 item 4).
 ///
@@ -142,15 +149,25 @@ impl PathSegment {
 
 /// Vector content: resolution-independent paths, SDF at draw time.
 ///
-/// Placeholder until the Vector persona (§5 item 1). Never
-/// pre-triangulated: zoom stays crisp by construction.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// Never pre-triangulated: zoom stays crisp by construction. The
+/// live-filter chain, masks and appearance version ride along (same
+/// order as pixel/group chains) so the legacy lift is lossless.
+/// (`FilterLayer`/`LayerMask` are neither `PartialEq` nor `Serialize`,
+/// so neither is this payload — like its legacy siblings.)
+#[derive(Debug, Clone)]
 pub struct VectorLayer {
     /// Paths in paint order (index 0 = bottom).
     pub paths: Vec<VectorPath>,
     /// Flat fill color (RGBA8) for closed paths. Gradients and
     /// strokes arrive with the style slice (§5 items 1+4).
     pub fill: [u8; 4],
+    /// Live-filter sub-layers applied to the rasterized appearance.
+    pub filter_layers: Vec<FilterLayer>,
+    /// Canvas-space coverage masks (like groups: the raster is
+    /// bounds-shifted per appearance).
+    pub masks: Vec<LayerMask>,
+    /// Appearance-cache invalidation key.
+    pub appearance_version: u64,
 }
 
 /// Text content: editable runs, vectorized at draw time.
@@ -298,6 +315,24 @@ impl Layer {
                 effects: Vec::new(),
                 children: p.children.iter().map(Self::from_legacy).collect(),
             },
+            LayerNode::Vector(v) => Self {
+                id: v.id,
+                name: v.name.clone(),
+                visible: v.visible,
+                locked: false,
+                opacity: v.opacity,
+                blend_mode: v.blend_mode,
+                transform: v.transform,
+                content: LayerContent::Vector(VectorLayer {
+                    paths: v.vector.paths.clone(),
+                    fill: v.vector.fill,
+                    filter_layers: v.filter_layers.clone(),
+                    masks: v.masks.clone(),
+                    appearance_version: v.appearance_version,
+                }),
+                effects: Vec::new(),
+                children: Vec::new(),
+            },
             LayerNode::Group(g) => Self {
                 id: g.id,
                 name: g.name.clone(),
@@ -336,11 +371,11 @@ impl Layer {
     /// history, `.cygp`).
     ///
     /// Returns `None` — never a degraded value — when the layer
-    /// is not representable: vector/text content, non-identity
-    /// transform on group/adjustment, children on adjustment, or
-    /// any non-empty [`Layer::effects`]. `locked` is display-only
-    /// and intentionally dropped (the legacy model can't express
-    /// it and never enforced it).
+    /// is not representable: text content (no legacy counterpart),
+    /// non-identity transform on group/adjustment, children on
+    /// adjustment/vector, or any non-empty [`Layer::effects`].
+    /// `locked` is display-only and intentionally dropped (the
+    /// legacy model can't express it and never enforced it).
     pub fn to_legacy(&self) -> Option<LayerNode> {
         if !self.effects.is_empty() {
             return None;
@@ -398,7 +433,30 @@ impl Layer {
                     masks: a.masks.clone(),
                 }))
             }
-            LayerContent::Vector(_) | LayerContent::Text(_) => None,
+            LayerContent::Vector(v) => {
+                if !self.children.is_empty() {
+                    return None;
+                }
+                Some(LayerNode::Vector(LegacyVector {
+                    id: self.id,
+                    name: self.name.clone(),
+                    vector: VectorLayer {
+                        paths: v.paths.clone(),
+                        fill: v.fill,
+                        filter_layers: Vec::new(),
+                        masks: Vec::new(),
+                        appearance_version: 0,
+                    },
+                    transform: self.transform,
+                    opacity: self.opacity,
+                    blend_mode: self.blend_mode,
+                    visible: self.visible,
+                    filter_layers: v.filter_layers.clone(),
+                    masks: v.masks.clone(),
+                    appearance_version: v.appearance_version,
+                }))
+            }
+            LayerContent::Text(_) => None,
         }
     }
 
@@ -480,14 +538,25 @@ mod tests {
     }
 
     #[test]
-    fn vector_and_text_are_not_legacy_representable() {
-        let vector = Layer::new(
-            "v",
-            LayerContent::Vector(VectorLayer {
-                paths: vec![],
-                fill: [0, 0, 0, 255],
-            }),
-        );
+    fn vector_round_trip_preserves_paths_and_chain() {
+        let mut legacy = crate::document::VectorLayer::new("v", crate::rect(0.0, 0.0, 4.0, 4.0));
+        legacy.opacity = 55.0;
+        let layer = Layer::from_legacy(&LayerNode::Vector(legacy));
+        assert!(matches!(layer.content, LayerContent::Vector(_)));
+        assert_eq!(layer.opacity, 55.0);
+        let back = layer.to_legacy().expect("vector is representable");
+        match back {
+            LayerNode::Vector(v) => {
+                assert_eq!(v.name, "v");
+                assert_eq!(v.opacity, 55.0);
+                assert_eq!(v.vector.paths.len(), 1);
+            }
+            _ => panic!("expected vector"),
+        }
+    }
+
+    #[test]
+    fn text_is_not_legacy_representable() {
         let text = Layer::new(
             "t",
             LayerContent::Text(TextLayer {
@@ -495,7 +564,6 @@ mod tests {
                 font_size: 16.0,
             }),
         );
-        assert!(vector.to_legacy().is_none());
         assert!(text.to_legacy().is_none());
     }
 
@@ -526,6 +594,9 @@ mod tests {
             LayerContent::Vector(VectorLayer {
                 paths: vec![],
                 fill: [0, 0, 0, 255],
+                filter_layers: Vec::new(),
+                masks: Vec::new(),
+                appearance_version: 0,
             }),
         ));
         assert!(adj.to_legacy().is_none());

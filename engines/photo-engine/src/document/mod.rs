@@ -14,7 +14,7 @@ pub(crate) use compositing::{preview_buf, thumb_buf};
 pub use dirty::DirtyRegion;
 pub use model::{
     AdjustmentLayer, Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask,
-    LayerNode, PixelLayer, RgbaBuf, Transform2D, next_appearance_version,
+    LayerNode, PixelLayer, RgbaBuf, Transform2D, VectorLayer, next_appearance_version,
 };
 pub use preview_surface::{PreviewSurface, PreviewSurfaceStats};
 pub use scheduler::{

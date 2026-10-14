@@ -406,6 +406,19 @@ pub fn node_footprint(node: &LayerNode) -> TileRegion {
             let own = layer_footprint_in_document(&l.transform, w, h);
             own.union(children_footprint(&l.children))
         }
+        LayerNode::Vector(v) => {
+            let Some(placed) = v.placement() else {
+                return TileRegion::EMPTY;
+            };
+            // Same dimensions as the appearance raster
+            // (`rasterize_bounds`): bounds size, ≥1×1.
+            let Some(bounds) = crate::scene::vector_bounds(&v.vector) else {
+                return TileRegion::EMPTY;
+            };
+            let w = (bounds.x1.ceil() - bounds.x0.floor()).max(1.0) as u32;
+            let h = (bounds.y1.ceil() - bounds.y0.floor()).max(1.0) as u32;
+            layer_footprint_in_document(&placed, w, h)
+        }
         LayerNode::Group(g) => group_footprint(g),
         LayerNode::Adjustment(_) => TileRegion::EMPTY,
     }
@@ -444,6 +457,11 @@ pub fn node_mark_region(node: &LayerNode) -> TileRegion {
                 .pad(appearance_spread(&l.filter_layers));
             own.union(children_mark_region(&l.children))
         }
+        LayerNode::Vector(v) => {
+            let mut region = node_footprint(node);
+            region = region.pad(appearance_spread(&v.filter_layers));
+            region
+        }
         LayerNode::Group(g) => {
             let mut region = TileRegion::EMPTY;
             group_mark_into(&g.children, &mut region);
@@ -466,7 +484,7 @@ fn children_mark_region(nodes: &[LayerNode]) -> TileRegion {
 fn group_mark_into(nodes: &[LayerNode], region: &mut TileRegion) {
     for node in nodes {
         match node {
-            LayerNode::Pixel(_) | LayerNode::Group(_) => {
+            LayerNode::Pixel(_) | LayerNode::Vector(_) | LayerNode::Group(_) => {
                 *region = region.union(node_mark_region(node));
             }
             LayerNode::Adjustment(_) => {}
@@ -481,6 +499,9 @@ fn group_footprint_into(nodes: &[LayerNode], region: &mut TileRegion) {
                 let (w, h) = l.dimensions();
                 let own = layer_footprint_in_document(&l.transform, w, h);
                 *region = region.union(own.union(children_footprint(&l.children)));
+            }
+            LayerNode::Vector(_) => {
+                *region = region.union(node_footprint(node));
             }
             LayerNode::Group(g) => group_footprint_into(&g.children, region),
             // Nested adjustment: global fallback decided by the caller

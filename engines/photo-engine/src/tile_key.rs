@@ -56,7 +56,9 @@ use image::{DynamicImage, GenericImageView};
 
 use tiles::{Padding, TileGrid, TileId};
 
-use crate::document::{AdjustmentLayer, Document, FilterNode, GroupLayer, LayerNode, PixelLayer};
+use crate::document::{
+    AdjustmentLayer, Document, FilterNode, GroupLayer, LayerNode, PixelLayer, VectorLayer,
+};
 use crate::renderer::filters_signature;
 
 /// CPU kernel version (bump if `image::*` / rayon / blend changes).
@@ -215,6 +217,10 @@ fn hash_layer_node(h: &mut DefaultHasher, node: &LayerNode) {
             h.write_u8(1);
             hash_group_layer(h, g);
         }
+        LayerNode::Vector(v) => {
+            h.write_u8(3);
+            hash_vector_layer(h, v);
+        }
         LayerNode::Adjustment(a) => {
             h.write_u8(2);
             hash_adjustment_layer(h, a);
@@ -258,6 +264,26 @@ fn hash_adjustment_layer(h: &mut DefaultHasher, a: &AdjustmentLayer) {
     h.write_u32(a.opacity.to_bits());
     h.write_u64(adjustment_signature(&a.filters));
     h.write_u64(crate::renderer::mask_signature(&a.masks));
+}
+
+/// Vector fingerprint: identity + display state + appearance version
+/// (bumped on every vector/filter mutation) + geometry summary (path
+/// count, closure, fill). No pixel hashing: the source is curves.
+fn hash_vector_layer(h: &mut DefaultHasher, v: &VectorLayer) {
+    h.write(v.id.as_bytes());
+    h.write_u8(u8::from(v.visible));
+    h.write_u32(v.opacity.to_bits());
+    h.write_u32(v.blend_mode.id());
+    hash_transform(h, &v.transform);
+    h.write_u64(v.appearance_version);
+    h.write(&v.vector.fill);
+    h.write_usize(v.vector.paths.len());
+    for path in &v.vector.paths {
+        h.write_usize(path.segments.len());
+        h.write_u8(u8::from(path.closed));
+    }
+    h.write_u64(filters_signature(&v.filter_layers));
+    h.write_u64(crate::renderer::mask_signature(&v.masks));
 }
 
 /// Source identity: the `Arc` address (shared by snapshots, hence stable

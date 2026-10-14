@@ -1,7 +1,7 @@
 use super::compositing::{needs_fallback_in, scope_half_extents};
 use super::model::{
     Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask, LayerNode, PixelLayer,
-    RgbaBuf, Transform2D,
+    RgbaBuf, Transform2D, VectorLayer,
 };
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use std::cell::RefCell;
@@ -93,6 +93,14 @@ impl Document {
     pub fn pixel_layer_mut(&mut self, id: Uuid) -> Option<&mut PixelLayer> {
         match self.find_mut(id) {
             Some(LayerNode::Pixel(l)) => Some(l),
+            _ => None,
+        }
+    }
+
+    /// Typed access to the vector layer.
+    pub fn vector_layer(&self, id: Uuid) -> Option<&VectorLayer> {
+        match self.find(id) {
+            Some(LayerNode::Vector(v)) => Some(v),
             _ => None,
         }
     }
@@ -747,6 +755,7 @@ impl Document {
         let fid = filter.id;
         match self.find_mut(layer_id)? {
             LayerNode::Pixel(l) => l.filter_layers.push(filter),
+            LayerNode::Vector(v) => v.filter_layers.push(filter),
             LayerNode::Group(g) => g.filter_layers.push(filter),
             LayerNode::Adjustment(a) => a.filters.push(FilterNode {
                 id: filter.id,
@@ -766,6 +775,10 @@ impl Document {
             LayerNode::Pixel(l) => {
                 let idx = l.filter_layers.iter().position(|f| f.id == filter_id)?;
                 l.filter_layers.remove(idx)
+            }
+            LayerNode::Vector(v) => {
+                let idx = v.filter_layers.iter().position(|f| f.id == filter_id)?;
+                v.filter_layers.remove(idx)
             }
             LayerNode::Group(g) => {
                 let idx = g.filter_layers.iter().position(|f| f.id == filter_id)?;
@@ -798,6 +811,11 @@ impl Document {
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.params),
+            Some(LayerNode::Vector(v)) => v
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.params),
             Some(LayerNode::Group(g)) => g
                 .filter_layers
                 .iter_mut()
@@ -823,6 +841,11 @@ impl Document {
     pub fn set_filter_enabled(&mut self, layer_id: Uuid, filter_id: Uuid, enabled: bool) -> bool {
         let target = match self.find_mut(layer_id) {
             Some(LayerNode::Pixel(l)) => l
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.enabled),
+            Some(LayerNode::Vector(v)) => v
                 .filter_layers
                 .iter_mut()
                 .find(|f| f.id == filter_id)
@@ -899,8 +922,10 @@ impl Document {
             return false;
         }
         filters.swap(idx, other);
-        if let LayerNode::Pixel(l) = node {
-            l.touch();
+        match node {
+            LayerNode::Pixel(l) => l.touch(),
+            LayerNode::Vector(v) => v.touch(),
+            _ => {}
         }
         true
     }
@@ -919,15 +944,21 @@ impl Document {
         }
         let new_id = copy.id;
         filters.insert(idx + 1, copy);
-        if let LayerNode::Pixel(l) = node {
-            l.touch();
+        match node {
+            LayerNode::Pixel(l) => l.touch(),
+            LayerNode::Vector(v) => v.touch(),
+            _ => {}
         }
         Some(new_id)
     }
 
+    /// Touches an appearance carrier (pixel or vector layer) for
+    /// cache invalidation. Name kept for call-site stability.
     fn touch_pixel(&mut self, layer_id: Uuid) {
-        if let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) {
-            l.touch();
+        match self.find_mut(layer_id) {
+            Some(LayerNode::Pixel(l)) => l.touch(),
+            Some(LayerNode::Vector(v)) => v.touch(),
+            _ => {}
         }
     }
 
@@ -950,10 +981,11 @@ impl Document {
 
     // -- Polymorphic attributes (node OR filter sub-layer) ---------------
 
-    /// Node (pixels) or filter sub-layer transform.
+    /// Node (pixels, vectors) or filter sub-layer transform.
     pub fn transform_of(&self, id: Uuid) -> Option<Transform2D> {
         match self.find(id) {
             Some(LayerNode::Pixel(l)) => Some(l.transform),
+            Some(LayerNode::Vector(v)) => Some(v.transform),
             _ => self.find_filter_layer(id).map(|f| f.transform),
         }
     }
@@ -961,9 +993,16 @@ impl Document {
     /// Replaces the transform (touches the carrier layer for invalidation).
     pub fn set_transform_any(&mut self, id: Uuid, transform: Transform2D) -> bool {
         if let Some(node) = self.find_mut(id) {
-            if let LayerNode::Pixel(l) = node {
-                l.transform = transform;
-                return true;
+            match node {
+                LayerNode::Pixel(l) => {
+                    l.transform = transform;
+                    return true;
+                }
+                LayerNode::Vector(v) => {
+                    v.transform = transform;
+                    return true;
+                }
+                _ => {}
             }
             return false;
         }
@@ -1180,6 +1219,9 @@ impl Document {
                     // design: left as stored.
                     Self::normalize_node_masks(&mut group.children);
                 }
+                // Vector (and vector-filter) masks are canvas-space, like
+                // groups: the raster is bounds-shifted per appearance.
+                LayerNode::Vector(_) => {}
                 LayerNode::Adjustment(_) => {}
             }
         }
@@ -1319,6 +1361,25 @@ impl Document {
         self.appearance(id).map(|a| a.image)
     }
 
+    /// Vector appearance: rasterized bounds + live-filter chain, no
+    /// cache in v1 (recomputed per composite — fine for a few vector
+    /// layers; cache follow-up with `appearance_version`).
+    pub fn appearance_vector_image(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        let layer = self.vector_layer(id)?;
+        let (img, _) = crate::scene::rasterize_bounds(&layer.vector)?;
+        Some(crate::filters::render_chain(
+            &Arc::new(img),
+            &layer.filter_layers,
+        ))
+    }
+
+    /// Pixel appearance, else vector appearance (compositing
+    /// resolver — one entry point for both carriers).
+    pub fn appearance_image_any(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        self.appearance_image(id)
+            .or_else(|| self.appearance_vector_image(id))
+    }
+
     /// Image alone WITHOUT thumbnail or preview (Phase 6G.3): composes the
     /// already-cacheable pieces (`unmasked_image` + `mask_coverage`, same
     /// guards as the full path) and bakes. Pixels bit-identical to
@@ -1421,7 +1482,7 @@ impl Document {
         // Same geometry and origin as `composite_scope`: re-deriving them
         // from the buffer's ROUNDED dimensions would break the mapping as
         // soon as extents are fractional.
-        let resolver = |id: Uuid| self.appearance_image(id);
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, &resolver);
         let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
         let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
@@ -1446,7 +1507,7 @@ impl Document {
     /// zoom). Same full composite as [`Self::sample_color`] → call ONLY
     /// in `spawn_blocking`.
     pub fn sample_region(&self, dx: f32, dy: f32, side: u32) -> Option<Vec<u8>> {
-        let resolver = |id: Uuid| self.appearance_image(id);
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, &resolver);
         let origin_x = half_w - self.width as f32 / 2.0;
         let origin_y = half_h - self.height as f32 / 2.0;
@@ -1500,7 +1561,7 @@ impl Document {
 
     /// [`Self::preview_geometry`] variant over a given scope.
     fn preview_geometry_of(&self, nodes: &[LayerNode]) -> Option<(u32, u32, f32, f32)> {
-        let resolver = |id: Uuid| self.appearance_image(id);
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         self.preview_geometry_of_with(nodes, &resolver)
     }
 
@@ -1523,7 +1584,7 @@ impl Document {
     }
 
     fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage> {
-        let resolver = |id: Uuid| self.appearance_image(id);
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         let mut stats = super::compositing::CompositeStats::default();
         self.composite_scope_with(nodes, &resolver, &mut stats)
     }
@@ -1745,6 +1806,11 @@ fn contributes(nodes: &[LayerNode], resolve: &dyn Fn(Uuid) -> Option<Arc<Dynamic
                     return true;
                 }
             }
+            LayerNode::Vector(v) => {
+                if v.visible && v.opacity > 0.01 && resolve(v.id).is_some() {
+                    return true;
+                }
+            }
             LayerNode::Group(g) => {
                 if g.visible && g.opacity > 0.01 && contributes(&g.children, resolve) {
                     return true;
@@ -1817,7 +1883,9 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
                 }
                 collect_pixels(&g.children, out)
             }
-            LayerNode::Adjustment(_) => {}
+            // Pixels only by design (appearance warming, snapshots):
+            // vectors resolve through `appearance_vector_image`.
+            LayerNode::Vector(_) | LayerNode::Adjustment(_) => {}
         }
     }
 }
@@ -1889,6 +1957,12 @@ fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut F
                 }
                 if let Some(found) = find_filter_in_mut(&mut g.children, filter_id) {
                     return Some(found);
+                }
+            }
+            // Vectors carry a filter chain but no children.
+            LayerNode::Vector(v) => {
+                if let Some(f) = v.filter_layers.iter_mut().find(|f| f.id == filter_id) {
+                    return Some(f);
                 }
             }
             LayerNode::Adjustment(_) => {}

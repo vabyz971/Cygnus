@@ -25,11 +25,58 @@
 use image::{ImageBuffer, Rgba};
 
 use super::VectorLayer;
-use super::pen::flatten;
+use super::pen::{flatten, path_bounds, translate};
 
 /// Fill subdivisions per curve (matches preview quality; curves
 /// stay analytic in the layer — this only affects pixels).
 const CURVE_SUBDIV: u32 = 16;
+
+/// Union bounds of a layer's closed paths (`None` when empty).
+///
+/// Open strokes are excluded (no stroke model yet — bounds would
+/// lie about the painted area).
+pub fn vector_bounds(layer: &VectorLayer) -> Option<datatypes::Rect> {
+    let mut acc: Option<datatypes::Rect> = None;
+    for path in layer.paths.iter().filter(|p| p.closed) {
+        let Some(b) = path_bounds(path) else {
+            continue;
+        };
+        acc = Some(match acc {
+            None => b,
+            Some(a) => datatypes::Rect::new(
+                a.x0.min(b.x0),
+                a.y0.min(b.y0),
+                a.x1.max(b.x1),
+                a.y1.max(b.y1),
+            ),
+        });
+    }
+    acc
+}
+
+/// Rasterize a layer shifted so its bounds origin lands on (0, 0).
+///
+/// Returns the image (bounds size, ≥1×1) and the origin that must be
+/// folded into the placement transform. `None` for empty layers.
+pub fn rasterize_bounds(layer: &VectorLayer) -> Option<(image::DynamicImage, datatypes::Vec2)> {
+    let bounds = vector_bounds(layer)?;
+    let origin = datatypes::Vec2::new(bounds.x0.floor(), bounds.y0.floor());
+    let w = (bounds.x1.ceil() - origin.x).max(1.0) as u32;
+    let h = (bounds.y1.ceil() - origin.y).max(1.0) as u32;
+    let shifted = VectorLayer {
+        paths: layer
+            .paths
+            .iter()
+            .map(|p| translate(p, -origin.x, -origin.y))
+            .collect(),
+        fill: layer.fill,
+        filter_layers: Vec::new(),
+        masks: Vec::new(),
+        appearance_version: 0,
+    };
+    let img = rasterize(&shifted, w, h);
+    Some((image::DynamicImage::ImageRgba8(img), origin))
+}
 
 /// Rasterize a vector layer onto a transparent canvas.
 ///
@@ -135,6 +182,9 @@ mod tests {
         let empty = VectorLayer {
             paths: vec![],
             fill: [255, 0, 0, 255],
+            filter_layers: Vec::new(),
+            masks: Vec::new(),
+            appearance_version: 0,
         };
         assert_eq!(alpha_count(&rasterize(&empty, 10, 10)), 0);
         assert_eq!(rasterize(&empty, 0, 10).dimensions(), (0, 10));
@@ -145,6 +195,9 @@ mod tests {
         let open = VectorLayer {
             paths: vec![pen.build().expect("open path")],
             fill: [255, 0, 0, 255],
+            filter_layers: Vec::new(),
+            masks: Vec::new(),
+            appearance_version: 0,
         };
         assert_eq!(alpha_count(&rasterize(&open, 10, 10)), 0);
     }
@@ -157,5 +210,23 @@ mod tests {
         assert!(n > 40 && n < 200, "star pixels: {n}");
         assert_eq!(img.get_pixel(0, 0)[3], 0);
         assert_eq!(img.get_pixel(10, 10)[3], 255);
+    }
+
+    #[test]
+    fn bounds_shift_rasterizes_off_origin_shapes() {
+        let layer = rect(100.0, 50.0, 6.0, 4.0);
+        let (img, origin) = rasterize_bounds(&layer).expect("bounded layer");
+        assert_eq!(origin, datatypes::Vec2::new(100.0, 50.0));
+        assert_eq!((img.width(), img.height()), (6, 4));
+        assert_eq!(alpha_count(&img.to_rgba8()), 24);
+        let empty = VectorLayer {
+            paths: vec![],
+            fill: [0, 0, 0, 255],
+            filter_layers: Vec::new(),
+            masks: Vec::new(),
+            appearance_version: 0,
+        };
+        assert!(vector_bounds(&empty).is_none());
+        assert!(rasterize_bounds(&empty).is_none());
     }
 }

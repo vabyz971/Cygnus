@@ -22,6 +22,14 @@ pub fn needs_fallback_in(nodes: &[LayerNode]) -> bool {
                     return true;
                 }
             }
+            LayerNode::Vector(v) => {
+                if v.blend_mode != BlendMode::Normal {
+                    return true;
+                }
+                if v.transform.has_skew() {
+                    return true;
+                }
+            }
             LayerNode::Group(g) => {
                 if g.opacity < 99.9
                     || g.blend_mode != BlendMode::Normal
@@ -760,6 +768,27 @@ pub fn extents_visit(
                 }
             }
             LayerNode::Adjustment(_) => {}
+            LayerNode::Vector(v) => {
+                if !v.visible || v.opacity <= 0.01 {
+                    continue;
+                }
+                let Some(img) = resolve(v.id) else {
+                    continue;
+                };
+                let Some(placed) = v.placement() else {
+                    continue;
+                };
+                let (w0, h0) = (img.width() as f32, img.height() as f32);
+                let clamped = Transform2D {
+                    scale_x: placed.scale_x.clamp(0.05, 8.0),
+                    scale_y: placed.scale_y.clamp(0.05, 8.0),
+                    ..placed
+                };
+                for (qx, qy) in clamped.doc_corners(w0, h0) {
+                    half.0 = half.0.max((qx - doc_cx).abs());
+                    half.1 = half.1.max((qy - doc_cy).abs());
+                }
+            }
             LayerNode::Pixel(l) => {
                 if !l.visible || l.opacity <= 0.01 {
                     continue;
@@ -929,6 +958,41 @@ pub fn fold_scope_stats(
                         stats.pixels_processed += acc_px;
                     }
                 }
+            }
+            LayerNode::Vector(v) => {
+                if !v.visible || v.opacity <= 0.01 {
+                    continue;
+                }
+                let Some(img) = resolve(v.id) else {
+                    continue;
+                };
+                // Bounds origin folded into the placement (appearance
+                // is bounds-shifted); user transform applies on top.
+                let Some(placed) = v.placement() else {
+                    continue;
+                };
+                let item = DrawItem {
+                    image: &img,
+                    transform: placed,
+                };
+                let t_blend = std::time::Instant::now();
+                let (top, ox, oy) = prepare_top(&item);
+                // Canvas-space masks (like groups: the raster has no
+                // stable source space across appearances).
+                let mask_buf = combine_group_masks(&v.masks, &top);
+                blend_into(
+                    acc,
+                    &top,
+                    mask_buf.as_ref(),
+                    v.opacity,
+                    v.blend_mode,
+                    ox + origin_x,
+                    oy + origin_y,
+                );
+                stats.blend_us += t_blend.elapsed().as_micros();
+                stats.layers_blended += 1;
+                stats.pixels_processed += acc_px;
+                contributed = true;
             }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {
@@ -1260,6 +1324,16 @@ fn scope_adjustment_window_into(nodes: &[LayerNode], window: &mut ScopeWindow) {
                 // Clipped children are only pixels (no global effect of their
                 // own): recursion suffices.
                 scope_adjustment_window_into(&l.children, window);
+            }
+            // Vectors carry a live-filter chain (spatial scope like
+            // groups) but no children.
+            LayerNode::Vector(v) => {
+                for f in &v.filter_layers {
+                    if !f.enabled {
+                        continue;
+                    }
+                    window.add(filter_layer_spatial_scope(f));
+                }
             }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {

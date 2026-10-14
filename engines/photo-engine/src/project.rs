@@ -17,15 +17,14 @@
 //! Native `.cygp` project format — UI-independent, reusable by the
 //! suite's other apps (layer video compositing…).
 //!
-//! FORMAT_VERSION 5: hierarchical nesting (Affinity-style nesting) —
-//! pixel layers' clipped children (`children`), groups' nested filters
-//! (`filter_layers`), adjustments' masks (`masks`). Versioned JSON
-//! container, PNG-then-base64 encoded images.
+//! FORMAT_VERSION 6: vector layers (`Vector` nodes with paths +
+//! flat fill, filter chain, masks). Versioned JSON container,
+//! PNG-then-base64 encoded images.
 //!
-//! Compatibility policy: v5 read natively, v4 read natively
-//! (v5 fields absent = empty defaults), v3 MIGRATED (filters converted
-//! to neutral sub-layers); any other version is refused with a clear
-//! message.
+//! Compatibility policy: v6 read natively, v5/v4 read natively
+//! (newer fields absent = empty defaults), v3 MIGRATED (filters
+//! converted to neutral sub-layers); any other version is refused
+//! with a clear message.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -39,14 +38,15 @@ use uuid::Uuid;
 
 use crate::document::{
     AdjustmentLayer, BlendMode, Document, FilterLayer, FilterNode, GroupLayer, LayerNode,
-    PixelLayer, Transform2D,
+    PixelLayer, Transform2D, VectorLayer,
 };
+use crate::scene::{PathSegment, VectorPath};
 
-/// Format version — bump on any incompatible change. v5: nesting
-/// (pixel children, group filters, adjustment masks). v4: pixel filters
-/// = sub-layers (`filter_layers`) instead of `live_filters` (v3,
-/// migrated on read).
-pub const FORMAT_VERSION: u32 = 5;
+/// Format version — bump on any incompatible change. v6: vector
+/// layers. v5: nesting (pixel children, group filters, adjustment
+/// masks). v4: pixel filters = sub-layers (`filter_layers`) instead
+/// of `live_filters` (v3, migrated on read).
+pub const FORMAT_VERSION: u32 = 6;
 
 /// Canonical Cygnus photo project extension.
 pub const PROJECT_EXTENSION: &str = "cygp";
@@ -80,6 +80,7 @@ struct ProjectFile {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum LayerNodeDto {
     Pixel(PixelDto),
+    Vector(VectorDto),
     Group(GroupDto),
     Adjustment(AdjustmentDto),
 }
@@ -150,6 +151,88 @@ struct AdjustmentDto {
     /// v5: masks restricting the effect zone.
     #[serde(default)]
     masks: Vec<MaskDto>,
+}
+
+/// v6: vector layer (curves + flat fill, no pixels stored).
+#[derive(Serialize, Deserialize)]
+struct VectorDto {
+    id: Uuid,
+    name: String,
+    paths: Vec<VectorPathDto>,
+    fill: [u8; 4],
+    /// Live-filter sub-layers (same order as pixel/group chains).
+    #[serde(default)]
+    filter_layers: Vec<FilterLayerDto>,
+    transform: Transform2D,
+    opacity: f32,
+    blend_mode: BlendMode,
+    visible: bool,
+    #[serde(default)]
+    masks: Vec<MaskDto>,
+}
+
+/// v6: one Bézier-ish path (same vocabulary as the scene model).
+#[derive(Serialize, Deserialize)]
+struct VectorPathDto {
+    start: datatypes::Vec2,
+    segments: Vec<VectorSegDto>,
+    closed: bool,
+}
+
+/// v6: one drawable segment.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum VectorSegDto {
+    Line {
+        to: datatypes::Vec2,
+    },
+    Quad {
+        ctrl: datatypes::Vec2,
+        to: datatypes::Vec2,
+    },
+    Cubic {
+        ctrl1: datatypes::Vec2,
+        ctrl2: datatypes::Vec2,
+        to: datatypes::Vec2,
+    },
+}
+
+impl VectorPath {
+    fn to_dto(&self) -> VectorPathDto {
+        VectorPathDto {
+            start: self.start,
+            segments: self
+                .segments
+                .iter()
+                .map(|seg| match *seg {
+                    PathSegment::Line { to } => VectorSegDto::Line { to },
+                    PathSegment::Quad { ctrl, to } => VectorSegDto::Quad { ctrl, to },
+                    PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                        VectorSegDto::Cubic { ctrl1, ctrl2, to }
+                    }
+                })
+                .collect(),
+            closed: self.closed,
+        }
+    }
+
+    fn from_dto(dto: VectorPathDto) -> Self {
+        VectorPath {
+            start: dto.start,
+            segments: dto
+                .segments
+                .into_iter()
+                .map(|seg| match seg {
+                    VectorSegDto::Line { to } => PathSegment::Line { to },
+                    VectorSegDto::Quad { ctrl, to } => PathSegment::Quad { ctrl, to },
+                    VectorSegDto::Cubic { ctrl1, ctrl2, to } => {
+                        PathSegment::Cubic { ctrl1, ctrl2, to }
+                    }
+                })
+                .collect(),
+            closed: dto.closed,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,6 +423,22 @@ fn node_to_dto(node: &LayerNode) -> Result<LayerNodeDto, String> {
             visible: a.visible,
             masks: masks_to_dto(&a.masks, &a.name)?,
         }),
+        LayerNode::Vector(v) => LayerNodeDto::Vector(VectorDto {
+            id: v.id,
+            name: v.name.clone(),
+            paths: v.vector.paths.iter().map(VectorPath::to_dto).collect(),
+            fill: v.vector.fill,
+            filter_layers: v
+                .filter_layers
+                .iter()
+                .map(|f| f.to_dto(&v.name))
+                .collect::<Result<Vec<_>, _>>()?,
+            transform: v.transform,
+            opacity: v.opacity,
+            blend_mode: v.blend_mode,
+            visible: v.visible,
+            masks: masks_to_dto(&v.masks, &v.name)?,
+        }),
     })
 }
 
@@ -418,6 +517,31 @@ fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String
             adj.masks = masks;
             LayerNode::Adjustment(adj)
         }
+        LayerNodeDto::Vector(d) => {
+            let mut vector = VectorLayer::new(
+                d.name.clone(),
+                crate::scene::VectorLayer {
+                    paths: d.paths.into_iter().map(VectorPath::from_dto).collect(),
+                    fill: d.fill,
+                    filter_layers: Vec::new(),
+                    masks: Vec::new(),
+                    appearance_version: 0,
+                },
+            );
+            vector.id = d.id;
+            vector.filter_layers = d
+                .filter_layers
+                .into_iter()
+                .map(|f| FilterLayer::from_dto(f, &d.name))
+                .collect::<Result<Vec<_>, _>>()?;
+            vector.transform = sanitize_transform(d.transform);
+            vector.opacity = d.opacity.clamp(0.0, 100.0);
+            vector.blend_mode = d.blend_mode;
+            vector.visible = d.visible;
+            vector.masks = masks_from_dto(d.masks, &d.name)?;
+            vector.touch();
+            LayerNode::Vector(vector)
+        }
     })
 }
 
@@ -454,7 +578,7 @@ impl std::fmt::Debug for LoadedProject {
     }
 }
 
-/// Saves the layer tree to a `.cygp` file (v5).
+/// Saves the layer tree to a `.cygp` file (v6).
 ///
 /// # Errors
 /// PNG encoding error of a layer, JSON serialization or disk write —
@@ -491,11 +615,11 @@ pub fn load(path: &Path) -> Result<LoadedProject, String> {
     let probe: VersionProbe =
         serde_json::from_slice(&json).map_err(|e| format!("Projet invalide : {e}"))?;
     let legacy_v3 = match probe.version {
-        FORMAT_VERSION | 4 => false,
+        FORMAT_VERSION | 5 | 4 => false,
         3 => true,
         v => {
             return Err(format!(
-                "Version de projet non supportée : {v} (v3 migrée, v4 et v5 natives). \
+                "Version de projet non supportée : {v} (v3 migrée, v4, v5 et v6 natives). \
                  Les projets au format 1 et 2 ne sont plus lisibles.",
             ));
         }
@@ -845,11 +969,11 @@ mod tests {
     fn roundtrip_v5_nesting_complet() {
         let doc = nested_doc();
         let path = temp_path("v5nest");
-        save(&path, &doc).expect("sauvegarde v5");
-        // Written version = 5.
+        save(&path, &doc).expect("sauvegarde v6");
+        // Written version = 6 (v5 content still reads natively).
         let raw = std::fs::read(&path).expect("relecture");
         let probe: serde_json::Value = serde_json::from_slice(&raw).expect("json");
-        assert_eq!(probe["version"], 5);
+        assert_eq!(probe["version"], 6);
         let loaded = load(&path).expect("chargement v5");
         std::fs::remove_file(&path).ok();
         // Nested structure preserved (stable ids).
@@ -946,5 +1070,39 @@ mod tests {
         assert!(adj.masks.is_empty(), "pas de masques d'ajustement en v4");
         // And v4 rendering stays correct (no nesting).
         assert!(loaded.document.composite_preview().is_some());
+    }
+
+    #[test]
+    fn roundtrip_v6_vector_preserves_curves() {
+        let mut doc = Document::new(20, 20);
+        let vector = VectorLayer::new("forme", crate::rect(2.0, 2.0, 6.0, 6.0));
+        let id = vector.id;
+        doc.push_layer(LayerNode::Vector(vector));
+        let path = temp_path("v6vec");
+        save(&path, &doc).expect("sauvegarde v6");
+        let raw = std::fs::read(&path).expect("relecture");
+        let probe: serde_json::Value = serde_json::from_slice(&raw).expect("json");
+        assert_eq!(probe["version"], 6);
+        let loaded = load(&path).expect("chargement v6");
+        std::fs::remove_file(&path).ok();
+        let LayerNode::Vector(v) = loaded.document.find(id).expect("vecteur retrouvé") else {
+            panic!("vecteur attendu");
+        };
+        assert_eq!(v.vector.paths.len(), 1);
+        assert!(v.vector.paths[0].closed);
+        assert_eq!(v.vector.fill, [0, 0, 0, 255]);
+        // Identical render before/after (rasterized vector pixels).
+        let before = doc.composite_preview().expect("composite avant");
+        let after = loaded
+            .document
+            .composite_preview()
+            .expect("composite après");
+        assert_eq!(before.to_rgba8().as_raw(), after.to_rgba8().as_raw());
+        assert!(alpha_pixels(&after) > 0, "le vecteur contribue");
+    }
+
+    /// Non-transparent pixels of a composite (vector smoke check).
+    fn alpha_pixels(img: &DynamicImage) -> u32 {
+        img.to_rgba8().pixels().filter(|p| p[3] > 0).count() as u32
     }
 }

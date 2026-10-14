@@ -181,6 +181,59 @@ pub fn flatten(path: &VectorPath, subdiv: u32) -> Vec<Vec2> {
     out
 }
 
+/// Translate a path by `(dx, dy)` (anchors + handles).
+pub fn translate(path: &VectorPath, dx: f32, dy: f32) -> VectorPath {
+    let shift = |p: Vec2| Vec2::new(p.x + dx, p.y + dy);
+    VectorPath {
+        start: shift(path.start),
+        segments: path
+            .segments
+            .iter()
+            .map(|seg| match *seg {
+                PathSegment::Line { to } => PathSegment::Line { to: shift(to) },
+                PathSegment::Quad { ctrl, to } => PathSegment::Quad {
+                    ctrl: shift(ctrl),
+                    to: shift(to),
+                },
+                PathSegment::Cubic { ctrl1, ctrl2, to } => PathSegment::Cubic {
+                    ctrl1: shift(ctrl1),
+                    ctrl2: shift(ctrl2),
+                    to: shift(to),
+                },
+            })
+            .collect(),
+        closed: path.closed,
+    }
+}
+
+/// Axis-aligned bounds of a path (flattened, all points incl. handles).
+///
+/// `None` for an empty path (start-only, non-finite coords excluded).
+pub fn path_bounds(path: &VectorPath) -> Option<datatypes::Rect> {
+    let flat = flatten(path, 8);
+    let mut points = flat;
+    for seg in &path.segments {
+        match *seg {
+            PathSegment::Line { .. } => {}
+            PathSegment::Quad { ctrl, .. } => points.push(ctrl),
+            PathSegment::Cubic { ctrl1, ctrl2, .. } => {
+                points.push(ctrl1);
+                points.push(ctrl2);
+            }
+        }
+    }
+    let mut iter = points.iter().filter(|p| p.x.is_finite() && p.y.is_finite());
+    let first = *iter.next()?;
+    let mut bounds = datatypes::Rect::new(first.x, first.y, first.x, first.y);
+    for p in iter {
+        bounds.x0 = bounds.x0.min(p.x);
+        bounds.y0 = bounds.y0.min(p.y);
+        bounds.x1 = bounds.x1.max(p.x);
+        bounds.y1 = bounds.y1.max(p.y);
+    }
+    Some(bounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +324,31 @@ mod tests {
         let flat = flatten(&path, 1);
         assert_eq!(flat.first(), Some(&Vec2::new(0.0, 0.0)));
         assert_eq!(flat.last(), Some(&Vec2::new(10.0, 10.0)));
+    }
+
+    #[test]
+    fn translate_shifts_anchors_and_handles() {
+        let path = pen_sample();
+        let moved = translate(&path, 5.0, -3.0);
+        assert_eq!(moved.start, Vec2::new(5.0, -3.0));
+        assert_eq!(moved.segments[0].endpoint(), Vec2::new(15.0, -3.0));
+        assert!(matches!(
+            moved.segments[2],
+            PathSegment::Cubic {
+                ctrl1: Vec2 { x: 20.0, y: 5.0 },
+                ..
+            }
+        ));
+        assert_eq!(path.start, Vec2::new(0.0, 0.0));
+    }
+
+    #[test]
+    fn bounds_cover_curve_extents() {
+        let path = pen_sample();
+        let b = path_bounds(&path).expect("non-empty path");
+        assert!(b.x0 <= 0.0 && b.y0 <= 0.0);
+        assert!(b.x1 >= 15.0 && b.y1 >= 10.0);
+        // Handles included: cubic ctrl2 y=10 is the max.
+        assert!((b.y1 - 10.0).abs() < 1e-4);
     }
 }

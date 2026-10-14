@@ -40,7 +40,7 @@ pub mod tiles;
 pub use command::{Command, RenderEvent, RenderRevision};
 pub use document::{
     AdjustmentLayer, Appearance, BlendMode, Document, FilterLayer, FilterNode, GroupLayer,
-    LayerMask, LayerNode, PixelLayer, RgbaBuf, Transform2D,
+    LayerMask, LayerNode, PixelLayer, RgbaBuf, Transform2D, VectorLayer,
 };
 pub use export::{DEFAULT_JPEG_QUALITY, ExportFormat, export_image};
 pub use filters::{filterable_types, new_filter_layer};
@@ -50,13 +50,15 @@ pub use registry::{all_definitions, definition_for};
 pub use render_overlay::effect_overlay;
 pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};
 pub use scene::pen::{
-    PenPath, anchors, cubic_point, flatten, move_anchor, move_control, quad_point,
+    PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, quad_point,
+    translate,
 };
-pub use scene::rasterize::rasterize;
+pub use scene::rasterize::{rasterize, rasterize_bounds, vector_bounds};
 pub use scene::shapes::{ellipse, polygon, rect, star};
 pub use scene::{
     AdjustmentLayer as SceneAdjustmentLayer, GroupLayer as SceneGroupLayer, Layer, LayerContent,
-    LayerEffect, PathSegment, RasterLayer as SceneRasterLayer, TextLayer, VectorLayer, VectorPath,
+    LayerEffect, PathSegment, RasterLayer as SceneRasterLayer, TextLayer,
+    VectorLayer as SceneVectorLayer, VectorPath,
 };
 pub use thumb_cache::ThumbnailKey;
 pub use tile_key::{
