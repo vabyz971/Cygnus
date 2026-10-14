@@ -511,6 +511,9 @@ fn axis_of(handle: Option<TransformHandle>, corners: [(f32, f32); 4]) -> Option<
 /// Draws the overlay (frame + 8 handles + knob + center) and reports
 /// the handle under `hover` for cursor feedback. All styling from
 /// the theme (no hardcoded color or size beyond the knob lift).
+/// Handles share the node editor's circle language (same overlay
+/// family on Move and Node tools): corners/edges read as hollow
+/// dots, the knob keeps its stem.
 pub fn draw_transform_overlay(
     painter: &egui::Painter,
     theme: cygnus_ui::theme::CygnusTheme,
@@ -542,37 +545,36 @@ pub fn draw_transform_overlay(
         // the way while the content moves under the pointer.
         return None;
     }
-    // Edge midpoints.
+    // Hovered handle first (highlighted like node anchors).
+    let knob = rotate_knob(quad, half * 6.0).map(|(k, _)| k)?;
+    let hovered = hover.and_then(|at| hit_handle(quad, knob, at, half * 2.5));
+    let fill = |handle: TransformHandle| {
+        if hovered == Some(handle) {
+            theme.colors.accent_hover
+        } else {
+            theme.colors.bg_primary
+        }
+    };
+    // Edge midpoints (hollow dots, node-editor language).
     for edge in Edge::ALL {
         let (a, b) = edge.ends();
         let mid = egui::pos2((quad[a].x + quad[b].x) / 2.0, (quad[a].y + quad[b].y) / 2.0);
-        painter.rect_filled(
-            egui::Rect::from_center_size(mid, egui::vec2(half * 2.0, half * 2.0)),
-            theme.radius.xs,
-            theme.colors.bg_primary,
-        );
-        painter.rect_stroke(
-            egui::Rect::from_center_size(mid, egui::vec2(half * 2.0, half * 2.0)),
-            theme.radius.xs,
-            stroke,
-            egui::StrokeKind::Middle,
-        );
+        painter.circle_filled(mid, half, fill(TransformHandle::Edge(edge)));
+        painter.circle_stroke(mid, half, stroke);
     }
     for corner in Corner::ALL {
-        let rect =
-            egui::Rect::from_center_size(quad[corner.index()], egui::vec2(half * 2.0, half * 2.0));
-        painter.rect_filled(rect, theme.radius.xs, theme.colors.bg_primary);
-        painter.rect_stroke(rect, theme.radius.xs, stroke, egui::StrokeKind::Middle);
+        let at = quad[corner.index()];
+        painter.circle_filled(at, half, fill(TransformHandle::Corner(corner)));
+        painter.circle_stroke(at, half, stroke);
     }
     // Rotation knob + stem.
     let mid_top = egui::pos2((quad[0].x + quad[1].x) / 2.0, (quad[0].y + quad[1].y) / 2.0);
     if let Some((knob, _)) = rotate_knob(quad, half * 6.0) {
         painter.line_segment([mid_top, knob], stroke);
-        painter.circle_filled(knob, half, theme.colors.bg_primary);
+        painter.circle_filled(knob, half, fill(TransformHandle::Rotate));
         painter.circle_stroke(knob, half, stroke);
     }
-    let knob = rotate_knob(quad, half * 6.0).map(|(k, _)| k)?;
-    hover.and_then(|at| hit_handle(quad, knob, at, half * 2.5))
+    hovered
 }
 
 // ---------------------------------------------------------------------------
