@@ -1000,6 +1000,22 @@ impl Document {
         }
     }
 
+    /// Replaces a vector layer's paths wholesale (node editor:
+    /// absolute values, not deltas — consecutive drag frames keep
+    /// only the latest, like `set_transform_any`). Touches the
+    /// carrier for invalidation. Returns `false` for non-vector
+    /// layers.
+    pub fn set_vector_paths(&mut self, id: Uuid, paths: Vec<crate::scene::VectorPath>) -> bool {
+        match self.find_mut(id) {
+            Some(LayerNode::Vector(v)) => {
+                v.vector.paths = paths;
+                v.touch();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Replaces the transform (touches the carrier layer for invalidation).
     pub fn set_transform_any(&mut self, id: Uuid, transform: Transform2D) -> bool {
         if let Some(node) = self.find_mut(id) {

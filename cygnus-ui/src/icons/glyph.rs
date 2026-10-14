@@ -82,6 +82,8 @@ pub(crate) enum CygnusIcon {
     Text,
     /// Vector-shape layer.
     Shape,
+    /// Node editing (vector pen nodes).
+    Node,
     /// Cut (video).
     Cut,
     /// Split a clip (video).
@@ -156,6 +158,7 @@ impl CygnusIcon {
             Self::Mask => ICON_TEXTURE,
             Self::Text => ICON_TITLE,
             Self::Shape => ICON_SHAPES,
+            Self::Node => ICON_POLYLINE,
             Self::Cut => ICON_CONTENT_CUT,
             Self::Split => ICON_CALL_SPLIT,
             Self::Trim => ICON_CROP,

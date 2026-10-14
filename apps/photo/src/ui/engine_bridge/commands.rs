@@ -140,6 +140,18 @@ pub enum PhotoEngineCommand {
         /// True on release (gesture boundary).
         commit: bool,
     },
+    /// Replace a vector layer's paths wholesale (node editor:
+    /// absolute values, not deltas — consecutive drag frames keep
+    /// only the latest). `commit` ends the gesture like
+    /// `SetTransform`.
+    SetVectorPaths {
+        /// Target vector layer.
+        layer: Uuid,
+        /// New paths (layer space).
+        paths: Vec<photo_engine::VectorPath>,
+        /// True on release (gesture boundary).
+        commit: bool,
+    },
     /// Paint into a mask (brush = white/reveals, eraser =
     /// black/hides — Affinity convention, brush color
     /// ignored). Points in image pixels, like `PaintStroke`.
@@ -314,6 +326,7 @@ impl PhotoEngineCommand {
             Self::PaintStroke { .. } => "paint_stroke",
             Self::MoveLayer { .. } => "move_layer",
             Self::SetTransform { .. } => "set_transform",
+            Self::SetVectorPaths { .. } => "set_vector_paths",
             Self::PaintMask { .. } => "paint_mask",
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
@@ -391,6 +404,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderInvalidation::Composite,
         ),
         PhotoEngineCommand::SetTransform { layer, .. } => (
+            RenderEvent::NodeInvalidated(*layer),
+            RenderInvalidation::Composite,
+        ),
+        PhotoEngineCommand::SetVectorPaths { layer, .. } => (
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::Composite,
         ),
@@ -606,6 +623,22 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 },
             ) if prev == layer => {
                 *prev_t = *transform;
+                *prev_c = *commit;
+                true
+            }
+            (
+                Some(PhotoEngineCommand::SetVectorPaths {
+                    layer: prev,
+                    paths: prev_paths,
+                    commit: prev_c,
+                }),
+                PhotoEngineCommand::SetVectorPaths {
+                    layer,
+                    paths,
+                    commit,
+                },
+            ) if prev == layer => {
+                *prev_paths = paths.clone();
                 *prev_c = *commit;
                 true
             }

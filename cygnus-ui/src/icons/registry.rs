@@ -88,6 +88,7 @@ impl IconRegistry {
             Icon::DragHandle => CygnusIcon::DragHandle,
             Icon::Text => CygnusIcon::Text,
             Icon::Shape => CygnusIcon::Shape,
+            Icon::Node => CygnusIcon::Node,
             Icon::Cut => CygnusIcon::Cut,
             Icon::Split => CygnusIcon::Split,
             Icon::Trim => CygnusIcon::Trim,
@@ -134,6 +135,7 @@ pub const ALL_ICONS: &[Icon] = &[
     Icon::Mask,
     Icon::Text,
     Icon::Shape,
+    Icon::Node,
     Icon::Cut,
     Icon::Split,
     Icon::Trim,
@@ -241,11 +243,11 @@ mod tests {
 
     #[test]
     fn all_icons_list_is_exhaustive() {
-        // 47 variants declared in `Icon`: the test breaks when a variant
+        // 48 variants declared in `Icon`: the test breaks when a variant
         // is added without being registered in ALL_ICONS.
         // (`Open` and `Folder` share the folder glyph but count as two
-        // distinct usages, hence 47 vs 46 on the glyph side.)
-        assert_eq!(ALL_ICONS.len(), 47);
+        // distinct usages, hence 48 vs 47 on the glyph side.)
+        assert_eq!(ALL_ICONS.len(), 48);
     }
 
     #[test]

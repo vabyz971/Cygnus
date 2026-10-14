@@ -35,6 +35,8 @@ pub enum PhotoCanvasTool {
     /// Move / select.
     #[default]
     Move,
+    /// Node editor (vector paths: anchors + handles).
+    Node,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -51,7 +53,7 @@ impl PhotoCanvasTool {
     /// Matching generic viewport tool.
     pub fn viewport_tool(self) -> ViewportTool {
         match self {
-            Self::Move => ViewportTool::Move,
+            Self::Move | Self::Node => ViewportTool::Move,
             Self::Pan => ViewportTool::Pan,
             Self::Zoom => ViewportTool::Zoom,
             Self::Brush | Self::Eraser | Self::Eyedropper => ViewportTool::Brush,
@@ -68,6 +70,7 @@ impl PhotoCanvasTool {
         use cygnus_i18n::PhotoTextKey;
         match self {
             Self::Move => texts.get(PhotoTextKey::MoveHintText),
+            Self::Node => texts.get(PhotoTextKey::NodeHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),

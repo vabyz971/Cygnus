@@ -28,6 +28,7 @@
 //! without egui); only [`draw_transform_overlay`] paints.
 
 use crate::ui::features::layers::PhotoLayerInfo;
+use crate::ui::features::layers::types::PhotoLayerKind;
 use photo_engine::Transform2D;
 use uuid::Uuid;
 
@@ -296,9 +297,15 @@ fn hit_test_in(layer: &PhotoLayerInfo, doc: (f32, f32)) -> Option<Uuid> {
         }
     }
     let (w, h) = layer.dims?;
-    let (x, y) = layer
-        .transform
-        .doc_to_local(w as f32, h as f32, doc.0, doc.1)?;
+    // Vectors render through the placement transform (bounds origin
+    // folded in) — hit the placed frame, like the overlay draws it.
+    let placed = match (&layer.kind, &layer.paths) {
+        (PhotoLayerKind::Vector, Some(paths)) => {
+            photo_engine::vector_placement(&layer.transform, paths)?
+        }
+        _ => layer.transform,
+    };
+    let (x, y) = placed.doc_to_local(w as f32, h as f32, doc.0, doc.1)?;
     ((0.0..w as f32).contains(&x) && (0.0..h as f32).contains(&y)).then_some(layer.id)
 }
 
@@ -568,6 +575,226 @@ pub fn draw_transform_overlay(
     hover.and_then(|at| hit_handle(quad, knob, at, half * 2.5))
 }
 
+// ---------------------------------------------------------------------------
+// Node editor (Node tool, vector layers)
+// ---------------------------------------------------------------------------
+
+/// Node reference inside one vector path (stable across a drag:
+/// resolved against the frozen base paths).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRef {
+    /// Anchor (path point): `anchors()[index]`.
+    Anchor {
+        /// Path index in the layer.
+        path: usize,
+        /// Anchor index (`0` = start).
+        index: usize,
+    },
+    /// Control handle of a curve segment.
+    Control {
+        /// Path index in the layer.
+        path: usize,
+        /// Segment index.
+        seg: usize,
+        /// Handle index (quad: `0`; cubic: `0` = `ctrl1`, `1` = `ctrl2`).
+        handle: usize,
+    },
+}
+
+/// One displayed node (document pixels + draw role).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodePoint {
+    /// Edited node on drag.
+    pub node: NodeRef,
+    /// Position in document pixels.
+    pub doc: (f32, f32),
+    /// Control handle (`false` = anchor).
+    pub control: bool,
+    /// Adjacent anchor (arm endpoint, controls only).
+    pub arm_to: Option<(f32, f32)>,
+}
+
+/// Nodes of one path: anchors, then control handles with arms.
+pub fn path_nodes(path_index: usize, path: &photo_engine::VectorPath) -> Vec<NodePoint> {
+    let mut out = Vec::new();
+    let anchors = photo_engine::anchors(path);
+    for (index, a) in anchors.iter().enumerate() {
+        out.push(NodePoint {
+            node: NodeRef::Anchor {
+                path: path_index,
+                index,
+            },
+            doc: (a.x, a.y),
+            control: false,
+            arm_to: None,
+        });
+    }
+    for (seg, s) in path.segments.iter().enumerate() {
+        // Anchor attached to the segment end (arm target).
+        let end = anchors.get(seg + 1).map(|a| (a.x, a.y));
+        match *s {
+            photo_engine::PathSegment::Line { .. } => {}
+            photo_engine::PathSegment::Quad { ctrl, .. } => {
+                out.push(NodePoint {
+                    node: NodeRef::Control {
+                        path: path_index,
+                        seg,
+                        handle: 0,
+                    },
+                    doc: (ctrl.x, ctrl.y),
+                    control: true,
+                    arm_to: end,
+                });
+            }
+            photo_engine::PathSegment::Cubic { ctrl1, ctrl2, .. } => {
+                let start = anchors.get(seg).map(|a| (a.x, a.y));
+                out.push(NodePoint {
+                    node: NodeRef::Control {
+                        path: path_index,
+                        seg,
+                        handle: 0,
+                    },
+                    doc: (ctrl1.x, ctrl1.y),
+                    control: true,
+                    arm_to: start,
+                });
+                out.push(NodePoint {
+                    node: NodeRef::Control {
+                        path: path_index,
+                        seg,
+                        handle: 1,
+                    },
+                    doc: (ctrl2.x, ctrl2.y),
+                    control: true,
+                    arm_to: end,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// In-progress node drag (one history entry per gesture, like
+/// [`TransformDrag`]): node follows the pointer, resolved against
+/// the frozen base paths — zoom/pan mid-gesture stay exact.
+#[derive(Debug, Clone)]
+pub struct NodeDrag {
+    /// Dragged layer.
+    pub layer: Uuid,
+    /// Edited path.
+    pub path_index: usize,
+    /// Dragged node.
+    pub node: NodeRef,
+    /// Paths at grab time (resolution base).
+    pub base_paths: Vec<photo_engine::VectorPath>,
+    /// Last paths sent to the worker (change-gated sends).
+    pub sent_paths: Vec<photo_engine::VectorPath>,
+}
+
+impl NodeDrag {
+    /// Begins a gesture (`None` on out-of-range node reference).
+    /// The node follows the pointer absolutely, so no grab point is
+    /// stored (unlike [`TransformDrag`]'s delta drags).
+    pub fn begin(layer: Uuid, paths: &[photo_engine::VectorPath], node: NodeRef) -> Option<Self> {
+        let (path_index, valid) = match node {
+            NodeRef::Anchor { path, index } => {
+                let ok = paths
+                    .get(path)
+                    .is_some_and(|p| index < photo_engine::anchors(p).len());
+                (path, ok)
+            }
+            NodeRef::Control { path, seg, handle } => {
+                let ok = paths.get(path).is_some_and(|p| {
+                    p.segments.get(seg).is_some_and(|s| match s {
+                        photo_engine::PathSegment::Line { .. } => false,
+                        photo_engine::PathSegment::Quad { .. } => handle == 0,
+                        photo_engine::PathSegment::Cubic { .. } => handle <= 1,
+                    })
+                });
+                (path, ok)
+            }
+        };
+        if !valid {
+            return None;
+        }
+        Some(Self {
+            layer,
+            path_index,
+            node,
+            base_paths: paths.to_vec(),
+            sent_paths: paths.to_vec(),
+        })
+    }
+
+    /// Resolves the pointer to new paths (pure: frozen base + current
+    /// pointer, no UI state).
+    pub fn resolve(&self, pointer_doc: (f32, f32)) -> Vec<photo_engine::VectorPath> {
+        let to = datatypes_vec2(pointer_doc.0, pointer_doc.1);
+        let mut paths = self.base_paths.clone();
+        let Some(path) = paths.get(self.path_index).cloned() else {
+            return paths;
+        };
+        paths[self.path_index] = match self.node {
+            NodeRef::Anchor { index, .. } => photo_engine::move_anchor(&path, index, to),
+            NodeRef::Control { seg, handle, .. } => {
+                photo_engine::move_control(&path, seg, handle, to)
+            }
+        };
+        paths
+    }
+}
+
+/// Draws node handles (anchors = filled squares, controls = hollow
+/// circles + arms). Positions are mapped through `to_screen`
+/// (document → screen); unmappable nodes are skipped. Returns the
+/// hovered node, if any.
+pub fn draw_node_overlay(
+    painter: &egui::Painter,
+    theme: cygnus_ui::theme::CygnusTheme,
+    points: &[NodePoint],
+    to_screen: &dyn Fn((f32, f32)) -> Option<egui::Pos2>,
+    hover: Option<egui::Pos2>,
+) -> Option<NodeRef> {
+    let half = theme.spacing.sm;
+    // Compact circles (0.7×): anchors read as points, not handles.
+    let dot = half * 0.7;
+    let arm = egui::Stroke::new(1.0, theme.colors.fg_secondary);
+    // Arms first (under the handles).
+    for point in points.iter().filter(|p| p.control) {
+        if let (Some(at), Some(arm_to)) = (to_screen(point.doc), point.arm_to.and_then(to_screen)) {
+            painter.line_segment([at, arm_to], arm);
+        }
+    }
+    let mut hovered = None;
+    for point in points {
+        let Some(at) = to_screen(point.doc) else {
+            continue;
+        };
+        if hover.is_some_and(|h| h.distance(at) <= half * 2.0) {
+            hovered = Some(point.node);
+        }
+        if point.control {
+            painter.circle_filled(at, dot, theme.colors.bg_primary);
+            painter.circle_stroke(at, dot, arm);
+        } else {
+            painter.circle_filled(
+                at,
+                dot,
+                if hover.is_some_and(|h| h.distance(at) <= half * 2.0) {
+                    theme.colors.accent_hover
+                } else {
+                    theme.colors.accent
+                },
+            );
+        }
+    }
+    hovered
+}
+
+fn datatypes_vec2(x: f32, y: f32) -> datatypes::Vec2 {
+    datatypes::Vec2::new(x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,4 +1055,84 @@ pub enum StabilityAction {
     Compensate(f32),
     /// Nothing to do.
     Hold,
+}
+
+#[cfg(test)]
+mod node_tests {
+    use super::*;
+
+    fn sample_paths() -> Vec<photo_engine::VectorPath> {
+        let mut pen = photo_engine::PenPath::new();
+        pen.move_to(datatypes::Vec2::new(0.0, 0.0))
+            .line_to(datatypes::Vec2::new(10.0, 0.0))
+            .quad_to(
+                datatypes::Vec2::new(15.0, 0.0),
+                datatypes::Vec2::new(15.0, 5.0),
+            );
+        vec![pen.build().expect("sample path")]
+    }
+
+    #[test]
+    fn path_nodes_lists_anchors_then_controls() {
+        let paths = sample_paths();
+        let nodes = path_nodes(0, &paths[0]);
+        // 3 anchors (start + 2 ends) + 1 quad control.
+        assert_eq!(nodes.len(), 4);
+        assert!(!nodes[0].control);
+        assert_eq!(nodes[0].doc, (0.0, 0.0));
+        let control = nodes.iter().find(|n| n.control).expect("control");
+        assert_eq!(control.doc, (15.0, 0.0));
+        assert_eq!(control.arm_to, Some((15.0, 5.0)));
+    }
+
+    #[test]
+    fn node_drag_resolves_against_frozen_base() {
+        let paths = sample_paths();
+        let drag = NodeDrag::begin(
+            Uuid::new_v4(),
+            &paths,
+            NodeRef::Anchor { path: 0, index: 1 },
+        )
+        .expect("valid anchor");
+        let next = drag.resolve((20.0, 5.0));
+        assert_eq!(
+            next[0].segments[0],
+            photo_engine::PathSegment::Line {
+                to: datatypes::Vec2::new(20.0, 5.0)
+            }
+        );
+        // Base untouched (pure resolution).
+        assert_eq!(
+            drag.base_paths[0].segments[0],
+            photo_engine::PathSegment::Line {
+                to: datatypes::Vec2::new(10.0, 0.0)
+            }
+        );
+    }
+
+    #[test]
+    fn node_drag_rejects_out_of_range_refs() {
+        let paths = sample_paths();
+        assert!(
+            NodeDrag::begin(
+                Uuid::new_v4(),
+                &paths,
+                NodeRef::Anchor { path: 0, index: 99 }
+            )
+            .is_none()
+        );
+        // Line segments carry no handles.
+        assert!(
+            NodeDrag::begin(
+                Uuid::new_v4(),
+                &paths,
+                NodeRef::Control {
+                    path: 0,
+                    seg: 0,
+                    handle: 0
+                }
+            )
+            .is_none()
+        );
+    }
 }

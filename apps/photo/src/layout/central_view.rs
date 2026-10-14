@@ -31,10 +31,11 @@ use crate::state::{OpenDocument, PreviewGeom, sample_preview_color};
 use crate::ui::features::layers::find_layer_in;
 use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
-    CanvasMapping, InkFrameInput, PhotoCanvas, PhotoCanvasOutcome, PhotoCanvasTool,
-    StabilityAction, StableView, TransformDrag, clear_ink, doc_to_screen, draw_brush_cursor,
-    draw_cached_ink, draw_document_bounds, draw_transform_overlay, feed_ink_frame, frame_corners,
-    hit_test_topmost, ink_tool_active, point_in_quad, screen_to_doc, stability_action,
+    CanvasMapping, InkFrameInput, NodeDrag, NodePoint, NodeRef, PhotoCanvas, PhotoCanvasOutcome,
+    PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, doc_to_screen,
+    draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_node_overlay,
+    draw_transform_overlay, feed_ink_frame, frame_corners, hit_test_topmost, ink_tool_active,
+    path_nodes, point_in_quad, screen_to_doc, stability_action,
 };
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 use cygnus_ui::components::{menu_row, menu_style};
@@ -129,6 +130,193 @@ fn stabilize_viewport(
         }
     }
 }
+/// Node points mapped to document space (placement applied:
+/// raw path points would miss the layer transform — the exact bug
+/// where nodes float away from their shape).
+fn placed_nodes(
+    transform: &photo_engine::Transform2D,
+    paths: &[photo_engine::VectorPath],
+) -> Vec<NodePoint> {
+    paths
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| path_nodes(i, p))
+        .map(|mut point| {
+            if let Some(doc) = photo_engine::place_vector_point(
+                transform,
+                paths,
+                datatypes::Vec2::new(point.doc.0, point.doc.1),
+            ) {
+                point.doc = doc;
+            }
+            point
+        })
+        .collect()
+}
+
+/// Node editor driver (Node tool): draws anchors + handles of the
+/// selected vector layer, runs node drags (live `SetVectorPaths`,
+/// one history entry per drag, `Escape` = undo) and click-to-select.
+fn draw_node_content(
+    ui: &mut egui::Ui,
+    doc: &mut OpenDocument,
+    response: Option<&egui::Response>,
+    pointer_world: &[egui::Vec2],
+    hover_pos: Option<egui::Pos2>,
+    dest_rect: Option<egui::Rect>,
+    geom: Option<PreviewGeom>,
+    mapping: &CanvasMapping,
+) -> Vec<PhotoAction> {
+    let mut actions = Vec::new();
+    let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let origin = geom.map(|g| g.origin).unwrap_or(egui::Vec2::ZERO);
+    let thumb_w = geom.map(|g| g.thumb_size.x).unwrap_or(0.0);
+    let to_screen = |doc_pt: (f32, f32)| -> Option<egui::Pos2> {
+        doc_to_screen(doc_pt, dest_rect?, origin, mapping.thumb_to_doc, thumb_w)
+    };
+    let press_doc = pointer_world.last().map(|v| (v.x, v.y));
+
+    // --- Active gesture -------------------------------------------------
+    if doc.ui.node_drag.is_some() {
+        if escaped {
+            if let Some(drag) = doc.ui.node_drag.take() {
+                if drag.sent_paths != drag.base_paths {
+                    actions.push(PhotoAction::Undo);
+                }
+                doc.ui.needs_repaint = true;
+            }
+            return actions;
+        }
+        let stopped = response.is_some_and(|r| r.drag_stopped() || r.clicked());
+        if stopped {
+            if let Some(drag) = doc.ui.node_drag.take() {
+                actions.push(PhotoAction::SetVectorPaths {
+                    layer: drag.layer,
+                    paths: drag.sent_paths,
+                    commit: true,
+                });
+                doc.ui.needs_repaint = true;
+            }
+            return actions;
+        }
+        ui.output_mut(|o| {
+            o.cursor_icon = egui::CursorIcon::Grabbing;
+        });
+        if let Some(pointer) = press_doc
+            && let Some(drag) = doc.ui.node_drag.as_mut()
+        {
+            let next = drag.resolve(pointer);
+            // Live follow, throttled like transforms (outline tracks
+            // every frame locally; worker re-renders at most ~25/s).
+            let due = doc
+                .ui
+                .last_node_send
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(40));
+            if next != drag.sent_paths {
+                drag.sent_paths = next.clone();
+                doc.ui.needs_repaint = true;
+                if due {
+                    doc.ui.last_node_send = Some(std::time::Instant::now());
+                    actions.push(PhotoAction::SetVectorPaths {
+                        layer: drag.layer,
+                        paths: next,
+                        commit: false,
+                    });
+                }
+            }
+        }
+        // Draw from the sent paths (no snapshot lag mid-gesture).
+        if let Some(drag) = doc.ui.node_drag.as_ref() {
+            let transform = find_layer_in(&doc.ui.layers, drag.layer)
+                .map(|info| info.transform)
+                .unwrap_or_default();
+            let points = placed_nodes(&transform, &drag.sent_paths);
+            let theme = ui.cygnus_theme();
+            draw_node_overlay(ui.painter(), theme, &points, &to_screen, hover_pos);
+        }
+        return actions;
+    }
+
+    // --- Idle ------------------------------------------------------------
+    // Selected vector layer with editable paths.
+    let target = doc.ui.selected.and_then(|id| {
+        find_layer_in(&doc.ui.layers, id).filter(|info| {
+            info.kind == PhotoLayerKind::Vector && info.visible && info.paths.is_some()
+        })
+    });
+    if let Some(info) = target {
+        let paths = info.paths.clone().expect("filtered");
+        let points = placed_nodes(&info.transform, &paths);
+        let theme = ui.cygnus_theme();
+        let hovered = draw_node_overlay(ui.painter(), theme, &points, &to_screen, hover_pos);
+        if hovered.is_some() {
+            ui.output_mut(|o| {
+                o.cursor_icon = egui::CursorIcon::Grab;
+            });
+        }
+        // Press on a node begins a drag (press-selects first, like
+        // the transform overlay).
+        if response.is_some_and(|r| r.drag_started())
+            && let Some(grab) = press_doc
+        {
+            if let Some(node) = nearest_node(&points, &to_screen, grab) {
+                if doc.ui.selected != Some(info.id) {
+                    actions.push(PhotoAction::SelectLayer(info.id));
+                }
+                if let Some(drag) = NodeDrag::begin(info.id, &paths, node) {
+                    doc.ui.node_drag = Some(drag);
+                    doc.ui.needs_repaint = true;
+                }
+            } else if let Some(hit) = hit_test_topmost(&doc.ui.layers, grab)
+                && doc.ui.selected != Some(hit)
+            {
+                actions.push(PhotoAction::SelectLayer(hit));
+            }
+        }
+    }
+    // Click (no drag): select topmost under the cursor, empty = deselect.
+    if response.is_some_and(|r| r.clicked())
+        && let Some(at) = hover_pos
+            .and_then(|pos| screen_to_doc(pos, dest_rect?, origin, mapping.thumb_to_doc, thumb_w))
+            .or(press_doc)
+    {
+        match hit_test_topmost(&doc.ui.layers, at) {
+            Some(hit) => {
+                if doc.ui.selected != Some(hit) {
+                    actions.push(PhotoAction::SelectLayer(hit));
+                }
+            }
+            None => {
+                if doc.ui.selected.is_some() {
+                    doc.ui.selected = None;
+                    doc.ui.needs_repaint = true;
+                }
+            }
+        }
+    }
+    actions
+}
+
+/// Nearest node to a document position (10 px screen radius).
+fn nearest_node(
+    points: &[NodePoint],
+    to_screen: &dyn Fn((f32, f32)) -> Option<egui::Pos2>,
+    grab: (f32, f32),
+) -> Option<NodeRef> {
+    let grab_screen = to_screen(grab)?;
+    let mut best: Option<(f32, NodeRef)> = None;
+    for point in points {
+        let Some(at) = to_screen(point.doc) else {
+            continue;
+        };
+        let dist = at.distance(grab_screen);
+        if dist <= 10.0 && best.is_none_or(|(d, _)| dist < d) {
+            best = Some((dist, point.node));
+        }
+    }
+    best.map(|(_, node)| node)
+}
+
 /// Transform overlay driver (Move tool): draws the selected pixel
 /// layer's frame + handles, runs handle gestures (live
 /// `SetTransform`, one history entry per drag, `Escape` = undo) and
@@ -357,6 +545,17 @@ pub fn draw_canvas_content(
         doc.ui.stroke.clear();
         doc.ui.needs_repaint = true;
     }
+    // Same for an in-progress node drag leaving the Node tool.
+    if doc.ui.tool != PhotoCanvasTool::Node
+        && let Some(drag) = doc.ui.node_drag.take()
+    {
+        actions.push(PhotoAction::SetVectorPaths {
+            layer: drag.layer,
+            paths: drag.sent_paths,
+            commit: true,
+        });
+        doc.ui.needs_repaint = true;
+    }
     let texture = doc.ui.texture_cache.texture();
     // Infinite plane: the thumbnail may extend past the document (layer
     // moved out of frame) and be downscaled (1600 px cap) — the
@@ -551,6 +750,20 @@ pub fn draw_canvas_content(
     // path). Click selects the topmost layer under the cursor.
     if doc.ui.tool == PhotoCanvasTool::Move {
         actions.extend(draw_transform_content(
+            ui,
+            doc,
+            outcome.response.as_ref(),
+            &outcome.pointer_world,
+            outcome.hover_pos,
+            outcome.dest_rect,
+            geom,
+            &mapping,
+        ));
+    }
+    // Node editor (Node tool): anchors + handles of the selected
+    // vector layer (body moves stay on the Move tool).
+    if doc.ui.tool == PhotoCanvasTool::Node {
+        actions.extend(draw_node_content(
             ui,
             doc,
             outcome.response.as_ref(),

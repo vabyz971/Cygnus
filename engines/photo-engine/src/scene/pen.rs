@@ -238,6 +238,35 @@ pub fn translate(path: &VectorPath, dx: f32, dy: f32) -> VectorPath {
     }
 }
 
+/// Every coordinate finite (guard rail for worker commands
+/// carrying externally built paths).
+pub fn paths_finite(paths: &[VectorPath]) -> bool {
+    paths
+        .iter()
+        .flat_map(path_points)
+        .all(|p| p.x.is_finite() && p.y.is_finite())
+}
+
+/// All points of a path (anchors + handles).
+fn path_points(path: &VectorPath) -> Vec<datatypes::Vec2> {
+    let mut out = vec![path.start];
+    for seg in &path.segments {
+        match *seg {
+            PathSegment::Line { to } => out.push(to),
+            PathSegment::Quad { ctrl, to } => {
+                out.push(ctrl);
+                out.push(to);
+            }
+            PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                out.push(ctrl1);
+                out.push(ctrl2);
+                out.push(to);
+            }
+        }
+    }
+    out
+}
+
 /// Axis-aligned bounds of a path (flattened, all points incl. handles).
 ///
 /// `None` for an empty path (start-only, non-finite coords excluded).

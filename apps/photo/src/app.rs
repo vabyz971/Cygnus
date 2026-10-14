@@ -493,6 +493,17 @@ impl PhotoApp {
                     commit,
                 });
             }
+            PhotoAction::SetVectorPaths {
+                layer,
+                paths,
+                commit,
+            } => {
+                self.send_active(PhotoEngineCommand::SetVectorPaths {
+                    layer,
+                    paths,
+                    commit,
+                });
+            }
             PhotoAction::ShowHelp => {
                 self.shell.help_open = true;
             }

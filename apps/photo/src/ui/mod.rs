@@ -66,8 +66,9 @@ pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};
 pub use toolbar::draw_tool_rail;
 pub use transform_overlay::{
-    StabilityAction, StableView, TransformDrag, doc_to_screen, draw_transform_overlay,
-    frame_corners, hit_test_topmost, point_in_quad, screen_to_doc, stability_action,
+    NodeDrag, NodePoint, NodeRef, StabilityAction, StableView, TransformDrag, doc_to_screen,
+    draw_node_overlay, draw_transform_overlay, frame_corners, hit_test_topmost, path_nodes,
+    point_in_quad, screen_to_doc, stability_action,
 };
 pub use viewport::{
     CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasOutcome,

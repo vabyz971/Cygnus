@@ -174,6 +174,25 @@ fn calque_seul_translucide_sur_transparent() {
 }
 
 #[test]
+fn calque_sorti_en_haut_a_gauche_reste_entier() {
+    // 2×2 red layer moved to (-1, -1): infinite plane grows, no
+    // pixel is masked — the 4 red pixels sit at buffer origin +
+    // doc offset (origin_x = half - doc/2 = 1).
+    let red = solid(2, 2, [255, 0, 0, 255]);
+    let doc = doc_of(
+        vec![pixel_node(&red, 100.0, BlendMode::Normal, -1.0, -1.0)],
+        4,
+        4,
+    );
+    let out = doc.composite_preview().expect("composite");
+    let rgba = out.to_rgba8();
+    let reds = rgba.pixels().filter(|p| p[0] == 255 && p[3] == 255).count();
+    assert_eq!(reds, 4, "aucun pixel masqué hors cadre");
+    assert_eq!(px(&out, 0, 0), [255, 0, 0, 255]);
+    assert_eq!(px(&out, 1, 1), [255, 0, 0, 255]);
+}
+
+#[test]
 fn opacite_nulle_ou_cache_ignores() {
     let base = solid(2, 2, [9, 9, 9, 255]);
     let top = solid(2, 2, [250, 250, 250, 255]);

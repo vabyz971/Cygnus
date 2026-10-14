@@ -72,6 +72,13 @@ pub fn draw_tool_options(
                 Toggle::new(texts.get(PhotoTextKey::GridLabel)).show(ui, theme, show_grid);
             });
         }
+        PhotoCanvasTool::Node => {
+            ui.horizontal(|ui| {
+                ui.label(body_text(theme, texts.get(PhotoTextKey::NodeHint)));
+                ui.separator();
+                Toggle::new(texts.get(PhotoTextKey::GridLabel)).show(ui, theme, show_grid);
+            });
+        }
         PhotoCanvasTool::Pan => {
             ui.horizontal(|ui| {
                 ui.label(body_text(theme, texts.get(PhotoTextKey::PanHintText)));
@@ -105,6 +112,7 @@ mod tests {
         cygnus_ui::theme::setup_fonts(&ctx);
         for tool in [
             PhotoCanvasTool::Move,
+            PhotoCanvasTool::Node,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
             PhotoCanvasTool::Brush,

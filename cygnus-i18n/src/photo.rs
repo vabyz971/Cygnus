@@ -231,6 +231,12 @@ pub enum PhotoTextKey {
     ShapePolygon,
     /// Star shape (vector creation menu).
     ShapeStar,
+    /// Node tool title.
+    NodeHint,
+    /// Node tool contextual help.
+    NodeHintText,
+    /// Recenter the canvas on the document (mode bar).
+    CenterView,
 }
 
 /// Photo catalog bound to a language.
@@ -345,6 +351,9 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::ShapeEllipse,
     PhotoTextKey::ShapePolygon,
     PhotoTextKey::ShapeStar,
+    PhotoTextKey::NodeHint,
+    PhotoTextKey::NodeHintText,
+    PhotoTextKey::CenterView,
 ];
 
 impl PhotoCatalog {
@@ -473,6 +482,9 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ShapeEllipse => "Ellipse",
         PhotoTextKey::ShapePolygon => "Polygone",
         PhotoTextKey::ShapeStar => "Étoile",
+        PhotoTextKey::NodeHint => "Nœuds",
+        PhotoTextKey::NodeHintText => "Glisser : déplacer le nœud — molette : zoom",
+        PhotoTextKey::CenterView => "Centrer",
     }
 }
 
@@ -585,6 +597,9 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ShapeEllipse => "Ellipse",
         PhotoTextKey::ShapePolygon => "Polygon",
         PhotoTextKey::ShapeStar => "Star",
+        PhotoTextKey::NodeHint => "Nodes",
+        PhotoTextKey::NodeHintText => "Drag: move node — wheel: zoom",
+        PhotoTextKey::CenterView => "Center",
     }
 }
 

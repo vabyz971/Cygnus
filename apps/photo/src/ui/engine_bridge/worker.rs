@@ -57,6 +57,9 @@ pub struct EngineWorker {
     /// Layer of the in-progress transform gesture (`SetTransform`
     /// coalescing: one history entry per drag, released on commit).
     pub(crate) coalesced_transform_layer: Option<Uuid>,
+    /// Layer of the in-progress node gesture (`SetVectorPaths`
+    /// coalescing: one history entry per drag, released on commit).
+    pub(crate) coalesced_vector_layer: Option<Uuid>,
     /// Preview clipped to the document (View menu, default: infinite plane).
     pub(crate) clip_to_doc: bool,
     /// Revision of the last produced composite (stale renders
@@ -186,6 +189,7 @@ fn history_label(op: &str) -> String {
         "paint_mask" => "Peindre le masque",
         "move_layer" => "Déplacer",
         "set_transform" => "Transformer",
+        "set_vector_paths" => "Nœuds vecteur",
         "open_image" => "Ouvrir une image",
         "add_empty_layer" => "Nouveau calque",
         "add_vector_layer" => "Nouvelle forme",
@@ -223,6 +227,7 @@ impl EngineWorker {
             pending_label: None,
             coalesced_opacity_layer: None,
             coalesced_transform_layer: None,
+            coalesced_vector_layer: None,
             clip_to_doc: false,
             revision: RenderRevision::default(),
             pending_tile_plan: None,
@@ -269,6 +274,7 @@ impl EngineWorker {
         // in-progress transform gesture: the next `SetTransform`
         // opens a fresh entry.
         self.coalesced_transform_layer = None;
+        self.coalesced_vector_layer = None;
     }
 
     /// Destructive edit of a pixel layer (mirror, rotation):
@@ -308,6 +314,7 @@ impl EngineWorker {
         self.document.restore_snapshot(step.snapshot);
         self.coalesced_opacity_layer = None;
         self.coalesced_transform_layer = None;
+        self.coalesced_vector_layer = None;
         true
     }
 
@@ -323,6 +330,7 @@ impl EngineWorker {
         self.document.restore_snapshot(step.snapshot);
         self.coalesced_opacity_layer = None;
         self.coalesced_transform_layer = None;
+        self.coalesced_vector_layer = None;
         true
     }
 
@@ -809,16 +817,20 @@ impl EngineWorker {
                 transform,
                 commit,
             } => {
-                // Guards: pixel layer, finite values.
+                // Guards: pixel/vector layer, finite values.
                 let current = match self.document.find(layer) {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => {
                         (pixels.transform, pixels.dimensions())
+                    }
+                    Some(photo_engine::LayerNode::Vector(vector)) => {
+                        (vector.transform, vector.raster_dims().unwrap_or((1, 1)))
                     }
                     _ => return Mutation::unchanged(),
                 };
                 if !transform.is_finite() {
                     if commit {
                         self.coalesced_transform_layer = None;
+                        self.coalesced_vector_layer = None;
                     }
                     return Mutation::unchanged();
                 }
@@ -826,6 +838,7 @@ impl EngineWorker {
                     // No change: release the slot on commit, no history.
                     if commit {
                         self.coalesced_transform_layer = None;
+                        self.coalesced_vector_layer = None;
                     }
                     return Mutation::unchanged();
                 }
@@ -836,10 +849,18 @@ impl EngineWorker {
                 }
                 self.coalesced_transform_layer = (!commit).then_some(layer);
                 let (old_t, (w, h)) = current;
-                if let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
-                {
-                    pixels.transform = transform;
-                    pixels.touch();
+                if let Some(node) = self.document.find_mut(layer) {
+                    match node {
+                        photo_engine::LayerNode::Pixel(pixels) => {
+                            pixels.transform = transform;
+                            pixels.touch();
+                        }
+                        photo_engine::LayerNode::Vector(vector) => {
+                            vector.transform = transform;
+                            vector.touch();
+                        }
+                        _ => {}
+                    }
                 }
                 // Precise marking: union of before/after footprints
                 // (+ exact filter spread), like `MoveLayer`.
@@ -847,12 +868,54 @@ impl EngineWorker {
                     Some(photo_engine::LayerNode::Pixel(pixels)) => {
                         photo_engine::tiles::appearance_spread(&pixels.filter_layers)
                     }
+                    Some(photo_engine::LayerNode::Vector(vector)) => {
+                        photo_engine::tiles::appearance_spread(&vector.filter_layers)
+                    }
                     _ => photo_engine::tiles::Padding::ZERO,
                 };
                 let dirty = DirtyMark::Region(photo_engine::tiles::layer_move_dirty_region(
                     &old_t, &transform, w, h, spread,
                 ));
                 Mutation::changed(invalidation).with_dirty(dirty)
+            }
+            PhotoEngineCommand::SetVectorPaths {
+                layer,
+                paths,
+                commit,
+            } => {
+                // Guards: vector layer, finite coordinates.
+                if !matches!(
+                    self.document.find(layer),
+                    Some(photo_engine::LayerNode::Vector(_))
+                ) || !photo_engine::paths_finite(&paths)
+                {
+                    if commit {
+                        self.coalesced_vector_layer = None;
+                    }
+                    return Mutation::unchanged();
+                }
+                let current = match self.document.find(layer) {
+                    Some(photo_engine::LayerNode::Vector(v)) => v.vector.paths.clone(),
+                    _ => return Mutation::unchanged(),
+                };
+                if paths == current {
+                    // No change: release the slot on commit, no history.
+                    if commit {
+                        self.coalesced_vector_layer = None;
+                    }
+                    return Mutation::unchanged();
+                }
+                // Coalescing: one history entry per drag gesture
+                // (frames share the slot, `commit` releases it).
+                if self.coalesced_vector_layer != Some(layer) {
+                    self.push_history(None);
+                }
+                self.coalesced_vector_layer = (!commit).then_some(layer);
+                self.document.set_vector_paths(layer, paths);
+                // Safe global marking in v1 (node edits reshape bounds
+                // arbitrarily; precise before/after regions are a
+                // follow-up like `MoveLayer`'s).
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
             }
             PhotoEngineCommand::Undo => {
                 if !self.apply_undo_step() {
@@ -1320,6 +1383,7 @@ impl EngineWorker {
                         self.redo.clear();
                         self.coalesced_opacity_layer = None;
                         self.coalesced_transform_layer = None;
+                        self.coalesced_vector_layer = None;
                         self.thumb_store.clear();
                         self.thumb_pending.clear();
                         self.thumb_fresh.clear();
@@ -4386,6 +4450,84 @@ mod single_pass_tests {
             worker.test_document().composite_preview().is_some(),
             "le vecteur se composite"
         );
+    }
+
+    #[test]
+    fn noeud_vecteur_deplace_historise() {
+        use photo_engine::LayerNode;
+        let mut worker = EngineWorker::new(Document::new(32, 32));
+        worker.apply(PhotoEngineCommand::AddVectorLayer {
+            shape: NewVectorShape::Rect,
+        });
+        let id = worker.test_document().root[0].id();
+        let before = match &worker.test_document().root[0] {
+            LayerNode::Vector(v) => v.vector.paths.clone(),
+            _ => panic!("calque vecteur attendu"),
+        };
+        // Move the first anchor (+2 px): frames coalesce, commit ends.
+        let mut moved = before.clone();
+        moved[0].start = datatypes::Vec2::new(moved[0].start.x + 2.0, moved[0].start.y);
+        worker.apply(PhotoEngineCommand::SetVectorPaths {
+            layer: id,
+            paths: moved.clone(),
+            commit: false,
+        });
+        worker.apply(PhotoEngineCommand::SetVectorPaths {
+            layer: id,
+            paths: moved.clone(),
+            commit: true,
+        });
+        match &worker.test_document().root[0] {
+            LayerNode::Vector(v) => assert_eq!(v.vector.paths, moved),
+            _ => panic!("calque vecteur attendu"),
+        }
+        match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
+                assert!(
+                    undo_labels.iter().any(|l| l == "Nœuds vecteur"),
+                    "{undo_labels:?}"
+                );
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        // Guard: non-vector target is a clean no-op (no render).
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        let pixel = worker.test_document().root.last().expect("pixel").id();
+        match worker.apply(PhotoEngineCommand::SetVectorPaths {
+            layer: pixel,
+            paths: moved,
+            commit: true,
+        }) {
+            PhotoEngineResponse::StateChanged { .. } => {}
+            other => panic!("no-op attendu, obtenu : {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transform_sur_vecteur_deplace() {
+        use photo_engine::LayerNode;
+        let mut worker = EngineWorker::new(Document::new(32, 32));
+        worker.apply(PhotoEngineCommand::AddVectorLayer {
+            shape: NewVectorShape::Rect,
+        });
+        let id = worker.test_document().root[0].id();
+        let before = match &worker.test_document().root[0] {
+            LayerNode::Vector(v) => v.transform.offset_x,
+            _ => panic!("calque vecteur attendu"),
+        };
+        let mut transform = photo_engine::Transform2D::default();
+        transform.offset_x = before + 5.0;
+        worker.apply(PhotoEngineCommand::SetTransform {
+            layer: id,
+            transform,
+            commit: true,
+        });
+        match &worker.test_document().root[0] {
+            LayerNode::Vector(v) => {
+                assert_eq!(v.transform.offset_x, before + 5.0);
+            }
+            _ => panic!("calque vecteur attendu"),
+        }
     }
 
     #[test]

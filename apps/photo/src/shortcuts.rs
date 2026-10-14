@@ -44,6 +44,7 @@ pub enum PhotoShortcut {
     ToolEraser,
     ToolEyedropper,
     ToolMove,
+    ToolNode,
     ToolHand,
     ToolZoom,
     // Edit
@@ -72,11 +73,12 @@ pub enum PhotoShortcut {
 
 impl PhotoShortcut {
     /// Every action, stable display order in the window.
-    pub const ALL: [PhotoShortcut; 23] = [
+    pub const ALL: [PhotoShortcut; 24] = [
         PhotoShortcut::ToolBrush,
         PhotoShortcut::ToolEraser,
         PhotoShortcut::ToolEyedropper,
         PhotoShortcut::ToolMove,
+        PhotoShortcut::ToolNode,
         PhotoShortcut::ToolHand,
         PhotoShortcut::ToolZoom,
         PhotoShortcut::Undo,
@@ -106,6 +108,7 @@ impl PhotoShortcut {
             Self::ToolEraser => "tool_eraser",
             Self::ToolEyedropper => "tool_eyedropper",
             Self::ToolMove => "tool_move",
+            Self::ToolNode => "tool_node",
             Self::ToolHand => "tool_hand",
             Self::ToolZoom => "tool_zoom",
             Self::Undo => "undo",
@@ -136,6 +139,7 @@ impl PhotoShortcut {
             Self::ToolEraser => "Outil Gomme",
             Self::ToolEyedropper => "Pipette",
             Self::ToolMove => "Déplacement",
+            Self::ToolNode => "Nœuds",
             Self::ToolHand => "Main",
             Self::ToolZoom => "Zoom",
             Self::Undo => "Annuler",
@@ -166,6 +170,7 @@ impl PhotoShortcut {
             | Self::ToolEraser
             | Self::ToolEyedropper
             | Self::ToolMove
+            | Self::ToolNode
             | Self::ToolHand
             | Self::ToolZoom => "Outils",
             Self::Undo | Self::Redo | Self::DeleteLayer => "Édition",
@@ -213,6 +218,7 @@ impl PhotoShortcut {
             Self::ToolEraser => PhotoAction::SetTool(PhotoCanvasTool::Eraser),
             Self::ToolEyedropper => PhotoAction::SetTool(PhotoCanvasTool::Eyedropper),
             Self::ToolMove => PhotoAction::SetTool(PhotoCanvasTool::Move),
+            Self::ToolNode => PhotoAction::SetTool(PhotoCanvasTool::Node),
             Self::ToolHand => PhotoAction::SetTool(PhotoCanvasTool::Pan),
             Self::ToolZoom => PhotoAction::SetTool(PhotoCanvasTool::Zoom),
             Self::Undo => PhotoAction::Undo,
@@ -421,7 +427,7 @@ mod tests {
         );
     }
 
-    /// All 23 shortcuts map to an action, except the 2 documented
+    /// All 24 shortcuts map to an action, except the 2 documented
     /// gaps (`ZoomFit`, `OpenPreferences`).
     #[test]
     fn every_shortcut_maps_or_is_documented_gap() {
@@ -438,7 +444,7 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(mapped, 21);
+        assert_eq!(mapped, 22);
     }
 
     /// Targeted conversions: tools, file (O001), layers, panels.

@@ -68,7 +68,13 @@ impl PhotoEditMode {
                 PhotoCanvasTool::Pan,
                 PhotoCanvasTool::Zoom,
             ],
-            Self::Vector | Self::Layout => &[
+            Self::Vector => &[
+                PhotoCanvasTool::Move,
+                PhotoCanvasTool::Node,
+                PhotoCanvasTool::Pan,
+                PhotoCanvasTool::Zoom,
+            ],
+            Self::Layout => &[
                 PhotoCanvasTool::Move,
                 PhotoCanvasTool::Pan,
                 PhotoCanvasTool::Zoom,
@@ -83,8 +89,18 @@ impl PhotoEditMode {
     }
 }
 
+/// Mode-bar outcome for one frame: persona switch and/or
+/// recenter request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModeBarOutcome {
+    /// Newly chosen persona, if any.
+    pub mode: Option<PhotoEditMode>,
+    /// Recenter the canvas on the document, if requested.
+    pub center_view: bool,
+}
+
 /// Draws the 2-row bar (modes then tool settings).
-/// Returns the newly chosen mode, if any (the app falls the tool
+/// Returns the frame outcome (the app falls the tool
 /// back when needed via [`PhotoEditMode::supports`]).
 pub fn draw_photo_modebar(
     ui: &mut egui::Ui,
@@ -94,9 +110,9 @@ pub fn draw_photo_modebar(
     show_grid: &mut bool,
     theme: &CygnusTheme,
     texts: cygnus_i18n::PhotoCatalog,
-) -> Option<PhotoEditMode> {
-    let mut chosen = None;
-    // Row 1: large mode buttons
+) -> ModeBarOutcome {
+    let mut outcome = ModeBarOutcome::default();
+    // Row 1: large mode buttons + recenter.
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             for candidate in PhotoEditMode::ALL {
@@ -111,8 +127,19 @@ pub fn draw_photo_modebar(
                     .clicked()
                 {
                     *mode = *candidate;
-                    chosen = Some(*candidate);
+                    outcome.mode = Some(*candidate);
                 }
+            }
+            ui.separator();
+            // Recenter the document in the viewport (fit + centered,
+            // like the Zoom 100% command): next to the personas so a
+            // lost canvas is one click away.
+            if Button::new(texts.get(cygnus_i18n::PhotoTextKey::CenterView))
+                .variant(ButtonVariant::Secondary)
+                .show(ui, theme)
+                .clicked()
+            {
+                outcome.center_view = true;
             }
         });
     });
@@ -121,7 +148,7 @@ pub fn draw_photo_modebar(
     ui.horizontal(|ui| {
         draw_tool_options(ui, tool, brush, show_grid, theme, texts);
     });
-    chosen
+    outcome
 }
 
 #[cfg(test)]
@@ -162,7 +189,7 @@ mod tests {
         let mut show_grid = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let chosen = draw_photo_modebar(
+                let outcome = draw_photo_modebar(
                     ui,
                     &mut mode,
                     PhotoCanvasTool::Brush,
@@ -171,7 +198,7 @@ mod tests {
                     &theme,
                     texts,
                 );
-                assert_eq!(chosen, None);
+                assert_eq!(outcome, ModeBarOutcome::default());
             });
         })
         .drop_without_applying_deltas();

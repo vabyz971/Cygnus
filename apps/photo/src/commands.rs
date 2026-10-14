@@ -231,6 +231,13 @@ pub enum PhotoAction {
         transform: photo_engine::Transform2D,
         commit: bool,
     },
+    /// Replace a vector layer's paths (node editor, worker).
+    /// `commit` ends the drag gesture (history boundary).
+    SetVectorPaths {
+        layer: Uuid,
+        paths: Vec<photo_engine::VectorPath>,
+        commit: bool,
+    },
     /// Reopen a closed dock tab (tools, inspector, layers).
     ShowDockTab(PhotoDockTab),
     /// Restore the default dock layout.

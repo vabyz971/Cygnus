@@ -110,7 +110,7 @@ pub fn show_mode_bar(
         .show(ui, |ui| {
             let translator = ctx.shared.translator();
             let texts = PhotoCatalog::new(translator.language());
-            let chosen = draw_photo_modebar(
+            let outcome = draw_photo_modebar(
                 ui,
                 &mut doc.ui.edit_mode,
                 doc.ui.tool,
@@ -120,10 +120,13 @@ pub fn show_mode_bar(
                 texts,
             );
             // Tool incompatible with the new mode: switch back.
-            if let Some(mode) = chosen
+            if let Some(mode) = outcome.mode
                 && !mode.supports(doc.ui.tool)
             {
                 actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
+            }
+            if outcome.center_view {
+                actions.push(PhotoAction::ZoomReset);
             }
         });
     actions

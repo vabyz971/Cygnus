@@ -31,13 +31,13 @@ use super::pen::{flatten, path_bounds, translate};
 /// stay analytic in the layer — this only affects pixels).
 const CURVE_SUBDIV: u32 = 16;
 
-/// Union bounds of a layer's closed paths (`None` when empty).
+/// Union bounds of closed paths (`None` when empty).
 ///
 /// Open strokes are excluded (no stroke model yet — bounds would
 /// lie about the painted area).
-pub fn vector_bounds(layer: &VectorLayer) -> Option<datatypes::Rect> {
+pub fn paths_bounds(paths: &[super::VectorPath]) -> Option<datatypes::Rect> {
     let mut acc: Option<datatypes::Rect> = None;
-    for path in layer.paths.iter().filter(|p| p.closed) {
+    for path in paths.iter().filter(|p| p.closed) {
         let Some(b) = path_bounds(path) else {
             continue;
         };
@@ -52,6 +52,14 @@ pub fn vector_bounds(layer: &VectorLayer) -> Option<datatypes::Rect> {
         });
     }
     acc
+}
+
+/// Union bounds of a layer's closed paths (`None` when empty).
+///
+/// Open strokes are excluded (no stroke model yet — bounds would
+/// lie about the painted area).
+pub fn vector_bounds(layer: &VectorLayer) -> Option<datatypes::Rect> {
+    paths_bounds(&layer.paths)
 }
 
 /// Rasterize a layer shifted so its bounds origin lands on (0, 0).
@@ -76,6 +84,38 @@ pub fn rasterize_bounds(layer: &VectorLayer) -> Option<(image::DynamicImage, dat
     };
     let img = rasterize(&shifted, w, h);
     Some((image::DynamicImage::ImageRgba8(img), origin))
+}
+
+/// Placement transform for paths: bounds origin folded into the
+/// offset (the appearance raster is bounds-shifted — same helper
+/// for compositing, overlay and hit-testing, single source of
+/// truth for "where path point `p` renders").
+pub fn vector_placement(
+    transform: &math_utils::Transform2D,
+    paths: &[super::VectorPath],
+) -> Option<math_utils::Transform2D> {
+    let bounds = paths_bounds(paths)?;
+    let mut placed = *transform;
+    placed.offset_x += bounds.x0.floor();
+    placed.offset_y += bounds.y0.floor();
+    Some(placed)
+}
+
+/// Document position of a layer-space path point (overlay nodes,
+/// hit-testing). `None` for empty layers.
+pub fn place_vector_point(
+    transform: &math_utils::Transform2D,
+    paths: &[super::VectorPath],
+    point: datatypes::Vec2,
+) -> Option<(f32, f32)> {
+    let bounds = paths_bounds(paths)?;
+    let origin = (bounds.x0.floor(), bounds.y0.floor());
+    let bw = (bounds.x1.ceil() - origin.0).max(1.0);
+    let bh = (bounds.y1.ceil() - origin.1).max(1.0);
+    let mut placed = *transform;
+    placed.offset_x += origin.0;
+    placed.offset_y += origin.1;
+    Some(placed.local_to_doc(bw, bh, point.x - origin.0, point.y - origin.1))
 }
 
 /// Rasterize a vector layer onto a transparent canvas.
@@ -228,5 +268,22 @@ mod tests {
         };
         assert!(vector_bounds(&empty).is_none());
         assert!(rasterize_bounds(&empty).is_none());
+    }
+
+    #[test]
+    fn placement_maps_layer_points_to_document() {
+        use math_utils::Transform2D;
+        // Off-origin shape, translated layer: node positions must land
+        // where the raster does (overlay/hit-test contract).
+        let layer = rect(100.0, 50.0, 6.0, 4.0);
+        let mut t = Transform2D::default();
+        t.offset_x = 10.0;
+        t.offset_y = 20.0;
+        let placed = vector_placement(&t, &layer.paths).expect("placed");
+        assert_eq!((placed.offset_x, placed.offset_y), (110.0, 70.0));
+        let doc = place_vector_point(&t, &layer.paths, datatypes::Vec2::new(100.0, 50.0))
+            .expect("placed point");
+        assert_eq!(doc, (110.0, 70.0));
+        assert!(place_vector_point(&t, &[], datatypes::Vec2::new(0.0, 0.0)).is_none());
     }
 }

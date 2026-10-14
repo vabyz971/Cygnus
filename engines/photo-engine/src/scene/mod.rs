@@ -51,10 +51,12 @@ pub mod shapes;
 pub mod vello_render;
 
 pub use pen::{
-    PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, quad_point,
-    to_kurbo, translate,
+    PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, paths_finite,
+    quad_point, to_kurbo, translate,
 };
-pub use rasterize::{rasterize, rasterize_bounds, vector_bounds};
+pub use rasterize::{
+    paths_bounds, place_vector_point, rasterize, rasterize_bounds, vector_bounds, vector_placement,
+};
 
 /// Non-destructive layer effect (spec §5 item 4).
 ///

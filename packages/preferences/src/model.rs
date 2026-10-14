@@ -195,6 +195,7 @@ impl KeybindingPreferences {
         bindings.insert("tool_eraser".to_string(), "E".to_string());
         bindings.insert("tool_eyedropper".to_string(), "I".to_string());
         bindings.insert("tool_move".to_string(), "V".to_string());
+        bindings.insert("tool_node".to_string(), "A".to_string());
         bindings.insert("tool_hand".to_string(), "H".to_string());
         bindings.insert("tool_zoom".to_string(), "Z".to_string());
         // Editing

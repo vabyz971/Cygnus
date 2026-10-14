@@ -94,6 +94,8 @@ pub enum Icon {
     Text,
     /// Vector shape.
     Shape,
+    /// Node editing (vector pen nodes).
+    Node,
     /// Cut.
     Cut,
     /// Split (video).

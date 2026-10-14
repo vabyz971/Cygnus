@@ -277,6 +277,9 @@ pub struct PhotoLayerInfo {
     /// only): canvas transform overlay geometry (corners via
     /// `transform.doc_corners`) and click hit-testing.
     pub dims: Option<(u32, u32)>,
+    /// Vector paths (`Some` for vector layers only): node editor
+    /// overlay (handles + drags, layer space).
+    pub paths: Option<Vec<photo_engine::VectorPath>>,
 }
 
 impl PhotoLayerInfo {
@@ -399,6 +402,10 @@ impl PhotoLayerInfo {
                 // the placed raster like a pixel source).
                 LayerNode::Vector(vector) => vector.raster_dims(),
                 LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+            },
+            paths: match node {
+                LayerNode::Vector(vector) => Some(vector.vector.paths.clone()),
+                LayerNode::Pixel(_) | LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
             },
         }
     }

@@ -29,7 +29,7 @@
 
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{
-    CreateDocumentDialogState, ExportDialogState, LayerRenameState, PhotoBrushSettings,
+    CreateDocumentDialogState, ExportDialogState, LayerRenameState, NodeDrag, PhotoBrushSettings,
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PhotoLayerThumb,
     PreviewImage, StableView, TransformDrag,
 };
@@ -161,6 +161,8 @@ pub struct PhotoUiState {
     pub drag_state: ReorderDragState,
     /// Canvas transform gesture (Move tool overlay, `None` = idle).
     pub transform_drag: Option<TransformDrag>,
+    /// Canvas node gesture (Node tool overlay, `None` = idle).
+    pub node_drag: Option<NodeDrag>,
     /// View-stability baseline (document on-screen size anchor:
     /// a scope change never rescale the document, see
     /// `stabilize_factor`).
@@ -168,6 +170,8 @@ pub struct PhotoUiState {
     /// Last live transform send (worker throttle: at most one
     /// `SetTransform` per window, release always sends).
     pub last_transform_send: Option<std::time::Instant>,
+    /// Last live node send (same throttle for `SetVectorPaths`).
+    pub last_node_send: Option<std::time::Instant>,
     /// Inline layer rename (double-click).
     pub rename: LayerRenameState,
     /// History depths (undo/redo buttons).
