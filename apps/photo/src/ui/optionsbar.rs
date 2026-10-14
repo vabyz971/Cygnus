@@ -21,10 +21,10 @@
 //! Nothing when the tool has no settings — the bar stays empty.
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
-use ui_kit::components::{Slider, Toggle};
-use ui_kit::theme::CygnusTheme;
-use ui_kit::theme::typography::body_text;
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_ui::components::{Slider, Toggle};
+use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::theme::typography::body_text;
 
 /// Draws the active tool's settings (updates `brush` and
 /// `show_grid` in place, no channel: purely local state).
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn options_render_for_every_tool_without_panic() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         for tool in [
             PhotoCanvasTool::Move,
             PhotoCanvasTool::Pan,
@@ -113,8 +113,8 @@ mod tests {
         ] {
             let mut brush = PhotoBrushSettings::default();
             let mut show_grid = false;
-            let theme = ui_kit::theme::CygnusTheme::dark();
-            let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
+            let theme = cygnus_ui::theme::CygnusTheme::dark();
+            let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     draw_tool_options(ui, tool, &mut brush, &mut show_grid, &theme, texts);

@@ -23,10 +23,10 @@
 //! level is exposed in Phase 3 (group children stay
 //! collapsed).
 
+use cygnus_ui::icons::Icon;
+use cygnus_ui::utils::DropPosition;
 use photo_engine::{BlendMode, Document, LayerNode};
 use std::collections::HashMap;
-use ui_kit::icons::Icon;
-use ui_kit::utils::DropPosition;
 use uuid::Uuid;
 
 /// Semantic type of a photo layer (mirror of engine `LayerNode`s).
@@ -48,7 +48,7 @@ pub const ALL_PHOTO_LAYER_KINDS: &[PhotoLayerKind] = &[
 ];
 
 impl PhotoLayerKind {
-    /// Semantic icon (via ui-kit's `Icon` only).
+    /// Semantic icon (via cygnus-ui's `Icon` only).
     pub fn icon(self) -> Icon {
         match self {
             Self::Pixel => Icon::ImageIcon,
@@ -58,11 +58,11 @@ impl PhotoLayerKind {
     }
 
     /// Type label (via the photo catalog).
-    pub fn icon_label(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
+    pub fn icon_label(self, texts: cygnus_i18n::PhotoCatalog) -> &'static str {
         match self {
-            Self::Pixel => texts.get(crate::i18n::PhotoTextKey::LayerKindPixel),
-            Self::Group => texts.get(crate::i18n::PhotoTextKey::LayerKindGroup),
-            Self::Adjustment => texts.get(crate::i18n::PhotoTextKey::LayerKindAdjustment),
+            Self::Pixel => texts.get(cygnus_i18n::PhotoTextKey::LayerKindPixel),
+            Self::Group => texts.get(cygnus_i18n::PhotoTextKey::LayerKindGroup),
+            Self::Adjustment => texts.get(cygnus_i18n::PhotoTextKey::LayerKindAdjustment),
         }
     }
 
@@ -189,14 +189,14 @@ pub struct LayerTreeSelection {
     pub focused: Option<AttachmentRef>,
 }
 
-/// Layers panel translation catalogs (generic ui-kit +
+/// Layers panel translation catalogs (generic cygnus-ui +
 /// photo-specific), built once per frame.
 #[derive(Debug, Clone, Copy)]
 pub struct LayerTexts {
     /// Generic labels (Rename, Delete…).
-    pub catalog: ui_kit::i18n::Catalog,
+    pub catalog: cygnus_i18n::Catalog,
     /// Photo domain strings.
-    pub texts: crate::i18n::PhotoCatalog,
+    pub texts: cygnus_i18n::PhotoCatalog,
 }
 
 /// Layer thumbnail for the panel (pure buffer, converted to a
@@ -752,13 +752,13 @@ mod tests {
         assert!(!fond.visible);
         assert_eq!(fond.kind, PhotoLayerKind::Pixel);
         // Check the icon resolves via the registry.
-        let _ = ui_kit::icons::IconRegistry::new().text(fond.kind.icon());
+        let _ = cygnus_ui::icons::IconRegistry::new().text(fond.kind.icon());
     }
 
     #[test]
     fn layer_kind_icons_come_from_registry() {
         for kind in ALL_PHOTO_LAYER_KINDS {
-            let _ = ui_kit::icons::IconRegistry::new().text(kind.icon());
+            let _ = cygnus_ui::icons::IconRegistry::new().text(kind.icon());
         }
     }
 

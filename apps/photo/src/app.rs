@@ -32,11 +32,11 @@ use crate::ui::features::layers::{
     find_attachment_in, find_layer_in, find_layer_in_mut, find_layer_of_attachment,
 };
 use crate::ui::{PhotoEngineCommand, spawn_photo_engine_worker};
+use cygnus_ui::dialogs::{pick_image_to_open, pick_project_to_open, pick_project_to_save};
+use cygnus_ui::layout::PanelId;
 use photo_engine::Document;
 use std::path::Path;
 use std::sync::mpsc::channel;
-use ui_kit::dialogs::{pick_image_to_open, pick_project_to_open, pick_project_to_save};
-use ui_kit::layout::PanelId;
 
 /// Photo app: tabbed documents + shell + runtime + action queue.
 ///
@@ -1138,7 +1138,7 @@ mod tests {
     fn full_layout_draws_without_panic() {
         let mut app = PhotoApp::new();
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let ctx_clone = ctx.clone();
         // Welcome + creation dialog (zero documents).
         ctx.run_ui(egui::RawInput::default(), |ui| {

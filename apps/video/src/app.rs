@@ -16,8 +16,8 @@
 
 //! Minimal Video app: placeholder while `video-engine` is pending.
 
-use ui_kit::theme::UiThemeExt;
-use ui_kit::theme::typography::{body_text, heading_text};
+use cygnus_ui::theme::UiThemeExt;
+use cygnus_ui::theme::typography::{body_text, heading_text};
 
 /// Video app (minimal base).
 #[derive(Default)]
@@ -60,7 +60,7 @@ mod tests {
     fn placeholder_draws_without_panic() {
         let mut app = VideoApp::new();
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             app.draw(ui);
         })

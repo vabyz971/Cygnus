@@ -11,4 +11,4 @@ workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
-ui-kit = { path = "../../packages/ui-kit" }
+cygnus-ui = { path = "../../cygnus-ui" }

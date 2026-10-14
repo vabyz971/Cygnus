@@ -62,7 +62,7 @@ pub use datatypes::{BlendMode, RgbaBuf};
 // ---------------------------------------------------------------------------
 
 /// 2D affine transform: canonical definition in `math-utils`
-/// (shared with `ui-kit`, which cannot depend on engines).
+/// (shared with `cygnus-ui`, which cannot depend on engines).
 /// Re-exported here to keep `use crate::document::Transform2D` working.
 pub use math_utils::Transform2D;
 

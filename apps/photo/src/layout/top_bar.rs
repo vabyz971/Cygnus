@@ -22,10 +22,10 @@
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
-use crate::i18n::PhotoCatalog;
 use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
 };
+use cygnus_i18n::PhotoCatalog;
 
 /// Converts a menu action into an app action.
 fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {

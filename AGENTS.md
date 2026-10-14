@@ -32,16 +32,17 @@ The crate name sometimes differs from the folder — use `-p` with the crate nam
 | `engines/text-engine` | `text-engine` (model → layout → glyph runs; measurement for layout) |
 | `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait; legacy nodal registry kept) |
 | `engines/audio-engine` | `audio-engine` (timeline + DSP graph on `graph`, DSP backend; outside Scene; legacy registry kept) |
-| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, egui design system: theme, components, containers, viewport, dialogs) |
+| `cygnus-ui` | `cygnus-ui` (lib `cygnus_ui`, egui design system: theme, components, containers, viewport, dialogs) |
+| `cygnus-i18n` | `cygnus-i18n` (lib `cygnus_i18n`, shared translations: generic `TextKey` + `Catalog`/`Language`, no per-app duplicates; all catalogs (generic + photo/video/audio domains) live here, apps hold no tables) |
 | `packages/app-shell` | `app-shell` (lib `app_shell`, app skeleton: `ActionQueue`, generic dock on `DockTab`) |
 | `packages/math-utils` | `math-utils` (affine transform `Transform2D`; canonical Vec2 = datatypes) |
 | `packages/file-utils` | `file-utils` (file errors, drag & drop, dialogs) |
 | `packages/preferences` | `preferences` (persistent preferences, hardware, shortcuts) |
 
-Allowed dependencies: `packages/*` ← `core/*` ← `engines/*` ← `apps/*`. Packages never depend on engines or apps; no dependencies between apps.
+Allowed dependencies: `packages/*` + `cygnus-i18n` ← `cygnus-ui` + `core/*` ← `engines/*` ← `apps/*`. Packages, cygnus-ui and cygnus-i18n never depend on engines or apps; cygnus-ui may depend on cygnus-i18n (never the reverse); no dependencies between apps.
 
 ## Architecture rules (strict)
-- Business logic → `engines/*` and `core/*`; widgets → `packages/ui-kit`; apps = interface + orchestration only. No rendering logic in apps.
+- Business logic → `engines/*` and `core/*`; widgets → `cygnus-ui`; apps = interface + orchestration only. No rendering logic in apps.
 - **Engines are PURE: no UI dependency.** `photo-engine` knows neither egui nor its types; the document model carries pure buffers (`RgbaBuf`, `Arc<[u8]>`). The app sends commands via `mpsc` to a worker owning the `Document`, and receives snapshots + composite preview; the texture is uploaded app-side (`ViewportTextureCache`). Non-blocking egui loop (`try_recv` per frame).
 - Engine→UI boundary: the worker replies `LayersChanged { layers, preview, can_undo, can_redo }`; the app converts the preview into an `egui::ColorImage` and feeds its `TextureHandle` (zero regeneration on zoom/pan — state-only).
 - **"state-only"** rendering model: a setting (opacity, position…) never regenerates pixels/textures; it applies at GPU draw. Preserve this model at all costs.
@@ -55,18 +56,18 @@ Allowed dependencies: `packages/*` ← `core/*` ← `engines/*` ← `apps/*`. Pa
 Split by role (same pattern for future apps):
 `main.rs` (eframe boot) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (app-specific layout) · `ui/` (domain widgets: `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`, `engine_bridge.rs`). Do not let it regrow into a monolithic main.rs.
 
-## `packages/ui-kit` architecture (layered, see lib.rs)
+## `cygnus-ui` architecture (layered, see lib.rs)
 1. **`theme`** = ONLY source of colors/sizes/radii (tokens `colors`, `spacing`, `radius`, `typography`).
 2. **`components`** = generic components (`Button`, `Slider`, `Select`, `Tabs`, inputs, `Toggle`, `IconButton`, `icon_button`/`Icon` — only contact with `egui_material_icons` via `icons::glyph` — `ReorderableList`). A component NEVER hardcodes a color/size: it references the tokens.
 3. **Containers** (`containers`: `Panel`, `Split` + `SplitState`, `Collapsible`, `Toolbar`, `Section`, `Card`, `Stack`) → 4. **Generic viewport** (texture display + zoom/pan, canonical `ViewportState`) → 5. **`dialogs`** (modal, file picker, progress) → 6. **`utils`** (generic drag state).
-- App-specific elements stay in `apps/<app>/src/ui/`. Promote to `packages/ui-kit` only when a 2nd app needs it (and never domain types: ui-kit stays domain-agnostic, verified by `scripts/check_uikit_domain_agnostic.sh`).
+- App-specific elements stay in `apps/<app>/src/ui/`. Promote to `cygnus-ui` only when a 2nd app needs it (and never domain types: cygnus-ui stays domain-agnostic, verified by `scripts/check_uikit_domain_agnostic.sh`).
 - **No hardcoded colors outside `theme/`** — including canvases (selection uses `item_selected`, indicators `drop_indicator`). Text sizes: go through `typography`.
 
 ## Conventions
 - `unwrap()`/`expect()` forbidden outside tests; no emoji in code or commits.
 - Short commits prefixed by the app: `photo: fix blend-mode offset jump`.
 - Each `.rs` file starts with the GPL v3 header (copy the one from `apps/photo/src/main.rs`).
-- Theme: palette/tokens implemented in `packages/ui-kit/src/theme/`; Hanken Grotesk font and Material icons loaded from `assets/fonts/`.
+- Theme: palette/tokens implemented in `cygnus-ui/src/theme/`; Hanken Grotesk font and Material icons loaded from `assets/fonts/`.
 
 <!-- graft:start -->
 ## Graft — repo context graph

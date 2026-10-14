@@ -18,8 +18,8 @@
 //!
 //! The user layout is saved INDEPENDENTLY of the document
 //! (`.cygp` project engine-side). `ui_state` serializes the
-//! [`WorkspaceState`](ui_kit::layout::WorkspaceState) to JSON via
-//! ui-kit; the disk wiring (paths, `preferences`) will come
+//! [`WorkspaceState`](cygnus_ui::layout::WorkspaceState) to JSON via
+//! cygnus-ui; the disk wiring (paths, `preferences`) will come
 //! with the disk hookup — hence the pending functions.
 
 pub mod ui_state;

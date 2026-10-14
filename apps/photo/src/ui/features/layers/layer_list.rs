@@ -18,7 +18,7 @@
 //!
 //! The hierarchy (`children`, filters, masks) is flattened into
 //! known-height rows ([`super::types::flatten_layers`]) then displayed
-//! via `ui_kit::components::ReorderableList::show_variable`: each
+//! via `cygnus_ui::components::ReorderableList::show_variable`: each
 //! row allocates EXACTLY its height — no overlap possible.
 //! The drop bubbles as [`LayerDrop`](super::types::LayerDrop) (before /
 //! inside / after), converted to [`PhotoAction`](crate::commands::PhotoAction)
@@ -31,11 +31,11 @@ use super::types::{
     FlatRow, FlatRowKind, LayerDrop, LayerTexts, LayerThumbView, LayerTreeSelection,
     PhotoLayerInfo, find_attachment_in, find_layer_in, flat_row_name, flatten_layers,
 };
+use cygnus_ui::components::{HierarchicalDrop, ReorderableList};
+use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::theme::UiThemeExt;
+use cygnus_ui::utils::ReorderDragState;
 use std::collections::HashMap;
-use ui_kit::components::{HierarchicalDrop, ReorderableList};
-use ui_kit::theme::CygnusTheme;
-use ui_kit::theme::UiThemeExt;
-use ui_kit::utils::ReorderDragState;
 use uuid::Uuid;
 
 /// Allocated height of a flattened row (never overlapping: the
@@ -205,10 +205,10 @@ mod tests {
     #[test]
     fn list_renders_without_panic_and_reports_nothing() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let texts = super::super::types::LayerTexts {
-            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
-            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+            catalog: cygnus_i18n::Catalog::new(cygnus_i18n::Language::Fr),
+            texts: cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr),
         };
         let layers = fixture_layers();
         let mut drag_state = ReorderDragState::default();
@@ -270,10 +270,10 @@ mod tests {
     fn hierarchical_list_renders_group_and_attachment_without_panic() {
         use photo_engine::GroupLayer;
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let texts = super::super::types::LayerTexts {
-            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
-            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+            catalog: cygnus_i18n::Catalog::new(cygnus_i18n::Language::Fr),
+            texts: cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr),
         };
         let mut doc = Document::new(8, 8);
         let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));

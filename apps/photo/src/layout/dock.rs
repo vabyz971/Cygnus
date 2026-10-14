@@ -42,10 +42,10 @@ use crate::app::{PhotoApp, remove_document};
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use app_shell::dock::DockTab;
+use cygnus_i18n::TextKey;
+use cygnus_ui::icons::{Icon, IconRegistry};
 use egui_tiles::{Behavior, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
-use ui_kit::i18n::TextKey;
-use ui_kit::icons::{Icon, IconRegistry};
 use uuid::Uuid;
 
 /// Generic dock mechanics (lookup, canvas tabs,
@@ -54,7 +54,7 @@ pub use app_shell::dock::{ensure_tab, push_canvas_tab, reconcile_canvases, remov
 
 /// Dockable Photo workspace panel (stable across versions:
 /// serialized into preferences, never rename without
-/// migration — like [`ui_kit::layout::PanelId`]).
+/// migration — like [`cygnus_ui::layout::PanelId`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PhotoDockTab {
     /// Compact tool rail.
@@ -247,16 +247,16 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         // shared reference) before the mutable document borrow.
         let ctx: &PhotoUiContext = self.ctx;
         let translator = ctx.shared.translator();
-        let texts = crate::i18n::PhotoCatalog::new(translator.language());
+        let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
         match *pane {
             PhotoDockTab::Tools => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get_mut(index) else {
-                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
+                    ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let translator = ctx.shared.translator();
-                let texts = crate::i18n::PhotoCatalog::new(translator.language());
+                let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
                 self.actions.extend(left_sidebar::draw_tools_content(
                     ui,
                     doc,
@@ -278,7 +278,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::Inspector => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get(index) else {
-                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
+                    ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
@@ -289,7 +289,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::Layers => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get_mut(index) else {
-                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
+                    ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
@@ -300,7 +300,7 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
             PhotoDockTab::History => {
                 let index = (*self.active).min(self.docs.len().saturating_sub(1));
                 let Some(doc) = self.docs.get(index) else {
-                    ui.label(texts.get(crate::i18n::PhotoTextKey::NoDocument));
+                    ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
                 let inner = padded_tile(ui, ctx, |ui| {
@@ -621,7 +621,7 @@ mod tests {
 
         let mut app = PhotoApp::new();
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let ctx_clone = ctx.clone();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             app.draw(&ctx_clone, ui);

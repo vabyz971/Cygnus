@@ -15,7 +15,9 @@
 | D007 | 2026-10-05 | Shortcuts suspended while typing (`egui_wants_keyboard_input`) | typing `b` while renaming must not switch tools; no double undo with fields | accepted |
 | D008 | 2026-10-06 | Layer tree: selectable + collapsible attachments, no DnD for them | click = focus (carrier selected), eye on/off, per-carrier chevron; layer DnD unchanged | accepted |
 | D009 | 2026-10-06 | Duplication-free inspector (opacity/visibility/blend = Layers panel) | single source of settings; inspector = identity + focused attachment | accepted |
-| D010 | 2026-10-06 | I18n: generic verbs → ui-kit `TextKey`, domain → `PhotoTextKey` | transient statuses, worker/engine messages and layer/file names excluded (data or no language plumbing) | accepted |
+| D010 | 2026-10-06 | I18n: generic verbs → shared `cygnus-i18n` `TextKey`, domain → `PhotoTextKey` | transient statuses, worker/engine messages and layer/file names excluded (data or no language plumbing) | superseded by D011 |
+| D011 | 2026-10-14 | I18n at workspace root (`cygnus-i18n`), not in `cygnus-ui` | one shared catalog crate for photo/video/audio, no per-app duplicates | superseded by D012 |
+| D012 | 2026-10-14 | All translation tables in `cygnus-i18n` (generic + photo domain), apps hold none | `apps/photo/src/i18n.rs` moved to `cygnus-i18n/src/photo.rs`; video/audio domains follow the same pattern | accepted |
 
 ## Template for a new decision
 

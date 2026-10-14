@@ -17,7 +17,7 @@
 //! Canonical 2D affine transform (scale → skew → rotation convention
 //! around the center, then offset).
 //!
-//! SINGLE source of the formula: `photo-engine` (compositing) and `ui-kit`
+//! SINGLE source of the formula: `photo-engine` (compositing) and `cygnus-ui`
 //! (`image_canvas::corners`) call it — no local copy anywhere else.
 
 use serde::{Deserialize, Serialize};

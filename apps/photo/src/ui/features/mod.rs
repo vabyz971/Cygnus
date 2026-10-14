@@ -18,7 +18,7 @@
 //!
 //! Each feature is independent: position-independent panels,
 //! actions bubbled as [`PhotoAction`](crate::commands::PhotoAction),
-//! ui-kit-only styling.
+//! cygnus-ui-only styling.
 
 pub mod history;
 pub mod inspector;

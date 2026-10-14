@@ -20,7 +20,7 @@
 //! highlighted, redo steps (next one first). Clicking a row =
 //! state jump ([`HistoryPanelAction`]), converted to
 //! [`PhotoAction`](crate::commands::PhotoAction) (see
-//! [`super::actions`]). ui-kit-only styling, no hardcoded
+//! [`super::actions`]). cygnus-ui-only styling, no hardcoded
 //! color.
 
 pub mod actions;

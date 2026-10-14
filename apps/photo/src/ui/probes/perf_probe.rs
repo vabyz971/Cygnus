@@ -185,7 +185,7 @@ fn probe_5_paint_stroke_4k() {
 
 #[test]
 fn probe_6_zoom_pan_state_only() {
-    use ui_kit::viewport::ViewportState;
+    use cygnus_ui::viewport::ViewportState;
     let mut viewport = ViewportState::default();
     let center = egui::pos2(960.0, 540.0);
     let t = Instant::now();
@@ -241,7 +241,7 @@ fn probe_cache_second_composite_hits() {
 
 #[test]
 fn probe_texture_update_reuses_slot() {
-    use ui_kit::viewport::ViewportTextureCache;
+    use cygnus_ui::viewport::ViewportTextureCache;
     let ctx = egui::Context::default();
     let mut cache = ViewportTextureCache::new();
     let image = egui::ColorImage::new([64, 64], vec![egui::Color32::RED; 64 * 64]);

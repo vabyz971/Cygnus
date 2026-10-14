@@ -21,10 +21,10 @@
 //! No worker send: everything bubbles as
 //! [`HistoryPanelAction`]. Labels come from the worker
 //! (snapshot `undo_labels`/`redo_labels`); the current state and the
-//! empty state use [`PhotoCatalog`](crate::i18n::PhotoCatalog).
+//! empty state use [`PhotoCatalog`](cygnus_i18n::PhotoCatalog).
 
 use crate::commands::PhotoUiContext;
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 
 /// History panel action (state jump, routed by `PhotoApp`
 /// to the worker after conversion).
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn panneau_rend_sans_panique_vide_et_rempli() {
         let ctx_egui = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx_egui);
+        cygnus_ui::theme::setup_fonts(&ctx_egui);
         let ctx = PhotoUiContext::for_frame(&ctx_egui);
         ctx_egui
             .run_ui(egui::RawInput::default(), |ui| {

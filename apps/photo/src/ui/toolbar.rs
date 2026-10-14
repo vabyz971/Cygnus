@@ -19,13 +19,13 @@
 //! Vertical icon bar with a tooltip showing each
 //! tool's name. Content follows the edit mode (see `super::modebar`:
 //! all tools in Pixel, navigation only in Vector/Layout).
-//! ui-kit-only styling.
+//! cygnus-ui-only styling.
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
-use ui_kit::icons::{Icon, IconRegistry};
-use ui_kit::theme::CygnusTheme;
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_ui::icons::{Icon, IconRegistry};
+use cygnus_ui::theme::CygnusTheme;
 
 /// Icon + contextual help of a rail tool.
 fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str) {
@@ -104,9 +104,9 @@ mod tests {
     #[test]
     fn tool_rail_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let theme = CygnusTheme::dark();
-        let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
+        let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
         let mut tool = PhotoCanvasTool::Move;
         let mut color = [255u8, 255, 255];
         ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -131,9 +131,9 @@ mod tests {
     #[test]
     fn every_mode_rail_renders() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let theme = CygnusTheme::dark();
-        let texts = PhotoCatalog::new(ui_kit::i18n::Language::Fr);
+        let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
         for mode in [
             PhotoEditMode::Vector,
             PhotoEditMode::Pixel,

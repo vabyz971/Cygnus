@@ -20,36 +20,36 @@
 //! an image. Shown instead of the tree while `docs` is empty.
 
 use crate::commands::PhotoAction;
-use ui_kit::components::{Button, ButtonVariant};
-use ui_kit::theme::typography::{body_text, heading_text};
+use cygnus_ui::components::{Button, ButtonVariant};
+use cygnus_ui::theme::typography::{body_text, heading_text};
 
 /// Draws the welcome screen and returns the actions (create / open).
 pub fn show(ui: &mut egui::Ui, ctx: &crate::commands::PhotoUiContext) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     let theme = ctx.shared.theme();
     let translator = ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
     ui.vertical_centered(|ui| {
         ui.add_space(theme.spacing.xl * 3.0);
         ui.label(heading_text(
             theme,
-            texts.get(crate::i18n::PhotoTextKey::NoDocumentOpen),
+            texts.get(cygnus_i18n::PhotoTextKey::NoDocumentOpen),
         ));
         ui.add_space(theme.spacing.sm);
         ui.label(body_text(
             theme,
-            texts.get(crate::i18n::PhotoTextKey::WelcomeBody),
+            texts.get(cygnus_i18n::PhotoTextKey::WelcomeBody),
         ));
         ui.add_space(theme.spacing.lg);
         ui.horizontal(|ui| {
-            if Button::new(translator.get(ui_kit::i18n::TextKey::NewDocument))
+            if Button::new(translator.get(cygnus_i18n::TextKey::NewDocument))
                 .variant(ButtonVariant::Primary)
                 .show(ui, theme)
                 .clicked()
             {
                 actions.push(PhotoAction::OpenNewDocumentDialog);
             }
-            if Button::new(texts.get(crate::i18n::PhotoTextKey::OpenImageFile))
+            if Button::new(texts.get(cygnus_i18n::PhotoTextKey::OpenImageFile))
                 .variant(ButtonVariant::Secondary)
                 .show(ui, theme)
                 .clicked()

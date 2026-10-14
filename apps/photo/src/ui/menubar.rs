@@ -20,20 +20,20 @@
 //! export with settings, quit), Edit (undo, redo),
 //! Layer (empty, image, duplicate, mask, delete), View
 //! (grid, zoom), Window (reopen a closed panel, reset
-//! the dock layout), Help. Items via [`ui_kit::components::menu`].
+//! the dock layout), Help. Items via [`cygnus_ui::components::menu`].
 //! The bar style uses square corners via `menu_bar_style`,
 //! sub-menus keep the theme's rounded radius.
-//! Generic labels come from the [`Catalog`](ui_kit::i18n::Catalog) catalog,
-//! Photo-specific strings from the [`PhotoCatalog`](crate::i18n::PhotoCatalog) catalog;
+//! Generic labels come from the [`Catalog`](cygnus_i18n::Catalog) catalog,
+//! Photo-specific strings from the [`PhotoCatalog`](cygnus_i18n::PhotoCatalog) catalog;
 //! the settings windows (new document, export) are
 //! app-owned modals (see `super::dialogs`).
 
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use crate::layout::dock::PhotoDockTab;
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 
-use ui_kit::components::menu::{menu_bar_style, menu_item, menu_item_enabled, menu_style};
-use ui_kit::i18n::{Catalog, TextKey};
-use ui_kit::theme::CygnusTheme;
+use cygnus_i18n::{Catalog, TextKey};
+use cygnus_ui::components::menu::{menu_bar_style, menu_item, menu_item_enabled, menu_style};
+use cygnus_ui::theme::CygnusTheme;
 
 /// Action reported by [`draw_menu_bar`], handled by the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,9 +113,9 @@ pub struct MenuAvailability {
 
 /// Draws the menu bar and returns the actions.
 ///
-/// Items are ui-kit ghost buttons (transparent background,
+/// Items are cygnus-ui ghost buttons (transparent background,
 /// native egui hover highlight); clicking closes the open menu.
-/// Generic labels come from the ui-kit catalog, Photo-specific
+/// Generic labels come from the cygnus-ui catalog, Photo-specific
 /// strings from the [`PhotoCatalog`] catalog.
 pub fn draw_menu_bar(
     ui: &mut egui::Ui,
@@ -141,7 +141,7 @@ pub fn draw_menu_bar(
             ui.scope_builder(egui::UiBuilder::new().style(bar_style), |ui| {
                 // Inner padding of menu titles (bigger clickable
                 // areas, airy bar), all from the theme. Dropdown
-                // items keep their fixed height (ui-kit min_size).
+                // items keep their fixed height (cygnus-ui min_size).
                 ui.spacing_mut().button_padding = egui::vec2(theme.spacing.sm, theme.spacing.sm);
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button(catalog.get(TextKey::File), |ui| {
@@ -378,12 +378,12 @@ pub fn draw_menu_bar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ui_kit::i18n::Language;
+    use cygnus_i18n::Language;
 
     #[test]
     fn menu_bar_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let theme = CygnusTheme::dark();
         for language in [Language::En, Language::Fr] {
             let catalog = Catalog::new(language);

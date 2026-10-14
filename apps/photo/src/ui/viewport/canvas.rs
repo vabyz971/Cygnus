@@ -19,14 +19,14 @@
 //! PHOTO canvas: generic viewport + photo tools on top.
 //!
 //! Domain widget: displays the `photo-engine` texture via
-//! `ui_kit::Viewport`, maps the photo tools (hand, zoom, brush,
+//! `cygnus_ui::Viewport`, maps the photo tools (hand, zoom, brush,
 //! eraser, move) and accumulates drawing strokes. At the end
 //! of a stroke (release), the request is RETURNED in
 //! [`PhotoCanvasOutcome::paint`]: the app sends it to the worker
 //! (via [`PhotoAction`](crate::commands::PhotoAction)), never the
 //! canvas. Pan/zoom stay 100% local (state-only).
 
-use ui_kit::viewport::{Viewport, ViewportAction, ViewportState, ViewportTool};
+use cygnus_ui::viewport::{Viewport, ViewportAction, ViewportState, ViewportTool};
 use uuid::Uuid;
 
 /// Active photo canvas tool (egui-side, no iced dependency).
@@ -64,8 +64,8 @@ impl PhotoCanvasTool {
     }
 
     /// Contextual help shown in the status bar (Affinity-style).
-    pub fn hint(self, texts: crate::i18n::PhotoCatalog) -> &'static str {
-        use crate::i18n::PhotoTextKey;
+    pub fn hint(self, texts: cygnus_i18n::PhotoCatalog) -> &'static str {
+        use cygnus_i18n::PhotoTextKey;
         match self {
             Self::Move => texts.get(PhotoTextKey::MoveHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
@@ -404,7 +404,7 @@ mod tests {
         use std::cell::RefCell;
 
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = ViewportState::default();
         let mut stroke: Vec<egui::Vec2> = Vec::new();
         let layer = uuid::Uuid::new_v4();
@@ -470,7 +470,7 @@ mod tests {
         use std::cell::RefCell;
 
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = ViewportState::default();
         let mut stroke: Vec<egui::Vec2> = Vec::new();
         let layer = uuid::Uuid::new_v4();
@@ -582,7 +582,7 @@ mod tests {
         use std::cell::{Cell, RefCell};
 
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = ViewportState::default();
         let mut stroke: Vec<egui::Vec2> = Vec::new();
         let layer = uuid::Uuid::new_v4();
@@ -668,7 +668,7 @@ mod tests {
         use std::cell::RefCell;
 
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = ViewportState::default();
         let mut stroke: Vec<egui::Vec2> = Vec::new();
         let layer = uuid::Uuid::new_v4();
@@ -745,7 +745,7 @@ mod tests {
         use std::cell::RefCell;
 
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = ViewportState::default();
         let mut stroke: Vec<egui::Vec2> = Vec::new();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -795,7 +795,7 @@ mod tests {
     #[test]
     fn canvas_renders_with_every_tool_without_panic() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         for tool in [
             PhotoCanvasTool::Move,
             PhotoCanvasTool::Pan,

@@ -21,8 +21,8 @@
 //! ([`load_workspace_or_default`], [`load_dock_or_default`]).
 
 use crate::layout::dock::{PhotoDockTab, default_tree, ensure_history_tabbed, reconcile_canvases};
+use cygnus_ui::layout::{WorkspaceState, load_workspace, save_workspace};
 use egui_tiles::Tree;
-use ui_kit::layout::{WorkspaceState, load_workspace, save_workspace};
 use uuid::Uuid;
 
 /// Serializes the workspace to JSON.
@@ -42,7 +42,7 @@ pub fn save_workspace_state(state: &WorkspaceState) -> Result<String, serde_json
 /// Waiting on disk wiring (`preferences`): next phase.
 ///
 /// # Errors
-/// Returns an error when the JSON is invalid or rejected by ui-kit.
+/// Returns an error when the JSON is invalid or rejected by cygnus-ui.
 #[allow(dead_code)]
 pub fn load_workspace_state(json: &str) -> Result<WorkspaceState, serde_json::Error> {
     load_workspace(json)

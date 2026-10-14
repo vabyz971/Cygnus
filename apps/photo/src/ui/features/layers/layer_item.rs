@@ -28,12 +28,12 @@
 //! then routed by `PhotoApp` (local state or worker).
 
 use super::types::{LayerTexts, LayerThumbView, PhotoLayerInfo, PhotoSubLayerInfo};
-use crate::i18n::PhotoTextKey;
+use cygnus_i18n::PhotoTextKey;
+use cygnus_i18n::TextKey;
+use cygnus_ui::components::{IconButton, menu_row, menu_style};
+use cygnus_ui::icons::{Icon, IconRegistry};
+use cygnus_ui::theme::UiThemeExt;
 use std::collections::HashMap;
-use ui_kit::components::{IconButton, menu_row, menu_style};
-use ui_kit::i18n::TextKey;
-use ui_kit::icons::{Icon, IconRegistry};
-use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
 /// Inline rename state (double-click on the name, owned by the app).
@@ -570,10 +570,10 @@ mod tests {
     #[test]
     fn item_renders_without_panic() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let texts = super::super::types::LayerTexts {
-            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
-            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+            catalog: cygnus_i18n::Catalog::new(cygnus_i18n::Language::Fr),
+            texts: cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr),
         };
         let layer = fixture_layer();
         let mut rename = LayerRenameState::default();
@@ -600,10 +600,10 @@ mod tests {
     #[test]
     fn item_without_interaction_reports_nothing() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let texts = super::super::types::LayerTexts {
-            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
-            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+            catalog: cygnus_i18n::Catalog::new(cygnus_i18n::Language::Fr),
+            texts: cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr),
         };
         let layer = fixture_layer();
         let mut rename = LayerRenameState::default();
@@ -628,7 +628,7 @@ mod tests {
     fn attachments_collapse_roundtrip() {
         use uuid::Uuid;
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let owner = Uuid::new_v4();
         // Open by default, even with no stored state.
         ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -668,7 +668,7 @@ mod tests {
         // or collapsing never hides anything.
         use uuid::Uuid;
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let owner = Uuid::new_v4();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -692,10 +692,10 @@ mod tests {
     fn attachment_rows_render_without_panic_and_report_nothing() {
         use uuid::Uuid;
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let texts = super::super::types::LayerTexts {
-            catalog: ui_kit::i18n::Catalog::new(ui_kit::i18n::Language::Fr),
-            texts: crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr),
+            catalog: cygnus_i18n::Catalog::new(cygnus_i18n::Language::Fr),
+            texts: cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr),
         };
         let owner = Uuid::new_v4();
         let filter = Uuid::new_v4();

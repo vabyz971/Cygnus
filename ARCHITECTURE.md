@@ -15,13 +15,18 @@ engines, a generic node graph, widgets and utility libraries.
 apps/       Final applications (independent binaries)
 engines/    PURE business engines — zero UI dependency
 core/       Shared foundation: datatypes
-packages/   Reusable libraries: ui-kit, app-shell, math-utils, file-utils
+cygnus-ui/  Design system (egui): theme, components, viewport
+cygnus-i18n/ Shared translations (all catalogs, no per-app duplicates)
+packages/   Reusable libraries: app-shell, math-utils, file-utils
 assets/     Shared resources (fonts)
 ```
 
-### packages/
+### cygnus-ui/ + cygnus-i18n/ + packages/
 Shared libraries reusable across all applications.
-- `ui-kit` (crate `ui_kit`): layered egui design system — `theme`
+- `cygnus-i18n` (crate `cygnus_i18n`): shared translations —
+  generic `TextKey` + `Catalog`/`Language` (en/fr tables, zero
+  allocation). All catalogs (generic + photo/video/audio domains) live here; apps hold no translation tables.
+- `cygnus-ui` (crate `cygnus_ui`): layered egui design system — `theme`
   (only source of colors/sizes, tokens in `theme/`),
   generic `components` (incl. `icon_button`, `ReorderableList`),
   `containers`, generic pan/zoom `viewport`, `dialogs`. Strictly
@@ -130,9 +135,10 @@ binary; photo is complete, video/audio are foundations awaiting their engines.
 
 ## Dependency rules
 
-1. `packages/` NEVER depends on `engines/` or `apps/`
+1. `packages/`, `cygnus-ui/` and `cygnus-i18n/` NEVER depend on `engines/` or `apps/`
 2. `engines/` may depend on `core/` and non-UI `packages/`; `datatypes` depends only on `serde`
-3. `apps/` may depend on `core/`, `engines/` and `packages/`
+3. `cygnus-ui/` may depend on `cygnus-i18n/` (panel titles, translator); never the reverse
+4. `apps/` may depend on `core/`, `engines/`, `cygnus-ui/`, `cygnus-i18n/` and `packages/`
 4. No circular dependencies
 5. No dependencies between apps
 

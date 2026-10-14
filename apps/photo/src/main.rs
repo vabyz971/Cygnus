@@ -26,7 +26,6 @@
 
 mod app;
 mod commands;
-mod i18n;
 mod layout;
 mod persistence;
 mod shortcuts;
@@ -41,8 +40,8 @@ fn main() {
             ..Default::default()
         },
         Box::new(|cc| {
-            ui_kit::theme::setup_fonts(&cc.egui_ctx);
-            ui_kit::theme::apply_cygnus_theme(&cc.egui_ctx);
+            cygnus_ui::theme::setup_fonts(&cc.egui_ctx);
+            cygnus_ui::theme::apply_cygnus_theme(&cc.egui_ctx);
             Ok(Box::new(app::PhotoApp::new()))
         }),
     )

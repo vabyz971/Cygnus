@@ -21,7 +21,7 @@
 //!   ↓ Top / Central (Tree) / Bottom (+ overlays)
 //! Tile / Feature (domain content)
 //!   ↓
-//! ui-kit (style + generic containers)
+//! cygnus-ui (style + generic containers)
 //! ```
 //!
 //! Each region draws its `egui::Panel` and delegates content to the

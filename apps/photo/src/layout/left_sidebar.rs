@@ -24,14 +24,14 @@
 use crate::commands::PhotoAction;
 use crate::state::OpenDocument;
 use crate::ui::draw_tool_rail;
-use ui_kit::theme::CygnusTheme;
+use cygnus_ui::theme::CygnusTheme;
 
 /// Compact tool rail (tab content, no `Panel`).
 pub fn draw_tools_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
     theme: &CygnusTheme,
-    texts: crate::i18n::PhotoCatalog,
+    texts: cygnus_i18n::PhotoCatalog,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
     if let Some(tool) = draw_tool_rail(

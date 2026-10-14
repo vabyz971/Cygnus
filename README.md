@@ -26,10 +26,10 @@ Cygnus/
 │   └── audio-engine/         # Audio engine (upcoming)
 ├── core/                     # Shared foundation reused across apps
 │   ├── datatypes/            # Shared types: nodes, sockets, parameters, Vec2
+├── cygnus-ui/                # egui design system: theme/ (SOLE source of tokens),
+│                             #   widgets/ (buttons, icons via CygnusIcon, reorderable
+│                             #   list), panels/, viewport/ (pan/zoom), dialogs/
 ├── packages/                 # Reusable libraries (never depend on engines/apps)
-│   ├── ui-kit/               # egui design system: theme/ (SOLE source of tokens),
-│   │                         #   widgets/ (buttons, icons via CygnusIcon, reorderable
-│   │                         #   list), panels/, viewport/ (pan/zoom), dialogs/
 │   ├── math-utils/           # Shared math: canonical affine `Transform2D`
 │   │                         #   (canonical `Vec2` = datatypes)
 │   ├── file-utils/           # I/O: drag & drop, file dialogs
@@ -42,7 +42,7 @@ Cygnus/
 ### Architecture philosophy
 - **Strict modularity**: business logic lives in `engines/*` and `core/*`, never in the apps. An app = interface + orchestration.
 - **Pure engines**: `photo-engine` (layer tree, compositing, history) has no UI dependency and can later serve the video module (titles, image compositing).
-- **Shared style, per-app layouts**: all widgets come from `packages/ui-kit` (theme, `CygnusIcon`, generic panels/viewport/dialogs); each app owns its layout and its domain widgets in `apps/*/src/ui/`. ui-kit never references engine or app types.
+- **Shared style, per-app layouts**: all widgets come from `cygnus-ui` (theme, `CygnusIcon`, generic panels/viewport/dialogs); each app owns its layout and its domain widgets in `apps/*/src/ui/`. cygnus-ui never references engine or app types.
 - **Non-blocking UI**: the egui loop never blocks — heavy work (decode, export, compositing) runs on background threads and reports back over `mpsc` channels polled each frame.
 - **Layered dependencies**: `apps/*` may depend on `engines/*`, `core/*`, and `packages/*`; `engines/*` may depend on `core/*` and non-UI `packages/*`. Packages never depend on engines or apps.
 - **State-only rendering**: settings (opacity, transform, blend) never regenerate pixels — they apply at draw time. This invariant is what makes the UI feel instant.
@@ -90,7 +90,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide: development setup, ar
 
 Quick summary:
 1. **Open an issue first** for significant changes (architecture, new engines).
-2. **Respect modularity**: business logic → `engines/*` / `core/*`, widgets → `packages/ui-kit`, orchestration → `apps/*`.
+2. **Respect modularity**: business logic → `engines/*` / `core/*`, widgets → `cygnus-ui`, orchestration → `apps/*`.
 3. **Preserve the state-only rendering model** — profile before optimizing.
 4. **Quality gate**: `cargo clippy --workspace` clean, `cargo fmt` before every commit.
 5. Short, descriptive commit messages prefixed by the app (`photo: fix blend-mode offset jump`).

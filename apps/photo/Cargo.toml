@@ -15,7 +15,8 @@ egui_animation.workspace = true
 egui_tiles.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-ui-kit = { path = "../../packages/ui-kit" }
+cygnus-ui = { path = "../../cygnus-ui" }
+cygnus-i18n = { path = "../../cygnus-i18n" }
 app-shell = { path = "../../packages/app-shell" }
 photo-engine = { path = "../../engines/photo-engine" }
 datatypes = { path = "../../core/datatypes" }

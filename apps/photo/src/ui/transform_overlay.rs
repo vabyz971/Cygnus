@@ -506,7 +506,7 @@ fn axis_of(handle: Option<TransformHandle>, corners: [(f32, f32); 4]) -> Option<
 /// the theme (no hardcoded color or size beyond the knob lift).
 pub fn draw_transform_overlay(
     painter: &egui::Painter,
-    theme: ui_kit::theme::CygnusTheme,
+    theme: cygnus_ui::theme::CygnusTheme,
     quad: [egui::Pos2; 4],
     hover: Option<egui::Pos2>,
     quiet: bool,

@@ -27,7 +27,6 @@
 //! brush cursor on top.
 
 use crate::commands::{PhotoAction, PhotoUiContext};
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
 use crate::state::{OpenDocument, PreviewGeom, sample_preview_color};
 use crate::ui::features::layers::find_layer_in;
 use crate::ui::features::layers::types::PhotoLayerKind;
@@ -37,8 +36,9 @@ use crate::ui::{
     draw_cached_ink, draw_document_bounds, draw_transform_overlay, feed_ink_frame, frame_corners,
     hit_test_topmost, ink_tool_active, point_in_quad, screen_to_doc, stability_action,
 };
-use ui_kit::components::{menu_row, menu_style};
-use ui_kit::prelude::UiThemeExt;
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_ui::components::{menu_row, menu_style};
+use cygnus_ui::prelude::UiThemeExt;
 
 /// View-stability driver (all tools): keeps the document's
 /// on-screen size across scope changes (see [`StableView`]). Pure
@@ -460,11 +460,11 @@ pub fn draw_canvas_content(
         egui::Popup::context_menu(response)
             .style(menu_style(theme))
             .show(|ui| {
-                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::ZoomIn)) {
+                if menu_row(ui, theme, catalog.get(cygnus_i18n::TextKey::ZoomIn)) {
                     actions.push(PhotoAction::ZoomIn);
                     ui.close();
                 }
-                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::ZoomOut)) {
+                if menu_row(ui, theme, catalog.get(cygnus_i18n::TextKey::ZoomOut)) {
                     actions.push(PhotoAction::ZoomOut);
                     ui.close();
                 }
@@ -473,7 +473,7 @@ pub fn draw_canvas_content(
                     ui.close();
                 }
                 ui.separator();
-                if menu_row(ui, theme, catalog.get(ui_kit::i18n::TextKey::Grid)) {
+                if menu_row(ui, theme, catalog.get(cygnus_i18n::TextKey::Grid)) {
                     actions.push(PhotoAction::ToggleGrid);
                     ui.close();
                 }

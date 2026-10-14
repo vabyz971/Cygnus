@@ -34,12 +34,12 @@
 
 use crate::layout::dock::PhotoDockTab;
 use crate::ui::{PaintRequest, PhotoCanvasTool};
+use cygnus_i18n::{Catalog, Language};
+use cygnus_ui::context::UiContext;
+use cygnus_ui::icons::IconRegistry;
+use cygnus_ui::theme::UiThemeExt;
 use photo_engine::BlendMode;
 use std::path::PathBuf;
-use ui_kit::context::UiContext;
-use ui_kit::i18n::{Catalog, Language};
-use ui_kit::icons::IconRegistry;
-use ui_kit::theme::UiThemeExt;
 use uuid::Uuid;
 
 /// UI action emitted by a panel, the viewport, or a menu.
@@ -249,7 +249,7 @@ pub type PhotoCommandQueue = app_shell::ActionQueue<PhotoAction>;
 /// documents, no engines, no mutable state — no GodContext.
 #[derive(Debug, Clone)]
 pub struct PhotoUiContext {
-    /// Shared ui-kit dependencies.
+    /// Shared cygnus-ui dependencies.
     pub shared: UiContext,
 }
 

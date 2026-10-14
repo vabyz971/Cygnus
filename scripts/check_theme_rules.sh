@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cygnus — garde-fou des règles du thème.
 #
-# Échoue si, hors `packages/ui-kit/src/theme/` et hors `#[cfg(test)]`,
+# Échoue si, hors `cygnus-ui/src/theme/` et hors `#[cfg(test)]`,
 # on trouve :
 #   - `CygnusTheme::dark()` (les widgets doivent lire `ui.cygnus_theme()`
 #     ou `ctx.cygnus_theme()`, repli sombre automatique) ;
@@ -26,8 +26,8 @@ FAIL=0
 # $1 = motif grep -E.
 flag_hors_theme_et_tests() {
     local motif="$1"
-    grep -rn -E "$motif" "$ROOT/packages" "$ROOT/apps" --include='*.rs' \
-        | grep -v 'packages/ui-kit/src/theme/' \
+    grep -rn -E "$motif" "$ROOT/packages" "$ROOT/apps" "$ROOT/cygnus-ui" --include='*.rs' \
+        | grep -v 'cygnus-ui/src/theme/' \
         | while IFS= read -r hit; do
             local file="${hit%%:*}"
             local rest="${hit#*:}"

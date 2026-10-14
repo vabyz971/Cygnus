@@ -20,7 +20,7 @@
 //!
 //! - `features/`: per-domain features (layers, inspector),
 //!   position-independent, bubbling [`PhotoAction`](crate::commands::PhotoAction)s;
-//! - `viewport/`: canvas + overlays around the generic ui-kit viewport;
+//! - `viewport/`: canvas + overlays around the generic cygnus-ui viewport;
 //! - flat widgets (`menubar`, `modebar`, `toolbar`, `optionsbar`,
 //!   `dialogs`): contents used by `crate::layout`.
 //!

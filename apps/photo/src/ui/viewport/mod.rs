@@ -21,9 +21,9 @@
 //! - [`canvas`]: `PhotoCanvas` (engine texture + tools, pan/zoom
 //!   state-only), with no worker send;
 //! - [`overlays`]: photo marker (origin) via the
-//!   agnostic ui-kit helpers.
+//!   agnostic cygnus-ui helpers.
 //!
-//! The generic camera lives in ui-kit; photo rendering and selection
+//! The generic camera lives in cygnus-ui; photo rendering and selection
 //! stay here, with no engine domain logic.
 
 pub mod canvas;

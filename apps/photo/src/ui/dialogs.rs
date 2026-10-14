@@ -16,10 +16,10 @@
 
 //! PHOTO app export and help dialogs.
 
+use cygnus_ui::components::{Select, Slider, TextInput};
+use cygnus_ui::dialogs::{CygnusModal, ModalAction};
+use cygnus_ui::theme::typography::body_text;
 use std::path::PathBuf;
-use ui_kit::components::{Select, Slider, TextInput};
-use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::theme::typography::body_text;
 
 /// Offered export formats.
 pub const EXPORT_FORMATS: &[&str] = &["PNG", "JPEG", "JPG", "GIF"];
@@ -95,35 +95,35 @@ pub fn draw_export_dialog(
     let ctx = ui_ctx.shared.ctx();
     let theme = *ui_ctx.shared.theme();
     let translator = ui_ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
     let mut confirm: Option<ExportRequest> = None;
     let mut open = true;
     let action = CygnusModal::new(
-        texts.get(crate::i18n::PhotoTextKey::ExportTitle),
-        translator.get(ui_kit::i18n::TextKey::Validate),
-        translator.get(ui_kit::i18n::TextKey::Cancel),
+        texts.get(cygnus_i18n::PhotoTextKey::ExportTitle),
+        translator.get(cygnus_i18n::TextKey::Validate),
+        translator.get(cygnus_i18n::TextKey::Cancel),
     )
     .show(ctx, &mut open, |ui| {
         ui.horizontal(|ui| {
             ui.label(body_text(
                 &theme,
-                texts.get(crate::i18n::PhotoTextKey::FolderLabel),
+                texts.get(cygnus_i18n::PhotoTextKey::FolderLabel),
             ));
             TextInput::new()
-                .placeholder(texts.get(crate::i18n::PhotoTextKey::FolderPlaceholder))
+                .placeholder(texts.get(cygnus_i18n::PhotoTextKey::FolderPlaceholder))
                 .show(ui, &theme, &mut state.folder);
         });
         ui.horizontal(|ui| {
             ui.label(body_text(
                 &theme,
-                texts.get(crate::i18n::PhotoTextKey::NameLabel),
+                texts.get(cygnus_i18n::PhotoTextKey::NameLabel),
             ));
             TextInput::new()
-                .placeholder(texts.get(crate::i18n::PhotoTextKey::FileNamePlaceholder))
+                .placeholder(texts.get(cygnus_i18n::PhotoTextKey::FileNamePlaceholder))
                 .show(ui, &theme, &mut state.filename);
         });
         let formats: Vec<&str> = EXPORT_FORMATS.to_vec();
-        Select::new(texts.get(crate::i18n::PhotoTextKey::FormatLabel), &formats).show(
+        Select::new(texts.get(cygnus_i18n::PhotoTextKey::FormatLabel), &formats).show(
             ui,
             &theme,
             &mut state.format,
@@ -132,7 +132,7 @@ pub fn draw_export_dialog(
             && EXPORT_FORMATS.get(state.format).copied().unwrap_or("PNG") != "GIF"
         {
             Slider::new(
-                texts.get(crate::i18n::PhotoTextKey::QualityLabel),
+                texts.get(cygnus_i18n::PhotoTextKey::QualityLabel),
                 1.0..=100.0,
             )
             .show(ui, &theme, &mut state.quality);
@@ -142,7 +142,7 @@ pub fn draw_export_dialog(
             &theme,
             &format!(
                 "{} {}",
-                texts.get(crate::i18n::PhotoTextKey::DestinationLabel),
+                texts.get(cygnus_i18n::PhotoTextKey::DestinationLabel),
                 request.path.display()
             ),
         ));
@@ -162,25 +162,25 @@ pub fn draw_help_dialog(ui_ctx: &crate::commands::PhotoUiContext, open: &mut boo
     let ctx = ui_ctx.shared.ctx();
     let theme = *ui_ctx.shared.theme();
     let translator = ui_ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
     let mut stays_open = true;
     CygnusModal::new(
-        texts.get(crate::i18n::PhotoTextKey::HelpTitle),
-        translator.get(ui_kit::i18n::TextKey::Close),
-        translator.get(ui_kit::i18n::TextKey::Close),
+        texts.get(cygnus_i18n::PhotoTextKey::HelpTitle),
+        translator.get(cygnus_i18n::TextKey::Close),
+        translator.get(cygnus_i18n::TextKey::Close),
     )
     .show(ctx, &mut stays_open, |ui| {
         ui.label(body_text(
             &theme,
-            texts.get(crate::i18n::PhotoTextKey::HelpToolsText),
+            texts.get(cygnus_i18n::PhotoTextKey::HelpToolsText),
         ));
         ui.label(body_text(
             &theme,
-            texts.get(crate::i18n::PhotoTextKey::HelpLayersText),
+            texts.get(cygnus_i18n::PhotoTextKey::HelpLayersText),
         ));
         ui.label(body_text(
             &theme,
-            texts.get(crate::i18n::PhotoTextKey::HelpFileText),
+            texts.get(cygnus_i18n::PhotoTextKey::HelpFileText),
         ));
     });
     *open = stays_open;

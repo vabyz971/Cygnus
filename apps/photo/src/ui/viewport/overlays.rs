@@ -19,11 +19,11 @@
 //!
 //! Composition layer: geometry comes from UI state (document
 //! screen rect), drawing from agnostic helpers
-//! ([`draw_crosshair`](ui_kit::viewport::draw_crosshair)), styling from
+//! ([`draw_crosshair`](cygnus_ui::viewport::draw_crosshair)), styling from
 //! the theme (no hardcoded color or size).
 
 use crate::commands::PhotoUiContext;
-use ui_kit::viewport::draw_crosshair;
+use cygnus_ui::viewport::draw_crosshair;
 
 /// Document boundary: accented frame around the DOCUMENT's
 /// screen rect (`None` = no image, nothing to draw), with
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn document_bounds_and_brush_cursor_render_without_panic() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {

@@ -28,7 +28,7 @@ use super::sections::draw_attachment_section;
 use crate::commands::PhotoUiContext;
 use crate::ui::PhotoLayerInfo;
 use crate::ui::features::layers::types::{AttachmentRef, find_attachment_in};
-use ui_kit::primitives::Text;
+use cygnus_ui::primitives::Text;
 use uuid::Uuid;
 
 /// Action emitted by the inspector (routed to the worker by the app, see
@@ -70,9 +70,9 @@ impl InspectorPanel {
         focused: Option<AttachmentRef>,
     ) -> Vec<InspectorAction> {
         let theme = ctx.shared.theme();
-        let texts = crate::i18n::PhotoCatalog::new(ctx.shared.translator().language());
+        let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
         let Some(layer) = selected else {
-            Text::body(theme, texts.get(crate::i18n::PhotoTextKey::NoLayerSelected)).show(ui);
+            Text::body(theme, texts.get(cygnus_i18n::PhotoTextKey::NoLayerSelected)).show(ui);
             return Vec::new();
         };
         // Lone layer: empty panel (layer settings live
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn inspector_renders_with_and_without_selection() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let layer = fixture_layer();
         let mut with_selection = Vec::new();

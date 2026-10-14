@@ -33,13 +33,13 @@ use crate::ui::{
     PhotoCanvasTool, PhotoEditMode, PhotoEngineResponse, PhotoLayerInfo, PhotoLayerThumb,
     PreviewImage, StableView, TransformDrag,
 };
+use cygnus_ui::layout::WorkspaceState;
+use cygnus_ui::utils::ReorderDragState;
+use cygnus_ui::viewport::{ViewportState, ViewportTextureCache};
 use photo_engine::RenderRevision;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use ui_kit::layout::WorkspaceState;
-use ui_kit::utils::ReorderDragState;
-use ui_kit::viewport::{ViewportState, ViewportTextureCache};
 use uuid::Uuid;
 
 /// Preview geometry: where the document sits inside the thumbnail
@@ -202,7 +202,7 @@ pub struct PhotoUiState {
 }
 
 /// Presentation timings and volumes (Phase 6G.1 §9–13): measured at
-/// the caller (`apply_response`), never in widgets (ui-kit untouched).
+/// the caller (`apply_response`), never in widgets (cygnus-ui untouched).
 /// `texture_set_us` = observable CPU cost of the upload call, NOT an
 /// exact GPU latency (the transfer may finish after return).
 #[derive(Debug, Default, Clone, Copy)]
@@ -835,7 +835,7 @@ mod tests {
 
     #[test]
     fn shell_defaults_to_usable_workspace() {
-        use ui_kit::layout::PanelId;
+        use cygnus_ui::layout::PanelId;
         let shell = PhotoShellState::default();
         assert!(!shell.help_open);
         assert!(shell.workspace.find(PanelId::Layers).is_some());

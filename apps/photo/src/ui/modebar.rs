@@ -27,8 +27,8 @@
 
 use super::optionsbar::draw_tool_options;
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
-use ui_kit::components::{Button, ButtonVariant};
-use ui_kit::theme::CygnusTheme;
+use cygnus_ui::components::{Button, ButtonVariant};
+use cygnus_ui::theme::CygnusTheme;
 
 /// Document edit mode (persona-style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -93,7 +93,7 @@ pub fn draw_photo_modebar(
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
     theme: &CygnusTheme,
-    texts: crate::i18n::PhotoCatalog,
+    texts: cygnus_i18n::PhotoCatalog,
 ) -> Option<PhotoEditMode> {
     let mut chosen = None;
     // Row 1: large mode buttons
@@ -154,9 +154,9 @@ mod tests {
     #[test]
     fn modebar_renders_without_panic_and_idle() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
-        let theme = ui_kit::theme::CygnusTheme::dark();
-        let texts = crate::i18n::PhotoCatalog::new(ui_kit::i18n::Language::Fr);
+        cygnus_ui::theme::setup_fonts(&ctx);
+        let theme = cygnus_ui::theme::CygnusTheme::dark();
+        let texts = cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr);
         let mut mode = PhotoEditMode::Pixel;
         let mut brush = PhotoBrushSettings::default();
         let mut show_grid = false;

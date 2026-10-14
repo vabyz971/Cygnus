@@ -17,12 +17,12 @@
 //! Document creation dialog: tabs, visual preset grid
 //! (clickable cards) and the selected preset's settings.
 
-use crate::i18n::{PhotoCatalog, PhotoTextKey};
-use ui_kit::components::Tabs;
-use ui_kit::components::{Button, ButtonVariant};
-use ui_kit::dialogs::{CygnusModal, ModalAction};
-use ui_kit::theme::CygnusTheme;
-use ui_kit::theme::typography::{body_size, body_text, heading_text};
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_ui::components::Tabs;
+use cygnus_ui::components::{Button, ButtonVariant};
+use cygnus_ui::dialogs::{CygnusModal, ModalAction};
+use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::theme::typography::{body_size, body_text, heading_text};
 
 /// Print resolution for physical units (in, cm, pica).
 pub const DOC_DPI: f64 = 300.0;
@@ -363,23 +363,23 @@ pub fn draw_create_document_dialog(
     let ctx = ui_ctx.shared.ctx();
     let theme = *ui_ctx.shared.theme();
     let translator = ui_ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
     let mut confirm: Option<NewDocumentChoice> = None;
     let mut open = true;
     let mut open_image = false;
 
     let action = CygnusModal::new(
-        texts.get(crate::i18n::PhotoTextKey::CreateDocumentTitle),
-        translator.get(ui_kit::i18n::TextKey::Create),
-        translator.get(ui_kit::i18n::TextKey::Cancel),
+        texts.get(cygnus_i18n::PhotoTextKey::CreateDocumentTitle),
+        translator.get(cygnus_i18n::TextKey::Create),
+        translator.get(cygnus_i18n::TextKey::Cancel),
     )
     .size(egui::vec2(470.0, 440.0))
     .show(ctx, &mut open, |ui| {
         // Full-width tabs (above the columns).
         let mut tab = state.tab;
         let tabs = [
-            texts.get(crate::i18n::PhotoTextKey::PrintTab),
-            texts.get(crate::i18n::PhotoTextKey::DigitalTab),
+            texts.get(cygnus_i18n::PhotoTextKey::PrintTab),
+            texts.get(cygnus_i18n::PhotoTextKey::DigitalTab),
         ];
         Tabs::new(&tabs).show(ui, &theme, &mut tab);
         state.tab = tab;
@@ -400,7 +400,7 @@ pub fn draw_create_document_dialog(
                     state.apply_preset(index, preset.px_w, preset.px_h, preset.unit);
                 }
                 ui.add_space(theme.spacing.sm);
-                if Button::new(texts.get(crate::i18n::PhotoTextKey::OpenImageFile))
+                if Button::new(texts.get(cygnus_i18n::PhotoTextKey::OpenImageFile))
                     .variant(ButtonVariant::Secondary)
                     .show(ui, &theme)
                     .clicked()
@@ -417,7 +417,7 @@ pub fn draw_create_document_dialog(
 
                 ui.label(heading_text(
                     &theme,
-                    translator.get(ui_kit::i18n::TextKey::Settings),
+                    translator.get(cygnus_i18n::TextKey::Settings),
                 ));
                 ui.add_space(theme.spacing.xs);
                 if let Some(selected) = state.preset.and_then(|index| presets.get(index)) {
@@ -436,8 +436,8 @@ pub fn draw_create_document_dialog(
                 // Unit change = re-conversion (pixel
                 // size preserved).
                 let mut unit = state.unit;
-                ui_kit::components::Select::new(
-                    texts.get(crate::i18n::PhotoTextKey::UnitLabel),
+                cygnus_ui::components::Select::new(
+                    texts.get(cygnus_i18n::PhotoTextKey::UnitLabel),
                     DOC_UNITS,
                 )
                 .stacked()
@@ -449,15 +449,15 @@ pub fn draw_create_document_dialog(
                 // Manual entry = custom format.
                 let max = from_px(DOC_MAX_DIMENSION, state.unit);
                 let mut width = state.width;
-                ui_kit::components::NumberInput::new(
-                    texts.get(crate::i18n::PhotoTextKey::WidthLabel),
+                cygnus_ui::components::NumberInput::new(
+                    texts.get(cygnus_i18n::PhotoTextKey::WidthLabel),
                 )
                 .range(0.01..=max)
                 .stacked()
                 .show(ui, &theme, &mut width);
                 let mut height = state.height;
-                ui_kit::components::NumberInput::new(
-                    texts.get(crate::i18n::PhotoTextKey::HeightLabel),
+                cygnus_ui::components::NumberInput::new(
+                    texts.get(cygnus_i18n::PhotoTextKey::HeightLabel),
                 )
                 .range(0.01..=max)
                 .stacked()
@@ -469,10 +469,10 @@ pub fn draw_create_document_dialog(
                 ui.horizontal(|ui| {
                     ui.label(body_text(
                         &theme,
-                        texts.get(crate::i18n::PhotoTextKey::OrientationLabel),
+                        texts.get(cygnus_i18n::PhotoTextKey::OrientationLabel),
                     ));
                     let portrait = state.orientation == DocOrientation::Portrait;
-                    if Button::new(texts.get(crate::i18n::PhotoTextKey::PortraitLabel))
+                    if Button::new(texts.get(cygnus_i18n::PhotoTextKey::PortraitLabel))
                         .variant(if portrait {
                             ButtonVariant::Primary
                         } else {
@@ -484,7 +484,7 @@ pub fn draw_create_document_dialog(
                         state.set_orientation(DocOrientation::Portrait);
                     }
                     let paysage = state.orientation == DocOrientation::Paysage;
-                    if Button::new(texts.get(crate::i18n::PhotoTextKey::LandscapeLabel))
+                    if Button::new(texts.get(cygnus_i18n::PhotoTextKey::LandscapeLabel))
                         .variant(if paysage {
                             ButtonVariant::Primary
                         } else {
@@ -529,7 +529,7 @@ mod tests {
     fn confirm_button_painted_and_clickable() {
         use egui::{Event, Modifiers, PointerButton, Pos2};
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = CreateDocumentDialogState {
             open: true,
             ..Default::default()
@@ -605,7 +605,7 @@ mod tests {
     fn open_image_button_returns_open_choice() {
         use egui::{Event, Modifiers, PointerButton, Pos2};
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = CreateDocumentDialogState {
             open: true,
             ..Default::default()
@@ -676,7 +676,7 @@ mod tests {
     fn dialog_window_fits_screen() {
         use egui::Pos2;
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = CreateDocumentDialogState {
             open: true,
             ..Default::default()
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn dialog_renders_and_applies_numerique_preset() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let mut state = CreateDocumentDialogState {
             open: true,
             tab: 1,

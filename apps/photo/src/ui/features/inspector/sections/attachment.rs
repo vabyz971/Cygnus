@@ -22,10 +22,10 @@
 
 use super::super::InspectorAction;
 use crate::commands::PhotoUiContext;
-use crate::i18n::PhotoTextKey;
 use crate::ui::features::layers::types::{AttachmentRef, PhotoSubLayerInfo};
-use ui_kit::components::{Slider, Toggle};
-use ui_kit::primitives::{Text, divider};
+use cygnus_i18n::PhotoTextKey;
+use cygnus_ui::components::{Slider, Toggle};
+use cygnus_ui::primitives::{Text, divider};
 
 /// Range of a float filter parameter, by registry key.
 fn param_range(key: &str) -> std::ops::RangeInclusive<f32> {
@@ -39,7 +39,7 @@ fn param_range(key: &str) -> std::ops::RangeInclusive<f32> {
 }
 
 /// Parameter label (known registry keys, fallback = raw key).
-fn param_label(key: &str, texts: crate::i18n::PhotoCatalog) -> String {
+fn param_label(key: &str, texts: cygnus_i18n::PhotoCatalog) -> String {
     match key {
         "brightness" => texts.get(PhotoTextKey::FilterParamBrightness).to_owned(),
         "contrast" => texts.get(PhotoTextKey::FilterParamContrast).to_owned(),
@@ -58,24 +58,24 @@ pub fn draw_attachment_section(
     sub: &PhotoSubLayerInfo,
 ) -> Vec<InspectorAction> {
     let theme = ctx.shared.theme();
-    let texts = crate::i18n::PhotoCatalog::new(ctx.shared.translator().language());
+    let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
     let mut actions = Vec::new();
     divider(ui, theme);
     Text::heading(theme, &sub.name).show(ui);
     Text::body(
         theme,
         if sub.is_filter {
-            texts.get(crate::i18n::PhotoTextKey::FilterLiveLabel)
+            texts.get(cygnus_i18n::PhotoTextKey::FilterLiveLabel)
         } else {
-            texts.get(crate::i18n::PhotoTextKey::MaskLabel)
+            texts.get(cygnus_i18n::PhotoTextKey::MaskLabel)
         },
     )
     .show(ui);
     let mut enabled = sub.enabled;
     Toggle::new(if sub.is_filter {
-        texts.get(crate::i18n::PhotoTextKey::FilterActive)
+        texts.get(cygnus_i18n::PhotoTextKey::FilterActive)
     } else {
-        texts.get(crate::i18n::PhotoTextKey::MaskActive)
+        texts.get(cygnus_i18n::PhotoTextKey::MaskActive)
     })
     .show(ui, theme, &mut enabled);
     if enabled != sub.enabled {

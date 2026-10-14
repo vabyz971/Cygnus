@@ -31,13 +31,13 @@ use super::types::{
     PhotoLayerInfo, find_filter_in, find_filter_position, find_layer_in, find_mask_position,
 };
 use crate::commands::PhotoUiContext;
+use cygnus_ui::components::{IconButton, Select, Slider, menu_row, menu_style};
+use cygnus_ui::icons::Icon;
+use cygnus_ui::primitives::Text;
+use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::utils::{DropPosition, ReorderDragState};
 use photo_engine::BlendMode;
 use std::collections::HashMap;
-use ui_kit::components::{IconButton, Select, Slider, menu_row, menu_style};
-use ui_kit::icons::Icon;
-use ui_kit::primitives::Text;
-use ui_kit::theme::CygnusTheme;
-use ui_kit::utils::{DropPosition, ReorderDragState};
 use uuid::Uuid;
 
 /// Layers panel action: toolbar + HUD interactions.
@@ -227,7 +227,7 @@ fn draw_selection_header(
     let before_opacity = opacity;
     let before_choice = choice;
     if layers.is_empty() {
-        Text::caption(theme, texts.get(crate::i18n::PhotoTextKey::NoLayers)).show(ui);
+        Text::caption(theme, texts.get(cygnus_i18n::PhotoTextKey::NoLayers)).show(ui);
         ui.separator();
         return actions;
     }
@@ -237,7 +237,7 @@ fn draw_selection_header(
             .spacing(egui::vec2(theme.spacing.sm, theme.spacing.xs))
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new(texts.get(crate::i18n::PhotoTextKey::OpacityLabel))
+                    egui::RichText::new(texts.get(cygnus_i18n::PhotoTextKey::OpacityLabel))
                         .size(theme.typography.body_size)
                         .color(theme.colors.fg_secondary),
                 );
@@ -253,7 +253,7 @@ fn draw_selection_header(
                 });
                 ui.end_row();
                 ui.label(
-                    egui::RichText::new(texts.get(crate::i18n::PhotoTextKey::BlendLabel))
+                    egui::RichText::new(texts.get(cygnus_i18n::PhotoTextKey::BlendLabel))
                         .size(theme.typography.body_size)
                         .color(theme.colors.fg_secondary),
                 );
@@ -463,7 +463,7 @@ fn draw_layers_panel(
     let translator = ctx.shared.translator();
     let t = LayerTexts {
         catalog: translator,
-        texts: crate::i18n::PhotoCatalog::new(translator.language()),
+        texts: cygnus_i18n::PhotoCatalog::new(translator.language()),
     };
     let texts = t.texts;
     let mut actions = Vec::new();
@@ -550,14 +550,14 @@ fn draw_layers_panel(
     // mask, filter (catalog context menu), delete.
     ui.horizontal(|ui| {
         if IconButton::new(Icon::ImageIcon)
-            .tooltip(texts.get(crate::i18n::PhotoTextKey::LayerFromImage))
+            .tooltip(texts.get(cygnus_i18n::PhotoTextKey::LayerFromImage))
             .show(ui, theme)
             .clicked()
         {
             actions.push(LayerPanelAction::AddImage);
         }
         if IconButton::new(Icon::Add)
-            .tooltip(texts.get(crate::i18n::PhotoTextKey::NewEmptyLayer))
+            .tooltip(texts.get(cygnus_i18n::PhotoTextKey::NewEmptyLayer))
             .show(ui, theme)
             .clicked()
         {
@@ -565,14 +565,14 @@ fn draw_layers_panel(
         }
         ui.add_enabled_ui(sel.selected.is_some(), |ui| {
             if IconButton::new(Icon::Duplicate)
-                .tooltip(texts.get(crate::i18n::PhotoTextKey::DuplicateLayer))
+                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DuplicateLayer))
                 .show(ui, theme)
                 .clicked()
             {
                 actions.push(LayerPanelAction::Duplicate);
             }
             if IconButton::new(Icon::Mask)
-                .tooltip(texts.get(crate::i18n::PhotoTextKey::AddMask))
+                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::AddMask))
                 .show(ui, theme)
                 .clicked()
             {
@@ -597,7 +597,7 @@ fn draw_layers_panel(
             // Filter-add context menu (Affinity-style: no
             // modal, the catalog opens at the button).
             let filter_resp = IconButton::new(Icon::Settings)
-                .tooltip(texts.get(crate::i18n::PhotoTextKey::FilterList))
+                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::FilterList))
                 .show(ui, theme);
             egui::Popup::menu(&filter_resp)
                 .style(menu_style(theme))
@@ -615,7 +615,7 @@ fn draw_layers_panel(
                     }
                 });
             if IconButton::new(Icon::Delete)
-                .tooltip(texts.get(crate::i18n::PhotoTextKey::DeleteLayer))
+                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DeleteLayer))
                 .show(ui, theme)
                 .clicked()
             {
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn panel_renders_without_panic_and_reports_nothing() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let layers = fixture_layers();
         let mut drag_state = ReorderDragState::default();
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn panel_with_selection_renders_header_without_actions() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let layers = fixture_layers();
         let selected = layers.first().map(|layer| layer.id);
@@ -707,7 +707,7 @@ mod tests {
     #[test]
     fn panel_empty_renders_without_panic() {
         let ctx = egui::Context::default();
-        ui_kit::theme::setup_fonts(&ctx);
+        cygnus_ui::theme::setup_fonts(&ctx);
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let mut drag_state = ReorderDragState::default();
         let mut rename = LayerRenameState::default();
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn convert_drop_maps_before_after_into() {
         use super::super::types::snapshot_layers;
-        use ui_kit::utils::DropPosition;
+        use cygnus_ui::utils::DropPosition;
         let dragged = Uuid::new_v4();
         let target = Uuid::new_v4();
         // Before / after between layers (same parent or not).

@@ -17,11 +17,11 @@
 //! Bottom status bar: read-only (no actions).
 //!
 //! Active tool hint on the left, application version on the right
-//! ("Alpha" prefix). ui-kit-only styling (`typography`).
+//! ("Alpha" prefix). cygnus-ui-only styling (`typography`).
 
 use crate::app::PhotoApp;
 use crate::commands::PhotoUiContext;
-use ui_kit::theme::typography::body_text;
+use cygnus_ui::theme::typography::body_text;
 
 /// Application version (from `Cargo.toml`).
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -30,7 +30,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
     let theme = ctx.shared.theme();
     let translator = ctx.shared.translator();
-    let texts = crate::i18n::PhotoCatalog::new(translator.language());
+    let texts = cygnus_i18n::PhotoCatalog::new(translator.language());
     egui::Panel::bottom("photo_status")
         .resizable(false)
         .show(ui, |ui| {
@@ -46,7 +46,7 @@ pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
                     None => {
                         ui.label(body_text(
                             theme,
-                            texts.get(crate::i18n::PhotoTextKey::NoDocumentOpen),
+                            texts.get(cygnus_i18n::PhotoTextKey::NoDocumentOpen),
                         ));
                     }
                 }
