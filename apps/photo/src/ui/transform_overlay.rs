@@ -522,6 +522,9 @@ pub fn draw_transform_overlay(
     quiet: bool,
 ) -> Option<TransformHandle> {
     let half = theme.spacing.sm;
+    // Compact dots (0.7×, node-editor language): corners, edges
+    // and knob share the handle size everywhere.
+    let dot = half * 0.7;
     let stroke = egui::Stroke::new(theme.borders.medium, theme.colors.accent);
     painter.add(egui::Shape::closed_line(quad.to_vec(), stroke));
     // Center pivot (always drawn: the rotation reference).
@@ -559,20 +562,20 @@ pub fn draw_transform_overlay(
     for edge in Edge::ALL {
         let (a, b) = edge.ends();
         let mid = egui::pos2((quad[a].x + quad[b].x) / 2.0, (quad[a].y + quad[b].y) / 2.0);
-        painter.circle_filled(mid, half, fill(TransformHandle::Edge(edge)));
-        painter.circle_stroke(mid, half, stroke);
+        painter.circle_filled(mid, dot, fill(TransformHandle::Edge(edge)));
+        painter.circle_stroke(mid, dot, stroke);
     }
     for corner in Corner::ALL {
         let at = quad[corner.index()];
-        painter.circle_filled(at, half, fill(TransformHandle::Corner(corner)));
-        painter.circle_stroke(at, half, stroke);
+        painter.circle_filled(at, dot, fill(TransformHandle::Corner(corner)));
+        painter.circle_stroke(at, dot, stroke);
     }
     // Rotation knob + stem.
     let mid_top = egui::pos2((quad[0].x + quad[1].x) / 2.0, (quad[0].y + quad[1].y) / 2.0);
     if let Some((knob, _)) = rotate_knob(quad, half * 6.0) {
         painter.line_segment([mid_top, knob], stroke);
-        painter.circle_filled(knob, half, fill(TransformHandle::Rotate));
-        painter.circle_stroke(knob, half, stroke);
+        painter.circle_filled(knob, dot, fill(TransformHandle::Rotate));
+        painter.circle_stroke(knob, dot, stroke);
     }
     hovered
 }
