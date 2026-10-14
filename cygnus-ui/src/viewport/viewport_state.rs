@@ -229,6 +229,35 @@ mod tests {
     }
 
     #[test]
+    fn stabilizer_must_use_centered_zoom() {
+        // Regression guard for the layer-move camera kick: in the real
+        // centered widget frame (`screen = center + offset + world *
+        // zoom`), the raw-frame `zoom_by` does NOT keep its anchor fixed
+        // — the view stabilizer must use `zoom_by_around` instead.
+        let center = egui::pos2(700.0, 450.0);
+        let anchor = egui::pos2(720.0, 460.0);
+        let world_in_centered_frame = |zoom: f32, offset: egui::Vec2| {
+            (egui::vec2(
+                (anchor.x - center.x - offset.x) / zoom,
+                (anchor.y - center.y - offset.y) / zoom,
+            ))
+        };
+        let mut raw = ViewportState::default();
+        let before = world_in_centered_frame(raw.zoom(), raw.offset());
+        raw.zoom_by(2.0, Some(anchor));
+        let drifted = world_in_centered_frame(raw.zoom(), raw.offset());
+        assert!(
+            (before.x - drifted.x).abs() > 1.0,
+            "raw zoom_by should drift in the centered frame (else this guard is moot)"
+        );
+        let mut fixed = ViewportState::default();
+        fixed.zoom_by_around(2.0, anchor, center);
+        let after = world_in_centered_frame(fixed.zoom(), fixed.offset());
+        assert!((before.x - after.x).abs() < 1e-4);
+        assert!((before.y - after.y).abs() < 1e-4);
+    }
+
+    #[test]
     fn pan_updates_offset() {
         let mut viewport = ViewportState::default();
         viewport.pan_by(egui::vec2(30.0, -12.0));

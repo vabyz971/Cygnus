@@ -81,15 +81,34 @@ fn stabilize_viewport(
         StabilityAction::Hold => return,
         StabilityAction::Compensate(factor) => {
             // Anchor: document center on screen (fixed point of the zoom).
-            let anchor = doc_to_screen(
+            let Some(anchor) = doc_to_screen(
                 (g.doc_size.x / 2.0, g.doc_size.y / 2.0),
                 dest,
                 g.origin,
                 mapping.thumb_to_doc,
                 g.thumb_size.x,
-            );
+            ) else {
+                // Degenerate mapping: accept the view as is.
+                doc.ui.stable_view = Some(StableView {
+                    screen_per_doc,
+                    full,
+                    doc: doc_size,
+                });
+                return;
+            };
+            // Centered widget frame (`screen = center + offset + world
+            // * zoom`): `zoom_by` assumes the raw frame and drifts toward
+            // the panel center (see `ViewportState::set_zoom_around`) —
+            // every scope change would visibly kick the camera. Recover
+            // the available center from the pre-interaction dest
+            // (`dest.center = available.center + offset`) and zoom around
+            // the document center instead: moving a layer never moves
+            // the camera (Affinity parity).
+            let available_center = dest.center() - pre_offset;
             let before = doc.ui.viewport.zoom();
-            doc.ui.viewport.zoom_by(factor, anchor);
+            doc.ui
+                .viewport
+                .zoom_by_around(factor, anchor, available_center);
             if doc.ui.viewport.zoom() != before {
                 // Settling takes effect next frame (repaint requested);
                 // predict the baseline so float dust cannot loop.
