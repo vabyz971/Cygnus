@@ -34,15 +34,19 @@ pub fn draw_tools_content(
     texts: cygnus_i18n::PhotoCatalog,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    if let Some(tool) = draw_tool_rail(
+    let outcome = draw_tool_rail(
         ui,
         &mut doc.ui.tool,
         &mut doc.ui.brush.color,
         doc.ui.edit_mode,
         theme,
         texts,
-    ) {
+    );
+    if let Some(tool) = outcome.tool {
         actions.push(PhotoAction::SetTool(tool));
+    }
+    if let Some(shape) = outcome.new_shape {
+        actions.push(PhotoAction::AddVectorLayer { shape });
     }
     actions
 }

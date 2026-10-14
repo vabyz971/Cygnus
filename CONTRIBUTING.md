@@ -17,7 +17,7 @@ Thank you for your interest in improving Cygnus! This document covers everything
 
 ## Development setup
 
-**Toolchain**: Rust **1.85+** (the project uses edition 2024).
+**Toolchain**: Rust **1.89+** (the project uses edition 2024).
 
 ### Linux — NixOS / Nix (official environment)
 

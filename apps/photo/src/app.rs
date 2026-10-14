@@ -228,6 +228,9 @@ impl PhotoApp {
                 self.send_active(PhotoEngineCommand::RedoSteps { steps });
             }
             PhotoAction::AddEmptyLayer => self.send_active(PhotoEngineCommand::AddEmptyLayer),
+            PhotoAction::AddVectorLayer { shape } => {
+                self.send_active(PhotoEngineCommand::AddVectorLayer { shape });
+            }
             PhotoAction::DuplicateSelectedLayer => {
                 if let Some(id) = self.active_doc_opt().and_then(|doc| doc.ui.selected) {
                     self.send_active(PhotoEngineCommand::DuplicateLayer(id));

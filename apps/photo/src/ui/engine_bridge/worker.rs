@@ -22,8 +22,8 @@
 
 use super::assert_send;
 use super::commands::{
-    DirtyMark, Mutation, PhotoEngineCommand, RenderInvalidation, SubmitDecision, fold_batch,
-    mark_for_node, render_routing,
+    DirtyMark, Mutation, NewVectorShape, PhotoEngineCommand, RenderInvalidation, SubmitDecision,
+    fold_batch, mark_for_node, render_routing,
 };
 use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 use super::preview::{AppearanceFrameCache, PreviewImage, render_preview};
@@ -188,6 +188,7 @@ fn history_label(op: &str) -> String {
         "set_transform" => "Transformer",
         "open_image" => "Ouvrir une image",
         "add_empty_layer" => "Nouveau calque",
+        "add_vector_layer" => "Nouvelle forme",
         "duplicate_layer" => "Dupliquer",
         "duplicate_filter" => "Dupliquer le filtre",
         "delete_layer" => "Supprimer",
@@ -1127,6 +1128,47 @@ impl EngineWorker {
                 self.document.push_layer(photo_engine::LayerNode::Pixel(
                     photo_engine::PixelLayer::new(name, std::sync::Arc::new(blank)),
                 ));
+                Mutation::changed(invalidation)
+            }
+            PhotoEngineCommand::AddVectorLayer { shape } => {
+                self.push_history(None);
+                let (width, height) = (self.document.width.max(1), self.document.height.max(1));
+                let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
+                let side = width.min(height) as f32;
+                let vector = match shape {
+                    NewVectorShape::Rect => photo_engine::rect(
+                        cx - width as f32 / 4.0,
+                        cy - height as f32 / 4.0,
+                        width as f32 / 2.0,
+                        height as f32 / 2.0,
+                    ),
+                    NewVectorShape::Ellipse => {
+                        photo_engine::ellipse(cx, cy, width as f32 / 4.0, height as f32 / 4.0, 48)
+                    }
+                    NewVectorShape::Polygon => photo_engine::polygon(cx, cy, side / 4.0, 6),
+                    NewVectorShape::Star => photo_engine::star(cx, cy, side / 4.0, side / 8.0, 5),
+                };
+                let name = format!("Forme {}", self.document.root.len() + 1);
+                // Origin-consumed normalization: paths are shifted so
+                // their bounds start near (0, 0) and the origin is
+                // folded into the transform offset. The frame then
+                // coincides with the placed raster — vectors behave
+                // exactly like pixels for overlay, hit-testing and
+                // moves (same invariant as raster sources).
+                let mut layer = photo_engine::VectorLayer::new(name, vector);
+                if let Some(bounds) = photo_engine::vector_bounds(&layer.vector) {
+                    let (ox, oy) = (bounds.x0.floor(), bounds.y0.floor());
+                    layer.vector.paths = layer
+                        .vector
+                        .paths
+                        .iter()
+                        .map(|p| photo_engine::translate(p, -ox, -oy))
+                        .collect();
+                    layer.transform.offset_x += ox;
+                    layer.transform.offset_y += oy;
+                }
+                self.document
+                    .push_layer(photo_engine::LayerNode::Vector(layer));
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::DuplicateLayer(id) => {
@@ -4293,6 +4335,57 @@ mod single_pass_tests {
         // through the (20,12) offset).
         assert!(dirty.intersects(TileRegion::new(20, 12, 16, 16)));
         assert!(!dirty.intersects(TileRegion::new(48, 48, 16, 16)));
+    }
+
+    #[test]
+    fn ajout_forme_vectorielle_composite() {
+        use photo_engine::LayerNode;
+        let mut worker = EngineWorker::new(Document::new(32, 32));
+        for shape in [
+            NewVectorShape::Rect,
+            NewVectorShape::Ellipse,
+            NewVectorShape::Polygon,
+            NewVectorShape::Star,
+        ] {
+            worker.apply(PhotoEngineCommand::AddVectorLayer { shape });
+        }
+        // Four vector layers, each carrying paths.
+        assert_eq!(worker.test_document().root.len(), 4);
+        for node in &worker.test_document().root {
+            match node {
+                LayerNode::Vector(v) => {
+                    assert!(!v.vector.paths.is_empty(), "forme tracée");
+                    // Origin-consumed normalization: raster bounds start
+                    // near (0, 0) and the transform carries the origin,
+                    // so overlay/hit-test match the placed raster.
+                    let bounds =
+                        photo_engine::vector_bounds(&v.vector).expect("bornes vectorielles");
+                    assert!(bounds.x0.abs() < 1.0 && bounds.y0.abs() < 1.0);
+                    assert!(v.transform.offset_x > 0.0 && v.transform.offset_y > 0.0);
+                    assert!(v.raster_dims().is_some(), "géométrie overlay");
+                }
+                _ => panic!("calque vecteur attendu"),
+            }
+        }
+        // History + composite carry the new kind.
+        match worker.apply(PhotoEngineCommand::Refresh) {
+            PhotoEngineResponse::LayersChanged {
+                undo_labels,
+                can_undo,
+                ..
+            } => {
+                assert!(can_undo);
+                assert!(
+                    undo_labels.iter().all(|l| l == "Nouvelle forme"),
+                    "{undo_labels:?}"
+                );
+            }
+            other => panic!("LayersChanged attendu, obtenu : {other:?}"),
+        }
+        assert!(
+            worker.test_document().composite_preview().is_some(),
+            "le vecteur se composite"
+        );
     }
 
     #[test]

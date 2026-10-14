@@ -32,6 +32,22 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use uuid::Uuid;
 
+/// Vector shape created from the Layers panel (bottom bar menu).
+///
+/// The worker sizes and centers the shape on the document — the UI
+/// only chooses the kind (no geometry crosses the channel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewVectorShape {
+    /// Axis-aligned rectangle.
+    Rect,
+    /// Ellipse.
+    Ellipse,
+    /// Regular hexagon.
+    Polygon,
+    /// Five-branch star.
+    Star,
+}
+
 /// UI → engine worker commands.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PhotoEngineCommand {
@@ -149,6 +165,11 @@ pub enum PhotoEngineCommand {
     },
     /// Add a transparent empty layer (document dimensions).
     AddEmptyLayer,
+    /// Add a vector shape layer (worker-sized, document-centered).
+    AddVectorLayer {
+        /// Shape kind to generate.
+        shape: NewVectorShape,
+    },
     /// Duplicate a layer (new ids, inserted above).
     DuplicateLayer(Uuid),
     /// Duplicate a live filter (new id, inserted above in its chain).
@@ -296,6 +317,7 @@ impl PhotoEngineCommand {
             Self::PaintMask { .. } => "paint_mask",
             Self::OpenImage { .. } => "open_image",
             Self::AddEmptyLayer => "add_empty_layer",
+            Self::AddVectorLayer { .. } => "add_vector_layer",
             Self::DuplicateLayer(_) => "duplicate_layer",
             Self::DuplicateFilter { .. } => "duplicate_filter",
             Self::FlipHorizontal(_) => "flip_horizontal",
@@ -388,6 +410,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::RotateCounterclockwise(_)
         | PhotoEngineCommand::CropToDocument(_)
         | PhotoEngineCommand::AddEmptyLayer
+        | PhotoEngineCommand::AddVectorLayer { .. }
         | PhotoEngineCommand::DuplicateLayer(_)
         | PhotoEngineCommand::DuplicateFilter { .. }
         | PhotoEngineCommand::DeleteLayer(_)

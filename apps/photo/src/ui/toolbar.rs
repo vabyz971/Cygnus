@@ -23,7 +23,9 @@
 
 use super::modebar::PhotoEditMode;
 use super::viewport::PhotoCanvasTool;
+use crate::ui::NewVectorShape;
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
+use cygnus_ui::components::{menu_row, menu_style};
 use cygnus_ui::icons::{Icon, IconRegistry};
 use cygnus_ui::theme::CygnusTheme;
 
@@ -39,13 +41,25 @@ fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str)
     }
 }
 
+/// Tool-rail outcome for one frame: tool switch and/or vector
+/// shape creation (both bubble up as [`PhotoAction`]s).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ToolRailOutcome {
+    /// Newly chosen tool, if any.
+    pub tool: Option<PhotoCanvasTool>,
+    /// Vector shape to create (worker-sized, centered), if any.
+    pub new_shape: Option<NewVectorShape>,
+}
+
 /// Draws the compact vertical tool rail (32 px, brush
 /// color right after the tools, Affinity-style) for the current
-/// `mode` and returns the newly chosen tool, if any.
+/// `mode` and returns the frame outcome.
 ///
 /// Hover and selection painted with theme tokens
 /// (`item_hover`, `item_selected`): buttons are frameless,
 /// the background is drawn before the button (behind the icon).
+/// The shape menu (vector creation) sits below the tools in every
+/// mode — creation is allowed everywhere, personas switch later.
 pub fn draw_tool_rail(
     ui: &mut egui::Ui,
     current_tool: &mut PhotoCanvasTool,
@@ -53,8 +67,8 @@ pub fn draw_tool_rail(
     mode: PhotoEditMode,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
-) -> Option<PhotoCanvasTool> {
-    let mut chosen = None;
+) -> ToolRailOutcome {
+    let mut outcome = ToolRailOutcome::default();
     ui.vertical_centered(|ui| {
         for (index, tool) in mode.tools().iter().enumerate() {
             let tool = *tool;
@@ -88,13 +102,64 @@ pub fn draw_tool_rail(
                 .on_hover_text(tip);
             if response.clicked() {
                 *current_tool = tool;
-                chosen = Some(tool);
+                outcome.tool = Some(tool);
             }
         }
         ui.separator();
+        // Vector creation lives in the Vector persona (Affinity
+        // parity: shapes belong to Designer, not Photo). Other
+        // personas show tools only.
+        if mode == PhotoEditMode::Vector {
+            // Vector shape creation (same button visuals, no tool switch).
+            let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
+            let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let fade = ui.ctx().animate_bool_with_time(
+                ui.make_persistent_id("photo_shape_menu"),
+                hover.hovered(),
+                0.12,
+            );
+            if fade > 0.0 {
+                ui.painter().rect_filled(
+                    rect,
+                    theme.radius.sm,
+                    theme.colors.item_hover.gamma_multiply(fade),
+                );
+            }
+            let shape_resp = ui
+                .put(
+                    rect,
+                    egui::Button::new(
+                        IconRegistry::new().sized(Icon::Shape, theme.typography.heading_size),
+                    )
+                    .frame(false),
+                )
+                .on_hover_text(texts.get(PhotoTextKey::NewVectorLayer));
+            egui::Popup::menu(&shape_resp)
+                .style(menu_style(theme))
+                .show(|ui| {
+                    for (label, shape) in [
+                        (texts.get(PhotoTextKey::ShapeRect), NewVectorShape::Rect),
+                        (
+                            texts.get(PhotoTextKey::ShapeEllipse),
+                            NewVectorShape::Ellipse,
+                        ),
+                        (
+                            texts.get(PhotoTextKey::ShapePolygon),
+                            NewVectorShape::Polygon,
+                        ),
+                        (texts.get(PhotoTextKey::ShapeStar), NewVectorShape::Star),
+                    ] {
+                        if menu_row(ui, theme, label) {
+                            outcome.new_shape = Some(shape);
+                            ui.close();
+                        }
+                    }
+                });
+            ui.separator();
+        }
         egui::color_picker::color_edit_button_srgb(ui, brush_color);
     });
-    chosen
+    outcome
 }
 
 #[cfg(test)]
@@ -120,7 +185,7 @@ mod tests {
                         &theme,
                         texts
                     ),
-                    None
+                    ToolRailOutcome::default()
                 );
             });
         })

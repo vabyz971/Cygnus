@@ -68,7 +68,7 @@ pub struct PreviewImage {
 ///
 /// The persistent renderer alone decides pixel recomputes; this local
 /// cache only avoids re-requesting the same result from the three
-/// consumers (snapshot, composite, geometry): each pixel
+/// consumers (snapshot, composite, geometry): each pixel AND vector
 /// layer is resolved once, then cloned into shared `Arc`s (no
 /// buffer copies, per goal 5).
 pub(crate) struct AppearanceFrameCache {
@@ -84,13 +84,19 @@ pub(crate) struct AppearanceFrameCache {
 
 impl AppearanceFrameCache {
     /// Resolves each pixel layer ONCE from the renderer
-    /// (image-only path, no thumbnail or preview).
+    /// (image-only path, no thumbnail or preview), then each vector
+    /// layer from its rasterized appearance (vectors never enter the
+    /// pixel cache — see `appearance_vector_image`).
     pub(crate) fn build(document: &Document) -> Self {
-        let ids: Vec<Uuid> = document.all_pixel_ids();
+        let mut ids: Vec<Uuid> = document.all_pixel_ids();
+        ids.extend(document.all_vector_ids());
         let mut map = HashMap::with_capacity(ids.len());
         let mut resolves = 0;
         for id in ids {
-            if let Some(image) = document.appearance_image_only(id) {
+            if let Some(image) = document
+                .appearance_image_only(id)
+                .or_else(|| document.appearance_vector_image(id))
+            {
                 map.insert(id, image);
                 resolves += 1;
             }
@@ -442,5 +448,27 @@ impl EngineWorker {
             },
             worker_stats,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_layer_reaches_preview_pixels() {
+        // Regression: the frame cache only resolved pixels, so vector
+        // shapes never reached the canvas.
+        let mut document = Document::new(32, 32);
+        document.push_layer(photo_engine::LayerNode::Vector(
+            photo_engine::VectorLayer::new("forme", photo_engine::rect(4.0, 4.0, 24.0, 24.0)),
+        ));
+        let frame = AppearanceFrameCache::build(&document);
+        assert_eq!(frame.resolves, 1, "vector appearance resolved");
+        let preview = render_preview(&document, false).expect("preview composite");
+        assert!(
+            preview.rgba.iter().skip(3).step_by(4).any(|a| *a > 0),
+            "vector pixels visible in preview"
+        );
     }
 }

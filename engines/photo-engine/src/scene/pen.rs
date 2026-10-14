@@ -181,6 +181,38 @@ pub fn flatten(path: &VectorPath, subdiv: u32) -> Vec<Vec2> {
     out
 }
 
+/// Convert a path to a `kurbo::BezPath` (Vello scenes, bounds,
+/// GPU flattening). Closed contours get `close_path`; open strokes
+/// stay open (stroked at draw time).
+pub fn to_kurbo(path: &VectorPath) -> kurbo::BezPath {
+    let mut bez = kurbo::BezPath::new();
+    bez.move_to((f64::from(path.start.x), f64::from(path.start.y)));
+    for seg in &path.segments {
+        match *seg {
+            PathSegment::Line { to } => {
+                bez.line_to((f64::from(to.x), f64::from(to.y)));
+            }
+            PathSegment::Quad { ctrl, to } => {
+                bez.quad_to(
+                    (f64::from(ctrl.x), f64::from(ctrl.y)),
+                    (f64::from(to.x), f64::from(to.y)),
+                );
+            }
+            PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                bez.curve_to(
+                    (f64::from(ctrl1.x), f64::from(ctrl1.y)),
+                    (f64::from(ctrl2.x), f64::from(ctrl2.y)),
+                    (f64::from(to.x), f64::from(to.y)),
+                );
+            }
+        }
+    }
+    if path.closed {
+        bez.close_path();
+    }
+    bez
+}
+
 /// Translate a path by `(dx, dy)` (anchors + handles).
 pub fn translate(path: &VectorPath, dx: f32, dy: f32) -> VectorPath {
     let shift = |p: Vec2| Vec2::new(p.x + dx, p.y + dy);
@@ -314,6 +346,22 @@ mod tests {
         ));
         // Lines have no handles: no-op.
         assert_eq!(move_control(&path, 0, 0, Vec2::new(1.0, 1.0)), path);
+    }
+
+    #[test]
+    fn kurbo_path_preserves_verbs_and_closure() {
+        let path = pen_sample();
+        let verbs: Vec<_> = to_kurbo(&path).into_elements();
+        assert_eq!(verbs.len(), 4, "move + line + quad + cubic (open)");
+        assert!(matches!(verbs[0], kurbo::PathEl::MoveTo(_)));
+        assert!(matches!(verbs[1], kurbo::PathEl::LineTo(_)));
+        assert!(matches!(verbs[2], kurbo::PathEl::QuadTo(_, _)));
+        assert!(matches!(verbs[3], kurbo::PathEl::CurveTo(_, _, _)));
+        let mut closed = path.clone();
+        closed.closed = true;
+        let verbs: Vec<_> = to_kurbo(&closed).into_elements();
+        assert_eq!(verbs.len(), 5);
+        assert!(matches!(verbs[4], kurbo::PathEl::ClosePath));
     }
 
     #[test]

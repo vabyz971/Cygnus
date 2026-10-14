@@ -51,10 +51,11 @@ pub use render_overlay::effect_overlay;
 pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};
 pub use scene::pen::{
     PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, quad_point,
-    translate,
+    to_kurbo, translate,
 };
 pub use scene::rasterize::{rasterize, rasterize_bounds, vector_bounds};
 pub use scene::shapes::{ellipse, polygon, rect, star};
+pub use scene::vello_render::render_vector_gpu;
 pub use scene::{
     AdjustmentLayer as SceneAdjustmentLayer, GroupLayer as SceneGroupLayer, Layer, LayerContent,
     LayerEffect, PathSegment, RasterLayer as SceneRasterLayer, TextLayer,

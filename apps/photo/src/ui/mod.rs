@@ -48,7 +48,8 @@ pub use create_document::{
 };
 pub use dialogs::{ExportDialogState, draw_export_dialog, draw_help_dialog};
 pub use engine_bridge::{
-    PhotoEngineCommand, PhotoEngineResponse, PreviewImage, spawn_photo_engine_worker,
+    NewVectorShape, PhotoEngineCommand, PhotoEngineResponse, PreviewImage,
+    spawn_photo_engine_worker,
 };
 pub use features::{
     history::{HistoryPanel, history_panel_action_to_photo},

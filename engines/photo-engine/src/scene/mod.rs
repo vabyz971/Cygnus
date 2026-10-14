@@ -48,10 +48,11 @@ use datatypes::Vec2;
 pub mod pen;
 pub mod rasterize;
 pub mod shapes;
+pub mod vello_render;
 
 pub use pen::{
     PenPath, anchors, cubic_point, flatten, move_anchor, move_control, path_bounds, quad_point,
-    translate,
+    to_kurbo, translate,
 };
 pub use rasterize::{rasterize, rasterize_bounds, vector_bounds};
 

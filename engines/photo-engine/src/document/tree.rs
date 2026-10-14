@@ -124,6 +124,16 @@ impl Document {
         out
     }
 
+    /// Ids of ALL vector layers (visible or not), DFS
+    /// order. Used by the preview frame cache (vectors resolve
+    /// through `appearance_vector_image`, never the pixel cache).
+    #[must_use]
+    pub fn all_vector_ids(&self) -> Vec<Uuid> {
+        let mut out = Vec::new();
+        collect_all_vector_ids(&self.root, &mut out);
+        out
+    }
+
     pub fn pixel_count(&self) -> usize {
         self.iter_pixels().len()
     }
@@ -1361,12 +1371,14 @@ impl Document {
         self.appearance(id).map(|a| a.image)
     }
 
-    /// Vector appearance: rasterized bounds + live-filter chain, no
-    /// cache in v1 (recomputed per composite — fine for a few vector
-    /// layers; cache follow-up with `appearance_version`).
+    /// Vector appearance: GPU render (Vello) with CPU fallback,
+    /// then the live-filter chain. No cache in v1 (recomputed per
+    /// composite — fine for a few vector layers; cache follow-up
+    /// with `appearance_version`).
     pub fn appearance_vector_image(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
         let layer = self.vector_layer(id)?;
-        let (img, _) = crate::scene::rasterize_bounds(&layer.vector)?;
+        let (img, _) = crate::scene::vello_render::render_vector_gpu(&layer.vector)
+            .or_else(|| crate::scene::rasterize_bounds(&layer.vector))?;
         Some(crate::filters::render_chain(
             &Arc::new(img),
             &layer.filter_layers,
@@ -1900,6 +1912,17 @@ fn collect_all_pixel_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
             out.push(l.id);
         }
         collect_all_pixel_ids(n.children(), out);
+    }
+}
+
+/// Ids of ALL vector layers (visible or not), DFS order. Vectors
+/// are childless in v1: no recursion beyond the accessor.
+fn collect_all_vector_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
+    for n in nodes {
+        if let LayerNode::Vector(v) = n {
+            out.push(v.id);
+        }
+        collect_all_vector_ids(n.children(), out);
     }
 }
 

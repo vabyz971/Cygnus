@@ -33,7 +33,7 @@
 //! neither documents nor engines.
 
 use crate::layout::dock::PhotoDockTab;
-use crate::ui::{PaintRequest, PhotoCanvasTool};
+use crate::ui::{NewVectorShape, PaintRequest, PhotoCanvasTool};
 use cygnus_i18n::{Catalog, Language};
 use cygnus_ui::context::UiContext;
 use cygnus_ui::icons::IconRegistry;
@@ -78,6 +78,11 @@ pub enum PhotoAction {
     HistoryForward(u32),
     /// New empty layer (worker).
     AddEmptyLayer,
+    /// Add a vector shape layer (worker-sized, document-centered).
+    AddVectorLayer {
+        /// Shape kind to generate.
+        shape: NewVectorShape,
+    },
     /// Layer from an image (file picker).
     AddImageLayer,
     /// Duplicate the selected layer (worker, no-op if none).

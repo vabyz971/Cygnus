@@ -393,9 +393,12 @@ impl PhotoLayerInfo {
             },
             dims: match node {
                 LayerNode::Pixel(pixels) => Some(pixels.dimensions()),
-                // Vectors are resolution-independent (bounds via the
-                // engine when the canvas overlay follows).
-                LayerNode::Vector(_) | LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
+                // Vectors are resolution-independent: overlay/hit-test
+                // geometry is the raster bounds size (paths are
+                // origin-normalized at creation, so the frame matches
+                // the placed raster like a pixel source).
+                LayerNode::Vector(vector) => vector.raster_dims(),
+                LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
             },
         }
     }

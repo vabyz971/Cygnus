@@ -433,6 +433,15 @@ impl VectorLayer {
         Some(t)
     }
 
+    /// Appearance raster dimensions (bounds size, ≥1×1): overlay
+    /// geometry and hit-testing (`None` = empty vector).
+    pub fn raster_dims(&self) -> Option<(u32, u32)> {
+        let bounds = crate::vector_bounds(&self.vector)?;
+        let w = (bounds.x1.ceil() - bounds.x0.floor()).max(1.0) as u32;
+        let h = (bounds.y1.ceil() - bounds.y0.floor()).max(1.0) as u32;
+        Some((w, h))
+    }
+
     /// Bumps the appearance version (call after any vector/filter mutation).
     pub fn touch(&mut self) {
         self.appearance_version = next_appearance_version();

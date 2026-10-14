@@ -221,6 +221,16 @@ pub enum PhotoTextKey {
     HistoryInitial,
     /// About.
     About,
+    /// New vector shape layer (Layers panel button).
+    NewVectorLayer,
+    /// Rectangle shape (vector creation menu).
+    ShapeRect,
+    /// Ellipse shape (vector creation menu).
+    ShapeEllipse,
+    /// Polygon shape (vector creation menu).
+    ShapePolygon,
+    /// Star shape (vector creation menu).
+    ShapeStar,
 }
 
 /// Photo catalog bound to a language.
@@ -330,6 +340,11 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::LayerKindGroup,
     PhotoTextKey::LayerKindAdjustment,
     PhotoTextKey::LayerKindVector,
+    PhotoTextKey::NewVectorLayer,
+    PhotoTextKey::ShapeRect,
+    PhotoTextKey::ShapeEllipse,
+    PhotoTextKey::ShapePolygon,
+    PhotoTextKey::ShapeStar,
 ];
 
 impl PhotoCatalog {
@@ -453,6 +468,11 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::HistoryEmpty => "Aucune modification",
         PhotoTextKey::HistoryInitial => "État initial",
         PhotoTextKey::About => "À propos",
+        PhotoTextKey::NewVectorLayer => "Nouvelle forme vectorielle",
+        PhotoTextKey::ShapeRect => "Rectangle",
+        PhotoTextKey::ShapeEllipse => "Ellipse",
+        PhotoTextKey::ShapePolygon => "Polygone",
+        PhotoTextKey::ShapeStar => "Étoile",
     }
 }
 
@@ -560,6 +580,11 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::HistoryEmpty => "No changes yet",
         PhotoTextKey::HistoryInitial => "Initial state",
         PhotoTextKey::About => "About",
+        PhotoTextKey::NewVectorLayer => "New vector shape",
+        PhotoTextKey::ShapeRect => "Rectangle",
+        PhotoTextKey::ShapeEllipse => "Ellipse",
+        PhotoTextKey::ShapePolygon => "Polygon",
+        PhotoTextKey::ShapeStar => "Star",
     }
 }
 

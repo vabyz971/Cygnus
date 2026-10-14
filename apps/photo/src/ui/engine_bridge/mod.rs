@@ -42,7 +42,7 @@ pub mod responses;
 pub mod thumbs;
 pub mod worker;
 
-pub use commands::{PhotoEngineCommand, RenderInvalidation, render_routing};
+pub use commands::{NewVectorShape, PhotoEngineCommand, RenderInvalidation, render_routing};
 pub use metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 pub use preview::{PREVIEW_MAX_DIMENSION, PreviewImage, render_preview, render_preview_timed};
 pub use responses::PhotoEngineResponse;

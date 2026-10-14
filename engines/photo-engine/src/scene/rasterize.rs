@@ -136,8 +136,8 @@ fn fill_even_odd(
             }
         }
         xs.sort_by(|x, y| x.total_cmp(y));
-        let mut pairs = xs.chunks_exact(2);
-        for pair in &mut pairs {
+        let (pairs, _) = xs.as_chunks::<2>();
+        for pair in pairs {
             let (mut x0, mut x1) = (pair[0], pair[1]);
             if x1 < x0 {
                 std::mem::swap(&mut x0, &mut x1);

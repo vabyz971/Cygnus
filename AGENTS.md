@@ -6,7 +6,7 @@ covers: []
 Rust creative suite: Cargo workspace, **egui 0.36 (eframe) + wgpu 30** apps, GPL-3.0 license. Docs: `README.md` (architecture, roadmap), `ARCHITECTURE.md` (dependency rules).
 
 ## Environment
-- Rust 2024 edition → toolchain **1.85+** required.
+- Rust 2024 edition → toolchain **1.89+** required.
 - Linux: enter `nix develop` (or direnv via `.envrc`) — provides cargo/clippy/rustfmt + Vulkan/Wayland with `LD_LIBRARY_PATH` already set.
 - Without Nix: install `pkg-config vulkan-loader libxkbcommon wayland`.
 

@@ -53,7 +53,7 @@ Cygnus/
 ## Building
 
 ### Prerequisites
-- Rust 1.85+ (2024 edition)
+- Rust 1.89+ (2024 edition)
 - System dependencies (Linux): `pkg-config`, `vulkan-loader`, `libxkbcommon`, `wayland` (+ `libx11` for X11)
 
 ### Linux (NixOS / Nix)

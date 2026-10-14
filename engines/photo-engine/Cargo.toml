@@ -12,6 +12,8 @@ datatypes = { path = "../../core/datatypes" }
 math-utils = { path = "../../packages/math-utils" }
 render-graph = { path = "../../core/render-graph" }
 tiles = { path = "../../core/tiles" }
+kurbo.workspace = true
+vello.workspace = true
 image = { workspace = true }
 rayon = { workspace = true }
 wgpu = { workspace = true }

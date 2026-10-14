@@ -239,10 +239,13 @@ fn draw_transform_content(
     }
 
     // --- Idle ------------------------------------------------------------
-    // Overlay target: visible selected pixel layer with carrier dims.
+    // Overlay target: visible selected pixel or vector layer with
+    // carrier dims (vectors are origin-normalized: same geometry).
     let target = doc.ui.selected.and_then(|id| {
         find_layer_in(&doc.ui.layers, id).filter(|info| {
-            info.kind == PhotoLayerKind::Pixel && info.visible && info.dims.is_some()
+            matches!(info.kind, PhotoLayerKind::Pixel | PhotoLayerKind::Vector)
+                && info.visible
+                && info.dims.is_some()
         })
     });
     if let Some(info) = target {
@@ -285,7 +288,8 @@ fn draw_transform_content(
                         actions.push(PhotoAction::SelectLayer(hit));
                     }
                     let space = find_layer_in(&doc.ui.layers, hit).and_then(|info| {
-                        (info.kind == PhotoLayerKind::Pixel && info.visible)
+                        (matches!(info.kind, PhotoLayerKind::Pixel | PhotoLayerKind::Vector)
+                            && info.visible)
                             .then(|| info.dims.map(|d| (d, info.transform)))
                             .flatten()
                     });

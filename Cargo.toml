@@ -41,6 +41,8 @@ egui = "=0.36.2"
 egui_material_icons = { version = "=0.8.0", features = ["filled", "outline"] }
 egui_animation = "=0.13.0"
 egui_tiles = "=0.17.1"
+kurbo = "=0.13.1"
+vello = "=0.11.0"
 rfd = "=0.15.4"
 wgpu = "=30.0.1"
 image = { version = "=0.25.10", features = ["rayon"] }
