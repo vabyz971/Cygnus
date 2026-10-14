@@ -44,6 +44,10 @@ use crate::document::{
 };
 use datatypes::Vec2;
 
+pub mod pen;
+pub mod rasterize;
+pub mod shapes;
+
 /// Non-destructive layer effect (spec §5 item 4).
 ///
 /// Evaluated at draw time only (state-only rendering): settings
@@ -85,18 +89,55 @@ pub enum LayerEffect {
     },
 }
 
-/// One Bézier-ish path of a [`VectorLayer`].
+/// One path of a [`VectorLayer`]: anchor + segments in layer space.
 ///
-/// Minimal placeholder: polyline points + closed flag. Full curve
-/// storage (verbs, fills, booleans) arrives with the Vector persona
-/// and converges with `vector-engine` — no parallel geometry model
-/// is built here on purpose.
+/// Same vocabulary as `vector-engine`'s `PathVerb` (line / quadratic
+/// / cubic + close) so the two models converge without translation
+/// loss; resolution stays infinite (SDF/flatten at draw, never
+/// pre-triangulated).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct VectorPath {
-    /// Control/anchor points in layer space.
-    pub points: Vec<Vec2>,
+    /// Subpath start (pen `move_to`).
+    pub start: Vec2,
+    /// Segments in draw order.
+    pub segments: Vec<PathSegment>,
     /// Closed contour or open stroke.
     pub closed: bool,
+}
+
+/// One drawable segment of a [`VectorPath`].
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PathSegment {
+    /// Straight segment to the endpoint.
+    Line {
+        /// Endpoint.
+        to: Vec2,
+    },
+    /// Quadratic Bézier (control, endpoint).
+    Quad {
+        /// Control handle.
+        ctrl: Vec2,
+        /// Endpoint.
+        to: Vec2,
+    },
+    /// Cubic Bézier (controls, endpoint) — the pen's curve.
+    Cubic {
+        /// First control handle (adjacent to the segment start).
+        ctrl1: Vec2,
+        /// Second control handle (adjacent to the endpoint).
+        ctrl2: Vec2,
+        /// Endpoint.
+        to: Vec2,
+    },
+}
+
+impl PathSegment {
+    /// Segment endpoint (next anchor).
+    pub fn endpoint(self) -> Vec2 {
+        match self {
+            Self::Line { to } | Self::Quad { to, .. } | Self::Cubic { to, .. } => to,
+        }
+    }
 }
 
 /// Vector content: resolution-independent paths, SDF at draw time.
@@ -107,6 +148,9 @@ pub struct VectorPath {
 pub struct VectorLayer {
     /// Paths in paint order (index 0 = bottom).
     pub paths: Vec<VectorPath>,
+    /// Flat fill color (RGBA8) for closed paths. Gradients and
+    /// strokes arrive with the style slice (§5 items 1+4).
+    pub fill: [u8; 4],
 }
 
 /// Text content: editable runs, vectorized at draw time.
@@ -437,7 +481,13 @@ mod tests {
 
     #[test]
     fn vector_and_text_are_not_legacy_representable() {
-        let vector = Layer::new("v", LayerContent::Vector(VectorLayer { paths: vec![] }));
+        let vector = Layer::new(
+            "v",
+            LayerContent::Vector(VectorLayer {
+                paths: vec![],
+                fill: [0, 0, 0, 255],
+            }),
+        );
         let text = Layer::new(
             "t",
             LayerContent::Text(TextLayer {
@@ -473,7 +523,10 @@ mod tests {
         );
         adj.children.push(Layer::new(
             "c",
-            LayerContent::Vector(VectorLayer { paths: vec![] }),
+            LayerContent::Vector(VectorLayer {
+                paths: vec![],
+                fill: [0, 0, 0, 255],
+            }),
         ));
         assert!(adj.to_legacy().is_none());
 
