@@ -26,6 +26,7 @@ The crate name sometimes differs from the folder — use `-p` with the crate nam
 | `core/graph` | `graph` (generic dependencies: dirty propagation, topo — pure CPU) |
 | `core/render-graph` | `render-graph` (scene-derived operations: partial build/sync, abstract backend — no wgpu or UI) |
 | `core/tiles` | `tiles` (spatial invalidation: grid, dirty bitset, CPU/GPU cache, progressive scheduler — pure CPU) |
+| `core/engine-runtime` | `engine-runtime` (generic engine worker: snapshot undo/redo with gesture coalescing, latest-value-wins batch folding, background thread loop + UI wake — no domain, UI or GPU) |
 | `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project; `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
 | `engines/vector-engine` | `vector-engine` (paths, shapes, styles, booleans + `VectorBackend` trait — no wgpu) |
 | `engines/layout-engine` | `layout-engine` (frames, constraints, algorithm + `apply_to_scene` — no wgpu/egui) |

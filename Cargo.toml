@@ -7,6 +7,7 @@ members = [
     "core/graph",
     "core/render-graph",
     "core/tiles",
+    "core/engine-runtime",
     "engines/photo-engine",
     "engines/video-engine",
     "engines/audio-engine",
