@@ -35,6 +35,7 @@ pub mod render_overlay;
 pub mod render_pool;
 pub mod renderer;
 pub mod scene;
+pub mod snapshot;
 pub mod thumb_cache;
 pub mod tile_key;
 pub mod tiles;

@@ -27,6 +27,7 @@
 //! [`LayerItemAction`], converted to [`PhotoAction`](crate::commands::PhotoAction)
 //! then routed by `PhotoApp` (local state or worker).
 
+use super::types::LayerKindUi;
 use super::types::{LayerTexts, LayerThumbView, PhotoLayerInfo, PhotoSubLayerInfo};
 use cygnus_i18n::PhotoTextKey;
 use cygnus_i18n::TextKey;
