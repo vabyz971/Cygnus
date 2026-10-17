@@ -662,6 +662,7 @@ impl Document {
     ///
     /// # Errors
     /// Returns an error if the carrier or the mask is not found.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_mask(
         &mut self,
         owner_id: Uuid,
@@ -1640,7 +1641,7 @@ impl Document {
     }
 
     /// [`Self::composite_scope`] body with injected resolver.
-    fn composite_scope_with(
+    pub(super) fn composite_scope_with(
         &self,
         nodes: &[LayerNode],
         resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,

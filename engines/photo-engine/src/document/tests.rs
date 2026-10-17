@@ -4449,7 +4449,7 @@ fn signature_tuiles_couvre_le_nesting() {
     // Adjustment mask → signature change.
     let mut doc3 = Document::new(2, 2);
     doc3.push_layer(pixel_node(&img, 100.0, BlendMode::Normal, 0.0, 0.0));
-    let mut adj = AdjustmentLayer::new("aj", vec![]);
+    let adj = AdjustmentLayer::new("aj", vec![]);
     let aid = adj.id;
     doc3.push_layer(LayerNode::Adjustment(adj));
     let base3 = tile_content_signature(&doc3);
@@ -4647,7 +4647,7 @@ fn isolate_montre_seul_la_cible_et_ses_ancetres() {
     let img = solid(2, 2, [10, 10, 10, 255]);
     let mut doc = Document::new(4, 4);
     doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", arc(&img))));
-    let mut g = GroupLayer::new(
+    let g = GroupLayer::new(
         "g",
         vec![LayerNode::Pixel(PixelLayer::new("enfant", arc(&img)))],
     );

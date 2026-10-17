@@ -67,9 +67,9 @@ pub use datatypes::{BlendMode, RgbaBuf};
 pub use math_utils::Transform2D;
 
 /// A dynamic filter (live filter): named reference to a registry effect
-/// + its parameters. Used AS IS by adjustment layers; pixel layers
-/// carry [`FilterLayer`] sub-layers
-/// (full-fledged sub-layers, Affinity-style).
+/// plus its parameters. Used AS IS by adjustment layers; pixel layers
+/// carry [`FilterLayer`] sub-layers (full-fledged sub-layers,
+/// Affinity-style).
 #[derive(Debug, Clone)]
 pub struct FilterNode {
     pub id: Uuid,

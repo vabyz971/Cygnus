@@ -276,9 +276,11 @@ mod tests {
         // Off-origin shape, translated layer: node positions must land
         // where the raster does (overlay/hit-test contract).
         let layer = rect(100.0, 50.0, 6.0, 4.0);
-        let mut t = Transform2D::default();
-        t.offset_x = 10.0;
-        t.offset_y = 20.0;
+        let t = Transform2D {
+            offset_x: 10.0,
+            offset_y: 20.0,
+            ..Transform2D::default()
+        };
         let placed = vector_placement(&t, &layer.paths).expect("placed");
         assert_eq!((placed.offset_x, placed.offset_y), (110.0, 70.0));
         let doc = place_vector_point(&t, &layer.paths, datatypes::Vec2::new(100.0, 50.0))

@@ -50,8 +50,8 @@ use crate::document::{Appearance, Document, FilterLayer, LayerMask, PixelLayer, 
 /// live document.
 ///
 /// Use case: toggling a filter (shader) or a mask changes the signature →
-/// `appearance_hit` MISS → `appearance()` would run `render_chain` + bake
-/// + preview/thumb at FULL RESOLUTION on the UI thread (multi-hundred-ms
+/// `appearance_hit` MISS → `appearance()` would run `render_chain`, bake
+/// and preview/thumb at FULL RESOLUTION on the UI thread (multi-hundred-ms
 /// freeze on large images). Instead, the app clones the document, applies
 /// the toggle on the clone in `spawn_blocking`, exports the warm entry
 /// and inserts it into the live document on receipt:
@@ -408,7 +408,7 @@ impl Renderer {
 
     /// Inserts an entry pre-computed off the UI thread. Insertion is
     /// structurally safe: a future `appearance_hit` HITs only if signatures
-    /// + source identity match — a stale entry (concurrent edit) simply
+    /// and source identity match — a stale entry (concurrent edit) simply
     /// goes unused, never wrong.
     pub fn insert_warmed(&mut self, layer_id: Uuid, warmed: WarmedAppearance) {
         self.entries.insert(

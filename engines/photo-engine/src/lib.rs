@@ -23,10 +23,12 @@ pub mod document;
 pub mod export;
 pub mod filters;
 pub mod gpu;
+pub mod histogram;
 pub mod history;
 pub mod interaction;
 pub mod nodes;
 pub mod paint;
+pub mod presets;
 pub mod project;
 pub mod registry;
 pub mod render_overlay;
@@ -42,10 +44,12 @@ pub use document::{
     AdjustmentLayer, Appearance, BlendMode, Document, FilterLayer, FilterNode, GroupLayer,
     LayerMask, LayerNode, PixelLayer, RgbaBuf, Transform2D, VectorLayer,
 };
-pub use export::{DEFAULT_JPEG_QUALITY, ExportFormat, export_image};
+pub use export::{DEFAULT_JPEG_QUALITY, ExportFormat, estimate_export_size, export_image};
 pub use filters::{filterable_types, new_filter_layer};
 pub use gpu::GpuContext;
+pub use histogram::Histogram;
 pub use history::UndoAction;
+pub use presets::{FilterPreset, find_preset, presets_for};
 pub use registry::{all_definitions, definition_for};
 pub use render_overlay::effect_overlay;
 pub use renderer::{AppearanceStats, Renderer, WarmedAppearance, filters_signature};

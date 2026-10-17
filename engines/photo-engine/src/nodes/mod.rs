@@ -25,8 +25,11 @@
 pub mod blur;
 pub mod brightness_contrast;
 pub mod color_correct;
+pub mod curves;
+pub mod hsl;
 pub mod input;
 pub mod layer;
+pub mod levels;
 pub mod mix;
 pub mod output;
 
@@ -79,6 +82,9 @@ pub fn all() -> Vec<Effect> {
         mix::effect(),
         layer::effect(),
         color_correct::effect(),
+        levels::effect(),
+        curves::effect(),
+        hsl::effect(),
     ]
 }
 

@@ -711,6 +711,48 @@ mod tests {
     }
 
     #[test]
+    fn adjustments_round_trip_with_presets_and_curve_points() {
+        // O005 DoD: Levels/Curves/HSL settings (presets included, the
+        // curve as a Text param) come back re-editable after reload.
+        let mut doc = Document::new(16, 16);
+        let mut layer = PixelLayer::new("photo", red_img());
+        for (type_id, preset) in [
+            ("levels", "levels.high_contrast"),
+            ("curves", "curves.strong_contrast"),
+            ("hsl", "hsl.vivid"),
+        ] {
+            let mut f = crate::filters::new_filter_layer(type_id).expect("type connu");
+            f.params = crate::presets::find_preset(type_id, preset)
+                .expect("preset connu")
+                .params;
+            layer.filter_layers.push(f);
+        }
+        let expected: Vec<_> = layer
+            .filter_layers
+            .iter()
+            .map(|f| (f.type_id.clone(), f.params.clone()))
+            .collect();
+        doc.push_layer(LayerNode::Pixel(layer));
+        let path = temp_path("adjust");
+        save(&path, &doc).expect("sauvegarde");
+        let loaded = load(&path).expect("chargement");
+        std::fs::remove_file(&path).ok();
+        let Some(LayerNode::Pixel(back)) = loaded.document.root.first() else {
+            panic!("calque pixels attendu");
+        };
+        let got: Vec<_> = back
+            .filter_layers
+            .iter()
+            .map(|f| (f.type_id.clone(), f.params.clone()))
+            .collect();
+        assert_eq!(got, expected);
+        assert!(matches!(
+            back.filter_layers[1].params.get("points"),
+            Some(ParamValue::Text(t)) if t == "0,0;64,40;192,215;255,255"
+        ));
+    }
+
+    #[test]
     fn aller_retour_projet_v4_conserve_arbre_et_filtres() {
         let doc = sample_document();
         let path = temp_path("rt");

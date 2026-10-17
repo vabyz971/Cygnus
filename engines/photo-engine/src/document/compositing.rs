@@ -180,7 +180,7 @@ pub fn fast_thumbnail_rgba8(
                 let topf = bottomf + y_ratio;
                 let bottom = (bottomf.ceil() as u32).clamp(0, h - 1);
                 let top = (topf.ceil() as u32).clamp(bottom, h);
-                for (ox, px) in row.chunks_exact_mut(4).enumerate() {
+                for (ox, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let (left, right, leftf, rightf) = col_bounds[ox];
                     let (r, g, b, a) = if bottom != top && left != right {
                         sample_block(raw, w, left, right, bottom, top)
@@ -876,7 +876,7 @@ pub fn fold_scope(
 /// `pixels_processed` counts actually traversed pixels: each `blend_into`
 /// / adjustment mix sweeps the WHOLE accumulator, so `pixels_processed ≈`
 /// layers_blended × scope_px` (plus mixes). `blend_us` covers prepare_top
-/// + blend per layer (allocs included), excluding extents and
+/// and blend per layer (allocs included), excluding extents and
 /// accumulator allocation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CompositeStats {
@@ -1658,7 +1658,7 @@ mod downsample_tests {
             DynamicImage::ImageRgba8(ImageBuffer::from_pixel(248, 350, Rgba([200, 40, 40, 255])));
         let thumb = thumb_buf(&portrait);
         assert_eq!((thumb.width, thumb.height), (48, 32));
-        for px in thumb.data.chunks_exact(4) {
+        for px in thumb.data.as_chunks::<4>().0 {
             for (got, want) in px.iter().zip([200, 40, 40, 255]) {
                 assert!(
                     (*got as i16 - want as i16).abs() <= 1,
@@ -1754,16 +1754,15 @@ mod rotation_tests {
             let pb = sample((x0 + 1).min(w1), y0);
             let pc = sample(x0, (y0 + 1).min(h1));
             let pd = sample((x0 + 1).min(w1), (y0 + 1).min(h1));
-            let mut expected = [0u8; 4];
-            for c in 0..4 {
-                expected[c] = (pa[c] as f32 * (1.0 - fx) * (1.0 - fy)
+            let expected: [u8; 4] = std::array::from_fn(|c| {
+                (pa[c] as f32 * (1.0 - fx) * (1.0 - fy)
                     + pb[c] as f32 * fx * (1.0 - fy)
                     + pc[c] as f32 * (1.0 - fx) * fy
                     + pd[c] as f32 * fx * fy)
-                    .round() as u8;
-            }
-            for c in 0..4 {
-                if (px.0[c] as i16 - expected[c] as i16).abs() > 2 {
+                    .round() as u8
+            });
+            for (got, want) in px.0.iter().zip(expected.iter()) {
+                if (*got as i16 - *want as i16).abs() > 2 {
                     mismatches += 1;
                 }
             }

@@ -634,7 +634,7 @@ mod tests {
             // Reference: direct commit on opaque background (resample included,
             // like the worker's `PaintStroke` arm).
             let mut base = vec![0u8; w as usize * h as usize * 4];
-            for px in base.chunks_exact_mut(4) {
+            for px in base.as_chunks_mut::<4>().0 {
                 px[0] = 200;
                 px[1] = 40;
                 px[2] = 40;
@@ -944,7 +944,7 @@ mod tests {
         overlay.add_points(&[(10.0, 10.0), (20.0, 20.0)]);
         let frame = overlay.render().expect("frame");
         assert!(!frame.rgba.iter().all(|&v| v == 0), "voile visible");
-        for px in frame.rgba.chunks_exact(4) {
+        for px in frame.rgba.as_chunks::<4>().0 {
             if px[3] > 0 {
                 assert_eq!(&px[0..3], &[255, 255, 255], "que du blanc + alpha");
             }
