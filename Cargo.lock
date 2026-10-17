@@ -2981,6 +2981,7 @@ dependencies = [
  "egui",
  "egui_animation",
  "egui_tiles",
+ "engine-runtime",
  "image",
  "photo-engine",
  "preferences",

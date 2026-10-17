@@ -31,6 +31,7 @@ use super::responses::PhotoEngineResponse;
 use crate::ui::features::layers::{
     PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
 };
+use engine_runtime::{EngineLoop, History, spawn_engine};
 use photo_engine::tiles::TileRegion;
 use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
@@ -46,20 +47,11 @@ pub struct EngineWorker {
     /// History stacks: PRE-mutation snapshot + French label
     /// of the operation (History panel, O003). `undo` oldest
     /// to newest, `redo` in undo order.
-    pub(crate) undo: Vec<HistoryStep>,
-    pub(crate) redo: Vec<HistoryStep>,
+    pub(crate) history: History<photo_engine::history::Snapshot, PhotoGesture>,
     /// Operation name (`op_name`) of the command being
     /// mutated: consumed by [`Self::push_history`] to label
     /// the step (set by `apply`/`apply_batch`, never by the arms).
     pub(crate) pending_label: Option<&'static str>,
-    /// Layer of the last `SetOpacity` (slider coalescing).
-    pub(crate) coalesced_opacity_layer: Option<Uuid>,
-    /// Layer of the in-progress transform gesture (`SetTransform`
-    /// coalescing: one history entry per drag, released on commit).
-    pub(crate) coalesced_transform_layer: Option<Uuid>,
-    /// Layer of the in-progress node gesture (`SetVectorPaths`
-    /// coalescing: one history entry per drag, released on commit).
-    pub(crate) coalesced_vector_layer: Option<Uuid>,
     /// Preview clipped to the document (View menu, default: infinite plane).
     pub(crate) clip_to_doc: bool,
     /// Revision of the last produced composite (stale renders
@@ -108,15 +100,17 @@ const TILE_CACHE_BUDGET_PX: usize = 8 << 20;
 /// History bounds (shared snapshots, nearly free).
 pub const HISTORY_LIMIT: usize = 100;
 
-/// One history step: state to restore + label shown in the
-/// History panel. The label travels with the snapshot (undo pushes
-/// it to redo and back: redo reapplies the same title).
-#[derive(Clone)]
-pub(crate) struct HistoryStep {
-    /// PRE-mutation state to restore.
-    snapshot: photo_engine::history::Snapshot,
-    /// French label of the operation (`history_label`).
-    label: String,
+/// Continuous gesture coalesced into ONE history entry (the runtime
+/// keeps at most one open: opening one closes the others).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PhotoGesture {
+    /// Slider on a layer (opacity) or a live filter (parameters,
+    /// curve points): keyed by the layer / filter id.
+    Slider(Uuid),
+    /// Transform drag (`SetTransform`, released on commit).
+    Transform(Uuid),
+    /// Vector node drag (`SetVectorPaths`, released on commit).
+    Nodes(Uuid),
 }
 
 /// "Crop to document" plan (O004): intersection of the
@@ -226,12 +220,8 @@ impl EngineWorker {
     pub fn new(document: Document) -> Self {
         Self {
             document,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            history: History::new(HISTORY_LIMIT),
             pending_label: None,
-            coalesced_opacity_layer: None,
-            coalesced_transform_layer: None,
-            coalesced_vector_layer: None,
             clip_to_doc: false,
             revision: RenderRevision::default(),
             pending_tile_plan: None,
@@ -263,23 +253,13 @@ impl EngineWorker {
     /// gesture (no push) drops its label with its duplicate.
     fn push_history(&mut self, coalesce_layer: Option<Uuid>) {
         let label = history_label(self.pending_label.take().unwrap_or("edit"));
-        if coalesce_layer.is_some() && coalesce_layer == self.coalesced_opacity_layer {
-            return;
-        }
-        if self.undo.len() >= HISTORY_LIMIT {
-            self.undo.remove(0);
-        }
-        self.undo.push(HistoryStep {
-            snapshot: self.document.snapshot(),
-            label,
-        });
-        self.redo.clear();
-        self.coalesced_opacity_layer = coalesce_layer;
-        // A discrete step (or an opacity gesture) ends any
-        // in-progress transform gesture: the next `SetTransform`
-        // opens a fresh entry.
-        self.coalesced_transform_layer = None;
-        self.coalesced_vector_layer = None;
+        // `document` and `history` are disjoint fields: the lazy
+        // snapshot only runs when a step is really recorded.
+        let document = &self.document;
+        self.history
+            .record(coalesce_layer.map(PhotoGesture::Slider), label, || {
+                document.snapshot()
+            });
     }
 
     /// Sets one live-filter parameter as a continuous gesture
@@ -306,7 +286,7 @@ impl EngineWorker {
         }
         self.push_history(Some(filter));
         if !self.document.set_filter_param(layer, filter, key, value) {
-            self.undo.pop();
+            self.history.cancel_last();
             return Mutation::unchanged();
         }
         let dirty = self
@@ -404,7 +384,7 @@ impl EngineWorker {
         }
         self.push_history(None);
         if let Err(error) = apply(&mut self.document) {
-            self.undo.pop();
+            self.history.cancel_last();
             return Mutation::immediate(PhotoEngineResponse::EngineError { message: error });
         }
         Mutation::changed(invalidation)
@@ -413,33 +393,21 @@ impl EngineWorker {
     /// One step back: restores the snapshot, the undone step (with
     /// its label) goes to redo. False when the stack is empty.
     fn apply_undo_step(&mut self) -> bool {
-        let Some(step) = self.undo.pop() else {
+        let document = &self.document;
+        let Some(snapshot) = self.history.undo(|| document.snapshot()) else {
             return false;
         };
-        self.redo.push(HistoryStep {
-            snapshot: self.document.snapshot(),
-            label: step.label,
-        });
-        self.document.restore_snapshot(step.snapshot);
-        self.coalesced_opacity_layer = None;
-        self.coalesced_transform_layer = None;
-        self.coalesced_vector_layer = None;
+        self.document.restore_snapshot(snapshot);
         true
     }
 
     /// One step forward, symmetric. False when the stack is empty.
     fn apply_redo_step(&mut self) -> bool {
-        let Some(step) = self.redo.pop() else {
+        let document = &self.document;
+        let Some(snapshot) = self.history.redo(|| document.snapshot()) else {
             return false;
         };
-        self.undo.push(HistoryStep {
-            snapshot: self.document.snapshot(),
-            label: step.label,
-        });
-        self.document.restore_snapshot(step.snapshot);
-        self.coalesced_opacity_layer = None;
-        self.coalesced_transform_layer = None;
-        self.coalesced_vector_layer = None;
+        self.document.restore_snapshot(snapshot);
         true
     }
 
@@ -488,12 +456,12 @@ impl EngineWorker {
         // waiting for the task, §18).
         let layers = snapshot_layers_with(&self.document, &|id| self.stored_thumb(id));
         let snapshot_us = t_snapshot.elapsed().as_micros();
-        let can_undo = !self.undo.is_empty();
-        let can_redo = !self.redo.is_empty();
+        let can_undo = self.history.can_undo();
+        let can_redo = self.history.can_redo();
         // History panel labels (O003): stacks oldest
         // to newest, cloned per response (short strings, ≤100).
-        let undo_labels = self.undo.iter().map(|step| step.label.clone()).collect();
-        let redo_labels = self.redo.iter().map(|step| step.label.clone()).collect();
+        let undo_labels = self.history.undo_labels();
+        let redo_labels = self.history.redo_labels();
         if invalidation == RenderInvalidation::Composite {
             // 6E incremental pipeline: dirty tiles re-evaluated, clean ones
             // reused; same bytes as legacy at equal content.
@@ -816,7 +784,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if !self.document.isolate(id) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -833,7 +801,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if !self.document.reorder_before(dragged, target, before) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -846,7 +814,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if !self.document.move_into_parent(layer, parent) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -964,25 +932,28 @@ impl EngineWorker {
                 };
                 if !transform.is_finite() {
                     if commit {
-                        self.coalesced_transform_layer = None;
-                        self.coalesced_vector_layer = None;
+                        self.history.release_gesture_if(|g| {
+                            matches!(g, PhotoGesture::Transform(_) | PhotoGesture::Nodes(_))
+                        });
                     }
                     return Mutation::unchanged();
                 }
                 if transform == current.0 {
                     // No change: release the slot on commit, no history.
                     if commit {
-                        self.coalesced_transform_layer = None;
-                        self.coalesced_vector_layer = None;
+                        self.history.release_gesture_if(|g| {
+                            matches!(g, PhotoGesture::Transform(_) | PhotoGesture::Nodes(_))
+                        });
                     }
                     return Mutation::unchanged();
                 }
                 // Coalescing: one history entry per drag gesture
                 // (frames share the slot, `commit` releases it).
-                if self.coalesced_transform_layer != Some(layer) {
+                if self.history.gesture() != Some(&PhotoGesture::Transform(layer)) {
                     self.push_history(None);
                 }
-                self.coalesced_transform_layer = (!commit).then_some(layer);
+                self.history
+                    .set_gesture((!commit).then_some(PhotoGesture::Transform(layer)));
                 let (old_t, (w, h)) = current;
                 // Groups carry no stored transform: the overlay
                 // commits a virtual placement, so apply the offset
@@ -1051,7 +1022,8 @@ impl EngineWorker {
                 ) || !photo_engine::paths_finite(&paths)
                 {
                     if commit {
-                        self.coalesced_vector_layer = None;
+                        self.history
+                            .release_gesture_if(|g| matches!(g, PhotoGesture::Nodes(_)));
                     }
                     return Mutation::unchanged();
                 }
@@ -1062,16 +1034,18 @@ impl EngineWorker {
                 if paths == current {
                     // No change: release the slot on commit, no history.
                     if commit {
-                        self.coalesced_vector_layer = None;
+                        self.history
+                            .release_gesture_if(|g| matches!(g, PhotoGesture::Nodes(_)));
                     }
                     return Mutation::unchanged();
                 }
                 // Coalescing: one history entry per drag gesture
                 // (frames share the slot, `commit` releases it).
-                if self.coalesced_vector_layer != Some(layer) {
+                if self.history.gesture() != Some(&PhotoGesture::Nodes(layer)) {
                     self.push_history(None);
                 }
-                self.coalesced_vector_layer = (!commit).then_some(layer);
+                self.history
+                    .set_gesture((!commit).then_some(PhotoGesture::Nodes(layer)));
                 self.document.set_vector_paths(layer, paths);
                 // Safe global marking in v1 (node edits reshape bounds
                 // arbitrarily; precise before/after regions are a
@@ -1318,7 +1292,7 @@ impl EngineWorker {
                     .paint_mask(owner, mask, &points, rx, ry, opacity, !eraser)
                     .is_err()
                 {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 // Global marking (safe fallback: the precise dirty follows
@@ -1414,7 +1388,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if self.document.duplicate_filter(layer, filter).is_none() {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -1460,7 +1434,7 @@ impl EngineWorker {
                 CropPlan::Rect { x, y, w, h } => {
                     self.push_history(None);
                     if let Err(error) = self.document.crop(id, x, y, w, h) {
-                        self.undo.pop();
+                        self.history.cancel_last();
                         return Mutation::immediate(PhotoEngineResponse::EngineError {
                             message: format!("Rogner impossible : {error}"),
                         });
@@ -1554,11 +1528,7 @@ impl EngineWorker {
                         // goes away), nor caches (changed layer ids:
                         // old doc thumbnails and tiles invalid).
                         self.document = loaded.document;
-                        self.undo.clear();
-                        self.redo.clear();
-                        self.coalesced_opacity_layer = None;
-                        self.coalesced_transform_layer = None;
-                        self.coalesced_vector_layer = None;
+                        self.history.clear();
                         self.thumb_store.clear();
                         self.thumb_pending.clear();
                         self.thumb_fresh.clear();
@@ -1635,7 +1605,7 @@ impl EngineWorker {
                 };
                 self.push_history(None);
                 if !self.document.set_filter_enabled(layer, filter, !current) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -1701,7 +1671,7 @@ impl EngineWorker {
                     applied &= self.document.set_filter_param(layer, filter, key, value);
                 }
                 if !applied {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 let dirty = self
@@ -1721,7 +1691,7 @@ impl EngineWorker {
                 };
                 self.push_history(None);
                 if !self.document.set_mask_enabled(owner, mask, !current) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -1774,7 +1744,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if !self.document.move_filter_to(filter, from, to, index) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 Mutation::changed(invalidation)
@@ -1821,7 +1791,7 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 if !self.document.move_mask_to(mask, from, to, index) {
-                    self.undo.pop();
+                    self.history.cancel_last();
                     return Mutation::unchanged();
                 }
                 touch_mask_owner(&mut self.document, from);
@@ -1879,14 +1849,21 @@ pub fn apply_command(document: &mut Document, command: PhotoEngineCommand) {
 
 /// Starts the engine worker on a background thread.
 ///
-/// Callback the worker runs after answering (the app wakes its UI
-/// loop; kept as a closure so the worker never depends on egui).
-pub type Waker = Box<dyn Fn() + Send>;
+pub use engine_runtime::Waker;
 
-/// Blocking `recv` loop (allowed off the UI thread): applies
-/// each command then responds, then calls `wake` so an idle UI picks
-/// the response up immediately. Dropping the UI-side `Sender`
-/// cleanly stops the thread.
+impl EngineLoop for EngineWorker {
+    type Command = PhotoEngineCommand;
+    type Response = PhotoEngineResponse;
+
+    fn apply_batch(&mut self, batch: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineResponse> {
+        EngineWorker::apply_batch(self, batch)
+    }
+}
+
+/// Starts the engine worker on a background thread (generic loop of
+/// `engine_runtime`: blocking `recv`, queued commands coalesced into
+/// one batch / one render, UI woken after answering). Dropping the
+/// UI-side `Sender` cleanly stops the thread.
 pub fn spawn_photo_engine_worker(
     document: Document,
     commands: Receiver<PhotoEngineCommand>,
@@ -1894,32 +1871,19 @@ pub fn spawn_photo_engine_worker(
     wake: Option<Waker>,
 ) -> JoinHandle<()> {
     assert_send::<Document>();
-    std::thread::spawn(move || {
-        let mut worker = EngineWorker::new(document);
-        // Threaded secondary task (Phase 6G.3): without this call,
-        // thumbnails would be computed inline on the worker thread,
-        // hence on the canvas-critical path — exactly what
-        // ThumbWorker exists to avoid.
-        worker.enable_thumb_thread();
-        // Batch loop: the first command blocks (`recv`), then
-        // everything already queued is coalesced (`try_recv`) and
-        // produces only ONE render (latest-value-wins). Structural
-        // commands still apply one by one, in order.
-        'worker: while let Ok(first) = commands.recv() {
-            let mut batch = vec![first];
-            while let Ok(next) = commands.try_recv() {
-                batch.push(next);
-            }
-            for response in worker.apply_batch(batch) {
-                if responses.send(response).is_err() {
-                    break 'worker;
-                }
-            }
-            if let Some(wake) = &wake {
-                wake();
-            }
-        }
-    })
+    spawn_engine(
+        move || {
+            let mut worker = EngineWorker::new(document);
+            // Threaded secondary task (Phase 6G.3): without this call,
+            // thumbnails would be computed inline on the worker thread,
+            // hence on the canvas-critical path.
+            worker.enable_thumb_thread();
+            worker
+        },
+        commands,
+        responses,
+        wake,
+    )
 }
 
 #[cfg(test)]
@@ -2151,16 +2115,16 @@ mod tests {
         assert_ne!(chain[1].id, fid);
         assert_eq!(chain[1].type_id, chain[0].type_id);
         assert_eq!(
-            worker.undo.last().map(|s| s.label.as_str()),
+            worker.history.undo_steps().last().map(|s| s.label.as_str()),
             Some("Dupliquer le filtre")
         );
         // Unknown filter: no-op, no history.
-        let undo_len = worker.undo.len();
+        let undo_len = worker.history.undo_steps().len();
         worker.apply(PhotoEngineCommand::DuplicateFilter {
             layer: id,
             filter: Uuid::new_v4(),
         });
-        assert_eq!(worker.undo.len(), undo_len);
+        assert_eq!(worker.history.undo_steps().len(), undo_len);
     }
 
     #[test]
@@ -2179,11 +2143,14 @@ mod tests {
         assert!(worker.document.find(ids[1]).expect("cible").visible());
         assert!(!worker.document.find(ids[0]).expect("voisin").visible());
         assert!(!worker.document.find(ids[2]).expect("voisin").visible());
-        assert_eq!(worker.undo.last().map(|s| s.label.as_str()), Some("Isoler"));
+        assert_eq!(
+            worker.history.undo_steps().last().map(|s| s.label.as_str()),
+            Some("Isoler")
+        );
         // Inconnu : sans effet, sans historique.
-        let undo_len = worker.undo.len();
+        let undo_len = worker.history.undo_steps().len();
         worker.apply(PhotoEngineCommand::IsolateLayer(Uuid::new_v4()));
-        assert_eq!(worker.undo.len(), undo_len);
+        assert_eq!(worker.history.undo_steps().len(), undo_len);
     }
 
     #[test]
@@ -2366,13 +2333,13 @@ mod tests {
             worker.document.find(id).expect("present").blend_mode(),
             Some(BlendMode::Multiply)
         );
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Unknown id: no effect, no snapshot.
         worker.apply(PhotoEngineCommand::SetBlendMode {
             layer: Uuid::new_v4(),
             mode: BlendMode::Screen,
         });
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(
             worker.document.find(id).expect("present").blend_mode(),
@@ -2409,7 +2376,7 @@ mod tests {
             layer: id,
             opacity: 20.0,
         });
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Undo restores the original opacity (100 engine default).
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(worker.document.find(id).expect("present").opacity(), 100.0);
@@ -2526,7 +2493,7 @@ mod tests {
             worker.document.find(id).expect("present").name(),
             "fond clair"
         );
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Empty or unknown: no-op without snapshot.
         worker.apply(PhotoEngineCommand::RenameLayer {
             layer: id,
@@ -2540,7 +2507,7 @@ mod tests {
             worker.document.find(id).expect("present").name(),
             "fond clair"
         );
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Undo restores the original name.
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(worker.document.find(id).expect("present").name(), "fond");
@@ -2650,7 +2617,7 @@ mod tests {
             .dimensions();
         assert_eq!((image.source_width, image.source_height), (w, h));
         assert_eq!(image.opacity, 100.0);
-        assert!(worker.undo.is_empty(), "lecture seule");
+        assert!(worker.history.undo_steps().is_empty(), "lecture seule");
         // Bottom layer: nothing below.
         let bottom = worker.document.root[0].id();
         assert!(matches!(
@@ -2697,7 +2664,10 @@ mod tests {
             gif,
             PhotoEngineResponse::ExportSizeEstimated { bytes: None, .. }
         ));
-        assert!(worker.undo.is_empty(), "aucune entrée d'historique");
+        assert!(
+            worker.history.undo_steps().is_empty(),
+            "aucune entrée d'historique"
+        );
     }
 
     #[test]
@@ -2727,15 +2697,19 @@ mod tests {
             });
         }
         assert_eq!(points(&worker), "0,0;128,160;255,255");
-        assert_eq!(worker.undo.len(), 1, "glissé coalescé");
+        assert_eq!(worker.history.undo_steps().len(), 1, "glissé coalescé");
         worker.apply(PhotoEngineCommand::ApplyFilterPreset {
             layer: id,
             filter: fid,
             preset: String::from("curves.invert"),
         });
         assert_eq!(points(&worker), "0,255;255,0");
-        assert_eq!(worker.undo.len(), 2, "préréglage = étape distincte");
-        assert_eq!(worker.undo[1].label, "Préréglage");
+        assert_eq!(
+            worker.history.undo_steps().len(),
+            2,
+            "préréglage = étape distincte"
+        );
+        assert_eq!(worker.history.undo_steps()[1].label, "Préréglage");
         // Unknown preset: clean error, no history entry.
         let response = worker.apply(PhotoEngineCommand::ApplyFilterPreset {
             layer: id,
@@ -2743,7 +2717,7 @@ mod tests {
             preset: String::from("inexistant"),
         });
         assert!(matches!(response, PhotoEngineResponse::EngineError { .. }));
-        assert_eq!(worker.undo.len(), 2);
+        assert_eq!(worker.history.undo_steps().len(), 2);
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(points(&worker), "0,0;128,160;255,255");
         worker.apply(PhotoEngineCommand::Undo);
@@ -2781,8 +2755,8 @@ mod tests {
             );
         }
         assert_eq!(param(&worker), 30.0);
-        assert_eq!(worker.undo.len(), 1, "geste coalescé");
-        assert_eq!(worker.undo[0].label, "Réglage du filtre");
+        assert_eq!(worker.history.undo_steps().len(), 1, "geste coalescé");
+        assert_eq!(worker.history.undo_steps()[0].label, "Réglage du filtre");
         // Guards: NaN, empty key, unknown ids = no-op without snapshot.
         worker.apply(PhotoEngineCommand::SetFilterParam {
             layer: id,
@@ -2809,7 +2783,7 @@ mod tests {
             value: 5.0,
         });
         assert_eq!(param(&worker), 30.0);
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Undo: back to the pre-gesture value.
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(param(&worker), 0.0);
@@ -2829,7 +2803,7 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!((moved.offset_x, moved.offset_y), (12.0, -5.0));
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Zero delta or unknown id: no effect, no snapshot.
         worker.apply(PhotoEngineCommand::MoveLayer {
             layer: id,
@@ -2841,7 +2815,7 @@ mod tests {
             dx: 3.0,
             dy: 3.0,
         });
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         worker.apply(PhotoEngineCommand::Undo);
         let restored = match worker.document.find(id).expect("present") {
             photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
@@ -2870,13 +2844,17 @@ mod tests {
         frame(&mut worker, 10.0, false);
         frame(&mut worker, 20.0, false);
         frame(&mut worker, 30.0, false);
-        assert_eq!(worker.undo.len(), 1, "frames coalesced");
+        assert_eq!(worker.history.undo_steps().len(), 1, "frames coalesced");
         frame(&mut worker, 30.0, true);
-        assert_eq!(worker.undo.len(), 1, "commit adds no entry");
+        assert_eq!(worker.history.undo_steps().len(), 1, "commit adds no entry");
         frame(&mut worker, 40.0, false);
-        assert_eq!(worker.undo.len(), 2, "new gesture after commit");
         assert_eq!(
-            worker.undo.last().map(|s| s.label.as_str()),
+            worker.history.undo_steps().len(),
+            2,
+            "new gesture after commit"
+        );
+        assert_eq!(
+            worker.history.undo_steps().last().map(|s| s.label.as_str()),
             Some("Transformer")
         );
         let current = match worker.document.find(id).expect("present") {
@@ -2958,7 +2936,7 @@ mod tests {
             transform: photo_engine::Transform2D::default(),
             commit: true,
         });
-        assert_eq!(worker.undo.len(), 0);
+        assert_eq!(worker.history.undo_steps().len(), 0);
         // Small move: bounded region, not the whole document.
         // `mutate` alone (without `respond`): the marking is
         // observable before the render absorbs it (same pattern as
@@ -2973,7 +2951,7 @@ mod tests {
             transform: t,
             commit: true,
         });
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         // Precise marking via the tile cache (same observation as
         // `MoveLayer`): bounded union of before/after footprints.
         let dirty = worker.render_worker.cache().dirty();
@@ -3010,11 +2988,15 @@ mod tests {
         };
         assert!(wide.full_width > wide.doc_width, "plan infini plus large");
         assert!((wide.origin_x - 2.0).abs() < 1.0, "origine exacte");
-        let undo_len = worker.undo.len();
+        let undo_len = worker.history.undo_steps().len();
         // Clipping masks (no history, immediate re-render): same
         // framing as the plane — no refit jump.
         worker.apply(PhotoEngineCommand::SetPreviewClip { clip: true });
-        assert_eq!(worker.undo.len(), undo_len, "pas de snapshot");
+        assert_eq!(
+            worker.history.undo_steps().len(),
+            undo_len,
+            "pas de snapshot"
+        );
         let clipped = match worker.apply(PhotoEngineCommand::Refresh) {
             PhotoEngineResponse::LayersChanged { preview, .. } => preview.expect("apercu rogne"),
             other => panic!("reponse inattendue : {other:?}"),
@@ -3148,7 +3130,7 @@ mod tests {
         assert_eq!(revision, RenderRevision(1));
         // Last value wins, a single history entry.
         assert_eq!(worker.document.find(id).expect("present").opacity(), 80.0);
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
     }
 
     #[test]
@@ -3201,7 +3183,7 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(offset, (3.0, 1.0));
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
         worker.apply(PhotoEngineCommand::Undo);
         let restored = match worker.document.find(id).expect("present") {
             photo_engine::LayerNode::Pixel(pixels) => {
@@ -3638,15 +3620,19 @@ mod single_pass_tests {
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
-        assert_eq!(worker.undo.len(), 1, "un geste = une entrée");
+        assert_eq!(
+            worker.history.undo_steps().len(),
+            1,
+            "un geste = une entrée"
+        );
         assert_eq!(&pixel(&worker)[0..3], &[0, 0, 255]);
         assert_eq!(pixel(&worker)[3], 255);
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(pixel(&worker)[3], 0, "undo restaure le transparent");
-        assert_eq!(worker.undo.len(), 0);
+        assert_eq!(worker.history.undo_steps().len(), 0);
         worker.apply(PhotoEngineCommand::Redo);
         assert_eq!(&pixel(&worker)[0..3], &[0, 0, 255], "redo rejoue le trait");
-        assert_eq!(worker.undo.len(), 1);
+        assert_eq!(worker.history.undo_steps().len(), 1);
     }
 
     /// Bench 6G.4: thumbnail cost BEFORE/AFTER the versioned cache.

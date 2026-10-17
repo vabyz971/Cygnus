@@ -603,35 +603,33 @@ pub(crate) fn mark_for_node(node: &photo_engine::LayerNode) -> DirtyMark {
     }
 }
 
-/// Folds a batch of pending commands (latest-value-wins) BEFORE
-/// application: consecutive `SetOpacity` on the same layer keep
-/// only the last value (same for `SetFilterParam` per
-/// layer/filter/key), consecutive `MoveLayer` are
-/// summed (zero sum = dropped command). Intermediate
-/// values therefore never fill the render queue, and
-/// history keeps one entry per gesture (existing
-/// coalescing preserved: folding never crosses `Undo`/`Redo`).
-pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCommand> {
-    let mut folded: Vec<PhotoEngineCommand> = Vec::with_capacity(commands.len());
-    for command in commands {
-        let merged = match (folded.last_mut(), &command) {
+/// Latest-value-wins folding (see `engine_runtime::batch`):
+/// consecutive `SetOpacity` on the same layer keep only the last
+/// value (same for `SetFilterParam` per layer/filter/key,
+/// `SetTransform` / `SetVectorPaths` per layer), consecutive
+/// `MoveLayer` are summed (zero sum = dropped command). Intermediate
+/// values therefore never fill the render queue, and history keeps one
+/// entry per gesture (folding never crosses `Undo`/`Redo`).
+impl engine_runtime::Coalesce for PhotoEngineCommand {
+    fn absorb(&mut self, command: &Self) -> bool {
+        match (self, command) {
             (
-                Some(PhotoEngineCommand::SetOpacity {
+                PhotoEngineCommand::SetOpacity {
                     layer: prev,
                     opacity: prev_op,
-                }),
+                },
                 PhotoEngineCommand::SetOpacity { layer, opacity },
             ) if prev == layer => {
                 *prev_op = *opacity;
                 true
             }
             (
-                Some(PhotoEngineCommand::SetFilterParam {
+                PhotoEngineCommand::SetFilterParam {
                     layer: prev_layer,
                     filter: prev_filter,
                     key: prev_key,
                     value: prev_value,
-                }),
+                },
                 PhotoEngineCommand::SetFilterParam {
                     layer,
                     filter,
@@ -643,11 +641,11 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 true
             }
             (
-                Some(PhotoEngineCommand::MoveLayer {
+                PhotoEngineCommand::MoveLayer {
                     layer: prev,
                     dx,
                     dy,
-                }),
+                },
                 PhotoEngineCommand::MoveLayer {
                     layer,
                     dx: ndx,
@@ -659,11 +657,11 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 true
             }
             (
-                Some(PhotoEngineCommand::SetTransform {
+                PhotoEngineCommand::SetTransform {
                     layer: prev,
                     transform: prev_t,
                     commit: prev_c,
-                }),
+                },
                 PhotoEngineCommand::SetTransform {
                     layer,
                     transform,
@@ -675,11 +673,11 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 true
             }
             (
-                Some(PhotoEngineCommand::SetVectorPaths {
+                PhotoEngineCommand::SetVectorPaths {
                     layer: prev,
                     paths: prev_paths,
                     commit: prev_c,
-                }),
+                },
                 PhotoEngineCommand::SetVectorPaths {
                     layer,
                     paths,
@@ -691,18 +689,16 @@ pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCo
                 true
             }
             _ => false,
-        };
-        if !merged {
-            folded.push(command);
         }
     }
-    folded
-        .into_iter()
-        .filter(|command| {
-            !matches!(
-                command,
-                PhotoEngineCommand::MoveLayer { dx, dy, .. } if *dx == 0.0 && *dy == 0.0
-            )
-        })
-        .collect()
+
+    fn is_noop(&self) -> bool {
+        matches!(self, PhotoEngineCommand::MoveLayer { dx, dy, .. } if *dx == 0.0 && *dy == 0.0)
+    }
+}
+
+/// Folds a batch of pending commands BEFORE application
+/// (`engine_runtime::fold_batch` over [`engine_runtime::Coalesce`]).
+pub(crate) fn fold_batch(commands: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineCommand> {
+    engine_runtime::fold_batch(commands)
 }
