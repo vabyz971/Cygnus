@@ -459,6 +459,24 @@ mod tests {
     }
 
     #[test]
+    fn row_count_matches_the_engine() {
+        let (doc, _, _) = grouped_doc();
+        let layers = snapshot_layers(&doc);
+        assert_eq!(
+            flattened_len(&layers),
+            photo_engine::snapshot::row_count(&layers)
+        );
+        let mut folded = layers.clone();
+        for layer in &mut folded {
+            layer.collapsed = true;
+        }
+        assert_eq!(
+            flattened_len(&folded),
+            photo_engine::snapshot::row_count(&folded)
+        );
+    }
+
+    #[test]
     fn profondeur_trois_sans_duplicat() {
         // Three nested levels: grand + moyen + petit, exactly once
         // each (no duplication at depth ≥ 2).

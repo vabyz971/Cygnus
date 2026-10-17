@@ -24,11 +24,9 @@ use super::commands::{DirtyMark, Mutation, PhotoEngineCommand, RenderInvalidatio
 use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 use super::responses::PhotoEngineResponse;
 use super::worker::EngineWorker;
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -156,9 +154,9 @@ fn capped_preview(image: image::DynamicImage) -> (image::DynamicImage, u64) {
     // dedicated pool. Every other case: unchanged legacy.
     if let image::DynamicImage::ImageRgba8(buf) = &image {
         if let Some((nw, nh)) =
-            photo_engine::document::compositing::capped_thumbnail_dims(w, h, PREVIEW_MAX_DIMENSION)
+            crate::document::compositing::capped_thumbnail_dims(w, h, PREVIEW_MAX_DIMENSION)
         {
-            let fast = photo_engine::document::compositing::fast_thumbnail_rgba8(buf, nw, nh);
+            let fast = crate::document::compositing::fast_thumbnail_rgba8(buf, nw, nh);
             debug_assert_eq!((fast.width(), fast.height()), (nw, nh));
             return (
                 image::DynamicImage::ImageRgba8(fast),
@@ -208,7 +206,7 @@ fn render_preview_timed_with(
     let doc_height = document.height.max(1);
     if clip_to_doc {
         let t_composite = std::time::Instant::now();
-        let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
+        let mut composite_stats = crate::document::compositing::CompositeStats::default();
         let composite =
             document.composite_preview_with_stats(&|id| frame.image(id), &mut composite_stats);
         let composite_us = t_composite.elapsed().as_micros();
@@ -268,7 +266,7 @@ fn render_preview_timed_with(
         );
     }
     let t_composite = std::time::Instant::now();
-    let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
+    let mut composite_stats = crate::document::compositing::CompositeStats::default();
     let composite =
         document.composite_preview_with_stats(&|id| frame.image(id), &mut composite_stats);
     let composite_us = t_composite.elapsed().as_micros();
@@ -331,7 +329,7 @@ fn render_preview_timed_with(
 }
 
 impl EngineWorker {
-    /// Display-scale composite (see `photo_engine::document::scaled`):
+    /// Display-scale composite (see `crate::document::scaled`):
     /// `None` when the document fits the cap or holds canvas-space data
     /// the scaled view cannot resample (the caller then runs the
     /// full-resolution pipeline). Same geometry contract as every preview
@@ -341,7 +339,7 @@ impl EngineWorker {
     ) -> Option<(
         Option<PreviewImage>,
         PreviewTimings,
-        photo_engine::document::RenderWorkerStats,
+        crate::document::RenderWorkerStats,
     )> {
         let scale = self.document.display_scale(PREVIEW_MAX_DIMENSION)?;
         let view = self.document.scaled_view(scale)?;
@@ -360,13 +358,13 @@ impl EngineWorker {
             }
         }
         self.scaled_appearances.retain(|id| small.contains_key(&id));
-        let mut stats = photo_engine::document::compositing::CompositeStats::default();
+        let mut stats = crate::document::compositing::CompositeStats::default();
         let resolve = |id: Uuid| small.get(&id).cloned();
         let part = view.composite_root_range_with(0..view.root.len(), &resolve, &mut stats);
         let composite_us = t_composite.elapsed().as_micros();
         // Tiles are not consulted on this path: nothing stays pending.
         self.render_worker.cache_mut().clear_dirty();
-        let worker_stats = photo_engine::document::RenderWorkerStats::default();
+        let worker_stats = crate::document::RenderWorkerStats::default();
         let Some(part) = part else {
             return Some((None, PreviewTimings::default(), worker_stats));
         };
@@ -432,7 +430,7 @@ impl EngineWorker {
     ) -> (
         Option<PreviewImage>,
         PreviewTimings,
-        photo_engine::document::RenderWorkerStats,
+        crate::document::RenderWorkerStats,
     ) {
         let doc_width = self.document.width.max(1);
         let doc_height = self.document.height.max(1);
@@ -443,7 +441,7 @@ impl EngineWorker {
         let scope = self.render_worker.scope_for(&self.document, &resolve);
         let (scope, request) = (
             scope,
-            photo_engine::document::RenderWorker::scope_request(scope, 1.0),
+            crate::document::RenderWorker::scope_request(scope, 1.0),
         );
         // Full-frame bypass: when the marked-dirty coverage dominates
         // a multi-tile scope, per-tile windowed re-renders redo the
@@ -461,19 +459,19 @@ impl EngineWorker {
             return (
                 preview,
                 timings,
-                photo_engine::document::RenderWorkerStats::default(),
+                crate::document::RenderWorkerStats::default(),
             );
         }
         let t_composite = std::time::Instant::now();
-        let mut composite_stats = photo_engine::document::compositing::CompositeStats::default();
-        let mut worker_stats = photo_engine::document::RenderWorkerStats::default();
+        let mut composite_stats = crate::document::compositing::CompositeStats::default();
+        let mut worker_stats = crate::document::RenderWorkerStats::default();
         let assembled = self.render_worker.render(
             &self.document,
             &resolve,
             &mut composite_stats,
             scope,
             &request,
-            &photo_engine::document::RenderPriorityContext::idle(),
+            &crate::document::RenderPriorityContext::idle(),
             &mut worker_stats,
         );
         let composite_us = t_composite.elapsed().as_micros();
@@ -616,7 +614,7 @@ pub struct ProxyLayerImage {
 /// One flattened part of the split stack as a canvas preview (same
 /// geometry contract as the main preview: origin in thumbnail pixels).
 pub(crate) fn proxy_part_preview(
-    part: photo_engine::document::ProxyPart,
+    part: crate::document::ProxyPart,
     scale: f32,
     doc_width: u32,
     doc_height: u32,
@@ -651,12 +649,12 @@ pub(crate) fn proxy_layer_image(
 ) -> ProxyLayerImage {
     let (sw, sh) = (image.width(), image.height());
     let rgba = image.to_rgba8();
-    let raster = match photo_engine::document::compositing::capped_thumbnail_dims(
+    let raster = match crate::document::compositing::capped_thumbnail_dims(
         sw,
         sh,
         PROXY_LAYER_MAX_DIMENSION,
     ) {
-        Some((nw, nh)) => photo_engine::document::compositing::fast_thumbnail_rgba8(&rgba, nw, nh),
+        Some((nw, nh)) => crate::document::compositing::fast_thumbnail_rgba8(&rgba, nw, nh),
         None => rgba,
     };
     ProxyLayerImage {
@@ -678,9 +676,10 @@ mod tests {
         // Regression: the frame cache only resolved pixels, so vector
         // shapes never reached the canvas.
         let mut document = Document::new(32, 32);
-        document.push_layer(photo_engine::LayerNode::Vector(
-            photo_engine::VectorLayer::new("forme", photo_engine::rect(4.0, 4.0, 24.0, 24.0)),
-        ));
+        document.push_layer(crate::LayerNode::Vector(crate::VectorLayer::new(
+            "forme",
+            crate::rect(4.0, 4.0, 24.0, 24.0),
+        )));
         let frame = AppearanceFrameCache::build(&document);
         assert_eq!(frame.resolves, 1, "vector appearance resolved");
         let preview = render_preview(&document, false).expect("preview composite");

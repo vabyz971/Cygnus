@@ -19,11 +19,9 @@
 //! Worker metrics and timings: [`PreviewTimings`], [`OpMetrics`],
 //! [`WorkerMetrics`].
 
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -159,5 +157,5 @@ pub struct WorkerMetrics {
     /// Number of composites actually produced (non-coalesced renders).
     pub renders: u64,
     /// Secondary thumbnails (Phase 6G.3 §14, cumulative).
-    pub thumb: crate::ui::thumb_worker::ThumbStats,
+    pub thumb: crate::session::thumb_worker::ThumbStats,
 }

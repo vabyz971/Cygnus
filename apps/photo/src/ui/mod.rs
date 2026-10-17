@@ -39,7 +39,6 @@ pub mod optionsbar;
 /// Perf measurement probes (temporary diagnostics, tests only).
 #[cfg(test)]
 mod probes;
-pub mod thumb_worker;
 pub mod toolbar;
 pub mod transform_overlay;
 pub mod viewport;

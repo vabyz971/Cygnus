@@ -34,5 +34,5 @@ pub use panel::LayersPanel;
 pub use types::{
     AttachmentRef, LayerThumbView, LayerTreeSelection, PhotoLayerInfo, PhotoLayerThumb,
     PhotoSubLayerInfo, find_attachment_in, find_filter_in, find_layer_in, find_layer_in_mut,
-    find_layer_of_attachment, flattened_len, snapshot_layers, snapshot_layers_with,
+    find_layer_of_attachment,
 };

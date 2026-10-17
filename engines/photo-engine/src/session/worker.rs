@@ -28,12 +28,10 @@ use super::commands::{
 use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 use super::preview::{AppearanceFrameCache, PreviewImage, render_preview};
 use super::responses::PhotoEngineResponse;
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use engine_runtime::{EngineLoop, History, spawn_engine};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,7 +45,7 @@ pub struct EngineWorker {
     /// History stacks: PRE-mutation snapshot + French label
     /// of the operation (History panel, O003). `undo` oldest
     /// to newest, `redo` in undo order.
-    pub(crate) history: History<photo_engine::history::Snapshot, PhotoGesture>,
+    pub(crate) history: History<crate::history::Snapshot, PhotoGesture>,
     /// Operation name (`op_name`) of the command being
     /// mutated: consumed by [`Self::push_history`] to label
     /// the step (set by `apply`/`apply_batch`, never by the arms).
@@ -61,17 +59,17 @@ pub struct EngineWorker {
     /// a stroke mutation, consumed by `respond` in the metrics.
     /// Never read by the renderer: pure observation, zero side effects.
     /// In a batch (`apply_batch`), only the batch's last stroke is observed.
-    pub(crate) pending_tile_plan: Option<photo_engine::tiles::StrokeTilePlan>,
+    pub(crate) pending_tile_plan: Option<crate::tiles::StrokeTilePlan>,
     /// Incremental rendering (Phase 6E): tile cache + tracked extent,
     /// fed by `Mutation::dirty` markings, consumed by the
     /// preview. Persists across commands: clean tiles are
     /// reused from frame to frame.
-    pub(crate) render_worker: photo_engine::document::RenderWorker,
+    pub(crate) render_worker: crate::document::RenderWorker,
     /// Known thumbnails per layer (Phase 6G.3): `(RgbaBuf, version)`
     /// of the last INGESTED results (freshness guard at ingestion).
     /// The snapshot serves them (stamped with the live version); fresh
     /// thumbnails also go out as `ThumbnailUpdated`.
-    pub(crate) thumb_store: HashMap<Uuid, (photo_engine::RgbaBuf, u64)>,
+    pub(crate) thumb_store: HashMap<Uuid, (crate::RgbaBuf, u64)>,
     /// Submitted, not-yet-settled intents: `(version, source)` per
     /// layer (send dedup + second factor of the freshness
     /// guard — see `ingest_thumb_done`).
@@ -81,7 +79,7 @@ pub struct EngineWorker {
     pub(crate) thumb_fresh: Vec<Uuid>,
     /// Secondary thumbnail task (threaded in production, inline in
     /// tests: same code, determinism preserved).
-    pub(crate) thumb_worker: crate::ui::thumb_worker::ThumbWorker,
+    pub(crate) thumb_worker: crate::session::thumb_worker::ThumbWorker,
     /// Cumulative surface-written pixels at the last response (Phase 6G):
     /// used to report the per-frame delta in `OpMetrics`.
     pub(crate) last_surface_pixels: u64,
@@ -90,7 +88,7 @@ pub struct EngineWorker {
     /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
     /// Display-scale appearances (reused while their source holds).
-    pub(crate) scaled_appearances: photo_engine::document::ScaledAppearances,
+    pub(crate) scaled_appearances: crate::document::ScaledAppearances,
 }
 
 /// Worker tile-cache budget (8M px ≈ 32 MB RGBA8): covers
@@ -115,7 +113,7 @@ pub(crate) enum PhotoGesture {
 
 /// "Crop to document" plan (O004): intersection of the
 /// layer footprint (offset + dimensions) with the document,
-/// converted back to layer space for [`Document::crop`](photo_engine::Document::crop).
+/// converted back to layer space for [`Document::crop`](crate::Document::crop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CropPlan {
     /// Not a pixel layer: silent no-op (like `AddFilter`).
@@ -225,18 +223,18 @@ impl EngineWorker {
             clip_to_doc: false,
             revision: RenderRevision::default(),
             pending_tile_plan: None,
-            render_worker: photo_engine::document::RenderWorker::new(
+            render_worker: crate::document::RenderWorker::new(
                 TILE_CACHE_BUDGET_PX,
-                photo_engine::tiles::VIEWPORT_TILE_PX,
+                crate::tiles::VIEWPORT_TILE_PX,
             ),
             thumb_store: HashMap::new(),
             thumb_pending: HashMap::new(),
             thumb_fresh: Vec::new(),
-            thumb_worker: crate::ui::thumb_worker::ThumbWorker::inline_(),
+            thumb_worker: crate::session::thumb_worker::ThumbWorker::inline_(),
             last_surface_pixels: 0,
             last_surface_us: 0,
             metrics: WorkerMetrics::default(),
-            scaled_appearances: photo_engine::document::ScaledAppearances::default(),
+            scaled_appearances: crate::document::ScaledAppearances::default(),
         }
     }
 
@@ -277,10 +275,8 @@ impl EngineWorker {
         if key.is_empty() {
             return Mutation::unchanged();
         }
-        let known = matches!(
-            self.document.find(layer),
-            Some(photo_engine::LayerNode::Pixel(_))
-        ) && self.document.find_filter_layer(filter).is_some();
+        let known = matches!(self.document.find(layer), Some(crate::LayerNode::Pixel(_)))
+            && self.document.find_filter_layer(filter).is_some();
         if !known {
             return Mutation::unchanged();
         }
@@ -297,7 +293,7 @@ impl EngineWorker {
     }
 
     /// Splits the stack around `layer` for a GPU-side drag (see
-    /// `photo_engine::document::drag_proxy`): two flattened parts and the
+    /// `crate::document::drag_proxy`): two flattened parts and the
     /// layer's own appearance. Read-only: no history, no render bump.
     fn drag_proxy_response(&mut self, layer: Uuid) -> PhotoEngineResponse {
         let unavailable = PhotoEngineResponse::DragProxyUnavailable { layer };
@@ -309,52 +305,53 @@ impl EngineWorker {
         };
         let (doc_w, doc_h) = (self.document.width.max(1), self.document.height.max(1));
         let opacity = self.document.root[index].opacity();
-        let mut stats = photo_engine::document::compositing::CompositeStats::default();
+        let mut stats = crate::document::compositing::CompositeStats::default();
         // Display-scale split when possible (same path as the canvas
         // preview: no full-resolution filter chain), exact frame otherwise.
         let scaled = self
             .document
             .display_scale(super::preview::PREVIEW_MAX_DIMENSION)
             .and_then(|s| self.document.scaled_view(s).map(|view| (s, view)));
-        let (below, above, appearance) =
-            if let Some((scale, view)) = scaled {
-                let mut small: HashMap<Uuid, Arc<image::DynamicImage>> = HashMap::new();
-                for id in self.document.all_pixel_ids() {
-                    if let Some(l) = self.document.pixel_layer(id) {
-                        small.insert(id, self.scaled_appearances.pixel_appearance(l, scale));
-                    }
+        let (below, above, appearance) = if let Some((scale, view)) = scaled {
+            let mut small: HashMap<Uuid, Arc<image::DynamicImage>> = HashMap::new();
+            for id in self.document.all_pixel_ids() {
+                if let Some(l) = self.document.pixel_layer(id) {
+                    small.insert(id, self.scaled_appearances.pixel_appearance(l, scale));
                 }
-                for id in self.document.all_vector_ids() {
-                    if let Some(full) = self.document.appearance_vector_image(id) {
-                        small.insert(id, self.scaled_appearances.get(id, &full, scale));
-                    }
+            }
+            for id in self.document.all_vector_ids() {
+                if let Some(full) = self.document.appearance_vector_image(id) {
+                    small.insert(id, self.scaled_appearances.get(id, &full, scale));
                 }
-                let resolve = |id: Uuid| small.get(&id).cloned();
-                let part = |range: std::ops::Range<usize>,
-                        stats: &mut photo_engine::document::compositing::CompositeStats| {
-                view.composite_root_range_with(range, &resolve, stats)
-                    .map(|p| super::preview::proxy_part_preview(p, scale, doc_w, doc_h))
-            };
-                (
-                    part(0..index, &mut stats),
-                    part(index + 1..view.root.len(), &mut stats),
-                    small.get(&layer).cloned(),
-                )
-            } else {
-                let frame = super::preview::AppearanceFrameCache::build(&self.document);
-                let resolve = |id: Uuid| frame.image(id);
-                let part = |range: std::ops::Range<usize>,
-                        stats: &mut photo_engine::document::compositing::CompositeStats| {
-                self.document
-                    .composite_root_range_with(range, &resolve, stats)
-                    .map(|p| super::preview::proxy_part_preview(p, 1.0, doc_w, doc_h))
-            };
-                (
-                    part(0..index, &mut stats),
-                    part(index + 1..self.document.root.len(), &mut stats),
-                    frame.image(layer),
-                )
-            };
+            }
+            let resolve = |id: Uuid| small.get(&id).cloned();
+            let part =
+                |range: std::ops::Range<usize>,
+                 stats: &mut crate::document::compositing::CompositeStats| {
+                    view.composite_root_range_with(range, &resolve, stats)
+                        .map(|p| super::preview::proxy_part_preview(p, scale, doc_w, doc_h))
+                };
+            (
+                part(0..index, &mut stats),
+                part(index + 1..view.root.len(), &mut stats),
+                small.get(&layer).cloned(),
+            )
+        } else {
+            let frame = super::preview::AppearanceFrameCache::build(&self.document);
+            let resolve = |id: Uuid| frame.image(id);
+            let part =
+                |range: std::ops::Range<usize>,
+                 stats: &mut crate::document::compositing::CompositeStats| {
+                    self.document
+                        .composite_root_range_with(range, &resolve, stats)
+                        .map(|p| super::preview::proxy_part_preview(p, 1.0, doc_w, doc_h))
+                };
+            (
+                part(0..index, &mut stats),
+                part(index + 1..self.document.root.len(), &mut stats),
+                frame.image(layer),
+            )
+        };
         let Some(appearance) = appearance else {
             return unavailable;
         };
@@ -376,10 +373,7 @@ impl EngineWorker {
         invalidation: RenderInvalidation,
         apply: impl FnOnce(&mut Document) -> Result<(), String>,
     ) -> Mutation {
-        if !matches!(
-            self.document.find(id),
-            Some(photo_engine::LayerNode::Pixel(_))
-        ) {
+        if !matches!(self.document.find(id), Some(crate::LayerNode::Pixel(_))) {
             return Mutation::unchanged();
         }
         self.push_history(None);
@@ -471,7 +465,7 @@ impl EngineWorker {
                 (None, None) => (
                     None,
                     super::metrics::PreviewTimings::default(),
-                    photo_engine::document::RenderWorkerStats::default(),
+                    crate::document::RenderWorkerStats::default(),
                 ),
             };
             // Phase 6G.2 §1: dirty is settled only AFTER producing the
@@ -822,10 +816,7 @@ impl EngineWorker {
             PhotoEngineCommand::ToggleGroupCollapsed(id) => {
                 // Display only: no pixel touched (snapshot only).
                 // PRE-mutation snapshot (never after).
-                if !matches!(
-                    self.document.find(id),
-                    Some(photo_engine::LayerNode::Group(_))
-                ) {
+                if !matches!(self.document.find(id), Some(crate::LayerNode::Group(_))) {
                     return Mutation::unchanged();
                 }
                 let collapsed = !self.is_collapsed(id);
@@ -873,15 +864,15 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 // Old transform BEFORE the move (old ∪ new next).
-                let before: Option<(photo_engine::Transform2D, u32, u32)> =
-                    match self.document.find(layer) {
-                        Some(photo_engine::LayerNode::Pixel(pixels)) => Some((
-                            pixels.transform,
-                            pixels.dimensions().0,
-                            pixels.dimensions().1,
-                        )),
-                        _ => None,
-                    };
+                let before: Option<(crate::Transform2D, u32, u32)> = match self.document.find(layer)
+                {
+                    Some(crate::LayerNode::Pixel(pixels)) => Some((
+                        pixels.transform,
+                        pixels.dimensions().0,
+                        pixels.dimensions().1,
+                    )),
+                    _ => None,
+                };
                 if let Some(node) = self.document.find_mut(layer) {
                     // Groups/adjustments: no-op (snapshot already pushed
                     // out of caution, state unchanged).
@@ -890,9 +881,9 @@ impl EngineWorker {
                 // Precise marking: union of before/after footprints (+exact
                 // spread). Without a pixel layer: safe global fallback.
                 let dirty = match (before, self.document.find(layer)) {
-                    (Some((old_t, w, h)), Some(photo_engine::LayerNode::Pixel(pixels))) => {
-                        let spread = photo_engine::tiles::appearance_spread(&pixels.filter_layers);
-                        DirtyMark::Region(photo_engine::tiles::layer_move_dirty_region(
+                    (Some((old_t, w, h)), Some(crate::LayerNode::Pixel(pixels))) => {
+                        let spread = crate::tiles::appearance_spread(&pixels.filter_layers);
+                        DirtyMark::Region(crate::tiles::layer_move_dirty_region(
                             &old_t,
                             &pixels.transform,
                             w,
@@ -913,18 +904,18 @@ impl EngineWorker {
                 // raster dims), group (virtual bounds placement),
                 // finite values.
                 let current = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
+                    Some(crate::LayerNode::Pixel(pixels)) => {
                         (pixels.transform, pixels.dimensions())
                     }
-                    Some(photo_engine::LayerNode::Vector(vector)) => {
+                    Some(crate::LayerNode::Vector(vector)) => {
                         (vector.transform, vector.raster_dims().unwrap_or((1, 1)))
                     }
-                    Some(photo_engine::LayerNode::Group(group)) => {
-                        let region = photo_engine::tiles::group_footprint(group);
-                        let placed = photo_engine::Transform2D {
+                    Some(crate::LayerNode::Group(group)) => {
+                        let region = crate::tiles::group_footprint(group);
+                        let placed = crate::Transform2D {
                             offset_x: region.x as f32,
                             offset_y: region.y as f32,
-                            ..photo_engine::Transform2D::default()
+                            ..crate::Transform2D::default()
                         };
                         (placed, (region.width.max(1), region.height.max(1)))
                     }
@@ -959,21 +950,16 @@ impl EngineWorker {
                 // commits a virtual placement, so apply the offset
                 // DELTA to the contents (children + canvas-space
                 // masks) instead of storing it.
-                if matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Group(_))
-                ) {
+                if matches!(self.document.find(layer), Some(crate::LayerNode::Group(_))) {
                     let region = match self.document.find(layer) {
-                        Some(photo_engine::LayerNode::Group(group)) => {
-                            photo_engine::tiles::group_footprint(group)
+                        Some(crate::LayerNode::Group(group)) => {
+                            crate::tiles::group_footprint(group)
                         }
-                        _ => photo_engine::tiles::TileRegion::EMPTY,
+                        _ => crate::tiles::TileRegion::EMPTY,
                     };
                     let dx = transform.offset_x - region.x as f32;
                     let dy = transform.offset_y - region.y as f32;
-                    if let Some(photo_engine::LayerNode::Group(group)) =
-                        self.document.find_mut(layer)
-                    {
+                    if let Some(crate::LayerNode::Group(group)) = self.document.find_mut(layer) {
                         for child in &mut group.children {
                             child.translate_by(dx, dy);
                         }
@@ -983,11 +969,11 @@ impl EngineWorker {
                     }
                 } else if let Some(node) = self.document.find_mut(layer) {
                     match node {
-                        photo_engine::LayerNode::Pixel(pixels) => {
+                        crate::LayerNode::Pixel(pixels) => {
                             pixels.transform = transform;
                             pixels.touch();
                         }
-                        photo_engine::LayerNode::Vector(vector) => {
+                        crate::LayerNode::Vector(vector) => {
                             vector.transform = transform;
                             vector.touch();
                         }
@@ -997,15 +983,15 @@ impl EngineWorker {
                 // Precise marking: union of before/after footprints
                 // (+ exact filter spread), like `MoveLayer`.
                 let spread = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
-                        photo_engine::tiles::appearance_spread(&pixels.filter_layers)
+                    Some(crate::LayerNode::Pixel(pixels)) => {
+                        crate::tiles::appearance_spread(&pixels.filter_layers)
                     }
-                    Some(photo_engine::LayerNode::Vector(vector)) => {
-                        photo_engine::tiles::appearance_spread(&vector.filter_layers)
+                    Some(crate::LayerNode::Vector(vector)) => {
+                        crate::tiles::appearance_spread(&vector.filter_layers)
                     }
-                    _ => photo_engine::tiles::Padding::ZERO,
+                    _ => crate::tiles::Padding::ZERO,
                 };
-                let dirty = DirtyMark::Region(photo_engine::tiles::layer_move_dirty_region(
+                let dirty = DirtyMark::Region(crate::tiles::layer_move_dirty_region(
                     &old_t, &transform, w, h, spread,
                 ));
                 Mutation::changed(invalidation).with_dirty(dirty)
@@ -1016,10 +1002,8 @@ impl EngineWorker {
                 commit,
             } => {
                 // Guards: vector layer, finite coordinates.
-                if !matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Vector(_))
-                ) || !photo_engine::paths_finite(&paths)
+                if !matches!(self.document.find(layer), Some(crate::LayerNode::Vector(_)))
+                    || !crate::paths_finite(&paths)
                 {
                     if commit {
                         self.history
@@ -1028,7 +1012,7 @@ impl EngineWorker {
                     return Mutation::unchanged();
                 }
                 let current = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Vector(v)) => v.vector.paths.clone(),
+                    Some(crate::LayerNode::Vector(v)) => v.vector.paths.clone(),
                     _ => return Mutation::unchanged(),
                 };
                 if paths == current {
@@ -1109,14 +1093,14 @@ impl EngineWorker {
                 // through the inverse transform so the stroke lands at the
                 // cursor — same as the transient overlay.
                 let (layer_transform, layer_w, layer_h) = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => (
+                    Some(crate::LayerNode::Pixel(pixels)) => (
                         pixels.transform,
                         pixels.dimensions().0,
                         pixels.dimensions().1,
                     ),
                     _ => return Mutation::unchanged(),
                 };
-                let is_identity = layer_transform == photo_engine::Transform2D::default();
+                let is_identity = layer_transform == crate::Transform2D::default();
                 let to_local = |p: (f32, f32)| -> Option<(f32, f32)> {
                     if is_identity {
                         Some(p)
@@ -1143,27 +1127,26 @@ impl EngineWorker {
                 }
                 // Gesture smoothing (1 point/frame): corners softened before
                 // rasterization (same conservative bbox for the dirty).
-                let points = photo_engine::paint::resample_stroke(&local, rx.max(ry).max(2.0));
+                let points = crate::paint::resample_stroke(&local, rx.max(ry).max(2.0));
                 self.push_history(None);
-                let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
-                else {
+                let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) else {
                     return Mutation::unchanged();
                 };
                 let source = pixels.source_image.clone();
                 let raster = source.to_rgba8();
                 let (width, height) = (raster.width(), raster.height());
                 let mut buffer = raster.into_raw();
-                let brush = photo_engine::paint::BrushParams {
+                let brush = crate::paint::BrushParams {
                     radius,
                     color,
                     opacity: opacity.clamp(0.0, 1.0),
                     mode: if eraser {
-                        photo_engine::paint::StrokeMode::Erase
+                        crate::paint::StrokeMode::Erase
                     } else {
-                        photo_engine::paint::StrokeMode::Paint
+                        crate::paint::StrokeMode::Paint
                     },
                 };
-                photo_engine::paint::paint_stroke_ellipse(
+                crate::paint::paint_stroke_ellipse(
                     &mut buffer,
                     width,
                     height,
@@ -1174,9 +1157,7 @@ impl EngineWorker {
                 );
                 if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
                     // Defensive re-read after the history push.
-                    if let Some(photo_engine::LayerNode::Pixel(pixels)) =
-                        self.document.find_mut(layer)
-                    {
+                    if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
                         pixels.set_source_image(image::DynamicImage::ImageRgba8(image));
                         pixels.touch();
                     }
@@ -1189,20 +1170,20 @@ impl EngineWorker {
                 // composite is still produced as before by `respond`.
                 // Rasterization above is unchanged (layer space).
                 let (layer_transform, layer_w, layer_h, halo) = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => (
+                    Some(crate::LayerNode::Pixel(pixels)) => (
                         pixels.transform,
                         pixels.dimensions().0,
                         pixels.dimensions().1,
-                        photo_engine::tiles::blur_halo_for_filters(&pixels.filter_layers),
+                        crate::tiles::blur_halo_for_filters(&pixels.filter_layers),
                     ),
                     _ => (
-                        photo_engine::Transform2D::default(),
+                        crate::Transform2D::default(),
                         self.document.width,
                         self.document.height,
-                        photo_engine::tiles::Padding::ZERO,
+                        crate::tiles::Padding::ZERO,
                     ),
                 };
-                self.pending_tile_plan = Some(photo_engine::tiles::plan_stroke_tiles_layer_space(
+                self.pending_tile_plan = Some(crate::tiles::plan_stroke_tiles_layer_space(
                     &points,
                     radius,
                     &layer_transform,
@@ -1216,12 +1197,12 @@ impl EngineWorker {
                 // EXACT spread of the appearance chain (not the 6B
                 // observation halo) — painting does not move the layer.
                 let spread = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(pixels)) => {
-                        photo_engine::tiles::appearance_spread(&pixels.filter_layers)
+                    Some(crate::LayerNode::Pixel(pixels)) => {
+                        crate::tiles::appearance_spread(&pixels.filter_layers)
                     }
-                    _ => photo_engine::tiles::Padding::ZERO,
+                    _ => crate::tiles::Padding::ZERO,
                 };
-                let dirty = photo_engine::tiles::stroke_footprint_in_document(
+                let dirty = crate::tiles::stroke_footprint_in_document(
                     &points,
                     radius,
                     &layer_transform,
@@ -1259,7 +1240,7 @@ impl EngineWorker {
                 // space owners (groups, adjustments): direct mapping.
                 let space = self.document.mask_paint_space(owner);
                 let is_identity = space
-                    .map(|(t, _, _)| t == photo_engine::Transform2D::default())
+                    .map(|(t, _, _)| t == crate::Transform2D::default())
                     .unwrap_or(true);
                 let to_local = |p: (f32, f32)| -> Option<(f32, f32)> {
                     // Canvas-space owner, or identity carrier:
@@ -1286,7 +1267,7 @@ impl EngineWorker {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
-                let points = photo_engine::paint::resample_stroke(&local, rx.max(ry).max(2.0));
+                let points = crate::paint::resample_stroke(&local, rx.max(ry).max(2.0));
                 if self
                     .document
                     .paint_mask(owner, mask, &points, rx, ry, opacity, !eraser)
@@ -1309,9 +1290,11 @@ impl EngineWorker {
                         .to_owned();
                     self.document.width = self.document.width.max(image.width());
                     self.document.height = self.document.height.max(image.height());
-                    self.document.push_layer(photo_engine::LayerNode::Pixel(
-                        photo_engine::PixelLayer::new(name, std::sync::Arc::new(image)),
-                    ));
+                    self.document
+                        .push_layer(crate::LayerNode::Pixel(crate::PixelLayer::new(
+                            name,
+                            std::sync::Arc::new(image),
+                        )));
                     Mutation::changed(invalidation)
                 }
                 Err(error) => Mutation::immediate(PhotoEngineResponse::EngineError {
@@ -1323,9 +1306,11 @@ impl EngineWorker {
                 let (width, height) = (self.document.width.max(1), self.document.height.max(1));
                 let blank = image::DynamicImage::new_rgba8(width, height);
                 let name = format!("Calque {}", self.document.root.len() + 1);
-                self.document.push_layer(photo_engine::LayerNode::Pixel(
-                    photo_engine::PixelLayer::new(name, std::sync::Arc::new(blank)),
-                ));
+                self.document
+                    .push_layer(crate::LayerNode::Pixel(crate::PixelLayer::new(
+                        name,
+                        std::sync::Arc::new(blank),
+                    )));
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::AddVectorLayer { shape } => {
@@ -1334,17 +1319,17 @@ impl EngineWorker {
                 let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
                 let side = width.min(height) as f32;
                 let vector = match shape {
-                    NewVectorShape::Rect => photo_engine::rect(
+                    NewVectorShape::Rect => crate::rect(
                         cx - width as f32 / 4.0,
                         cy - height as f32 / 4.0,
                         width as f32 / 2.0,
                         height as f32 / 2.0,
                     ),
                     NewVectorShape::Ellipse => {
-                        photo_engine::ellipse(cx, cy, width as f32 / 4.0, height as f32 / 4.0, 48)
+                        crate::ellipse(cx, cy, width as f32 / 4.0, height as f32 / 4.0, 48)
                     }
-                    NewVectorShape::Polygon => photo_engine::polygon(cx, cy, side / 4.0, 6),
-                    NewVectorShape::Star => photo_engine::star(cx, cy, side / 4.0, side / 8.0, 5),
+                    NewVectorShape::Polygon => crate::polygon(cx, cy, side / 4.0, 6),
+                    NewVectorShape::Star => crate::star(cx, cy, side / 4.0, side / 8.0, 5),
                 };
                 let name = format!("Forme {}", self.document.root.len() + 1);
                 // Origin-consumed normalization: paths are shifted so
@@ -1353,20 +1338,19 @@ impl EngineWorker {
                 // coincides with the placed raster — vectors behave
                 // exactly like pixels for overlay, hit-testing and
                 // moves (same invariant as raster sources).
-                let mut layer = photo_engine::VectorLayer::new(name, vector);
-                if let Some(bounds) = photo_engine::vector_bounds(&layer.vector) {
+                let mut layer = crate::VectorLayer::new(name, vector);
+                if let Some(bounds) = crate::vector_bounds(&layer.vector) {
                     let (ox, oy) = (bounds.x0.floor(), bounds.y0.floor());
                     layer.vector.paths = layer
                         .vector
                         .paths
                         .iter()
-                        .map(|p| photo_engine::translate(p, -ox, -oy))
+                        .map(|p| crate::translate(p, -ox, -oy))
                         .collect();
                     layer.transform.offset_x += ox;
                     layer.transform.offset_y += oy;
                 }
-                self.document
-                    .push_layer(photo_engine::LayerNode::Vector(layer));
+                self.document.push_layer(crate::LayerNode::Vector(layer));
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::DuplicateLayer(id) => {
@@ -1443,22 +1427,19 @@ impl EngineWorker {
                 }
             },
             PhotoEngineCommand::AddFilter { layer, filter_type } => {
-                let Some(filter) = photo_engine::new_filter_layer(&filter_type) else {
+                let Some(filter) = crate::new_filter_layer(&filter_type) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
                         message: format!("Filtre inconnu : {filter_type}"),
                     });
                 };
-                let is_pixel = matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Pixel(_))
-                );
+                let is_pixel =
+                    matches!(self.document.find(layer), Some(crate::LayerNode::Pixel(_)));
                 if !is_pixel {
                     return Mutation::unchanged();
                 }
                 self.push_history(None);
                 // Re-read after the history push (fresh borrow).
-                if let Some(photo_engine::LayerNode::Pixel(pixels)) = self.document.find_mut(layer)
-                {
+                if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
                     pixels.filter_layers.push(filter);
                     pixels.touch();
                 }
@@ -1480,8 +1461,8 @@ impl EngineWorker {
                             }
                         } else {
                             let format =
-                                photo_engine::ExportFormat::from_path_with_quality(&path, quality);
-                            match photo_engine::export_image(&image, &path, format) {
+                                crate::ExportFormat::from_path_with_quality(&path, quality);
+                            match crate::export_image(&image, &path, format) {
                                 Ok(()) => PhotoEngineResponse::ExportDone { path },
                                 Err(error) => PhotoEngineResponse::EngineError {
                                     message: format!("Export impossible : {error}"),
@@ -1498,14 +1479,14 @@ impl EngineWorker {
                 Mutation::immediate(self.drag_proxy_response(layer))
             }
             PhotoEngineCommand::EstimateExportSize { ext, quality } => {
-                let format = photo_engine::ExportFormat::from_path_with_quality(
+                let format = crate::ExportFormat::from_path_with_quality(
                     std::path::Path::new(&format!("estimate.{ext}")),
                     quality,
                 );
                 let bytes = (ext != "gif")
                     .then(|| self.document.composite_preview())
                     .flatten()
-                    .and_then(|image| photo_engine::estimate_export_size(&image, format).ok());
+                    .and_then(|image| crate::estimate_export_size(&image, format).ok());
                 Mutation::immediate(PhotoEngineResponse::ExportSizeEstimated {
                     ext,
                     quality,
@@ -1513,7 +1494,7 @@ impl EngineWorker {
                 })
             }
             PhotoEngineCommand::SaveProject { path } => {
-                Mutation::immediate(match photo_engine::project::save(&path, &self.document) {
+                Mutation::immediate(match crate::project::save(&path, &self.document) {
                     Ok(()) => PhotoEngineResponse::ProjectSaved { path },
                     Err(error) => PhotoEngineResponse::EngineError {
                         message: format!("Enregistrement impossible : {error}"),
@@ -1521,7 +1502,7 @@ impl EngineWorker {
                 })
             }
             PhotoEngineCommand::LoadProject { path } => {
-                match photo_engine::project::load(&path) {
+                match crate::project::load(&path) {
                     Ok(loaded) => {
                         // Total replacement: new editing session.
                         // Neither a pre-mutation snapshot (the old document
@@ -1568,7 +1549,7 @@ impl EngineWorker {
                     .mask_owner_dims(layer)
                     .unwrap_or((self.document.width.max(1), self.document.height.max(1)));
                 if let Some(masks) = self.document.masks_of_mut(layer) {
-                    let mut mask = photo_engine::LayerMask::full(width, height);
+                    let mut mask = crate::LayerMask::full(width, height);
                     mask.name = format!("Masque {}", masks.len() + 1);
                     masks.push(mask);
                 }
@@ -1646,10 +1627,8 @@ impl EngineWorker {
             } => {
                 // Discrete step (one entry, ends any slider gesture):
                 // the preset installs a COMPLETE parameter set.
-                let is_pixel = matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Pixel(_))
-                );
+                let is_pixel =
+                    matches!(self.document.find(layer), Some(crate::LayerNode::Pixel(_)));
                 let Some(type_id) = self
                     .document
                     .find_filter_layer(filter)
@@ -1660,7 +1639,7 @@ impl EngineWorker {
                 if !is_pixel {
                     return Mutation::unchanged();
                 }
-                let Some(found) = photo_engine::find_preset(&type_id, &preset) else {
+                let Some(found) = crate::find_preset(&type_id, &preset) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
                         message: format!("Préréglage inconnu : {preset}"),
                     });
@@ -1829,10 +1808,10 @@ impl EngineWorker {
 /// masks (the engine's mask setters do not bump the version
 /// themselves). Groups: on-the-fly composition, nothing to invalidate.
 fn touch_mask_owner(document: &mut Document, owner: Uuid) {
-    if let Some(photo_engine::LayerNode::Pixel(pixels)) = document.find_mut(owner) {
+    if let Some(crate::LayerNode::Pixel(pixels)) = document.find_mut(owner) {
         pixels.touch();
     } else if let Some(parent) = document.find_filter_parent(owner)
-        && let Some(photo_engine::LayerNode::Pixel(pixels)) = document.find_mut(parent)
+        && let Some(crate::LayerNode::Pixel(pixels)) = document.find_mut(parent)
     {
         pixels.touch();
     }
@@ -1889,7 +1868,7 @@ pub fn spawn_photo_engine_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photo_engine::{LayerNode, PixelLayer};
+    use crate::{LayerNode, PixelLayer};
     use std::sync::Arc;
     use std::sync::mpsc::channel;
 
@@ -2099,7 +2078,7 @@ mod tests {
             filter_type: String::from("brightness_contrast"),
         });
         let fid = match worker.document.find(id).expect("layer") {
-            photo_engine::LayerNode::Pixel(pixels) => pixels.filter_layers[0].id,
+            crate::LayerNode::Pixel(pixels) => pixels.filter_layers[0].id,
             _ => panic!("pixels attendus"),
         };
         worker.apply(PhotoEngineCommand::DuplicateFilter {
@@ -2107,7 +2086,7 @@ mod tests {
             filter: fid,
         });
         let chain = match worker.document.find(id).expect("layer") {
-            photo_engine::LayerNode::Pixel(pixels) => &pixels.filter_layers,
+            crate::LayerNode::Pixel(pixels) => &pixels.filter_layers,
             _ => panic!("pixels attendus"),
         };
         assert_eq!(chain.len(), 2);
@@ -2202,7 +2181,7 @@ mod tests {
     fn reorder_nodes_into_group_and_back() {
         // Free nesting: a layer enters a group then leaves it
         // (before a root layer) — undo/redo follow.
-        use photo_engine::GroupLayer;
+        use crate::GroupLayer;
         let mut worker = EngineWorker::new({
             let mut doc = Document::new(8, 8);
             doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", test_image())));
@@ -2246,7 +2225,7 @@ mod tests {
     #[test]
     fn toggle_collapsed_is_state_only_with_undo() {
         // Fallback: snapshot only (no composite), undo restores.
-        use photo_engine::GroupLayer;
+        use crate::GroupLayer;
         let mut worker = EngineWorker::new({
             let mut doc = Document::new(8, 8);
             doc.push_layer(LayerNode::Pixel(PixelLayer::new("fond", test_image())));
@@ -2259,7 +2238,7 @@ mod tests {
         let groupe = worker.document.root[1].id();
         let renders = worker.metrics.renders;
         assert_eq!(
-            flattened_len(&snapshot_layers(&worker.document)),
+            crate::snapshot::row_count(&snapshot_layers(&worker.document)),
             3,
             "groupe déplié : fond + groupe + enfant"
         );
@@ -2271,14 +2250,18 @@ mod tests {
         assert_eq!(worker.metrics.renders, renders, "aucun re-rendu");
         let layers = snapshot_layers(&worker.document);
         assert!(layers[0].collapsed, "groupe replié");
-        assert_eq!(flattened_len(&layers), 2, "enfant masqué de la liste");
+        assert_eq!(
+            crate::snapshot::row_count(&layers),
+            2,
+            "enfant masqué de la liste"
+        );
         // Unknown id: no-op.
         worker.apply(PhotoEngineCommand::ToggleGroupCollapsed(Uuid::new_v4()));
         // Undo: expanded again.
         worker.apply(PhotoEngineCommand::Undo);
         let layers = snapshot_layers(&worker.document);
         assert!(!layers[0].collapsed);
-        assert_eq!(flattened_len(&layers), 3);
+        assert_eq!(crate::snapshot::row_count(&layers), 3);
     }
 
     #[test]
@@ -2554,7 +2537,7 @@ mod tests {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
         for type_id in ["brightness_contrast", "blur"] {
-            let filter = photo_engine::new_filter_layer(type_id).expect("filtre connu");
+            let filter = crate::new_filter_layer(type_id).expect("filtre connu");
             worker.document.add_filter(id, filter);
         }
         // Application order: [brightness, blur]; move the first one up.
@@ -2628,7 +2611,7 @@ mod tests {
         let top = worker.document.root[2].id();
         worker.apply(PhotoEngineCommand::SetBlendMode {
             layer: top,
-            mode: photo_engine::BlendMode::Multiply,
+            mode: crate::BlendMode::Multiply,
         });
         assert!(matches!(
             worker.apply(PhotoEngineCommand::PrepareDragProxy { layer: middle }),
@@ -2676,7 +2659,7 @@ mod tests {
         // step installing the full parameter set; undo restores both.
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
-        let filter = photo_engine::new_filter_layer("curves").expect("filtre connu");
+        let filter = crate::new_filter_layer("curves").expect("filtre connu");
         let fid = filter.id;
         worker.document.add_filter(id, filter);
         let points = |worker: &EngineWorker| match worker
@@ -2728,7 +2711,7 @@ mod tests {
     fn set_filter_param_applies_coalesces_and_undoes() {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
-        let filter = photo_engine::new_filter_layer("brightness_contrast").expect("filtre connu");
+        let filter = crate::new_filter_layer("brightness_contrast").expect("filtre connu");
         let fid = worker.document.add_filter(id, filter).expect("ajout");
         let param = |worker: &EngineWorker| {
             worker
@@ -2799,7 +2782,7 @@ mod tests {
             dy: -5.0,
         });
         let moved = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            crate::LayerNode::Pixel(pixels) => pixels.transform,
             _ => panic!("pixels attendus"),
         };
         assert_eq!((moved.offset_x, moved.offset_y), (12.0, -5.0));
@@ -2818,7 +2801,7 @@ mod tests {
         assert_eq!(worker.history.undo_steps().len(), 1);
         worker.apply(PhotoEngineCommand::Undo);
         let restored = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            crate::LayerNode::Pixel(pixels) => pixels.transform,
             _ => panic!("pixels attendus"),
         };
         assert_eq!((restored.offset_x, restored.offset_y), (0.0, 0.0));
@@ -2831,9 +2814,9 @@ mod tests {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
         let frame = |worker: &mut EngineWorker, dx: f32, commit: bool| {
-            let t = photo_engine::Transform2D {
+            let t = crate::Transform2D {
                 offset_x: dx,
-                ..photo_engine::Transform2D::default()
+                ..crate::Transform2D::default()
             };
             worker.apply(PhotoEngineCommand::SetTransform {
                 layer: id,
@@ -2858,7 +2841,7 @@ mod tests {
             Some("Transformer")
         );
         let current = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            crate::LayerNode::Pixel(pixels) => pixels.transform,
             _ => panic!("pixels attendus"),
         };
         assert_eq!(current.offset_x, 40.0);
@@ -2866,7 +2849,7 @@ mod tests {
         worker.apply(PhotoEngineCommand::Undo);
         worker.apply(PhotoEngineCommand::Undo);
         let restored = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => pixels.transform,
+            crate::LayerNode::Pixel(pixels) => pixels.transform,
             _ => panic!("pixels attendus"),
         };
         assert_eq!(restored.offset_x, 0.0);
@@ -2895,9 +2878,9 @@ mod tests {
         )));
         let mut worker = EngineWorker::new(doc);
         let id = worker.document.root[0].id();
-        let t = photo_engine::Transform2D {
+        let t = crate::Transform2D {
             rotation_deg: 30.0,
-            ..photo_engine::Transform2D::default()
+            ..crate::Transform2D::default()
         };
         let response = worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
@@ -2919,12 +2902,12 @@ mod tests {
         // Unknown layer, non-finite, unchanged: no-op, no history.
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: Uuid::new_v4(),
-            transform: photo_engine::Transform2D::default(),
+            transform: crate::Transform2D::default(),
             commit: true,
         });
-        let nan = photo_engine::Transform2D {
+        let nan = crate::Transform2D {
             offset_x: f32::NAN,
-            ..photo_engine::Transform2D::default()
+            ..crate::Transform2D::default()
         };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
@@ -2933,7 +2916,7 @@ mod tests {
         });
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
-            transform: photo_engine::Transform2D::default(),
+            transform: crate::Transform2D::default(),
             commit: true,
         });
         assert_eq!(worker.history.undo_steps().len(), 0);
@@ -2941,10 +2924,10 @@ mod tests {
         // `mutate` alone (without `respond`): the marking is
         // observable before the render absorbs it (same pattern as
         // the precise-paint test).
-        let t = photo_engine::Transform2D {
+        let t = crate::Transform2D {
             offset_x: 5.0,
             offset_y: 3.0,
-            ..photo_engine::Transform2D::default()
+            ..crate::Transform2D::default()
         };
         let _ = worker.mutate(PhotoEngineCommand::SetTransform {
             layer: id,
@@ -3177,7 +3160,7 @@ mod tests {
         assert_eq!(responses.len(), 1);
         assert_eq!(worker.metrics.renders, 1);
         let offset = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => {
+            crate::LayerNode::Pixel(pixels) => {
                 (pixels.transform.offset_x, pixels.transform.offset_y)
             }
             _ => panic!("pixels attendus"),
@@ -3186,7 +3169,7 @@ mod tests {
         assert_eq!(worker.history.undo_steps().len(), 1);
         worker.apply(PhotoEngineCommand::Undo);
         let restored = match worker.document.find(id).expect("present") {
-            photo_engine::LayerNode::Pixel(pixels) => {
+            crate::LayerNode::Pixel(pixels) => {
                 (pixels.transform.offset_x, pixels.transform.offset_y)
             }
             _ => panic!("pixels attendus"),
@@ -3383,7 +3366,7 @@ mod fold_batch_tests {
     }
 
     fn three_layer_doc_for_fold() -> Document {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         use std::sync::Arc;
         let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
         let mut doc = Document::new(8, 8);
@@ -3472,7 +3455,7 @@ mod single_pass_tests {
     /// Large document (640x480) for multi-case tile tests
     /// (observation tiles: 256 px, single level 0).
     fn wide_doc() -> Document {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         use std::sync::Arc;
         let mut doc = Document::new(640, 480);
         let blank = Arc::new(image::DynamicImage::new_rgba8(640, 480));
@@ -3644,7 +3627,7 @@ mod single_pass_tests {
     #[test]
     #[ignore = "bench 6G.4 (murs indicatifs, compteurs exacts)"]
     fn bench_thumb_6g4() {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         use std::time::Instant;
         fn blank(w: u32, h: u32) -> Document {
             let mut doc = Document::new(w, h);
@@ -3765,7 +3748,7 @@ mod single_pass_tests {
         // Commit-to-MouseUp time on 2048²: mutation + composite +
         // secondary thumbnail (inline here). Indicative wall only.
         let mut worker = EngineWorker::new({
-            use photo_engine::{LayerNode, PixelLayer};
+            use crate::{LayerNode, PixelLayer};
             use std::sync::Arc;
             let mut doc = Document::new(2048, 2048);
             doc.push_layer(LayerNode::Pixel(PixelLayer::new(
@@ -3841,7 +3824,7 @@ mod single_pass_tests {
         // 1920x1080: committing a small stroke ⇒ small dirty region
         // next to the document, marked tiles < total, revision +1.
         let mut worker = EngineWorker::new({
-            use photo_engine::{LayerNode, PixelLayer};
+            use crate::{LayerNode, PixelLayer};
             use std::sync::Arc;
             let mut doc = Document::new(1920, 1080);
             doc.push_layer(LayerNode::Pixel(PixelLayer::new(
@@ -3881,7 +3864,7 @@ mod single_pass_tests {
 
     #[test]
     fn cache_cycle_filtre_ressert_sans_recalcul() {
-        use photo_engine::LayerNode;
+        use crate::LayerNode;
         // 6G.4: paint (MISS) → add filter (MISS, same Arc) →
         // remove filter (same Arc + restored signature ⇒ HIT).
         // Identical bytes before/after the cycle, zero recompute.
@@ -3941,11 +3924,11 @@ mod single_pass_tests {
 
     #[test]
     fn cache_hit_perime_rejete() {
-        use photo_engine::LayerNode;
+        use crate::LayerNode;
         // 6G.4 + 6G.3: a cache HIT tagged with an outdated version
         // is rejected by the guard (never displayed, never stored —
         // but counted as HIT: no computation happened).
-        use crate::ui::thumb_worker::ThumbDone;
+        use crate::session::thumb_worker::ThumbDone;
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         worker.apply(PhotoEngineCommand::Refresh);
         let target = worker.document.root[0].id();
@@ -4287,9 +4270,10 @@ mod single_pass_tests {
         buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
         buf.put_pixel(0, 1, Rgba([255, 0, 0, 255]));
         let mut doc = Document::new(4, 2);
-        doc.push_layer(photo_engine::LayerNode::Pixel(
-            photo_engine::PixelLayer::new("asym", Arc::new(DynamicImage::ImageRgba8(buf))),
-        ));
+        doc.push_layer(crate::LayerNode::Pixel(crate::PixelLayer::new(
+            "asym",
+            Arc::new(DynamicImage::ImageRgba8(buf)),
+        )));
         doc
     }
 
@@ -4339,9 +4323,7 @@ mod single_pass_tests {
         assert_ne!(tourne, avant, "rotation visible");
         // Group: silent no-op (like AddFilter), no history.
         let mut groupe = Document::new(4, 4);
-        groupe.push_layer(photo_engine::LayerNode::Group(
-            photo_engine::GroupLayer::new("g", vec![]),
-        ));
+        groupe.push_layer(crate::LayerNode::Group(crate::GroupLayer::new("g", vec![])));
         let gid = groupe.root[0].id();
         let mut pivot = EngineWorker::new(groupe);
         assert!(matches!(
@@ -4352,7 +4334,7 @@ mod single_pass_tests {
 
     #[test]
     fn crop_plan_couvre_tous_les_cas() {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         use std::sync::Arc;
         let mut doc = Document::new(10, 10);
         let img = Arc::new(image::DynamicImage::new_rgba8(6, 6));
@@ -4363,9 +4345,9 @@ mod single_pass_tests {
         // Shifted half out of frame: non-null clamped rect.
         doc.set_transform_any(
             id,
-            photo_engine::Transform2D {
+            crate::Transform2D {
                 offset_x: 7.0,
-                ..photo_engine::Transform2D::default()
+                ..crate::Transform2D::default()
             },
         );
         assert_eq!(
@@ -4380,19 +4362,19 @@ mod single_pass_tests {
         // Fully out of frame: clean error.
         doc.set_transform_any(
             id,
-            photo_engine::Transform2D {
+            crate::Transform2D {
                 offset_x: 20.0,
-                ..photo_engine::Transform2D::default()
+                ..crate::Transform2D::default()
             },
         );
         assert_eq!(crop_plan(&doc, id), CropPlan::Outside);
         // Rotation: rejected (wrong world intersection).
         doc.set_transform_any(
             id,
-            photo_engine::Transform2D {
+            crate::Transform2D {
                 offset_x: 0.0,
                 rotation_deg: 45.0,
-                ..photo_engine::Transform2D::default()
+                ..crate::Transform2D::default()
             },
         );
         assert_eq!(crop_plan(&doc, id), CropPlan::Transformed);
@@ -4400,21 +4382,21 @@ mod single_pass_tests {
 
     #[test]
     fn toggle_bascule_filtre_et_masque_avec_historique() {
-        use photo_engine::FilterLayer;
+        use crate::FilterLayer;
         use std::collections::HashMap;
         let mut doc = Document::new(8, 8);
-        let mut pixels = photo_engine::PixelLayer::new(
+        let mut pixels = crate::PixelLayer::new(
             "fond",
             std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
         );
         let filtre = FilterLayer::neutral("brightness_contrast", HashMap::new());
         let fid = filtre.id;
         pixels.filter_layers.push(filtre);
-        let masque = photo_engine::LayerMask::full(4, 4);
+        let masque = crate::LayerMask::full(4, 4);
         let mid = masque.id;
         pixels.masks.push(masque);
         let id = pixels.id;
-        doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
+        doc.push_layer(crate::LayerNode::Pixel(pixels));
         let mut worker = EngineWorker::new(doc);
         // Active filter → inactive.
         match worker.apply(PhotoEngineCommand::ToggleFilter {
@@ -4458,9 +4440,9 @@ mod single_pass_tests {
 
     #[test]
     fn paint_mask_noircit_libelle_et_annule() {
-        use photo_engine::LayerMask;
+        use crate::LayerMask;
         let mut doc = Document::new(8, 8);
-        let mut pixels = photo_engine::PixelLayer::new(
+        let mut pixels = crate::PixelLayer::new(
             "fond",
             std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4)),
         );
@@ -4468,7 +4450,7 @@ mod single_pass_tests {
         let mid = masque.id;
         pixels.masks.push(masque);
         let id = pixels.id;
-        doc.push_layer(photo_engine::LayerNode::Pixel(pixels));
+        doc.push_layer(crate::LayerNode::Pixel(pixels));
         let mut worker = EngineWorker::new(doc);
         // Eraser on white mask: digs (R channel).
         match worker.apply(PhotoEngineCommand::PaintMask {
@@ -4540,7 +4522,7 @@ mod single_pass_tests {
     }
 
     fn three_layer_doc_for_fold() -> Document {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         use std::sync::Arc;
         let image = Arc::new(image::DynamicImage::new_rgba8(4, 4));
         let mut doc = Document::new(8, 8);
@@ -4555,7 +4537,7 @@ mod single_pass_tests {
     // ------------------------------------------------------------------
 
     fn painted_doc() -> (Document, Uuid) {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         // 64² document with contrasted content (hard edges): opaque background +
         // offset square.
         let fond = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
@@ -4602,7 +4584,7 @@ mod single_pass_tests {
     }
 
     fn painted_big_doc() -> (Document, Uuid) {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         // 300² document (4 tiles at 256 px): identity background + square.
         let fond = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             300,
@@ -4773,7 +4755,7 @@ mod single_pass_tests {
 
     #[test]
     fn ajout_forme_vectorielle_composite() {
-        use photo_engine::LayerNode;
+        use crate::LayerNode;
         let mut worker = EngineWorker::new(Document::new(32, 32));
         for shape in [
             NewVectorShape::Rect,
@@ -4792,8 +4774,7 @@ mod single_pass_tests {
                     // Origin-consumed normalization: raster bounds start
                     // near (0, 0) and the transform carries the origin,
                     // so overlay/hit-test match the placed raster.
-                    let bounds =
-                        photo_engine::vector_bounds(&v.vector).expect("bornes vectorielles");
+                    let bounds = crate::vector_bounds(&v.vector).expect("bornes vectorielles");
                     assert!(bounds.x0.abs() < 1.0 && bounds.y0.abs() < 1.0);
                     assert!(v.transform.offset_x > 0.0 && v.transform.offset_y > 0.0);
                     assert!(v.raster_dims().is_some(), "géométrie overlay");
@@ -4824,7 +4805,7 @@ mod single_pass_tests {
 
     #[test]
     fn noeud_vecteur_deplace_historise() {
-        use photo_engine::LayerNode;
+        use crate::LayerNode;
         let mut worker = EngineWorker::new(Document::new(32, 32));
         worker.apply(PhotoEngineCommand::AddVectorLayer {
             shape: NewVectorShape::Rect,
@@ -4875,7 +4856,7 @@ mod single_pass_tests {
 
     #[test]
     fn transform_sur_vecteur_deplace() {
-        use photo_engine::LayerNode;
+        use crate::LayerNode;
         let mut worker = EngineWorker::new(Document::new(32, 32));
         worker.apply(PhotoEngineCommand::AddVectorLayer {
             shape: NewVectorShape::Rect,
@@ -4885,9 +4866,9 @@ mod single_pass_tests {
             LayerNode::Vector(v) => v.transform.offset_x,
             _ => panic!("calque vecteur attendu"),
         };
-        let transform = photo_engine::Transform2D {
+        let transform = crate::Transform2D {
             offset_x: before + 5.0,
-            ..photo_engine::Transform2D::default()
+            ..crate::Transform2D::default()
         };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
@@ -4904,7 +4885,7 @@ mod single_pass_tests {
 
     #[test]
     fn transform_sur_groupe_deplace_enfants() {
-        use photo_engine::{GroupLayer, LayerNode, PixelLayer};
+        use crate::{GroupLayer, LayerNode, PixelLayer};
         let img = std::sync::Arc::new(image::DynamicImage::new_rgba8(4, 4));
         let mut doc = Document::new(32, 32);
         doc.push_layer(LayerNode::Pixel(PixelLayer::new("a", img.clone())));
@@ -4917,13 +4898,13 @@ mod single_pass_tests {
         let mut worker = EngineWorker::new(doc);
         // Virtual placement: current bounds origin + (4, 2).
         let region = match &worker.test_document().root[0] {
-            LayerNode::Group(g) => photo_engine::tiles::group_footprint(g),
+            LayerNode::Group(g) => crate::tiles::group_footprint(g),
             _ => panic!("groupe attendu"),
         };
-        let placement = photo_engine::Transform2D {
+        let placement = crate::Transform2D {
             offset_x: region.x as f32 + 4.0,
             offset_y: region.y as f32 + 2.0,
-            ..photo_engine::Transform2D::default()
+            ..crate::Transform2D::default()
         };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: group_id,
@@ -4959,7 +4940,7 @@ mod single_pass_tests {
 
     fn live_version(worker: &EngineWorker, id: Uuid) -> u64 {
         match worker.test_document().find(id) {
-            Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
+            Some(crate::LayerNode::Pixel(l)) => l.appearance_version,
             _ => panic!("calque pixels attendu"),
         }
     }
@@ -5074,7 +5055,7 @@ mod single_pass_tests {
     fn ingest_rejette_perime_ordre_inverse() {
         // §16: B computed then A (older) → A rejected, B kept.
         // No thread: synthesized results, guard alone.
-        use crate::ui::thumb_worker::ThumbDone;
+        use crate::session::thumb_worker::ThumbDone;
         let (doc, fond) = painted_doc();
         let mut worker = EngineWorker::new(doc);
         worker.apply(PhotoEngineCommand::Refresh);
@@ -5088,7 +5069,7 @@ mod single_pass_tests {
             opacity: 1.0,
         });
         let live_version = match worker.test_document().find(fond) {
-            Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
+            Some(crate::LayerNode::Pixel(l)) => l.appearance_version,
             _ => panic!("calque"),
         };
         // (Inline mode already stored the fresh thumbnail.)
@@ -5102,7 +5083,7 @@ mod single_pass_tests {
         let stale = ThumbDone {
             layer: fond,
             version: live_version.wrapping_sub(1),
-            thumb: photo_engine::RgbaBuf::from_vec(48, 32, vec![0u8; 48 * 32 * 4]),
+            thumb: crate::RgbaBuf::from_vec(48, 32, vec![0u8; 48 * 32 * 4]),
             image: std::sync::Arc::new(image::DynamicImage::new_rgba8(1, 1)),
             render_us: 0,
             thumb_us: 0,
@@ -5136,7 +5117,7 @@ mod single_pass_tests {
             opacity: 1.0,
         });
         let live_version = match worker.test_document().find(fond) {
-            Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
+            Some(crate::LayerNode::Pixel(l)) => l.appearance_version,
             _ => panic!("calque"),
         };
         // The response already came back (canvas) with the intent pending —
@@ -5169,10 +5150,10 @@ mod single_pass_tests {
         // Bytes == direct computation (same function, same inputs).
         let stored = worker.thumb_store.get(&fond).expect("stockée").0.clone();
         let layer = match worker.test_document().find(fond) {
-            Some(photo_engine::LayerNode::Pixel(l)) => l.clone(),
+            Some(crate::LayerNode::Pixel(l)) => l.clone(),
             _ => panic!("calque"),
         };
-        let mut renderer = photo_engine::renderer::Renderer::default();
+        let mut renderer = crate::renderer::Renderer::default();
         let (_, expected) = renderer.appearance_frame(&layer).expect("cadre");
         assert_eq!(
             (stored.width, stored.height, stored.data.as_ref()),
@@ -5220,7 +5201,7 @@ mod single_pass_tests {
     // ------------------------------------------------------------------
 
     fn bench_doc(size: u32) -> (Document, Uuid) {
-        use photo_engine::{LayerNode, PixelLayer};
+        use crate::{LayerNode, PixelLayer};
         let fond = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             size,
             size,
@@ -5531,7 +5512,7 @@ mod single_pass_tests {
         label: &str,
         samples: &[u128],
         m: &OpMetrics,
-        thumb: &crate::ui::thumb_worker::ThumbStats,
+        thumb: &crate::session::thumb_worker::ThumbStats,
     ) {
         let mut sorted = samples.to_vec();
         let (min, median, p95) = stats_us(&mut sorted);
@@ -5749,98 +5730,6 @@ mod single_pass_tests {
             &m,
             &worker.metrics.thumb,
         );
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_presentation_ui_512() {
-        // Release recommended: worker paint → response → apply_response with
-        // headless Context. Measures ColorImage + texture.set + thumbs + total.
-        use crate::state::{PhotoUiState, apply_response};
-        let ctx = egui::Context::default();
-        let (doc, fond) = bench_doc(512);
-        let mut worker = EngineWorker::new(doc);
-        worker.apply(PhotoEngineCommand::PaintStroke {
-            layer: fond,
-            points: vec![(20.0, 20.0), (36.0, 20.0)],
-            eraser: false,
-            radius: 5.0,
-            color: [0, 0, 255],
-            opacity: 1.0,
-        });
-        // Replays the same response N times on fresh states (uploads + bytes).
-        let mut samples = Vec::new();
-        for _ in 0..7 {
-            let response = worker.apply(PhotoEngineCommand::Refresh);
-            let preview_bytes = match &response {
-                PhotoEngineResponse::LayersChanged { preview, .. } => preview
-                    .as_ref()
-                    .map(|p| p.width as u64 * p.height as u64 * 4),
-                _ => None,
-            };
-            let mut ui = PhotoUiState::default();
-            let t = std::time::Instant::now();
-            apply_response(&ctx, &mut ui, response);
-            let total_us = t.elapsed().as_micros();
-            let p = ui.last_presentation;
-            samples.push(total_us);
-            eprintln!(
-                "BENCHUI apply_us={total_us} thumb_us={} colorimage_us={} texture_us={} \
-                 preview_us={} uploads={} upload_bytes={} preview_bytes={:?}",
-                p.thumb_sync_us,
-                p.colorimage_us,
-                p.texture_set_us,
-                p.preview_apply_us,
-                ui.texture_uploads,
-                ui.texture_upload_bytes,
-                preview_bytes,
-            );
-        }
-        let mut sorted = samples.clone();
-        let (min, median, p95) = stats_us(&mut sorted);
-        eprintln!(
-            "BENCHUI op=apply_response size=512 n={} min={min} median={median} p95={p95}",
-            samples.len()
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn bench_presentation_ui_2048() {
-        // 2048² UI: 3 applies (partial cold), millis per step.
-        use crate::state::{PhotoUiState, apply_response};
-        let ctx = egui::Context::default();
-        let (doc, fond) = bench_doc(2048);
-        let mut worker = EngineWorker::new(doc);
-        for i in 0..3 {
-            worker.apply(PhotoEngineCommand::PaintStroke {
-                layer: fond,
-                points: vec![
-                    (20.0 + i as f32 * 300.0, 20.0),
-                    (36.0 + i as f32 * 300.0, 20.0),
-                ],
-                eraser: false,
-                radius: 5.0,
-                color: [0, 0, 255],
-                opacity: 1.0,
-            });
-            let response = worker.apply(PhotoEngineCommand::Refresh);
-            let mut ui = PhotoUiState::default();
-            let t = std::time::Instant::now();
-            apply_response(&ctx, &mut ui, response);
-            let total_us = t.elapsed().as_micros();
-            let p = ui.last_presentation;
-            eprintln!(
-                "BENCHUI op=apply size=2048 apply_us={total_us} thumb_us={} \
-                 colorimage_us={} texture_us={} preview_us={} uploads={} upload_bytes={}",
-                p.thumb_sync_us,
-                p.colorimage_us,
-                p.texture_set_us,
-                p.preview_apply_us,
-                ui.texture_uploads,
-                ui.texture_upload_bytes,
-            );
-        }
     }
 
     #[test]

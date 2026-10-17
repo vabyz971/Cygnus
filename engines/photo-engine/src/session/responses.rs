@@ -19,11 +19,9 @@
 //! Worker-to-UI responses: [`PhotoEngineResponse`].
 
 use super::preview::{PreviewImage, ProxyLayerImage};
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

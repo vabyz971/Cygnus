@@ -20,11 +20,9 @@
 //! ([`render_routing`]) and batch coalescing ([`fold_batch`]).
 
 use super::responses::PhotoEngineResponse;
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -136,7 +134,7 @@ pub enum PhotoEngineCommand {
         /// Target pixel layer.
         layer: Uuid,
         /// New transform (document space).
-        transform: photo_engine::Transform2D,
+        transform: crate::Transform2D,
         /// True on release (gesture boundary).
         commit: bool,
     },
@@ -148,7 +146,7 @@ pub enum PhotoEngineCommand {
         /// Target vector layer.
         layer: Uuid,
         /// New paths (layer space).
-        paths: Vec<photo_engine::VectorPath>,
+        paths: Vec<crate::VectorPath>,
         /// True on release (gesture boundary).
         commit: bool,
     },
@@ -251,7 +249,7 @@ pub enum PhotoEngineCommand {
         layer: Uuid,
         /// Targeted filter.
         filter: Uuid,
-        /// Preset id (`photo_engine::presets_for`).
+        /// Preset id (`crate::presets_for`).
         preset: String,
     },
     /// Enable/disable a mask (toggle, keeping its pixels).
@@ -324,7 +322,7 @@ pub enum PhotoEngineCommand {
     Refresh,
     /// Save the document into a `.cygp` (O001: Save/Save As).
     /// The path is already resolved by the app (local state); the worker
-    /// only serializes via `photo_engine::project::save`.
+    /// only serializes via `crate::project::save`.
     SaveProject {
         /// Destination path (`.cygp` extension handled by the picker).
         path: PathBuf,
@@ -594,8 +592,8 @@ impl Mutation {
 /// Precise marking for a bearer node (footprint + exact spread):
 /// `EMPTY` (adjustment, empty layer) ⇒ `Global` fallback — never a silent
 /// empty region (an adjustment touches the whole accumulator).
-pub(crate) fn mark_for_node(node: &photo_engine::LayerNode) -> DirtyMark {
-    let region = photo_engine::tiles::node_mark_region(node);
+pub(crate) fn mark_for_node(node: &crate::LayerNode) -> DirtyMark {
+    let region = crate::tiles::node_mark_region(node);
     if region.is_empty() {
         DirtyMark::Global
     } else {

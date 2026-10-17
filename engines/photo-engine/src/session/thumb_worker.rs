@@ -56,7 +56,7 @@ use std::thread::JoinHandle;
 use image::DynamicImage;
 use uuid::Uuid;
 
-use photo_engine::{FilterLayer, LayerMask, RgbaBuf, ThumbnailKey};
+use crate::{FilterLayer, LayerMask, RgbaBuf, ThumbnailKey};
 
 /// Thumbnail request: everything needed to derive image + thumbnail,
 /// cloned from the live layer (light: `Arc` + params, never copied
@@ -138,18 +138,18 @@ pub struct ThumbStats {
 /// bit-identical bytes by construction (same code, same inputs).
 /// `None` on zero dimensions (guard, never in practice).
 pub fn compute_thumb(job: &ThumbJob) -> Option<(Arc<DynamicImage>, RgbaBuf, u128, u128)> {
-    let mut layer = photo_engine::PixelLayer::new("thumb-job", Arc::clone(&job.source));
+    let mut layer = crate::PixelLayer::new("thumb-job", Arc::clone(&job.source));
     layer.id = job.layer;
     layer.filter_layers = job.filters.clone();
     layer.masks = job.masks.clone();
-    let mut renderer = photo_engine::renderer::Renderer::default();
+    let mut renderer = crate::renderer::Renderer::default();
     let t_render = std::time::Instant::now();
     let (image, _) = renderer.appearance_frame(&layer)?;
     let render_us = t_render.elapsed().as_micros();
     // Resample isolated and measured separately (§1: it dominates) — same inputs,
     // same function as the frame path.
     let t_thumb = std::time::Instant::now();
-    let thumb = photo_engine::document::compositing::thumb_buf(&image);
+    let thumb = crate::document::compositing::thumb_buf(&image);
     let thumb_us = t_thumb.elapsed().as_micros();
     Some((image, thumb, render_us, thumb_us))
 }
@@ -333,7 +333,7 @@ mod tests {
             64,
             Rgba([value, value, value, 255]),
         )));
-        let layer = photo_engine::PixelLayer::new("test", source.clone());
+        let layer = crate::PixelLayer::new("test", source.clone());
         let key = ThumbnailKey::for_layer(&layer);
         ThumbJob {
             layer: Uuid::new_v4(),
@@ -351,8 +351,8 @@ mod tests {
         let job = solid_job(77, 3);
         let done = ThumbWorker::compute_now(&job).expect("calcul");
         assert_eq!(done.version, 3);
-        let mut renderer = photo_engine::renderer::Renderer::default();
-        let mut layer = photo_engine::PixelLayer::new("x", Arc::clone(&job.source));
+        let mut renderer = crate::renderer::Renderer::default();
+        let mut layer = crate::PixelLayer::new("x", Arc::clone(&job.source));
         layer.id = job.layer;
         let (image, thumb) = renderer.appearance_frame(&layer).expect("cadre");
         assert_eq!(

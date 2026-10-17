@@ -13,40 +13,15 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-// Re-exports keep the old single module's public paths
-// (including test-used ones): some only serve
-// under `#[cfg(test)]`, hence the targeted tolerance.
 #![allow(unused_imports)]
 
-//! Non-blocking bridge to the `photo-engine` worker (pattern v2 §3.4).
+//! Non-blocking bridge to the `photo-engine` editing session.
 //!
-//! The egui loop NEVER touches the `Document`: it sends
-//! [`PhotoEngineCommand`](commands::PhotoEngineCommand) via `Sender` and polls
-//! [`PhotoEngineResponse`](responses::PhotoEngineResponse) via `try_recv` each frame.
-//!
-//! Breakdown (pure move, zero logic change):
-//! - [`commands`]: commands, render routing, batch coalescing;
-//! - [`responses`]: worker-to-UI responses;
-//! - [`metrics`]: metrics and timings;
-//! - [`preview`]: composite previews (legacy + incremental);
-//! - [`thumbs`]: async thumbnails of the `EngineWorker`;
-//! - [`worker`]: worker (live document, history, application).
+//! The worker (live document, history, commands, rendering, thumbnails)
+//! lives in `photo_engine::session`; this module only re-exports it under
+//! the app's historical paths. The egui loop NEVER touches the
+//! `Document`: it sends [`PhotoEngineCommand`] via `Sender` and polls
+//! [`PhotoEngineResponse`] via `try_recv` each frame.
 
-pub(crate) fn assert_send<T: Send>() {}
-
-pub mod commands;
-pub mod metrics;
-pub mod preview;
-pub mod responses;
-pub mod thumbs;
-pub mod worker;
-
-pub use commands::{NewVectorShape, PhotoEngineCommand, RenderInvalidation, render_routing};
-pub use metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
-pub use preview::{
-    PREVIEW_MAX_DIMENSION, PROXY_LAYER_MAX_DIMENSION, PreviewImage, ProxyLayerImage,
-    render_preview, render_preview_timed,
-};
-pub use responses::PhotoEngineResponse;
-pub use worker::{EngineWorker, HISTORY_LIMIT, Waker, apply_command, spawn_photo_engine_worker};
+pub use photo_engine::session::*;
+pub use photo_engine::session::{commands, metrics, preview, responses, thumbs, worker};

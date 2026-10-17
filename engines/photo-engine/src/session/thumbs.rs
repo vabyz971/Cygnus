@@ -26,11 +26,9 @@ use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 use super::preview::AppearanceFrameCache;
 use super::responses::PhotoEngineResponse;
 use super::worker::EngineWorker;
-use crate::ui::features::layers::{
-    PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
-};
-use photo_engine::tiles::TileRegion;
-use photo_engine::{BlendMode, Document, RenderEvent, RenderRevision};
+use crate::snapshot::{PhotoLayerInfo, PhotoLayerThumb, snapshot_layers, snapshot_layers_with};
+use crate::tiles::TileRegion;
+use crate::{BlendMode, Document, RenderEvent, RenderRevision};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,16 +42,16 @@ impl EngineWorker {
     /// mode (tests, ephemeral `apply_command` — no leaked thread).
     pub fn enable_thumb_thread(&mut self) {
         if !self.thumb_worker.is_threaded() {
-            self.thumb_worker = crate::ui::thumb_worker::ThumbWorker::spawned();
+            self.thumb_worker = crate::session::thumb_worker::ThumbWorker::spawned();
         }
     }
 
     /// Known thumbnail of a layer IF it matches the live version
     /// (else `None`: icon while waiting for the secondary task). Sole
     /// source of snapshot thumbnails — never the renderer directly.
-    pub(crate) fn stored_thumb(&self, id: Uuid) -> Option<photo_engine::RgbaBuf> {
+    pub(crate) fn stored_thumb(&self, id: Uuid) -> Option<crate::RgbaBuf> {
         let live = match self.document.find(id) {
-            Some(photo_engine::LayerNode::Pixel(l)) => l.appearance_version,
+            Some(crate::LayerNode::Pixel(l)) => l.appearance_version,
             _ => return None,
         };
         let (thumb, version) = self.thumb_store.get(&id)?;
@@ -86,7 +84,7 @@ impl EngineWorker {
     pub(crate) fn is_collapsed(&self, id: Uuid) -> bool {
         matches!(
             self.document.find(id),
-            Some(photo_engine::LayerNode::Group(groupe)) if groupe.collapsed
+            Some(crate::LayerNode::Group(groupe)) if groupe.collapsed
         )
     }
 
@@ -96,12 +94,12 @@ impl EngineWorker {
     /// (inline fallback when the thread died).
     /// Returns the submitted versions (diagnostics).
     pub(crate) fn submit_stale_thumbs(&mut self) -> u64 {
-        use crate::ui::thumb_worker::ThumbJob;
+        use crate::session::thumb_worker::ThumbJob;
         self.prune_thumb_store();
         let mut submitted = 0u64;
         let mut inline_done = Vec::new();
         for id in self.document.all_pixel_ids() {
-            let Some(photo_engine::LayerNode::Pixel(layer)) = self.document.find(id) else {
+            let Some(crate::LayerNode::Pixel(layer)) = self.document.find(id) else {
                 continue;
             };
             let live_version = layer.appearance_version;
@@ -125,7 +123,7 @@ impl EngineWorker {
                 source: Arc::clone(&layer.source_image),
                 filters: layer.filter_layers.clone(),
                 masks: layer.masks.clone(),
-                key: photo_engine::ThumbnailKey::for_layer(layer),
+                key: crate::ThumbnailKey::for_layer(layer),
             };
             self.metrics.thumb.submitted += 1;
             submitted += 1;
@@ -155,7 +153,10 @@ impl EngineWorker {
     /// preserving the `Arc`s), and `ptr_eq` locks the allocation.
     /// Returns true when stored (fresh). Used by the threaded poll AND
     /// inline mode (same code).
-    pub(crate) fn ingest_thumb_done(&mut self, done: crate::ui::thumb_worker::ThumbDone) -> bool {
+    pub(crate) fn ingest_thumb_done(
+        &mut self,
+        done: crate::session::thumb_worker::ThumbDone,
+    ) -> bool {
         // 6G.4 cache accounting (HIT/MISS measured here: covers inline AND
         // threaded, fresh or stale — a stale HIT is still an avoided
         // computation, rejected right after by the guard).
@@ -178,9 +179,9 @@ impl EngineWorker {
         // source allocation identity (kept at send time; version-only
         // fallback for an untracked external result, e.g. tests).
         let fresh = match self.document.find(done.layer) {
-            Some(photo_engine::LayerNode::Pixel(layer)) => {
+            Some(crate::LayerNode::Pixel(layer)) => {
                 let job_source = pending_source.as_ref().unwrap_or(&layer.source_image);
-                crate::ui::thumb_worker::is_fresh(
+                crate::session::thumb_worker::is_fresh(
                     &done,
                     layer.appearance_version,
                     &layer.source_image,
@@ -241,7 +242,7 @@ impl EngineWorker {
                 // Check the live state still matches (else: gone stale
                 // meanwhile — the next job will recompute it).
                 let current = match self.document.find(layer) {
-                    Some(photo_engine::LayerNode::Pixel(l)) => Some(l.appearance_version),
+                    Some(crate::LayerNode::Pixel(l)) => Some(l.appearance_version),
                     _ => None,
                 };
                 if current == Some(*version) {

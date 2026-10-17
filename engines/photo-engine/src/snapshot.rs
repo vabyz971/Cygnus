@@ -505,6 +505,43 @@ pub fn snapshot_layers_with(
         .collect()
 }
 
+/// Number of rows the Layers panel lists for `layers` (layers, live
+/// filters, masks; collapsed subtrees hidden). Mirrors the app's row
+/// flattening, which asserts the two stay equal.
+#[must_use]
+pub fn row_count(layers: &[PhotoLayerInfo]) -> usize {
+    layers
+        .iter()
+        .map(|layer| {
+            1 + if layer.collapsed {
+                0
+            } else {
+                child_rows(layer)
+            }
+        })
+        .sum()
+}
+
+fn child_rows(layer: &PhotoLayerInfo) -> usize {
+    let children: usize = layer
+        .children
+        .iter()
+        .map(|child| {
+            1 + if child.collapsed {
+                0
+            } else {
+                child_rows(child)
+            } + filter_rows(&child.filters)
+                + child.masks.len()
+        })
+        .sum();
+    children + filter_rows(&layer.filters) + layer.masks.len()
+}
+
+fn filter_rows(filters: &[PhotoSubLayerInfo]) -> usize {
+    filters.iter().map(|f| 1 + f.masks.len()).sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

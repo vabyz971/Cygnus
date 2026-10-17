@@ -27,7 +27,7 @@ The crate name sometimes differs from the folder — use `-p` with the crate nam
 | `core/render-graph` | `render-graph` (scene-derived operations: partial build/sync, abstract backend — no wgpu or UI) |
 | `core/tiles` | `tiles` (spatial invalidation: grid, dirty bitset, CPU/GPU cache, progressive scheduler — pure CPU) |
 | `core/engine-runtime` | `engine-runtime` (generic engine worker: snapshot undo/redo with gesture coalescing, latest-value-wins batch folding, background thread loop + UI wake — no domain, UI or GPU) |
-| `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project; `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
+| `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project, `snapshot` (layer-tree data for the UI), `session` (the editing worker: commands, rendering, thumbnails, on `engine-runtime`); `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
 | `engines/vector-engine` | `vector-engine` (paths, shapes, styles, booleans + `VectorBackend` trait — no wgpu) |
 | `engines/layout-engine` | `layout-engine` (frames, constraints, algorithm + `apply_to_scene` — no wgpu/egui) |
 | `engines/text-engine` | `text-engine` (model → layout → glyph runs; measurement for layout) |
@@ -44,7 +44,7 @@ Allowed dependencies: `packages/*` + `cygnus-i18n` ← `cygnus-ui` + `core/*` �
 
 ## Architecture rules (strict)
 - Business logic → `engines/*` and `core/*`; widgets → `cygnus-ui`; apps = interface + orchestration only. No rendering logic in apps.
-- **Engines are PURE: no UI dependency.** `photo-engine` knows neither egui nor its types; the document model carries pure buffers (`RgbaBuf`, `Arc<[u8]>`). The app sends commands via `mpsc` to a worker owning the `Document`, and receives snapshots + composite preview; the texture is uploaded app-side (`ViewportTextureCache`). Non-blocking egui loop (`try_recv` per frame).
+- **Engines are PURE: no UI dependency.** `photo-engine` knows neither egui nor its types; the document model carries pure buffers (`RgbaBuf`, `Arc<[u8]>`). The app sends commands via `mpsc` to the worker owning the `Document` (`photo_engine::session`, generic loop/history in `core/engine-runtime`), and receives snapshots + composite preview; the texture is uploaded app-side (`ViewportTextureCache`). Non-blocking egui loop (`try_recv` per frame).
 - Engine→UI boundary: the worker replies `LayersChanged { layers, preview, can_undo, can_redo }`; the app converts the preview into an `egui::ColorImage` and feeds its `TextureHandle` (zero regeneration on zoom/pan — state-only).
 - **"state-only"** rendering model: a setting (opacity, position…) never regenerates pixels/textures; it applies at GPU draw. Preserve this model at all costs.
 - Rendering: CPU composite preview worker-side (capped, background thread); zero-copy native wgpu path (`register_native_texture`) planned app-side.
@@ -55,7 +55,7 @@ Allowed dependencies: `packages/*` + `cygnus-i18n` ← `cygnus-ui` + `core/*` �
 
 ## Photo app structure
 Split by role (same pattern for future apps):
-`main.rs` (eframe boot) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (app-specific layout) · `ui/` (domain widgets: `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`, `engine_bridge.rs`). Do not let it regrow into a monolithic main.rs.
+`main.rs` (eframe boot) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (app-specific layout) · `ui/` (domain widgets: `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`; `engine_bridge` only re-exports `photo_engine::session`). Do not let it regrow into a monolithic main.rs.
 
 ## `cygnus-ui` architecture (layered, see lib.rs)
 1. **`theme`** = ONLY source of colors/sizes/radii (tokens `colors`, `spacing`, `radius`, `typography`).

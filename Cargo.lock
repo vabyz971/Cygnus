@@ -2997,6 +2997,7 @@ dependencies = [
  "base64",
  "bytemuck",
  "datatypes",
+ "engine-runtime",
  "image",
  "kurbo",
  "math-utils",
