@@ -33,11 +33,11 @@ pub struct CygnusSizes {
     pub button_md: f32,
     /// Large button height (40px).
     pub button_lg: f32,
-    /// Text-input field height (30px).
+    /// Text-input field height (24px).
     pub input_height: f32,
-    /// Square icon-button size (28px).
+    /// Square icon-button size (24px).
     pub icon_button: f32,
-    /// Photo layer-row height (44px, shared by nested layers,
+    /// Photo layer-row height (36px, shared by nested layers,
     /// filters and masks for one uniform look).
     pub layer_row: f32,
     /// Square layer thumbnail (28px).
@@ -46,10 +46,12 @@ pub struct CygnusSizes {
     pub tool_button: f32,
     /// Creation-dialog preset card (90px).
     pub preset_card: f32,
-    /// Photo selection-bar height (40px).
+    /// Top / selection bar height (36px, Rerun's top bar).
     pub bar_height: f32,
-    /// Tab height (28px).
+    /// Tab and panel title-bar height (24px, Rerun's title bar).
     pub tab_height: f32,
+    /// Compact list / menu row height (24px, Rerun's list item).
+    pub list_item: f32,
     /// Minimum touch target (24px).
     pub min_touch: f32,
 }
@@ -63,14 +65,15 @@ impl CygnusSizes {
             button_sm: 24.0,
             button_md: 32.0,
             button_lg: 40.0,
-            input_height: 30.0,
-            icon_button: 28.0,
-            layer_row: 44.0,
+            input_height: 24.0,
+            icon_button: 24.0,
+            layer_row: 36.0,
             layer_thumb: 28.0,
             tool_button: 28.0,
             preset_card: 90.0,
-            bar_height: 40.0,
-            tab_height: 28.0,
+            bar_height: 36.0,
+            tab_height: 24.0,
+            list_item: 24.0,
             min_touch: 24.0,
         }
     }

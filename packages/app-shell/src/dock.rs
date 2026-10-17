@@ -135,6 +135,12 @@ fn activate_tile<T: DockTab>(tree: &mut Tree<T>, tile: TileId) {
 /// other canvases when possible (side-by-side tabs, new one active),
 /// otherwise into the first tab container found.
 pub fn push_canvas_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
+    let is_tabs = |tree: &Tree<T>, id: TileId| {
+        matches!(
+            tree.tiles.get(id),
+            Some(egui_tiles::Tile::Container(Container::Tabs(_)))
+        )
+    };
     // Existing canvases' leaf first…
     let mut target = tree
         .tiles
@@ -143,27 +149,44 @@ pub fn push_canvas_tab<T: DockTab>(tree: &mut Tree<T>, tab: T) {
             egui_tiles::Tile::Pane(pane) if pane.canvas_id().is_some() => tree.tiles.parent_of(*id),
             _ => None,
         })
-        .find(|parent| {
-            matches!(
-                tree.tiles.get(*parent),
-                Some(egui_tiles::Tile::Container(Container::Tabs(_)))
-            )
-        });
-    // …otherwise the first tab container (fallback: never empty in
-    // practice, the layout guarantees the canvas container).
+        .find(|parent| is_tabs(tree, *parent));
+    // …then an EMPTY tab container (the canvas slot left by the last
+    // closed document). Never "the first tab container": side panels
+    // are tab containers too, and iteration order is not stable.
     if target.is_none() {
-        target = tree.tiles.iter().find_map(|(id, tile)| {
-            matches!(tile, egui_tiles::Tile::Container(Container::Tabs(_))).then_some(*id)
+        target = tree.tiles.iter().find_map(|(id, tile)| match tile {
+            egui_tiles::Tile::Container(Container::Tabs(tabs)) if tabs.children.is_empty() => {
+                Some(*id)
+            }
+            _ => None,
         });
     }
+    let id = tree.tiles.insert_pane(tab);
     if let Some(parent) = target {
-        let id = tree.tiles.insert_pane(tab);
         if let Some(egui_tiles::Tile::Container(Container::Tabs(tabs))) = tree.tiles.get_mut(parent)
         {
             tabs.add_child(id);
             tabs.set_active(id);
         }
+        return;
     }
+    // The empty slot was simplified away: rebuild the center column
+    // right after the tools in a horizontal root, or wrap the root.
+    let slot = tree.tiles.insert_tab_tile(vec![id]);
+    let root = tree.root();
+    if let Some(root) = root
+        && let Some(egui_tiles::Tile::Container(Container::Linear(linear))) =
+            tree.tiles.get_mut(root)
+        && linear.dir == egui_tiles::LinearDir::Horizontal
+    {
+        let at = linear.children.len().min(1);
+        linear.children.insert(at, slot);
+        linear.shares.set_share(slot, SHARE_CANVAS);
+        return;
+    }
+    let children: Vec<TileId> = root.into_iter().chain(std::iter::once(slot)).collect();
+    let wrapped = tree.tiles.insert_horizontal_tile(children);
+    tree.root = Some(wrapped);
 }
 
 /// Removes the canvas tab of document `id` (no effect if
@@ -294,6 +317,77 @@ mod tests {
             tree.tiles.parent_of(first),
             tree.tiles.parent_of(second),
             "canevas en onglets côte à côte"
+        );
+    }
+
+    /// Removes every empty tab container (what egui_tiles'
+    /// simplification does between frames).
+    fn prune_empty_tabs(tree: &mut Tree<TestTab>) {
+        let empty: Vec<TileId> = tree
+            .tiles
+            .iter()
+            .filter_map(|(id, tile)| match tile {
+                egui_tiles::Tile::Container(Container::Tabs(tabs)) if tabs.children.is_empty() => {
+                    Some(*id)
+                }
+                _ => None,
+            })
+            .collect();
+        for id in empty {
+            tree.remove_recursively(id);
+        }
+    }
+
+    #[test]
+    fn push_canvas_tab_reuses_the_empty_canvas_slot() {
+        let mut tree = tree_one_canvas();
+        remove_canvas_tab(&mut tree, Uuid::from_u128(1));
+        push_canvas_tab(&mut tree, canvas(2));
+        let side = find_tile(&tree, TestTab::SideBottom).expect("bas présent");
+        let new = find_tile(&tree, canvas(2)).expect("canevas présent");
+        assert_ne!(tree.tiles.parent_of(new), tree.tiles.parent_of(side));
+        assert_eq!(
+            tree.tiles
+                .parent_of(new)
+                .and_then(|p| tree.tiles.parent_of(p)),
+            tree.root()
+        );
+    }
+
+    #[test]
+    fn push_canvas_tab_rebuilds_a_pruned_canvas_slot_in_the_center() {
+        let mut tree = tree_one_canvas();
+        remove_canvas_tab(&mut tree, Uuid::from_u128(1));
+        prune_empty_tabs(&mut tree);
+        // Side panels in their own tab container: the old fallback
+        // ("first tab container") could pick it.
+        let bottom = find_tile(&tree, TestTab::SideBottom).expect("bas présent");
+        let tabs = tree.tiles.insert_tab_tile(vec![]);
+        if let Some(parent) = tree.tiles.parent_of(bottom)
+            && let Some(egui_tiles::Tile::Container(Container::Linear(linear))) =
+                tree.tiles.get_mut(parent)
+            && let Some(pos) = linear.children.iter().position(|c| *c == bottom)
+        {
+            linear.children[pos] = tabs;
+        }
+        if let Some(egui_tiles::Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(tabs) {
+            t.add_child(bottom);
+        }
+        push_canvas_tab(&mut tree, canvas(3));
+        let new = find_tile(&tree, canvas(3)).expect("canevas présent");
+        let slot = tree.tiles.parent_of(new).expect("conteneur");
+        assert_ne!(slot, tabs, "jamais avec les panneaux latéraux");
+        let Some(root) = tree.root() else {
+            panic!("racine attendue");
+        };
+        let Some(egui_tiles::Tile::Container(Container::Linear(linear))) = tree.tiles.get(root)
+        else {
+            panic!("racine horizontale attendue");
+        };
+        assert_eq!(
+            linear.children.get(1),
+            Some(&slot),
+            "au centre, après les outils"
         );
     }
 

@@ -109,9 +109,8 @@ impl<'a> Button<'a> {
     pub fn show(self, ui: &mut egui::Ui, theme: &CygnusTheme) -> egui::Response {
         let text_color = match self.variant {
             ButtonVariant::Ghost => theme.colors.fg_secondary,
-            ButtonVariant::Primary | ButtonVariant::Secondary | ButtonVariant::Danger => {
-                theme.colors.fg_primary
-            }
+            ButtonVariant::Secondary => theme.colors.fg_primary,
+            ButtonVariant::Primary | ButtonVariant::Danger => theme.colors.fg_strong,
         };
         let height = match self.size {
             ButtonSize::Small => theme.sizes.button_sm,
@@ -120,10 +119,17 @@ impl<'a> Button<'a> {
         };
         let fills = fills_for(self.variant, theme);
         ui.scope(|ui| {
+            // egui paints button frames with `weak_bg_fill`: both are
+            // set so every variant really shows its tint.
             let widgets = &mut ui.visuals_mut().widgets;
-            widgets.inactive.bg_fill = fills.idle;
-            widgets.hovered.bg_fill = fills.hover;
-            widgets.active.bg_fill = fills.pressed;
+            for (state, fill) in [
+                (&mut widgets.inactive, fills.idle),
+                (&mut widgets.hovered, fills.hover),
+                (&mut widgets.active, fills.pressed),
+            ] {
+                state.bg_fill = fill;
+                state.weak_bg_fill = fill;
+            }
             ui.add_enabled(
                 self.enabled,
                 egui::Button::new(
@@ -168,7 +174,7 @@ fn fills_for(variant: ButtonVariant, theme: &CygnusTheme) -> ButtonFills {
             pressed: colors.accent,
         },
         ButtonVariant::Secondary => ButtonFills {
-            idle: colors.bg_tertiary,
+            idle: colors.widget_bg,
             hover: colors.item_hover,
             pressed: colors.bg_tertiary,
         },

@@ -39,10 +39,10 @@ impl CygnusTypography {
     /// Dark-theme scale.
     pub fn dark() -> Self {
         Self {
-            heading_size: 16.0,
-            body_size: 13.0,
-            caption_size: 11.0,
-            icon_size: 18.0,
+            heading_size: 14.0,
+            body_size: 12.5,
+            caption_size: 10.5,
+            icon_size: 16.0,
         }
     }
 }

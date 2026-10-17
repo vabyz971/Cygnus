@@ -65,10 +65,19 @@ impl<'a> TextInput<'a> {
             edit = edit.hint_text(
                 egui::RichText::new(hint)
                     .size(theme.typography.body_size)
-                    .color(theme.colors.fg_secondary),
+                    .color(theme.colors.fg_subdued),
             );
         }
-        ui.add(edit)
+        // Recessed field with a hairline (buttons stay outline-free):
+        // the frame reads the inactive/hovered strokes.
+        ui.scope(|ui| {
+            let widgets = &mut ui.visuals_mut().widgets;
+            widgets.inactive.bg_stroke = egui::Stroke::new(theme.borders.thin, theme.colors.border);
+            widgets.hovered.bg_stroke =
+                egui::Stroke::new(theme.borders.thin, theme.colors.fg_subdued);
+            ui.add(edit.background_color(theme.colors.bg_tertiary))
+        })
+        .inner
     }
 }
 

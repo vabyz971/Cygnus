@@ -237,10 +237,10 @@ mod tests {
         let center = egui::pos2(700.0, 450.0);
         let anchor = egui::pos2(720.0, 460.0);
         let world_in_centered_frame = |zoom: f32, offset: egui::Vec2| {
-            (egui::vec2(
+            egui::vec2(
                 (anchor.x - center.x - offset.x) / zoom,
                 (anchor.y - center.y - offset.y) / zoom,
-            ))
+            )
         };
         let mut raw = ViewportState::default();
         let before = world_in_centered_frame(raw.zoom(), raw.offset());

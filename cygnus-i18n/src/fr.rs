@@ -51,6 +51,7 @@ pub fn translate(key: TextKey) -> &'static str {
         TextKey::Inspector => "Inspecteur",
         TextKey::Navigator => "Navigateur",
         TextKey::History => "Historique",
+        TextKey::Histogram => "Histogramme",
         TextKey::Timeline => "Chronologie",
         TextKey::File => "Fichier",
         TextKey::Edit => "Édition",

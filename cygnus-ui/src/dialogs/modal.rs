@@ -111,12 +111,22 @@ impl<'a> CygnusModal<'a> {
                     .max_height((max_h - theme.spacing.lg * 2.0).max(160.0))
                     .show(ui, |ui| add_contents(ui));
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(self.cancel_label).clicked() {
-                        action = Some(ModalAction::Cancel);
-                    }
-                    if ui.button(self.confirm_label).clicked() {
+                // Footer: actions right-aligned, primary last (rightmost).
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::components::Button::new(self.confirm_label)
+                        .variant(crate::components::ButtonVariant::Primary)
+                        .size(crate::components::ButtonSize::Small)
+                        .show(ui, &theme)
+                        .clicked()
+                    {
                         action = Some(ModalAction::Confirm);
+                    }
+                    if crate::components::Button::new(self.cancel_label)
+                        .size(crate::components::ButtonSize::Small)
+                        .show(ui, &theme)
+                        .clicked()
+                    {
+                        action = Some(ModalAction::Cancel);
                     }
                 });
             });

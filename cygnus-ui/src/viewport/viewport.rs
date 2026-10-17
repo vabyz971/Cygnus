@@ -195,11 +195,25 @@ impl Viewport {
         zoom: f32,
         offset: egui::Vec2,
     ) -> Option<egui::Rect> {
+        Self::fit_dest_with_margin(available, image_size, zoom, offset, 0.0)
+    }
+
+    /// [`Self::fit_dest`] keeping `margin` screen pixels free around the
+    /// fitted image at zoom 1 (breathing room, Affinity-style); the
+    /// center and the zoom/pan behavior are unchanged.
+    pub fn fit_dest_with_margin(
+        available: egui::Rect,
+        image_size: egui::Vec2,
+        zoom: f32,
+        offset: egui::Vec2,
+        margin: f32,
+    ) -> Option<egui::Rect> {
         if image_size.x <= 0.0 || image_size.y <= 0.0 {
             return None;
         }
-        let fit = (available.width() / image_size.x)
-            .min(available.height() / image_size.y)
+        let room = available.shrink(margin.max(0.0));
+        let fit = (room.width() / image_size.x)
+            .min(room.height() / image_size.y)
             .max(0.0);
         let size = image_size * fit * zoom;
         let center = available.center() + offset;
@@ -239,9 +253,13 @@ impl Viewport {
 
         match self.texture_id {
             Some(texture_id) => {
-                if let Some(dest) =
-                    Self::fit_dest(rect, self.image_size, state.zoom(), state.offset())
-                {
+                if let Some(dest) = Self::fit_dest_with_margin(
+                    rect,
+                    self.image_size,
+                    state.zoom(),
+                    state.offset(),
+                    theme.spacing.xl,
+                ) {
                     ui.painter()
                         .image(texture_id, dest, full_uv(), egui::Color32::WHITE);
                     if self.show_grid {
@@ -447,5 +465,18 @@ mod tests {
         assert!((dest.width() - 800.0).abs() < 1e-3);
         // Invalid size: nothing to draw.
         assert!(Viewport::fit_dest(available, egui::Vec2::ZERO, 1.0, egui::Vec2::ZERO).is_none());
+        // Margin: the fit leaves room on the limiting axis, same center.
+        let framed = Viewport::fit_dest_with_margin(
+            available,
+            egui::vec2(800.0, 600.0),
+            1.0,
+            egui::Vec2::ZERO,
+            20.0,
+        )
+        .expect("dest");
+        assert_eq!(framed.center(), available.center());
+        // 360x260 room: height limits (260 / 600), width = 800 × that.
+        assert!((framed.height() - 260.0).abs() < 1e-3);
+        assert!((framed.width() - 800.0 * 260.0 / 600.0).abs() < 1e-3);
     }
 }

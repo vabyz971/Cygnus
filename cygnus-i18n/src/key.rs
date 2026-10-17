@@ -78,6 +78,8 @@ pub enum TextKey {
     Navigator,
     /// History.
     History,
+    /// Histogram (tone distribution).
+    Histogram,
     /// Timeline.
     Timeline,
     /// File menu.

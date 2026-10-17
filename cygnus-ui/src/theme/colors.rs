@@ -20,6 +20,13 @@
 //! or canvas may hardcode an [`egui::Color32`]. The dark-theme
 //! values live in [`CygnusColors::dark`], reused by
 //! [`Default`] for direct access.
+//!
+//! Palette modeled on Rerun's viewer (`re_ui` design tokens): near-black
+//! neutral surfaces separated by 1 px dividers rather than by contrasting
+//! fills, three text levels (strong / default / subdued) and one blue
+//! accent. Surfaces step up in lightness with elevation:
+//! `bg_primary` (panels) < `bg_secondary` (bars, popups) <
+//! `bg_tertiary` (inputs, canvas surround) < `widget_bg` (controls).
 
 /// Cygnus theme colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,10 +37,18 @@ pub struct CygnusColors {
     pub bg_secondary: egui::Color32,
     /// Recessed-area background (inputs, empty canvas).
     pub bg_tertiary: egui::Color32,
-    /// Primary text.
+    /// Primary (default) text.
     pub fg_primary: egui::Color32,
-    /// Secondary / disabled text.
+    /// Secondary text (labels, captions).
     pub fg_secondary: egui::Color32,
+    /// Strong text: headings, active/hovered items, selected tabs.
+    pub fg_strong: egui::Color32,
+    /// Subdued text: placeholders, disabled hints.
+    pub fg_subdued: egui::Color32,
+    /// Fill of resting controls (slider rails, checkboxes, toggles).
+    pub widget_bg: egui::Color32,
+    /// Shadow under popups, menus and windows.
+    pub shadow: egui::Color32,
     /// Accent (selection, primary buttons).
     pub accent: egui::Color32,
     /// Hover accent.
@@ -54,27 +69,40 @@ pub struct CygnusColors {
     pub item_hover: egui::Color32,
     /// Drop-position indicator (drag & drop).
     pub drop_indicator: egui::Color32,
+    /// Red channel plot (histograms, per-channel graphs).
+    pub channel_red: egui::Color32,
+    /// Green channel plot.
+    pub channel_green: egui::Color32,
+    /// Blue channel plot.
+    pub channel_blue: egui::Color32,
 }
 
 impl CygnusColors {
     /// Default Cygnus dark palette.
     pub fn dark() -> Self {
         Self {
-            bg_primary: egui::Color32::from_rgb(18, 18, 22),
-            bg_secondary: egui::Color32::from_rgb(24, 24, 30),
-            bg_tertiary: egui::Color32::from_rgb(32, 32, 40),
-            fg_primary: egui::Color32::from_rgb(240, 240, 245),
-            fg_secondary: egui::Color32::from_rgb(160, 160, 175),
-            accent: egui::Color32::from_rgb(88, 124, 255),
-            accent_hover: egui::Color32::from_rgb(108, 144, 255),
-            border: egui::Color32::from_rgb(48, 48, 60),
-            error: egui::Color32::from_rgb(255, 85, 85),
-            error_hover: egui::Color32::from_rgb(255, 105, 105),
-            success: egui::Color32::from_rgb(80, 220, 120),
-            warning: egui::Color32::from_rgb(255, 190, 60),
-            item_selected: egui::Color32::from_rgb(45, 55, 90),
-            item_hover: egui::Color32::from_rgb(35, 35, 45),
-            drop_indicator: egui::Color32::from_rgb(88, 124, 255),
+            bg_primary: egui::Color32::from_rgb(13, 13, 13),
+            bg_secondary: egui::Color32::from_rgb(23, 23, 23),
+            bg_tertiary: egui::Color32::from_rgb(33, 33, 33),
+            fg_primary: egui::Color32::from_rgb(204, 204, 204),
+            fg_secondary: egui::Color32::from_rgb(147, 144, 144),
+            fg_strong: egui::Color32::from_rgb(255, 255, 255),
+            fg_subdued: egui::Color32::from_rgb(100, 99, 99),
+            widget_bg: egui::Color32::from_rgb(44, 43, 43),
+            shadow: egui::Color32::from_rgba_unmultiplied(0, 0, 0, 128),
+            accent: egui::Color32::from_rgb(24, 106, 221),
+            accent_hover: egui::Color32::from_rgb(70, 118, 255),
+            border: egui::Color32::from_rgb(53, 52, 52),
+            error: egui::Color32::from_rgb(229, 72, 77),
+            error_hover: egui::Color32::from_rgb(240, 98, 102),
+            success: egui::Color32::from_rgb(70, 190, 120),
+            warning: egui::Color32::from_rgb(255, 122, 12),
+            item_selected: egui::Color32::from_rgb(0, 61, 161),
+            item_hover: egui::Color32::from_rgb(39, 38, 38),
+            drop_indicator: egui::Color32::from_rgb(24, 106, 221),
+            channel_red: egui::Color32::from_rgb(235, 80, 80),
+            channel_green: egui::Color32::from_rgb(80, 200, 110),
+            channel_blue: egui::Color32::from_rgb(85, 130, 245),
         }
     }
 }

@@ -43,8 +43,8 @@ impl CygnusRadius {
             none: 0.0,
             xs: 2.0,
             sm: 4.0,
-            md: 8.0,
-            lg: 12.0,
+            md: 6.0,
+            lg: 10.0,
             full: 9999.0,
         }
     }

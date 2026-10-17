@@ -24,6 +24,7 @@
 
 pub mod card;
 pub mod collapsible;
+pub mod dock_style;
 pub mod panel;
 pub mod section;
 pub mod split;
@@ -32,6 +33,7 @@ pub mod toolbar;
 
 pub use card::Card;
 pub use collapsible::Collapsible;
+pub use dock_style::{DockResizeState, DockStyle, DockTabState};
 pub use panel::Panel;
 pub use section::Section;
 pub use split::Split;

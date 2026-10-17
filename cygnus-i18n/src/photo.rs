@@ -237,6 +237,76 @@ pub enum PhotoTextKey {
     NodeHintText,
     /// Mask out-of-document content (mode bar toggle).
     MaskView,
+    /// Input black point slider (levels).
+    FilterParamInBlack,
+    /// Input white point slider (levels).
+    FilterParamInWhite,
+    /// Midtone gamma slider (levels).
+    FilterParamGamma,
+    /// Output black slider (levels).
+    FilterParamOutBlack,
+    /// Output white slider (levels).
+    FilterParamOutWhite,
+    /// Lightness slider (HSL).
+    FilterParamLightness,
+    /// Preset picker label (adjustments).
+    PresetLabel,
+    /// Current settings match no preset.
+    PresetCustom,
+    /// Reset preset (definition defaults).
+    PresetDefault,
+    /// Levels preset.
+    PresetLevelsHighContrast,
+    /// Levels preset.
+    PresetLevelsBrighten,
+    /// Levels preset.
+    PresetLevelsDarken,
+    /// Levels preset.
+    PresetLevelsFaded,
+    /// Curves preset.
+    PresetCurvesSoftContrast,
+    /// Curves preset.
+    PresetCurvesStrongContrast,
+    /// Curves preset.
+    PresetCurvesBrighten,
+    /// Curves preset.
+    PresetCurvesDarken,
+    /// Curves preset.
+    PresetCurvesMatte,
+    /// Curves preset.
+    PresetCurvesInvert,
+    /// HSL preset.
+    PresetHslBlackAndWhite,
+    /// HSL preset.
+    PresetHslMuted,
+    /// HSL preset.
+    PresetHslVivid,
+    /// HSL preset.
+    PresetHslBrighten,
+    /// HSL preset.
+    PresetHslComplementary,
+    /// Curve editor contextual help.
+    CurveEditorHint,
+    /// Reset the curve to the diagonal.
+    CurveReset,
+    /// Histogram with no image.
+    HistogramEmpty,
+    /// Luminance channel toggle.
+    HistogramLuma,
+    /// RGB channels toggle.
+    HistogramRgb,
+    /// Export dialog size estimate prefix.
+    EstimatedSizeLabel,
+    /// Size estimate in flight.
+    EstimatingSize,
+    /// WebP export mode note.
+    WebpLosslessNote,
+    /// TIFF export mode note.
+    TiffNote,
+    /// Kilobyte unit suffix.
+    SizeUnitKilobytes,
+    /// Megabyte unit suffix.
+    SizeUnitMegabytes,
 }
 
 /// Photo catalog bound to a language.
@@ -354,6 +424,41 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::NodeHint,
     PhotoTextKey::NodeHintText,
     PhotoTextKey::MaskView,
+    PhotoTextKey::FilterParamInBlack,
+    PhotoTextKey::FilterParamInWhite,
+    PhotoTextKey::FilterParamGamma,
+    PhotoTextKey::FilterParamOutBlack,
+    PhotoTextKey::FilterParamOutWhite,
+    PhotoTextKey::FilterParamLightness,
+    PhotoTextKey::PresetLabel,
+    PhotoTextKey::PresetCustom,
+    PhotoTextKey::PresetDefault,
+    PhotoTextKey::PresetLevelsHighContrast,
+    PhotoTextKey::PresetLevelsBrighten,
+    PhotoTextKey::PresetLevelsDarken,
+    PhotoTextKey::PresetLevelsFaded,
+    PhotoTextKey::PresetCurvesSoftContrast,
+    PhotoTextKey::PresetCurvesStrongContrast,
+    PhotoTextKey::PresetCurvesBrighten,
+    PhotoTextKey::PresetCurvesDarken,
+    PhotoTextKey::PresetCurvesMatte,
+    PhotoTextKey::PresetCurvesInvert,
+    PhotoTextKey::PresetHslBlackAndWhite,
+    PhotoTextKey::PresetHslMuted,
+    PhotoTextKey::PresetHslVivid,
+    PhotoTextKey::PresetHslBrighten,
+    PhotoTextKey::PresetHslComplementary,
+    PhotoTextKey::CurveEditorHint,
+    PhotoTextKey::CurveReset,
+    PhotoTextKey::HistogramEmpty,
+    PhotoTextKey::HistogramLuma,
+    PhotoTextKey::HistogramRgb,
+    PhotoTextKey::EstimatedSizeLabel,
+    PhotoTextKey::EstimatingSize,
+    PhotoTextKey::WebpLosslessNote,
+    PhotoTextKey::TiffNote,
+    PhotoTextKey::SizeUnitKilobytes,
+    PhotoTextKey::SizeUnitMegabytes,
 ];
 
 impl PhotoCatalog {
@@ -397,7 +502,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ShowHideLayer => "Afficher / masquer",
         PhotoTextKey::IsolateLayer => "Solo",
         PhotoTextKey::NoLayers => "Aucun calque",
-        PhotoTextKey::NoLayerSelected => "Aucun calque selectionne",
+        PhotoTextKey::NoLayerSelected => "Aucun calque sélectionné",
         PhotoTextKey::FilterLiveLabel => "Filtre live",
         PhotoTextKey::MaskLabel => "Masque",
         PhotoTextKey::FilterActive => "Filtre actif",
@@ -411,21 +516,21 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::BlendLabel => "Fusion",
         PhotoTextKey::FilterList => "Liste des filtres",
         PhotoTextKey::OpenImageFile => "Ouvrir une image…",
-        PhotoTextKey::MoveHint => "Deplacer / selectionner",
-        PhotoTextKey::PanHint => "Main (deplacer la vue)",
+        PhotoTextKey::MoveHint => "Déplacer / sélectionner",
+        PhotoTextKey::PanHint => "Main (déplacer la vue)",
         PhotoTextKey::ZoomHint => "Loupe",
         PhotoTextKey::BrushHint => "Pinceau",
         PhotoTextKey::EraserHint => "Gomme",
         PhotoTextKey::EyedropperHint => "Pipette",
-        PhotoTextKey::MoveHintText => "Glisser : deplacer le calque — molette : zoom",
-        PhotoTextKey::PanHintText => "Glisser : deplacer la vue — molette : zoom",
-        PhotoTextKey::ZoomHintText => "Clic : zoom avant — clic droit : zoom arriere",
-        PhotoTextKey::BrushHintText => "Glisser : peindre — relacher : commettre le trait",
-        PhotoTextKey::EraserHintText => "Glisser : effacer — relacher : commettre",
-        PhotoTextKey::EyedropperHintText => "Cliquer : echantillonner la couleur",
+        PhotoTextKey::MoveHintText => "Glisser : déplacer le calque — molette : zoom",
+        PhotoTextKey::PanHintText => "Glisser : déplacer la vue — molette : zoom",
+        PhotoTextKey::ZoomHintText => "Clic : zoom avant — clic droit : zoom arrière",
+        PhotoTextKey::BrushHintText => "Glisser : peindre — relâcher : valider le trait",
+        PhotoTextKey::EraserHintText => "Glisser : effacer — relâcher : valider",
+        PhotoTextKey::EyedropperHintText => "Cliquer : échantillonner la couleur",
         PhotoTextKey::SizeLabel => "Taille",
         PhotoTextKey::ColorLabel => "Couleur",
-        PhotoTextKey::MoveTitle => "Deplacement",
+        PhotoTextKey::MoveTitle => "Déplacement",
         PhotoTextKey::GridLabel => "Grille",
         PhotoTextKey::NoDocumentOpen => "Aucun document ouvert",
         PhotoTextKey::WelcomeBody => "Créez un document ou ouvrez une image pour commencer.",
@@ -457,21 +562,21 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::DestinationLabel => "Destination :",
         PhotoTextKey::HelpTitle => "Aide de Photo",
         PhotoTextKey::HelpToolsText => {
-            "Outils : deplacement, main, loupe, pinceau, gomme, pipette."
+            "Outils : déplacement, main, loupe, pinceau, gomme, pipette."
         }
         PhotoTextKey::HelpLayersText => {
-            "Calques : clic = selection, double-clic sur le nom = renommer, glisser-deposer = reordonner. Bas du panneau : image, vide, dupliquer, masque, filtres, supprimer."
+            "Calques : clic = sélection, double-clic sur le nom = renommer, glisser-déposer = réordonner. Bas du panneau : image, vide, dupliquer, masque, filtres, supprimer."
         }
         PhotoTextKey::HelpFileText => {
-            "Fichier > Nouveau document : format, dimensions (px, in, cm, pica), orientation portrait/paysage. Exportation : dossier, format PNG/JPEG/JPG/GIF, validation."
+            "Fichier > Nouveau document : format, dimensions (px, in, cm, pica), orientation portrait/paysage. Exportation : dossier, format PNG/JPEG/WEBP/TIFF/GIF, validation."
         }
         PhotoTextKey::LayerKindPixel => "Pixels",
         PhotoTextKey::LayerKindGroup => "Groupe",
-        PhotoTextKey::LayerKindAdjustment => "Reglage",
+        PhotoTextKey::LayerKindAdjustment => "Réglage",
         PhotoTextKey::LayerKindVector => "Vecteur",
         PhotoTextKey::AddMask => "Ajouter un masque",
         PhotoTextKey::DeleteLayer => "Supprimer le calque",
-        PhotoTextKey::CropPreviewToDocument => "Rogner l'apercu au document",
+        PhotoTextKey::CropPreviewToDocument => "Rogner l'aperçu au document",
         PhotoTextKey::Zoom100 => "Zoom 100 %",
         PhotoTextKey::ResetLayout => "Réinitialiser la disposition",
         PhotoTextKey::HistoryEmpty => "Aucune modification",
@@ -485,6 +590,43 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NodeHint => "Nœuds",
         PhotoTextKey::NodeHintText => "Glisser : déplacer le nœud — molette : zoom",
         PhotoTextKey::MaskView => "Masquer",
+        PhotoTextKey::FilterParamInBlack => "Noir d'entrée",
+        PhotoTextKey::FilterParamInWhite => "Blanc d'entrée",
+        PhotoTextKey::FilterParamGamma => "Gamma",
+        PhotoTextKey::FilterParamOutBlack => "Noir de sortie",
+        PhotoTextKey::FilterParamOutWhite => "Blanc de sortie",
+        PhotoTextKey::FilterParamLightness => "Luminosité",
+        PhotoTextKey::PresetLabel => "Préréglage",
+        PhotoTextKey::PresetCustom => "Personnalisé",
+        PhotoTextKey::PresetDefault => "Par défaut",
+        PhotoTextKey::PresetLevelsHighContrast => "Contraste élevé",
+        PhotoTextKey::PresetLevelsBrighten => "Éclaircir",
+        PhotoTextKey::PresetLevelsDarken => "Assombrir",
+        PhotoTextKey::PresetLevelsFaded => "Délavé",
+        PhotoTextKey::PresetCurvesSoftContrast => "Contraste doux",
+        PhotoTextKey::PresetCurvesStrongContrast => "Contraste fort",
+        PhotoTextKey::PresetCurvesBrighten => "Éclaircir",
+        PhotoTextKey::PresetCurvesDarken => "Assombrir",
+        PhotoTextKey::PresetCurvesMatte => "Mat",
+        PhotoTextKey::PresetCurvesInvert => "Négatif",
+        PhotoTextKey::PresetHslBlackAndWhite => "Noir et blanc",
+        PhotoTextKey::PresetHslMuted => "Atténué",
+        PhotoTextKey::PresetHslVivid => "Éclatant",
+        PhotoTextKey::PresetHslBrighten => "Éclaircir",
+        PhotoTextKey::PresetHslComplementary => "Complémentaire",
+        PhotoTextKey::CurveEditorHint => {
+            "Clic : ajouter un point · glisser : déplacer · double-clic : supprimer"
+        }
+        PhotoTextKey::CurveReset => "Réinitialiser la courbe",
+        PhotoTextKey::HistogramEmpty => "Aucune image à analyser",
+        PhotoTextKey::HistogramLuma => "Luminance",
+        PhotoTextKey::HistogramRgb => "RVB",
+        PhotoTextKey::EstimatedSizeLabel => "Taille estimée :",
+        PhotoTextKey::EstimatingSize => "estimation…",
+        PhotoTextKey::WebpLosslessNote => "WebP sans perte, transparence conservée",
+        PhotoTextKey::TiffNote => "TIFF non compressé, transparence conservée",
+        PhotoTextKey::SizeUnitKilobytes => "Ko",
+        PhotoTextKey::SizeUnitMegabytes => "Mo",
     }
 }
 
@@ -600,6 +742,41 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::NodeHint => "Nodes",
         PhotoTextKey::NodeHintText => "Drag: move node — wheel: zoom",
         PhotoTextKey::MaskView => "Mask",
+        PhotoTextKey::FilterParamInBlack => "Input black",
+        PhotoTextKey::FilterParamInWhite => "Input white",
+        PhotoTextKey::FilterParamGamma => "Gamma",
+        PhotoTextKey::FilterParamOutBlack => "Output black",
+        PhotoTextKey::FilterParamOutWhite => "Output white",
+        PhotoTextKey::FilterParamLightness => "Lightness",
+        PhotoTextKey::PresetLabel => "Preset",
+        PhotoTextKey::PresetCustom => "Custom",
+        PhotoTextKey::PresetDefault => "Default",
+        PhotoTextKey::PresetLevelsHighContrast => "High contrast",
+        PhotoTextKey::PresetLevelsBrighten => "Brighten",
+        PhotoTextKey::PresetLevelsDarken => "Darken",
+        PhotoTextKey::PresetLevelsFaded => "Faded",
+        PhotoTextKey::PresetCurvesSoftContrast => "Soft contrast",
+        PhotoTextKey::PresetCurvesStrongContrast => "Strong contrast",
+        PhotoTextKey::PresetCurvesBrighten => "Brighten",
+        PhotoTextKey::PresetCurvesDarken => "Darken",
+        PhotoTextKey::PresetCurvesMatte => "Matte",
+        PhotoTextKey::PresetCurvesInvert => "Invert",
+        PhotoTextKey::PresetHslBlackAndWhite => "Black and white",
+        PhotoTextKey::PresetHslMuted => "Muted",
+        PhotoTextKey::PresetHslVivid => "Vivid",
+        PhotoTextKey::PresetHslBrighten => "Brighten",
+        PhotoTextKey::PresetHslComplementary => "Complementary",
+        PhotoTextKey::CurveEditorHint => "Click: add point · drag: move · double-click: remove",
+        PhotoTextKey::CurveReset => "Reset curve",
+        PhotoTextKey::HistogramEmpty => "No image to analyze",
+        PhotoTextKey::HistogramLuma => "Luminance",
+        PhotoTextKey::HistogramRgb => "RGB",
+        PhotoTextKey::EstimatedSizeLabel => "Estimated size:",
+        PhotoTextKey::EstimatingSize => "estimating…",
+        PhotoTextKey::WebpLosslessNote => "Lossless WebP, transparency kept",
+        PhotoTextKey::TiffNote => "Uncompressed TIFF, transparency kept",
+        PhotoTextKey::SizeUnitKilobytes => "KB",
+        PhotoTextKey::SizeUnitMegabytes => "MB",
     }
 }
 
@@ -646,7 +823,7 @@ mod tests {
         assert_eq!(texts.get(PhotoTextKey::DeleteLayer), "Supprimer le calque");
         assert_eq!(
             texts.get(PhotoTextKey::CropPreviewToDocument),
-            "Rogner l'apercu au document"
+            "Rogner l'aperçu au document"
         );
         assert_eq!(texts.get(PhotoTextKey::Zoom100), "Zoom 100 %");
         assert_eq!(
