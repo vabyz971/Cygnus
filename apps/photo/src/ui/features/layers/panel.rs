@@ -172,6 +172,7 @@ pub struct LayersPanel;
 impl LayersPanel {
     /// Draws the content (list, bottom button bar) and returns
     /// the actions.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
@@ -449,6 +450,7 @@ fn convert_drop(layers: &[PhotoLayerInfo], drop: LayerDrop) -> Option<LayerPanel
 }
 
 /// Header + bounded list (reserves the button bar) + bottom bar.
+#[allow(clippy::too_many_arguments)]
 fn draw_layers_panel(
     ui: &mut egui::Ui,
     ctx: &PhotoUiContext,

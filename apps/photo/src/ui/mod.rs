@@ -29,6 +29,7 @@
 
 pub mod create_document;
 pub mod dialogs;
+pub mod drag_proxy;
 pub mod engine_bridge;
 pub mod features;
 pub mod ink_overlay;
@@ -52,6 +53,7 @@ pub use engine_bridge::{
     spawn_photo_engine_worker,
 };
 pub use features::{
+    histogram::HistogramPanel,
     history::{HistoryPanel, history_panel_action_to_photo},
     inspector::{InspectorPanel, inspector_action_to_photo},
     layers::{

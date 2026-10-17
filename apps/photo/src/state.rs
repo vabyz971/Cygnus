@@ -203,6 +203,24 @@ pub struct PhotoUiState {
     /// Displayed render revision (`None` = no texture): stale
     /// responses do not re-upload.
     pub displayed_revision: Option<RenderRevision>,
+    /// Last export size estimate received (O006, export dialog).
+    pub export_estimate: Option<ExportEstimate>,
+    /// On-screen rect of the preview texture last frame (true zoom
+    /// readout: screen pixels per document pixel).
+    pub last_dest: Option<egui::Rect>,
+    /// GPU drag proxy of the layer being moved (see `ui::drag_proxy`).
+    pub drag_proxy: Option<crate::ui::drag_proxy::DragProxyState>,
+}
+
+/// Export size estimate for one (format, quality) pair (O006).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportEstimate {
+    /// Format extension.
+    pub ext: String,
+    /// JPEG quality used.
+    pub quality: u8,
+    /// Estimated bytes (`None` = not estimable).
+    pub bytes: Option<u64>,
 }
 
 /// Presentation timings and volumes (Phase 6G.1 §9–13): measured at
@@ -488,6 +506,13 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         ui.last_preview = Some(image);
                         ui.displayed_revision = Some(revision);
                         ui.status.clear();
+                        // The commit render landed: the drag proxy hands over.
+                        if matches!(
+                            ui.drag_proxy,
+                            Some(crate::ui::drag_proxy::DragProxyState::Ending(..))
+                        ) {
+                            ui.drag_proxy = None;
+                        }
                     }
                 }
                 None => {
@@ -508,7 +533,14 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             redo_labels,
         } => {
             // Snapshot only: the displayed texture is kept as
-            // is (no new render produced worker-side).
+            // is (no new render produced worker-side). A no-op drag
+            // commit lands here: the proxy has nothing left to bridge.
+            if matches!(
+                ui.drag_proxy,
+                Some(crate::ui::drag_proxy::DragProxyState::Ending(..))
+            ) {
+                ui.drag_proxy = None;
+            }
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
@@ -542,11 +574,45 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ExportDone { path } => {
-            ui.status = format!("Exporte : {}", path.display());
+            ui.status = format!("Exporté : {}", path.display());
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ProjectSaved { path } => {
-            ui.status = format!("Enregistre : {}", path.display());
+            ui.status = format!("Enregistré : {}", path.display());
+            ui.needs_repaint = true;
+        }
+        PhotoEngineResponse::DragProxyReady {
+            layer,
+            below,
+            image,
+            above,
+        } => {
+            use crate::ui::drag_proxy::{DragProxy, DragProxyState};
+            // Only the split still awaited (a drag ended meanwhile, or
+            // moved to another layer: stale, dropped).
+            if matches!(ui.drag_proxy, Some(DragProxyState::Requested(id)) if id == layer) {
+                ui.drag_proxy = Some(DragProxyState::Ready(DragProxy::upload(
+                    ctx, layer, below, image, above,
+                )));
+                ui.needs_repaint = true;
+            }
+        }
+        PhotoEngineResponse::DragProxyUnavailable { layer } => {
+            use crate::ui::drag_proxy::DragProxyState;
+            if matches!(ui.drag_proxy, Some(DragProxyState::Requested(id)) if id == layer) {
+                ui.drag_proxy = Some(DragProxyState::Unavailable(layer));
+            }
+        }
+        PhotoEngineResponse::ExportSizeEstimated {
+            ext,
+            quality,
+            bytes,
+        } => {
+            ui.export_estimate = Some(ExportEstimate {
+                ext,
+                quality,
+                bytes,
+            });
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ThumbnailUpdated { layer, thumb } => {
@@ -665,6 +731,79 @@ mod tests {
             },
         );
         assert!(ui.status.contains("test.png"));
+    }
+
+    #[test]
+    fn drag_proxy_lifecycle_through_responses() {
+        use crate::ui::drag_proxy::DragProxyState;
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        let layer = Uuid::new_v4();
+        let ready = |layer| PhotoEngineResponse::DragProxyReady {
+            layer,
+            below: None,
+            image: crate::ui::engine_bridge::ProxyLayerImage {
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+                source_width: 1,
+                source_height: 1,
+                opacity: 100.0,
+            },
+            above: None,
+        };
+        // Unrequested split: ignored.
+        apply_response(&ctx, &mut ui, ready(layer));
+        assert!(ui.drag_proxy.is_none());
+        ui.drag_proxy = Some(DragProxyState::Requested(layer));
+        // Split for another layer: stale, ignored.
+        apply_response(&ctx, &mut ui, ready(Uuid::new_v4()));
+        assert!(matches!(ui.drag_proxy, Some(DragProxyState::Requested(_))));
+        apply_response(&ctx, &mut ui, ready(layer));
+        let Some(DragProxyState::Ready(proxy)) = ui.drag_proxy.take() else {
+            panic!("proxy prêt attendu");
+        };
+        // Released: drawn until the commit render lands.
+        ui.drag_proxy = Some(DragProxyState::Ending(
+            proxy,
+            photo_engine::Transform2D::default(),
+        ));
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(5)));
+        assert!(ui.drag_proxy.is_none(), "rendu du commit : relais terminé");
+        // Refusal keeps the drag on live renders.
+        ui.drag_proxy = Some(DragProxyState::Requested(layer));
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::DragProxyUnavailable { layer },
+        );
+        assert!(matches!(
+            ui.drag_proxy,
+            Some(DragProxyState::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn export_estimate_is_stored() {
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(
+            &ctx,
+            &mut ui,
+            PhotoEngineResponse::ExportSizeEstimated {
+                ext: String::from("webp"),
+                quality: 90,
+                bytes: Some(1234),
+            },
+        );
+        assert_eq!(
+            ui.export_estimate,
+            Some(ExportEstimate {
+                ext: String::from("webp"),
+                quality: 90,
+                bytes: Some(1234),
+            })
+        );
     }
 
     #[test]

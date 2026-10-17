@@ -331,6 +331,92 @@ fn render_preview_timed_with(
 }
 
 impl EngineWorker {
+    /// Display-scale composite (see `photo_engine::document::scaled`):
+    /// `None` when the document fits the cap or holds canvas-space data
+    /// the scaled view cannot resample (the caller then runs the
+    /// full-resolution pipeline). Same geometry contract as every preview
+    /// (origin in thumbnail pixels, `full / thumb` = document scale).
+    pub(crate) fn render_preview_scaled(
+        &mut self,
+    ) -> Option<(
+        Option<PreviewImage>,
+        PreviewTimings,
+        photo_engine::document::RenderWorkerStats,
+    )> {
+        let scale = self.document.display_scale(PREVIEW_MAX_DIMENSION)?;
+        let view = self.document.scaled_view(scale)?;
+        let t_composite = std::time::Instant::now();
+        // Appearances evaluated at the display scale (filters and masks
+        // included): the full-resolution chain never runs on this path.
+        let mut small: HashMap<Uuid, Arc<image::DynamicImage>> = HashMap::new();
+        for id in self.document.all_pixel_ids() {
+            if let Some(layer) = self.document.pixel_layer(id) {
+                small.insert(id, self.scaled_appearances.pixel_appearance(layer, scale));
+            }
+        }
+        for id in self.document.all_vector_ids() {
+            if let Some(full) = self.document.appearance_vector_image(id) {
+                small.insert(id, self.scaled_appearances.get(id, &full, scale));
+            }
+        }
+        self.scaled_appearances.retain(|id| small.contains_key(&id));
+        let mut stats = photo_engine::document::compositing::CompositeStats::default();
+        let resolve = |id: Uuid| small.get(&id).cloned();
+        let part = view.composite_root_range_with(0..view.root.len(), &resolve, &mut stats);
+        let composite_us = t_composite.elapsed().as_micros();
+        // Tiles are not consulted on this path: nothing stays pending.
+        self.render_worker.cache_mut().clear_dirty();
+        let worker_stats = photo_engine::document::RenderWorkerStats::default();
+        let Some(part) = part else {
+            return Some((None, PreviewTimings::default(), worker_stats));
+        };
+        let t_thumb = std::time::Instant::now();
+        let mut raster = part.image.to_rgba8();
+        if self.clip_to_doc {
+            mask_outside_doc(
+                &mut raster,
+                part.origin_x,
+                part.origin_y,
+                view.width,
+                view.height,
+            );
+        }
+        let (scaled_w, scaled_h) = (raster.width(), raster.height());
+        // A plane far larger than the document can still exceed the cap.
+        let (capped, resize_px) = capped_preview(image::DynamicImage::ImageRgba8(raster));
+        let raster = capped.to_rgba8();
+        let (w, h) = (raster.width(), raster.height());
+        let k = w as f32 / scaled_w.max(1) as f32;
+        let thumb_to_doc = 1.0 / (scale * k);
+        let thumb_us = t_thumb.elapsed().as_micros();
+        Some((
+            Some(PreviewImage {
+                width: w,
+                height: h,
+                rgba: raster.into_raw(),
+                full_width: (w as f32 * thumb_to_doc).round() as u32,
+                full_height: (h as f32 * thumb_to_doc).round() as u32,
+                origin_x: part.origin_x * k,
+                origin_y: part.origin_y * k,
+                doc_width: self.document.width.max(1),
+                doc_height: self.document.height.max(1),
+            }),
+            PreviewTimings {
+                composite_us,
+                thumb_us,
+                geometry_us: 0,
+                blend_us: stats.blend_us,
+                layers_blended: stats.layers_blended,
+                pixels_processed: stats.pixels_processed,
+                scope_px: stats.scope_px,
+                full_px: u64::from(scaled_w) * u64::from(scaled_h),
+                preview_px: u64::from(w) * u64::from(h),
+                preview_resize_pixels: resize_px,
+            },
+            worker_stats,
+        ))
+    }
+
     /// Composite preview via the incremental pipeline (Phase 6E): the extent
     /// (clipped document or infinite plane) is cut into tiles rendered by
     /// `RenderWorker` (hits reused, miss ⇒ windowed 6C
@@ -367,7 +453,7 @@ impl EngineWorker {
         // with bit-identical bytes. Small scopes always stay tiled
         // (exact tile-metric tests live there).
         let scope_px = u64::from(scope.w.max(1)) * u64::from(scope.h.max(1));
-        let dirty_px = u64::from(self.render_worker.cache().dirty().bounds().area());
+        let dirty_px = self.render_worker.cache().dirty().bounds().area();
         if scope_px > 4 * 256 * 256 && dirty_px * 2 >= scope_px {
             let (preview, timings) =
                 render_preview_timed_with(&self.document, self.clip_to_doc, frame);
@@ -502,6 +588,84 @@ impl EngineWorker {
             },
             worker_stats,
         )
+    }
+}
+
+/// Largest dimension of a dragged layer's proxy texture (GPU-side
+/// quad during a move; the exact composite lands on release).
+pub const PROXY_LAYER_MAX_DIMENSION: u32 = 2048;
+
+/// Pixels of the dragged layer for the drag proxy (carrier space,
+/// downscaled to [`PROXY_LAYER_MAX_DIMENSION`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProxyLayerImage {
+    /// Texture width (pixels).
+    pub width: u32,
+    /// Texture height (pixels).
+    pub height: u32,
+    /// RGBA8 pixels row by row.
+    pub rgba: Vec<u8>,
+    /// Carrier dimensions before downscaling (must match the drag).
+    pub source_width: u32,
+    /// Carrier height before downscaling.
+    pub source_height: u32,
+    /// Layer opacity (0..=100), applied as a texture tint.
+    pub opacity: f32,
+}
+
+/// One flattened part of the split stack as a canvas preview (same
+/// geometry contract as the main preview: origin in thumbnail pixels).
+pub(crate) fn proxy_part_preview(
+    part: photo_engine::document::ProxyPart,
+    scale: f32,
+    doc_width: u32,
+    doc_height: u32,
+) -> PreviewImage {
+    let buffer_w = part.image.width().max(1);
+    let (capped, _) = capped_preview(image::DynamicImage::ImageRgba8(part.image.to_rgba8()));
+    let raster = capped.to_rgba8();
+    let (w, h) = (raster.width(), raster.height());
+    // `scale` = buffer pixels per document pixel (1 on the full path).
+    let k = w as f32 / buffer_w as f32;
+    let thumb_to_doc = 1.0 / (scale * k);
+    PreviewImage {
+        width: w,
+        height: h,
+        rgba: raster.into_raw(),
+        full_width: (w as f32 * thumb_to_doc).round() as u32,
+        full_height: (h as f32 * thumb_to_doc).round() as u32,
+        origin_x: part.origin_x * k,
+        origin_y: part.origin_y * k,
+        doc_width,
+        doc_height,
+    }
+}
+
+/// Dragged layer appearance as a proxy texture.
+/// `source_dims` = carrier dimensions the quad spans (the image may be
+/// a display-scale appearance, smaller than the carrier).
+pub(crate) fn proxy_layer_image(
+    image: &image::DynamicImage,
+    source_dims: (u32, u32),
+    opacity: f32,
+) -> ProxyLayerImage {
+    let (sw, sh) = (image.width(), image.height());
+    let rgba = image.to_rgba8();
+    let raster = match photo_engine::document::compositing::capped_thumbnail_dims(
+        sw,
+        sh,
+        PROXY_LAYER_MAX_DIMENSION,
+    ) {
+        Some((nw, nh)) => photo_engine::document::compositing::fast_thumbnail_rgba8(&rgba, nw, nh),
+        None => rgba,
+    };
+    ProxyLayerImage {
+        width: raster.width(),
+        height: raster.height(),
+        rgba: raster.into_raw(),
+        source_width: source_dims.0,
+        source_height: source_dims.1,
+        opacity,
     }
 }
 

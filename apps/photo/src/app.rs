@@ -54,6 +54,9 @@ pub struct PhotoApp {
     pub runtime: PhotoRuntimeState,
     /// Pending UI actions (drained each frame).
     pub queue: PhotoCommandQueue,
+    /// egui context the workers wake up when a response is ready
+    /// (`None` in headless tests: polling on input still works).
+    repaint: Option<egui::Context>,
 }
 
 impl PhotoApp {
@@ -74,6 +77,7 @@ impl PhotoApp {
             shell,
             runtime: PhotoRuntimeState::new(),
             queue: PhotoCommandQueue::new(),
+            repaint: None,
         };
         // No initial document: the user creates (or opens).
         app.shell.new_doc_dialog.open();
@@ -81,6 +85,15 @@ impl PhotoApp {
         // via `preferences`: next phase).
         app.shell.tree = load_tree_or_default(None, &app.doc_ids());
         app
+    }
+
+    /// Lets document workers request a repaint when they answer:
+    /// without it, a finished render only shows on the next input
+    /// event (the idle egui loop never polls on its own).
+    #[must_use]
+    pub fn with_repaint_context(mut self, ctx: egui::Context) -> Self {
+        self.repaint = Some(ctx);
+        self
     }
 
     /// Active document, if any.
@@ -110,10 +123,16 @@ impl PhotoApp {
         let (worker_tx, rx) = channel();
         // Handle deliberately detached: the worker lives while
         // the channel is open, never blocking the UI.
-        std::mem::forget(spawn_photo_engine_worker(document, worker_rx, worker_tx));
+        let wake = self
+            .repaint
+            .clone()
+            .map(|ctx| Box::new(move || ctx.request_repaint()) as crate::ui::engine_bridge::Waker);
+        std::mem::forget(spawn_photo_engine_worker(
+            document, worker_rx, worker_tx, wake,
+        ));
         let ui = PhotoUiState {
             needs_repaint: true,
-            status: String::from("Pret"),
+            status: String::from("Prêt"),
             ..Default::default()
         };
         let id = uuid::Uuid::new_v4();
@@ -210,6 +229,12 @@ impl PhotoApp {
                 }
             }
             PhotoAction::OpenExportDialog => self.shell.export_dialog.open(),
+            PhotoAction::PrepareDragProxy { layer } => {
+                self.send_active(PhotoEngineCommand::PrepareDragProxy { layer });
+            }
+            PhotoAction::EstimateExportSize { ext, quality } => {
+                self.send_active(PhotoEngineCommand::EstimateExportSize { ext, quality });
+            }
             PhotoAction::ExportDocument { path, quality } => {
                 if let Some(parent) = path.parent()
                     && !parent.as_os_str().is_empty()
@@ -307,6 +332,40 @@ impl PhotoApp {
                     filter,
                     key,
                     value,
+                });
+            }
+            PhotoAction::SetFilterText {
+                layer,
+                filter,
+                key,
+                value,
+            } => {
+                // Optimistic like `SetFilterParam`: the curve follows the
+                // drag without waiting for the worker.
+                if let Some(doc) = self.active_doc_mut_opt()
+                    && let Some(info) =
+                        crate::ui::features::layers::find_layer_in_mut(&mut doc.ui.layers, layer)
+                    && let Some(sub) = info.filters.iter_mut().find(|sub| sub.id == filter)
+                {
+                    sub.text_params.insert(key.clone(), value.clone());
+                    doc.ui.needs_repaint = true;
+                }
+                self.send_active(PhotoEngineCommand::SetFilterText {
+                    layer,
+                    filter,
+                    key,
+                    value,
+                });
+            }
+            PhotoAction::ApplyFilterPreset {
+                layer,
+                filter,
+                preset,
+            } => {
+                self.send_active(PhotoEngineCommand::ApplyFilterPreset {
+                    layer,
+                    filter,
+                    preset,
                 });
             }
             PhotoAction::SelectLayer(id) => {
@@ -763,7 +822,7 @@ mod tests {
                 .expect("doc")
                 .ui
                 .status
-                .contains("Enregistre :")
+                .contains("Enregistré :")
             {
                 break;
             }

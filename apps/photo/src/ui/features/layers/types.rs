@@ -101,6 +101,9 @@ pub struct PhotoSubLayerInfo {
     /// masks. Only `Float`s travel (the registry's `Enum`/`Text`
     /// are not slider-editable).
     pub params: HashMap<String, f32>,
+    /// Current text parameters of the filter (curve points, O005);
+    /// empty for masks and for slider-only filters.
+    pub text_params: HashMap<String, String>,
     /// Masks owned by a live filter (empty for masks and for plain
     /// layer piles): rendered indented one level deeper, focusable
     /// with the filter as owner.
@@ -123,6 +126,14 @@ fn sub_filter(f: &photo_engine::FilterLayer) -> PhotoSubLayerInfo {
             .iter()
             .filter_map(|(key, value)| value.as_float().map(|v| (key.clone(), v)))
             .collect(),
+        text_params: f
+            .params
+            .iter()
+            .filter_map(|(key, value)| match value {
+                datatypes::ParamValue::Text(text) => Some((key.clone(), text.clone())),
+                _ => None,
+            })
+            .collect(),
         masks: f.masks.iter().map(sub_mask).collect(),
         thumb: None,
     }
@@ -138,6 +149,7 @@ fn sub_mask(m: &photo_engine::LayerMask) -> PhotoSubLayerInfo {
         enabled: m.enabled,
         filter_type: String::new(),
         params: HashMap::new(),
+        text_params: HashMap::new(),
         masks: Vec::new(),
         thumb: mask_thumb(m),
     }
@@ -153,10 +165,8 @@ fn mask_thumb(m: &photo_engine::LayerMask) -> Option<PhotoLayerThumb> {
     if sw == 0 || sh == 0 {
         return None;
     }
-    let stride = ((sw + MAX_W - 1) / MAX_W)
-        .max((sh + MAX_H - 1) / MAX_H)
-        .max(1);
-    let (w, h) = ((sw + stride - 1) / stride, (sh + stride - 1) / stride);
+    let stride = sw.div_ceil(MAX_W).max(sh.div_ceil(MAX_H)).max(1);
+    let (w, h) = (sw.div_ceil(stride), sh.div_ceil(stride));
     let src = m.image.as_raw();
     let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
     for y in 0..h {
@@ -395,10 +405,11 @@ impl PhotoLayerInfo {
                 // through child translation, see `translate_by`).
                 LayerNode::Group(group) => {
                     let region = photo_engine::tiles::group_footprint(group);
-                    let mut placed = photo_engine::Transform2D::default();
-                    placed.offset_x = region.x as f32;
-                    placed.offset_y = region.y as f32;
-                    placed
+                    photo_engine::Transform2D {
+                        offset_x: region.x as f32,
+                        offset_y: region.y as f32,
+                        ..photo_engine::Transform2D::default()
+                    }
                 }
                 LayerNode::Adjustment(_) => photo_engine::Transform2D::default(),
             },

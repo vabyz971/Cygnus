@@ -44,6 +44,9 @@ pub mod worker;
 
 pub use commands::{NewVectorShape, PhotoEngineCommand, RenderInvalidation, render_routing};
 pub use metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
-pub use preview::{PREVIEW_MAX_DIMENSION, PreviewImage, render_preview, render_preview_timed};
+pub use preview::{
+    PREVIEW_MAX_DIMENSION, PROXY_LAYER_MAX_DIMENSION, PreviewImage, ProxyLayerImage,
+    render_preview, render_preview_timed,
+};
 pub use responses::PhotoEngineResponse;
-pub use worker::{EngineWorker, HISTORY_LIMIT, apply_command, spawn_photo_engine_worker};
+pub use worker::{EngineWorker, HISTORY_LIMIT, Waker, apply_command, spawn_photo_engine_worker};

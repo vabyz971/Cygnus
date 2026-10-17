@@ -25,5 +25,6 @@
 //! (selection header): never duplicated here.
 
 pub mod attachment;
+pub mod curve_editor;
 
 pub use attachment::draw_attachment_section;

@@ -14,13 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Dock tab contents: "Inspector", "Layers" and
-//! "History".
+//! Dock tab contents: "Inspector", "Layers", "History" and
+//! "Histogram".
 //!
 //! ```text
 //! PhotoDockTab::Inspector → InspectorPanel
 //! PhotoDockTab::Layers    → LayersPanel
 //! PhotoDockTab::History   → HistoryPanel
+//! PhotoDockTab::Histogram → HistogramPanel
 //! ```
 //!
 //! Position-independent: visibility and placement via the dock
@@ -29,7 +30,7 @@
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use crate::ui::{
-    HistoryPanel, InspectorPanel, LayersPanel, history_panel_action_to_photo,
+    HistogramPanel, HistoryPanel, InspectorPanel, LayersPanel, history_panel_action_to_photo,
     inspector_action_to_photo, layer_panel_action_to_photo,
 };
 
@@ -95,4 +96,15 @@ pub fn draw_history_content(
         .into_iter()
         .map(history_panel_action_to_photo)
         .collect()
+}
+
+/// Tone histogram of the displayed composite (tab content, read-only).
+pub fn draw_histogram_content(ui: &mut egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext) {
+    HistogramPanel::show(
+        ui,
+        ctx,
+        doc.id,
+        doc.ui.last_preview.as_ref(),
+        doc.ui.displayed_revision,
+    );
 }

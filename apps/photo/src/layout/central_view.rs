@@ -77,9 +77,8 @@ fn stabilize_viewport(
                 full,
                 doc: doc_size,
             });
-            return;
         }
-        StabilityAction::Hold => return,
+        StabilityAction::Hold => (),
         StabilityAction::Compensate(factor) => {
             // Anchor: document center on screen (fixed point of the zoom).
             let Some(anchor) = doc_to_screen(
@@ -157,6 +156,7 @@ fn placed_nodes(
 /// Node editor driver (Node tool): draws anchors + handles of the
 /// selected vector layer, runs node drags (live `SetVectorPaths`,
 /// one history entry per drag, `Escape` = undo) and click-to-select.
+#[allow(clippy::too_many_arguments)]
 fn draw_node_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
@@ -322,6 +322,7 @@ fn nearest_node(
 /// `SetTransform`, one history entry per drag, `Escape` = undo) and
 /// click-to-select (topmost layer, empty click deselects). Body drags
 /// are left to the canvas legacy path (`MoveLayer` on release).
+#[allow(clippy::too_many_arguments)]
 fn draw_transform_content(
     ui: &mut egui::Ui,
     doc: &mut OpenDocument,
@@ -351,9 +352,12 @@ fn draw_transform_content(
             // Cancel: the coalesced frames form a single entry —
             // undo only when at least one frame was applied.
             if let Some(drag) = doc.ui.transform_drag.take() {
-                if drag.sent != drag.start {
+                // Proxy-driven frames never reached the worker: only
+                // live frames need undoing.
+                if drag.applied {
                     actions.push(PhotoAction::Undo);
                 }
+                doc.ui.drag_proxy = None;
                 doc.ui.stroke.clear();
                 doc.ui.needs_repaint = true;
             }
@@ -373,6 +377,7 @@ fn draw_transform_content(
                     transform: drag.sent,
                     commit: true,
                 });
+                end_drag_proxy(doc, &drag);
                 doc.ui.needs_repaint = true;
             }
             return actions;
@@ -380,30 +385,38 @@ fn draw_transform_content(
         ui.output_mut(|o| {
             o.cursor_icon = egui::CursorIcon::Grabbing;
         });
-        if let Some(pointer) = press_doc {
-            if let Some(drag) = doc.ui.transform_drag.as_mut() {
-                let next = drag.resolve(pointer);
-                // Live follow, throttled: the outline tracks every
-                // frame locally (60 fps feedback); the worker
-                // re-renders at most ~25/s (its queue folds anyway, but
-                // a saturated worker would lag the preview seconds
-                // behind the pointer on big documents). Release always
-                // sends.
-                let due = doc
-                    .ui
-                    .last_transform_send
-                    .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(40));
-                if next != drag.sent {
-                    drag.sent = next;
-                    doc.ui.needs_repaint = true;
-                    if due {
-                        doc.ui.last_transform_send = Some(std::time::Instant::now());
-                        actions.push(PhotoAction::SetTransform {
-                            layer: drag.layer,
-                            transform: next,
-                            commit: false,
-                        });
-                    }
+        if let Some(pointer) = press_doc
+            && let Some(drag) = doc.ui.transform_drag.as_mut()
+        {
+            let next = drag.resolve(pointer);
+            // Live follow, throttled: the outline tracks every
+            // frame locally (60 fps feedback); the worker
+            // re-renders at most ~25/s (its queue folds anyway, but
+            // a saturated worker would lag the preview seconds
+            // behind the pointer on big documents). Release always
+            // sends.
+            let due = doc
+                .ui
+                .last_transform_send
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(40));
+            // GPU drag proxy ready: the canvas draws the layer at
+            // `drag.sent` every frame, the worker only sees the release.
+            let proxied = doc
+                .ui
+                .drag_proxy
+                .as_ref()
+                .is_some_and(|proxy| proxy.drives(drag.layer));
+            if next != drag.sent {
+                drag.sent = next;
+                doc.ui.needs_repaint = true;
+                if due && !proxied {
+                    doc.ui.last_transform_send = Some(std::time::Instant::now());
+                    drag.applied = true;
+                    actions.push(PhotoAction::SetTransform {
+                        layer: drag.layer,
+                        transform: next,
+                        commit: false,
+                    });
                 }
             }
         }
@@ -444,7 +457,7 @@ fn draw_transform_content(
         let dims = info.dims.expect("filtered");
         let layer = info.id;
         let corners = frame_corners(&transform, dims);
-        let quad = corners.map(|c| to_screen(c));
+        let quad = corners.map(to_screen);
         // Groups show the frame with no handles (body moves only —
         // scale/rotate of a group is a follow-up).
         let hover_for_handles = (info.kind != PhotoLayerKind::Group)
@@ -534,6 +547,110 @@ fn draw_transform_content(
     actions
 }
 
+/// Paint slots of the drag proxy: under / layer (document-clipped when
+/// the preview is clipped) / over, plus the placement they share.
+struct ProxySlots {
+    under: egui::layers::ShapeIdx,
+    layer: egui::layers::ShapeIdx,
+    layer_clip: egui::Rect,
+    over: egui::layers::ShapeIdx,
+    mapping: crate::ui::drag_proxy::ProxyMapping,
+}
+
+/// Reserves the slots when a proxy may draw this frame (cheap no-op
+/// shapes otherwise never filled).
+fn reserve_proxy_slots(
+    ui: &egui::Ui,
+    doc: &OpenDocument,
+    geom: Option<PreviewGeom>,
+    dest: Option<egui::Rect>,
+) -> Option<ProxySlots> {
+    use crate::ui::drag_proxy::DragProxyState;
+    if !matches!(
+        doc.ui.drag_proxy,
+        Some(DragProxyState::Ready(_) | DragProxyState::Ending(..))
+    ) {
+        return None;
+    }
+    let (geom, dest) = (geom?, dest?);
+    let layer_clip = if doc.ui.preview_clip {
+        geom.doc_rect(dest)
+            .map_or(ui.clip_rect(), |r| r.intersect(ui.clip_rect()))
+    } else {
+        ui.clip_rect()
+    };
+    Some(ProxySlots {
+        under: ui.painter().add(egui::Shape::Noop),
+        layer: ui
+            .painter()
+            .with_clip_rect(layer_clip)
+            .add(egui::Shape::Noop),
+        layer_clip,
+        over: ui.painter().add(egui::Shape::Noop),
+        mapping: crate::ui::drag_proxy::ProxyMapping { dest, geom },
+    })
+}
+
+/// Proxy lifecycle against the gesture: request the split when a drag
+/// starts on a new layer, drop pending/ready states once no drag runs
+/// (`Ending` lives on until the commit render, see `state.rs`).
+fn sync_drag_proxy(doc: &mut OpenDocument, actions: &mut Vec<PhotoAction>) {
+    use crate::ui::drag_proxy::DragProxyState;
+    match (&doc.ui.transform_drag, &doc.ui.drag_proxy) {
+        (Some(drag), state) => {
+            let current = state
+                .as_ref()
+                .filter(|s| !matches!(s, DragProxyState::Ending(..)))
+                .map(DragProxyState::layer);
+            if current != Some(drag.layer) {
+                doc.ui.drag_proxy = Some(DragProxyState::Requested(drag.layer));
+                actions.push(PhotoAction::PrepareDragProxy { layer: drag.layer });
+            } else if let Some(DragProxyState::Ready(proxy)) = state
+                && proxy.source_dims != drag.dims
+            {
+                // Carrier mismatch (resampled layer): live renders.
+                doc.ui.drag_proxy = Some(DragProxyState::Unavailable(drag.layer));
+            }
+        }
+        (None, Some(DragProxyState::Ending(..))) | (None, None) => {}
+        (None, Some(_)) => doc.ui.drag_proxy = None,
+    }
+}
+
+/// Release: a proxy-driven drag keeps drawing its final transform until
+/// the commit render lands; anything else is dropped.
+fn end_drag_proxy(doc: &mut OpenDocument, drag: &crate::ui::TransformDrag) {
+    use crate::ui::drag_proxy::DragProxyState;
+    doc.ui.drag_proxy = match doc.ui.drag_proxy.take() {
+        Some(DragProxyState::Ready(proxy))
+            if proxy.layer == drag.layer && drag.sent != drag.start =>
+        {
+            Some(DragProxyState::Ending(proxy, drag.sent))
+        }
+        _ => None,
+    };
+}
+
+/// Fills the reserved slots with this frame's proxy shapes.
+fn paint_drag_proxy(ui: &egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext, slots: ProxySlots) {
+    use crate::ui::drag_proxy::{DragProxyState, proxy_shapes};
+    let (proxy, transform) = match (&doc.ui.drag_proxy, &doc.ui.transform_drag) {
+        (Some(DragProxyState::Ready(proxy)), Some(drag)) if drag.layer == proxy.layer => {
+            (proxy, drag.sent)
+        }
+        (Some(DragProxyState::Ending(proxy, transform)), _) => (proxy, *transform),
+        _ => return,
+    };
+    let backdrop = ctx.shared.theme().colors.bg_tertiary;
+    let shapes = proxy_shapes(proxy, &transform, slots.mapping, backdrop);
+    let painter = ui.painter();
+    painter.set(slots.under, egui::Shape::Vec(shapes.under));
+    painter
+        .with_clip_rect(slots.layer_clip)
+        .set(slots.layer, egui::Shape::Vec(shapes.layer));
+    painter.set(slots.over, egui::Shape::Vec(shapes.over));
+}
+
 /// Document canvas + overlays + eyedropper (dock tab content,
 /// no `CentralPanel`).
 pub fn draw_canvas_content(
@@ -552,6 +669,7 @@ pub fn draw_canvas_content(
             transform: drag.sent,
             commit: true,
         });
+        end_drag_proxy(doc, &drag);
         doc.ui.stroke.clear();
         doc.ui.needs_repaint = true;
     }
@@ -595,6 +713,10 @@ pub fn draw_canvas_content(
     // document center instead. Skipped when the user drove zoom/pan
     // (re-baseline) or the document itself was replaced.
     stabilize_viewport(doc, &outcome, geom, &mapping, pre_zoom, pre_offset);
+    // Drag proxy paint slots, reserved UNDER every overlay drawn below
+    // (filled at the end of the frame, once the gesture resolved).
+    let proxy_slots = reserve_proxy_slots(ui, doc, geom, outcome.dest_rect);
+    doc.ui.last_dest = outcome.dest_rect;
     // Stroke commit: routed to the worker by the app.
     let committed = outcome.paint.is_some();
     if let Some(paint) = outcome.paint {
@@ -769,6 +891,10 @@ pub fn draw_canvas_content(
             geom,
             &mapping,
         ));
+    }
+    sync_drag_proxy(doc, &mut actions);
+    if let Some(slots) = proxy_slots {
+        paint_drag_proxy(ui, doc, ctx, slots);
     }
     // Node editor (Node tool): anchors + handles of the selected
     // vector layer (body moves stay on the Move tool).

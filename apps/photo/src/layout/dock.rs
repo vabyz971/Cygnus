@@ -43,6 +43,7 @@ use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use app_shell::dock::DockTab;
 use cygnus_i18n::TextKey;
+use cygnus_ui::containers::{DockResizeState, DockStyle, DockTabState};
 use cygnus_ui::icons::{Icon, IconRegistry};
 use egui_tiles::{Behavior, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,8 @@ pub enum PhotoDockTab {
     Layers,
     /// Undo/redo step history (tabbed with Layers).
     History,
+    /// Tone histogram of the composite (O006, tabbed with Layers).
+    Histogram,
 }
 
 impl PhotoDockTab {
@@ -78,6 +81,7 @@ impl PhotoDockTab {
             Self::Inspector => TextKey::Inspector,
             Self::Layers => TextKey::Layers,
             Self::History => TextKey::History,
+            Self::Histogram => TextKey::Histogram,
         }
     }
 }
@@ -106,7 +110,37 @@ pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
         PhotoDockTab::Layers,
     );
     ensure_history_tabbed(&mut tree);
+    ensure_histogram_tabbed(&mut tree);
     tree
+}
+
+/// Histogram tabbed next to History (O006).
+///
+/// Idempotent like [`ensure_history_tabbed`]: trees restored from an
+/// earlier JSON gain the tab; an existing one is left where the user
+/// put it. Unexpected container around History: nothing touched.
+pub fn ensure_histogram_tabbed(tree: &mut Tree<PhotoDockTab>) {
+    if app_shell::dock::has_tab(tree, PhotoDockTab::Histogram) {
+        return;
+    }
+    let Some(history) = tree.tiles.find_pane(&PhotoDockTab::History) else {
+        return;
+    };
+    let Some(parent) = tree.tiles.parent_of(history) else {
+        return;
+    };
+    if !matches!(
+        tree.tiles.get(parent),
+        Some(egui_tiles::Tile::Container(egui_tiles::Container::Tabs(_)))
+    ) {
+        return;
+    }
+    let histogram = tree.tiles.insert_pane(PhotoDockTab::Histogram);
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs))) =
+        tree.tiles.get_mut(parent)
+    {
+        tabs.add_child(histogram);
+    }
 }
 
 /// History tabbed with Layers (bottom of the right column).
@@ -160,6 +194,15 @@ pub fn show_tree(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) ->
     };
     app.shell.tree.ui(&mut behavior, ui);
     behavior.actions
+}
+
+/// egui_tiles tab state → the dock style's own (cygnus-ui stays free
+/// of the tiling crate).
+fn dock_tab_state(state: &egui_tiles::TabState) -> DockTabState {
+    DockTabState {
+        active: state.active,
+        dragged: state.is_being_dragged,
+    }
 }
 
 /// Tile content with inner `sm` padding (inspector,
@@ -216,7 +259,14 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                 .iter()
                 .find(|doc| doc.id == id)
                 .map(|doc| {
-                    let zoom = (doc.ui.viewport.zoom() * 100.0).round();
+                    // True zoom: screen pixels per document pixel (the
+                    // viewport zoom is relative to the fitted preview).
+                    let zoom = match (doc.ui.last_dest, doc.ui.preview_geom) {
+                        (Some(dest), Some(geom)) if geom.full_size.x > 0.0 => {
+                            (dest.width() / geom.full_size.x * 100.0).round()
+                        }
+                        _ => (doc.ui.viewport.zoom() * 100.0).round(),
+                    };
                     match doc.ui.preview_geom {
                         Some(geom) => format!(
                             "{} | {}x{} | {}%",
@@ -308,6 +358,16 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                 });
                 self.actions.extend(inner);
             }
+            PhotoDockTab::Histogram => {
+                let index = (*self.active).min(self.docs.len().saturating_sub(1));
+                let Some(doc) = self.docs.get(index) else {
+                    ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
+                    return UiResponse::None;
+                };
+                padded_tile(ui, ctx, |ui| {
+                    right_sidebar::draw_histogram_content(ui, doc, ctx);
+                });
+            }
         }
         UiResponse::None
     }
@@ -335,6 +395,79 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         false
     }
 
+    // --- Rerun-style chrome, all from theme tokens (`DockStyle`) ---
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        DockStyle::new(self.ctx.shared.theme()).tab_bar_height()
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        DockStyle::new(self.ctx.shared.theme()).gap_width()
+    }
+
+    fn tab_title_spacing(&self, _visuals: &egui::Visuals) -> f32 {
+        DockStyle::new(self.ctx.shared.theme()).tab_title_spacing()
+    }
+
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        DockStyle::new(self.ctx.shared.theme()).tab_bar_color()
+    }
+
+    fn tab_bg_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<PhotoDockTab>,
+        _tile_id: TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        DockStyle::new(self.ctx.shared.theme()).tab_bg_color(dock_tab_state(state))
+    }
+
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<PhotoDockTab>,
+        _tile_id: TileId,
+        _state: &egui_tiles::TabState,
+    ) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn tab_bar_hline_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        DockStyle::new(self.ctx.shared.theme()).tab_bar_hline_stroke()
+    }
+
+    fn tab_text_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<PhotoDockTab>,
+        _tile_id: TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        DockStyle::new(self.ctx.shared.theme()).tab_text_color(dock_tab_state(state))
+    }
+
+    fn resize_stroke(
+        &self,
+        _style: &egui::Style,
+        resize_state: egui_tiles::ResizeState,
+    ) -> egui::Stroke {
+        let state = match resize_state {
+            egui_tiles::ResizeState::Idle => DockResizeState::Idle,
+            egui_tiles::ResizeState::Hovering => DockResizeState::Hovering,
+            egui_tiles::ResizeState::Dragging => DockResizeState::Dragging,
+        };
+        DockStyle::new(self.ctx.shared.theme()).resize_stroke(state)
+    }
+
+    fn drag_preview_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        DockStyle::new(self.ctx.shared.theme()).drag_preview_color()
+    }
+
+    fn drag_preview_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        DockStyle::new(self.ctx.shared.theme()).drag_preview_stroke()
+    }
+
     /// Tab bar everywhere (even single-pane, dock-style).
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
         egui_tiles::SimplificationOptions {
@@ -356,11 +489,12 @@ mod tests {
     }
 
     /// Fixed test panels.
-    const FIXED_TABS: [PhotoDockTab; 4] = [
+    const FIXED_TABS: [PhotoDockTab; 5] = [
         PhotoDockTab::Tools,
         PhotoDockTab::Inspector,
         PhotoDockTab::Layers,
         PhotoDockTab::History,
+        PhotoDockTab::Histogram,
     ];
 
     fn canvas(id: u128) -> PhotoDockTab {
@@ -650,5 +784,23 @@ mod tests {
             ));
             assert!(has_tab(&load_tree_or_default(None, &ids), tab));
         }
+    }
+
+    #[test]
+    fn histogram_joins_the_history_tabs_once() {
+        let mut tree = default_tree(vec![canvas(1)]);
+        let history = find_tile(&tree, PhotoDockTab::History).expect("historique présent");
+        let histogram = find_tile(&tree, PhotoDockTab::Histogram).expect("histogramme présent");
+        assert_eq!(
+            tree.tiles.parent_of(history),
+            tree.tiles.parent_of(histogram)
+        );
+        ensure_histogram_tabbed(&mut tree);
+        let count = tree
+            .tiles
+            .iter()
+            .filter(|(_, tile)| matches!(tile, egui_tiles::Tile::Pane(PhotoDockTab::Histogram)))
+            .count();
+        assert_eq!(count, 1, "idempotent");
     }
 }

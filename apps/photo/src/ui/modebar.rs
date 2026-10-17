@@ -14,12 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! PHOTO mode and tool-settings bar (2nd top row,
-//! full width, domain widget).
+//! PHOTO personas and context bar (domain widgets).
 //!
-//! Row 1: large mode-switch buttons (Vector, Pixel,
-//! Layout) then a separator. Row 2: name and settings of the
-//! selected tool (delegated to `super::optionsbar`). The mode restricts
+//! [`draw_persona_switch`]: compact segmented switch (Vector, Pixel,
+//! Layout) living in the menu row, Affinity-style — one top bar
+//! instead of a dedicated persona row. [`draw_photo_modebar`]: the
+//! context bar under it, name and settings of the selected tool
+//! (delegated to `super::optionsbar`) with the view toggles
+//! right-aligned. The mode restricts
 //! the rail tools (paint tools live in Pixel; Vector and
 //! Layout expose move, hand, and zoom until their
 //! own tools land): switching modes falls back to Move when
@@ -27,7 +29,7 @@
 
 use super::optionsbar::draw_tool_options;
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
-use cygnus_ui::components::{Button, ButtonVariant};
+use cygnus_ui::components::{Button, ButtonSize, ButtonVariant, Toggle};
 use cygnus_ui::theme::CygnusTheme;
 
 /// Document edit mode (persona-style).
@@ -89,22 +91,49 @@ impl PhotoEditMode {
     }
 }
 
-/// Mode-bar outcome for one frame: persona switch and/or
-/// out-of-document masking toggle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Context bar outcome.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ModeBarOutcome {
-    /// Newly chosen persona, if any.
-    pub mode: Option<PhotoEditMode>,
     /// Mask toggle pressed (out-of-document content on/off).
     pub toggle_mask: bool,
 }
 
-/// Draws the 2-row bar (modes then tool settings).
-/// Returns the frame outcome (the app falls the tool
-/// back when needed via [`PhotoEditMode::supports`]).
-pub fn draw_photo_modebar(
+/// Compact persona switch (segmented: active = primary, others
+/// ghost). Returns the newly chosen persona, if any.
+pub fn draw_persona_switch(
     ui: &mut egui::Ui,
     mode: &mut PhotoEditMode,
+    theme: &CygnusTheme,
+) -> Option<PhotoEditMode> {
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = theme.spacing.xxs;
+        for candidate in PhotoEditMode::ALL {
+            let active = *mode == *candidate;
+            if Button::new(candidate.label())
+                .variant(if active {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Ghost
+                })
+                .size(ButtonSize::Small)
+                .show(ui, theme)
+                .clicked()
+                && !active
+            {
+                *mode = *candidate;
+                chosen = Some(*candidate);
+            }
+        }
+    });
+    chosen
+}
+
+/// Context bar: selected tool settings on the left, view toggles
+/// (out-of-document mask) on the right.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_photo_modebar(
+    ui: &mut egui::Ui,
     tool: PhotoCanvasTool,
     brush: &mut PhotoBrushSettings,
     show_grid: &mut bool,
@@ -113,45 +142,13 @@ pub fn draw_photo_modebar(
     texts: cygnus_i18n::PhotoCatalog,
 ) -> ModeBarOutcome {
     let mut outcome = ModeBarOutcome::default();
-    // Row 1: large mode buttons + recenter.
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            for candidate in PhotoEditMode::ALL {
-                let active = *mode == *candidate;
-                if Button::new(candidate.label())
-                    .variant(if active {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Secondary
-                    })
-                    .show(ui, theme)
-                    .clicked()
-                {
-                    *mode = *candidate;
-                    outcome.mode = Some(*candidate);
-                }
-            }
-            ui.separator();
-            // Mask toggle (out-of-document content on/off, same
-            // framing either way): next to the personas, active
-            // state visible like a persona.
-            if Button::new(texts.get(cygnus_i18n::PhotoTextKey::MaskView))
-                .variant(if preview_clip {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                })
-                .show(ui, theme)
-                .clicked()
-            {
-                outcome.toggle_mask = true;
-            }
-        });
-    });
-    ui.separator();
-    // Row 2: selected tool name and settings.
     ui.horizontal(|ui| {
         draw_tool_options(ui, tool, brush, show_grid, theme, texts);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut clip = preview_clip;
+            Toggle::new(texts.get(cygnus_i18n::PhotoTextKey::MaskView)).show(ui, theme, &mut clip);
+            outcome.toggle_mask = clip != preview_clip;
+        });
     });
     outcome
 }
@@ -194,9 +191,9 @@ mod tests {
         let mut show_grid = false;
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
+                assert_eq!(draw_persona_switch(ui, &mut mode, &theme), None);
                 let outcome = draw_photo_modebar(
                     ui,
-                    &mut mode,
                     PhotoCanvasTool::Brush,
                     &mut brush,
                     &mut show_grid,

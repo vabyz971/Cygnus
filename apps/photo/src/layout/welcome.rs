@@ -41,7 +41,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &crate::commands::PhotoUiContext) -> Vec<Pho
             texts.get(cygnus_i18n::PhotoTextKey::WelcomeBody),
         ));
         ui.add_space(theme.spacing.lg);
-        ui.horizontal(|ui| {
+        // Stacked, centered actions (a horizontal row would hug the left
+        // edge inside `vertical_centered`).
+        {
             if Button::new(translator.get(cygnus_i18n::TextKey::NewDocument))
                 .variant(ButtonVariant::Primary)
                 .show(ui, theme)
@@ -56,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &crate::commands::PhotoUiContext) -> Vec<Pho
             {
                 actions.push(PhotoAction::OpenImageDialog);
             }
-        });
+        }
     });
     actions
 }

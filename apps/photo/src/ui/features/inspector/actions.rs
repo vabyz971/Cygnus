@@ -47,6 +47,22 @@ pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
             key,
             value,
         },
+        InspectorAction::SetFilterText {
+            owner,
+            id,
+            key,
+            value,
+        } => PhotoAction::SetFilterText {
+            layer: owner,
+            filter: id,
+            key,
+            value,
+        },
+        InspectorAction::ApplyPreset { owner, id, preset } => PhotoAction::ApplyFilterPreset {
+            layer: owner,
+            filter: id,
+            preset,
+        },
     }
 }
 
@@ -90,6 +106,32 @@ mod tests {
                 filter: id,
                 key: String::from("brightness"),
                 value: 25.0
+            }
+        );
+        assert_eq!(
+            inspector_action_to_photo(InspectorAction::SetFilterText {
+                owner,
+                id,
+                key: String::from("points"),
+                value: String::from("0,0;255,255")
+            }),
+            PhotoAction::SetFilterText {
+                layer: owner,
+                filter: id,
+                key: String::from("points"),
+                value: String::from("0,0;255,255")
+            }
+        );
+        assert_eq!(
+            inspector_action_to_photo(InspectorAction::ApplyPreset {
+                owner,
+                id,
+                preset: String::from("hsl.vivid")
+            }),
+            PhotoAction::ApplyFilterPreset {
+                layer: owner,
+                filter: id,
+                preset: String::from("hsl.vivid")
             }
         );
     }

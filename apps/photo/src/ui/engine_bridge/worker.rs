@@ -97,6 +97,8 @@ pub struct EngineWorker {
     pub(crate) last_surface_us: u128,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
+    /// Display-scale appearances (reused while their source holds).
+    pub(crate) scaled_appearances: photo_engine::document::ScaledAppearances,
 }
 
 /// Worker tile-cache budget (8M px ≈ 32 MB RGBA8): covers
@@ -212,6 +214,8 @@ fn history_label(op: &str) -> String {
         "crop_to_document" => "Rogner au document",
         "toggle_filter" => "Basculer le filtre",
         "set_filter_param" => "Réglage du filtre",
+        "set_filter_text" => "Réglage du filtre",
+        "apply_filter_preset" => "Préréglage",
         "toggle_mask" => "Basculer le masque",
         _ => "Édition",
     })
@@ -242,6 +246,7 @@ impl EngineWorker {
             last_surface_pixels: 0,
             last_surface_us: 0,
             metrics: WorkerMetrics::default(),
+            scaled_appearances: photo_engine::document::ScaledAppearances::default(),
         }
     }
 
@@ -275,6 +280,110 @@ impl EngineWorker {
         // opens a fresh entry.
         self.coalesced_transform_layer = None;
         self.coalesced_vector_layer = None;
+    }
+
+    /// Sets one live-filter parameter as a continuous gesture
+    /// (sliders, curve drag): guards, then coalescing per filter (one
+    /// snapshot per gesture, like opacity per layer — keyed
+    /// `push_history(Some)`), PRE-mutation snapshot.
+    fn set_filter_value(
+        &mut self,
+        layer: Uuid,
+        filter: Uuid,
+        key: String,
+        value: datatypes::ParamValue,
+        invalidation: RenderInvalidation,
+    ) -> Mutation {
+        if key.is_empty() {
+            return Mutation::unchanged();
+        }
+        let known = matches!(
+            self.document.find(layer),
+            Some(photo_engine::LayerNode::Pixel(_))
+        ) && self.document.find_filter_layer(filter).is_some();
+        if !known {
+            return Mutation::unchanged();
+        }
+        self.push_history(Some(filter));
+        if !self.document.set_filter_param(layer, filter, key, value) {
+            self.undo.pop();
+            return Mutation::unchanged();
+        }
+        let dirty = self
+            .document
+            .find(layer)
+            .map_or(DirtyMark::Global, mark_for_node);
+        Mutation::changed(invalidation).with_dirty(dirty)
+    }
+
+    /// Splits the stack around `layer` for a GPU-side drag (see
+    /// `photo_engine::document::drag_proxy`): two flattened parts and the
+    /// layer's own appearance. Read-only: no history, no render bump.
+    fn drag_proxy_response(&mut self, layer: Uuid) -> PhotoEngineResponse {
+        let unavailable = PhotoEngineResponse::DragProxyUnavailable { layer };
+        let Some(index) = self.document.drag_proxy_index(layer) else {
+            return unavailable;
+        };
+        let Some(dims) = self.document.pixel_layer(layer).map(|l| l.dimensions()) else {
+            return unavailable;
+        };
+        let (doc_w, doc_h) = (self.document.width.max(1), self.document.height.max(1));
+        let opacity = self.document.root[index].opacity();
+        let mut stats = photo_engine::document::compositing::CompositeStats::default();
+        // Display-scale split when possible (same path as the canvas
+        // preview: no full-resolution filter chain), exact frame otherwise.
+        let scaled = self
+            .document
+            .display_scale(super::preview::PREVIEW_MAX_DIMENSION)
+            .and_then(|s| self.document.scaled_view(s).map(|view| (s, view)));
+        let (below, above, appearance) =
+            if let Some((scale, view)) = scaled {
+                let mut small: HashMap<Uuid, Arc<image::DynamicImage>> = HashMap::new();
+                for id in self.document.all_pixel_ids() {
+                    if let Some(l) = self.document.pixel_layer(id) {
+                        small.insert(id, self.scaled_appearances.pixel_appearance(l, scale));
+                    }
+                }
+                for id in self.document.all_vector_ids() {
+                    if let Some(full) = self.document.appearance_vector_image(id) {
+                        small.insert(id, self.scaled_appearances.get(id, &full, scale));
+                    }
+                }
+                let resolve = |id: Uuid| small.get(&id).cloned();
+                let part = |range: std::ops::Range<usize>,
+                        stats: &mut photo_engine::document::compositing::CompositeStats| {
+                view.composite_root_range_with(range, &resolve, stats)
+                    .map(|p| super::preview::proxy_part_preview(p, scale, doc_w, doc_h))
+            };
+                (
+                    part(0..index, &mut stats),
+                    part(index + 1..view.root.len(), &mut stats),
+                    small.get(&layer).cloned(),
+                )
+            } else {
+                let frame = super::preview::AppearanceFrameCache::build(&self.document);
+                let resolve = |id: Uuid| frame.image(id);
+                let part = |range: std::ops::Range<usize>,
+                        stats: &mut photo_engine::document::compositing::CompositeStats| {
+                self.document
+                    .composite_root_range_with(range, &resolve, stats)
+                    .map(|p| super::preview::proxy_part_preview(p, 1.0, doc_w, doc_h))
+            };
+                (
+                    part(0..index, &mut stats),
+                    part(index + 1..self.document.root.len(), &mut stats),
+                    frame.image(layer),
+                )
+            };
+        let Some(appearance) = appearance else {
+            return unavailable;
+        };
+        PhotoEngineResponse::DragProxyReady {
+            layer,
+            below,
+            image: super::preview::proxy_layer_image(&appearance, dims, opacity),
+            above,
+        }
     }
 
     /// Destructive edit of a pixel layer (mirror, rotation):
@@ -355,14 +464,22 @@ impl EngineWorker {
         let thumb_hits_before = self.metrics.thumb.cache_hits;
         let thumb_misses_before = self.metrics.thumb.cache_misses;
         self.poll_thumb_results();
+        // Display-scale pass first (large documents): appearances and
+        // composite at the preview scale, no full-resolution frame at all.
+        // Otherwise the exact full-resolution frame feeds the tile pipeline.
         let t_frame = std::time::Instant::now();
-        let frame = (invalidation == RenderInvalidation::Composite)
+        let scaled = if invalidation == RenderInvalidation::Composite {
+            self.render_preview_scaled()
+        } else {
+            None
+        };
+        let frame = (invalidation == RenderInvalidation::Composite && scaled.is_none())
             .then(|| AppearanceFrameCache::build(&self.document));
         let frame_us = t_frame.elapsed().as_micros();
         // Secondary task: submitted AFTER the frame (entries are
         // cloned, state frozen by the finished mutation) and BEFORE the
         // composite — in threaded mode, computation overlaps canvas rendering.
-        if frame.is_some() {
+        if invalidation == RenderInvalidation::Composite {
             self.submit_stale_thumbs();
         }
         let t_snapshot = std::time::Instant::now();
@@ -378,10 +495,17 @@ impl EngineWorker {
         let undo_labels = self.undo.iter().map(|step| step.label.clone()).collect();
         let redo_labels = self.redo.iter().map(|step| step.label.clone()).collect();
         if invalidation == RenderInvalidation::Composite {
-            let frame = frame.as_ref().expect("cadre construit en mode Composite");
             // 6E incremental pipeline: dirty tiles re-evaluated, clean ones
             // reused; same bytes as legacy at equal content.
-            let (preview, timings, worker_stats) = self.render_preview_incremental(frame);
+            let (preview, timings, worker_stats) = match (scaled, frame.as_ref()) {
+                (Some(rendered), _) => rendered,
+                (None, Some(frame)) => self.render_preview_incremental(frame),
+                (None, None) => (
+                    None,
+                    super::metrics::PreviewTimings::default(),
+                    photo_engine::document::RenderWorkerStats::default(),
+                ),
+            };
             // Phase 6G.2 §1: dirty is settled only AFTER producing the
             // result (never before, never without rendering). `None` ⇒ nothing to
             // settle (conservative retry next frame).
@@ -407,8 +531,8 @@ impl EngineWorker {
                 composite_us: timings.composite_us,
                 thumb_us: timings.thumb_us,
                 geometry_us: timings.geometry_us,
-                appearance_resolves: frame.resolves,
-                appearance_frame_hits: frame.hits(),
+                appearance_resolves: frame.as_ref().map_or(0, |f| f.resolves),
+                appearance_frame_hits: frame.as_ref().map_or(0, AppearanceFrameCache::hits),
                 preview_rebuilds: stats_after.preview_rebuilds - stats_before.preview_rebuilds,
                 thumb_rebuilds: stats_after.thumb_rebuilds - stats_before.thumb_rebuilds,
                 blend_us: timings.blend_us,
@@ -829,9 +953,11 @@ impl EngineWorker {
                     }
                     Some(photo_engine::LayerNode::Group(group)) => {
                         let region = photo_engine::tiles::group_footprint(group);
-                        let mut placed = photo_engine::Transform2D::default();
-                        placed.offset_x = region.x as f32;
-                        placed.offset_y = region.y as f32;
+                        let placed = photo_engine::Transform2D {
+                            offset_x: region.x as f32,
+                            offset_y: region.y as f32,
+                            ..photo_engine::Transform2D::default()
+                        };
                         (placed, (region.width.max(1), region.height.max(1)))
                     }
                     _ => return Mutation::unchanged(),
@@ -1379,12 +1505,8 @@ impl EngineWorker {
                                 },
                             }
                         } else {
-                            let format = match ext.as_deref() {
-                                Some("jpg") | Some("jpeg") => photo_engine::ExportFormat::Jpeg {
-                                    quality: quality.clamp(1, 100),
-                                },
-                                _ => photo_engine::ExportFormat::from_path(&path),
-                            };
+                            let format =
+                                photo_engine::ExportFormat::from_path_with_quality(&path, quality);
                             match photo_engine::export_image(&image, &path, format) {
                                 Ok(()) => PhotoEngineResponse::ExportDone { path },
                                 Err(error) => PhotoEngineResponse::EngineError {
@@ -1394,8 +1516,26 @@ impl EngineWorker {
                         }
                     }
                     None => PhotoEngineResponse::EngineError {
-                        message: String::from("Rien a exporter (document vide)"),
+                        message: String::from("Rien à exporter (document vide)"),
                     },
+                })
+            }
+            PhotoEngineCommand::PrepareDragProxy { layer } => {
+                Mutation::immediate(self.drag_proxy_response(layer))
+            }
+            PhotoEngineCommand::EstimateExportSize { ext, quality } => {
+                let format = photo_engine::ExportFormat::from_path_with_quality(
+                    std::path::Path::new(&format!("estimate.{ext}")),
+                    quality,
+                );
+                let bytes = (ext != "gif")
+                    .then(|| self.document.composite_preview())
+                    .flatten()
+                    .and_then(|image| photo_engine::estimate_export_size(&image, format).ok());
+                Mutation::immediate(PhotoEngineResponse::ExportSizeEstimated {
+                    ext,
+                    quality,
+                    bytes,
                 })
             }
             PhotoEngineCommand::SaveProject { path } => {
@@ -1506,26 +1646,61 @@ impl EngineWorker {
                 key,
                 value,
             } => {
-                // Continuous gesture (sliders): guards then coalescing
-                // per filter (one snapshot per gesture, like opacity
-                // per layer — keyed `push_history(Some)`).
-                if !value.is_finite() || key.is_empty() {
+                if !value.is_finite() {
                     return Mutation::unchanged();
                 }
-                let known = matches!(
-                    self.document.find(layer),
-                    Some(photo_engine::LayerNode::Pixel(_))
-                ) && self.document.find_filter_layer(filter).is_some();
-                if !known {
-                    return Mutation::unchanged();
-                }
-                self.push_history(Some(filter));
-                if !self.document.set_filter_param(
+                self.set_filter_value(
                     layer,
                     filter,
-                    key.clone(),
+                    key,
                     datatypes::ParamValue::Float(value),
-                ) {
+                    invalidation,
+                )
+            }
+            PhotoEngineCommand::SetFilterText {
+                layer,
+                filter,
+                key,
+                value,
+            } => self.set_filter_value(
+                layer,
+                filter,
+                key,
+                datatypes::ParamValue::Text(value),
+                invalidation,
+            ),
+            PhotoEngineCommand::ApplyFilterPreset {
+                layer,
+                filter,
+                preset,
+            } => {
+                // Discrete step (one entry, ends any slider gesture):
+                // the preset installs a COMPLETE parameter set.
+                let is_pixel = matches!(
+                    self.document.find(layer),
+                    Some(photo_engine::LayerNode::Pixel(_))
+                );
+                let Some(type_id) = self
+                    .document
+                    .find_filter_layer(filter)
+                    .map(|f| f.type_id.clone())
+                else {
+                    return Mutation::unchanged();
+                };
+                if !is_pixel {
+                    return Mutation::unchanged();
+                }
+                let Some(found) = photo_engine::find_preset(&type_id, &preset) else {
+                    return Mutation::immediate(PhotoEngineResponse::EngineError {
+                        message: format!("Préréglage inconnu : {preset}"),
+                    });
+                };
+                self.push_history(None);
+                let mut applied = true;
+                for (key, value) in found.params {
+                    applied &= self.document.set_filter_param(layer, filter, key, value);
+                }
+                if !applied {
                     self.undo.pop();
                     return Mutation::unchanged();
                 }
@@ -1704,13 +1879,19 @@ pub fn apply_command(document: &mut Document, command: PhotoEngineCommand) {
 
 /// Starts the engine worker on a background thread.
 ///
+/// Callback the worker runs after answering (the app wakes its UI
+/// loop; kept as a closure so the worker never depends on egui).
+pub type Waker = Box<dyn Fn() + Send>;
+
 /// Blocking `recv` loop (allowed off the UI thread): applies
-/// each command then responds. Dropping the UI-side `Sender`
+/// each command then responds, then calls `wake` so an idle UI picks
+/// the response up immediately. Dropping the UI-side `Sender`
 /// cleanly stops the thread.
 pub fn spawn_photo_engine_worker(
     document: Document,
     commands: Receiver<PhotoEngineCommand>,
     responses: Sender<PhotoEngineResponse>,
+    wake: Option<Waker>,
 ) -> JoinHandle<()> {
     assert_send::<Document>();
     std::thread::spawn(move || {
@@ -1733,6 +1914,9 @@ pub fn spawn_photo_engine_worker(
                 if responses.send(response).is_err() {
                     break 'worker;
                 }
+            }
+            if let Some(wake) = &wake {
+                wake();
             }
         }
     })
@@ -2307,7 +2491,7 @@ mod tests {
         let target = doc.root[0].id();
         let (cmd_tx, cmd_rx) = channel();
         let (resp_tx, resp_rx) = channel();
-        let handle = spawn_photo_engine_worker(doc, cmd_rx, resp_tx);
+        let handle = spawn_photo_engine_worker(doc, cmd_rx, resp_tx, None);
 
         // The UI thread never blocks: immediate empty poll…
         assert!(resp_rx.try_recv().is_err());
@@ -2444,6 +2628,129 @@ mod tests {
     }
 
     #[test]
+    fn drag_proxy_splits_the_stack_without_side_effects() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let middle = worker.document.root[1].id();
+        let response = worker.apply(PhotoEngineCommand::PrepareDragProxy { layer: middle });
+        let PhotoEngineResponse::DragProxyReady {
+            layer,
+            below,
+            image,
+            above,
+        } = response
+        else {
+            panic!("proxy attendu");
+        };
+        assert_eq!(layer, middle);
+        assert!(below.is_some() && above.is_some());
+        let (w, h) = worker
+            .document
+            .pixel_layer(middle)
+            .expect("pixels")
+            .dimensions();
+        assert_eq!((image.source_width, image.source_height), (w, h));
+        assert_eq!(image.opacity, 100.0);
+        assert!(worker.undo.is_empty(), "lecture seule");
+        // Bottom layer: nothing below.
+        let bottom = worker.document.root[0].id();
+        assert!(matches!(
+            worker.apply(PhotoEngineCommand::PrepareDragProxy { layer: bottom }),
+            PhotoEngineResponse::DragProxyReady { below: None, .. }
+        ));
+        // A Multiply layer above reads the dragged one: refused.
+        let top = worker.document.root[2].id();
+        worker.apply(PhotoEngineCommand::SetBlendMode {
+            layer: top,
+            mode: photo_engine::BlendMode::Multiply,
+        });
+        assert!(matches!(
+            worker.apply(PhotoEngineCommand::PrepareDragProxy { layer: middle }),
+            PhotoEngineResponse::DragProxyUnavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn export_size_estimate_has_no_side_effects() {
+        // O006: estimate per format, echoed key, no history, GIF skipped.
+        let mut worker = EngineWorker::new(three_layer_doc());
+        for ext in ["png", "jpg", "webp", "tiff"] {
+            let response = worker.apply(PhotoEngineCommand::EstimateExportSize {
+                ext: String::from(ext),
+                quality: 80,
+            });
+            let PhotoEngineResponse::ExportSizeEstimated {
+                ext: echoed,
+                quality,
+                bytes,
+            } = response
+            else {
+                panic!("estimation attendue pour {ext}");
+            };
+            assert_eq!((echoed.as_str(), quality), (ext, 80));
+            assert!(bytes.is_some_and(|b| b > 0), "{ext}");
+        }
+        let gif = worker.apply(PhotoEngineCommand::EstimateExportSize {
+            ext: String::from("gif"),
+            quality: 0,
+        });
+        assert!(matches!(
+            gif,
+            PhotoEngineResponse::ExportSizeEstimated { bytes: None, .. }
+        ));
+        assert!(worker.undo.is_empty(), "aucune entrée d'historique");
+    }
+
+    #[test]
+    fn curve_text_and_presets_apply_and_undo() {
+        // O005: curve drag = one coalesced step; preset = one discrete
+        // step installing the full parameter set; undo restores both.
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let id = worker.document.root[0].id();
+        let filter = photo_engine::new_filter_layer("curves").expect("filtre connu");
+        let fid = filter.id;
+        worker.document.add_filter(id, filter);
+        let points = |worker: &EngineWorker| match worker
+            .document
+            .find_filter_layer(fid)
+            .and_then(|f| f.params.get("points"))
+        {
+            Some(datatypes::ParamValue::Text(text)) => text.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(points(&worker), "0,0;255,255");
+        for value in ["0,0;128,140;255,255", "0,0;128,160;255,255"] {
+            worker.apply(PhotoEngineCommand::SetFilterText {
+                layer: id,
+                filter: fid,
+                key: String::from("points"),
+                value: String::from(value),
+            });
+        }
+        assert_eq!(points(&worker), "0,0;128,160;255,255");
+        assert_eq!(worker.undo.len(), 1, "glissé coalescé");
+        worker.apply(PhotoEngineCommand::ApplyFilterPreset {
+            layer: id,
+            filter: fid,
+            preset: String::from("curves.invert"),
+        });
+        assert_eq!(points(&worker), "0,255;255,0");
+        assert_eq!(worker.undo.len(), 2, "préréglage = étape distincte");
+        assert_eq!(worker.undo[1].label, "Préréglage");
+        // Unknown preset: clean error, no history entry.
+        let response = worker.apply(PhotoEngineCommand::ApplyFilterPreset {
+            layer: id,
+            filter: fid,
+            preset: String::from("inexistant"),
+        });
+        assert!(matches!(response, PhotoEngineResponse::EngineError { .. }));
+        assert_eq!(worker.undo.len(), 2);
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(points(&worker), "0,0;128,160;255,255");
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(points(&worker), "0,0;255,255");
+    }
+
+    #[test]
     fn set_filter_param_applies_coalesces_and_undoes() {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
@@ -2550,8 +2857,10 @@ mod tests {
         let mut worker = EngineWorker::new(three_layer_doc());
         let id = worker.document.root[0].id();
         let frame = |worker: &mut EngineWorker, dx: f32, commit: bool| {
-            let mut t = photo_engine::Transform2D::default();
-            t.offset_x = dx;
+            let t = photo_engine::Transform2D {
+                offset_x: dx,
+                ..photo_engine::Transform2D::default()
+            };
             worker.apply(PhotoEngineCommand::SetTransform {
                 layer: id,
                 transform: t,
@@ -2608,8 +2917,10 @@ mod tests {
         )));
         let mut worker = EngineWorker::new(doc);
         let id = worker.document.root[0].id();
-        let mut t = photo_engine::Transform2D::default();
-        t.rotation_deg = 30.0;
+        let t = photo_engine::Transform2D {
+            rotation_deg: 30.0,
+            ..photo_engine::Transform2D::default()
+        };
         let response = worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
             transform: t,
@@ -2633,8 +2944,10 @@ mod tests {
             transform: photo_engine::Transform2D::default(),
             commit: true,
         });
-        let mut nan = photo_engine::Transform2D::default();
-        nan.offset_x = f32::NAN;
+        let nan = photo_engine::Transform2D {
+            offset_x: f32::NAN,
+            ..photo_engine::Transform2D::default()
+        };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
             transform: nan,
@@ -2650,9 +2963,11 @@ mod tests {
         // `mutate` alone (without `respond`): the marking is
         // observable before the render absorbs it (same pattern as
         // the precise-paint test).
-        let mut t = photo_engine::Transform2D::default();
-        t.offset_x = 5.0;
-        t.offset_y = 3.0;
+        let t = photo_engine::Transform2D {
+            offset_x: 5.0,
+            offset_y: 3.0,
+            ..photo_engine::Transform2D::default()
+        };
         let _ = worker.mutate(PhotoEngineCommand::SetTransform {
             layer: id,
             transform: t,
@@ -2685,6 +3000,9 @@ mod tests {
             PhotoEngineResponse::EngineError { message } => panic!("{message}"),
             PhotoEngineResponse::ExportDone { .. } => panic!("export inattendu"),
             PhotoEngineResponse::ProjectSaved { .. } => panic!("sauvegarde inattendue"),
+            PhotoEngineResponse::ExportSizeEstimated { .. } => panic!("estimation inattendue"),
+            PhotoEngineResponse::DragProxyReady { .. }
+            | PhotoEngineResponse::DragProxyUnavailable { .. } => panic!("proxy inattendu"),
             PhotoEngineResponse::StateChanged { .. } => panic!("rendu attendu"),
             PhotoEngineResponse::ThumbnailUpdated { .. } => {
                 panic!("pas de miniature seule sur apply solo")
@@ -2709,8 +3027,10 @@ mod tests {
         let (fw, ox, doc) = (wide.full_width, wide.origin_x, wide.doc_width);
         let inside_same = wide
             .rgba
-            .chunks_exact(4)
-            .zip(clipped.rgba.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(clipped.rgba.as_chunks::<4>().0.iter())
             .enumerate()
             .filter(|(i, _)| {
                 let x = (*i as u32 % fw) as f32;
@@ -2720,7 +3040,9 @@ mod tests {
         assert!(inside_same, "pixels du document intacts");
         let outside_masked = clipped
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(i, _)| {
                 let x = (*i as u32 % fw) as f32;
@@ -4577,8 +4899,10 @@ mod single_pass_tests {
             LayerNode::Vector(v) => v.transform.offset_x,
             _ => panic!("calque vecteur attendu"),
         };
-        let mut transform = photo_engine::Transform2D::default();
-        transform.offset_x = before + 5.0;
+        let transform = photo_engine::Transform2D {
+            offset_x: before + 5.0,
+            ..photo_engine::Transform2D::default()
+        };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: id,
             transform,
@@ -4610,9 +4934,11 @@ mod single_pass_tests {
             LayerNode::Group(g) => photo_engine::tiles::group_footprint(g),
             _ => panic!("groupe attendu"),
         };
-        let mut placement = photo_engine::Transform2D::default();
-        placement.offset_x = region.x as f32 + 4.0;
-        placement.offset_y = region.y as f32 + 2.0;
+        let placement = photo_engine::Transform2D {
+            offset_x: region.x as f32 + 4.0,
+            offset_y: region.y as f32 + 2.0,
+            ..photo_engine::Transform2D::default()
+        };
         worker.apply(PhotoEngineCommand::SetTransform {
             layer: group_id,
             transform: placement,

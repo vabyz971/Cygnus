@@ -42,7 +42,9 @@ fn main() {
         Box::new(|cc| {
             cygnus_ui::theme::setup_fonts(&cc.egui_ctx);
             cygnus_ui::theme::apply_cygnus_theme(&cc.egui_ctx);
-            Ok(Box::new(app::PhotoApp::new()))
+            Ok(Box::new(
+                app::PhotoApp::new().with_repaint_context(cc.egui_ctx.clone()),
+            ))
         }),
     )
     .expect("Failed to start eframe");

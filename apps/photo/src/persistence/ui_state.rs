@@ -20,7 +20,9 @@
 //! differently-versioned JSON falls back to the default layout
 //! ([`load_workspace_or_default`], [`load_dock_or_default`]).
 
-use crate::layout::dock::{PhotoDockTab, default_tree, ensure_history_tabbed, reconcile_canvases};
+use crate::layout::dock::{
+    PhotoDockTab, default_tree, ensure_histogram_tabbed, ensure_history_tabbed, reconcile_canvases,
+};
 use cygnus_ui::layout::{WorkspaceState, load_workspace, save_workspace};
 use egui_tiles::Tree;
 use uuid::Uuid;
@@ -94,6 +96,7 @@ pub fn load_tree_or_default(json: Option<&str>, ids: &[Uuid]) -> Tree<PhotoDockT
         .unwrap_or_else(|| default_tree(ids.iter().map(|id| PhotoDockTab::Canvas(*id)).collect()));
     reconcile_canvases(&mut state, ids);
     ensure_history_tabbed(&mut state);
+    ensure_histogram_tabbed(&mut state);
     state
 }
 

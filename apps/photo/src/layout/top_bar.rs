@@ -22,6 +22,7 @@
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
+use crate::ui::modebar::draw_persona_switch;
 use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
 };
@@ -94,7 +95,8 @@ pub fn show_menu_bar(
     actions
 }
 
-/// Row 2: edit modes + tool settings.
+/// Row 2: context bar — personas first (Affinity's toolbar), then
+/// the tool settings, view toggles right-aligned.
 /// Absent with no open document.
 pub fn show_mode_bar(
     ui: &mut egui::Ui,
@@ -110,22 +112,27 @@ pub fn show_mode_bar(
         .show(ui, |ui| {
             let translator = ctx.shared.translator();
             let texts = PhotoCatalog::new(translator.language());
-            let outcome = draw_photo_modebar(
-                ui,
-                &mut doc.ui.edit_mode,
-                doc.ui.tool,
-                &mut doc.ui.brush,
-                &mut doc.ui.show_grid,
-                doc.ui.preview_clip,
-                ctx.shared.theme(),
-                texts,
-            );
-            // Tool incompatible with the new mode: switch back.
-            if let Some(mode) = outcome.mode
-                && !mode.supports(doc.ui.tool)
-            {
-                actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
-            }
+            let theme = ctx.shared.theme();
+            let outcome = ui
+                .horizontal(|ui| {
+                    if let Some(mode) = draw_persona_switch(ui, &mut doc.ui.edit_mode, theme)
+                        && !mode.supports(doc.ui.tool)
+                    {
+                        // Tool missing from the new persona: fall back.
+                        actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
+                    }
+                    ui.separator();
+                    draw_photo_modebar(
+                        ui,
+                        doc.ui.tool,
+                        &mut doc.ui.brush,
+                        &mut doc.ui.show_grid,
+                        doc.ui.preview_clip,
+                        ctx.shared.theme(),
+                        texts,
+                    )
+                })
+                .inner;
             if outcome.toggle_mask {
                 actions.push(PhotoAction::TogglePreviewClip);
             }

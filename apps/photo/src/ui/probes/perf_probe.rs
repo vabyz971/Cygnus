@@ -165,6 +165,54 @@ fn probe_4_move_layer_4k() {
 }
 
 #[test]
+fn probe_4b_drag_proxy_4k() {
+    // One-off split cost at gesture start; every drag frame after it
+    // is GPU-only (zero worker traffic until release).
+    let mut worker = EngineWorker::new(doc_4k());
+    worker.apply(PhotoEngineCommand::Refresh);
+    let id = layer_id(&worker, 1);
+    let t = Instant::now();
+    let response = worker.apply(PhotoEngineCommand::PrepareDragProxy { layer: id });
+    eprintln!("drag proxy 4K split: {}ms", t.elapsed().as_millis());
+    assert!(matches!(
+        response,
+        PhotoEngineResponse::DragProxyReady { .. }
+    ));
+}
+
+#[test]
+fn probe_4c_filter_slider_4k() {
+    // Adjustment slider ticks (Levels gamma) on a 4K layer: each tick
+    // re-runs the chain, at display scale when the document allows it.
+    let mut worker = EngineWorker::new(doc_4k());
+    worker.apply(PhotoEngineCommand::Refresh);
+    let id = layer_id(&worker, 2);
+    worker.apply(PhotoEngineCommand::AddFilter {
+        layer: id,
+        filter_type: String::from("levels"),
+    });
+    let filter = match worker.test_document().find(id) {
+        Some(LayerNode::Pixel(p)) => p.filter_layers[0].id,
+        _ => panic!("pixels attendus"),
+    };
+    let t = Instant::now();
+    for i in 0..10 {
+        worker.apply(PhotoEngineCommand::SetFilterParam {
+            layer: id,
+            filter,
+            key: String::from("gamma"),
+            value: 1.0 + i as f32 * 0.1,
+        });
+    }
+    eprintln!(
+        "10 ticks filtre: {}ms (soit {}ms/tick)",
+        t.elapsed().as_millis(),
+        t.elapsed().as_millis() / 10
+    );
+    report(&worker);
+}
+
+#[test]
 fn probe_5_paint_stroke_4k() {
     let mut worker = EngineWorker::new(doc_4k());
     worker.apply(PhotoEngineCommand::Refresh);

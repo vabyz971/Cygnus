@@ -5,17 +5,17 @@
 
 ## v0.8 "Usable daily"
 
-- [ ] **v0.8.1 Persistence + shortcuts + history**
+- [x] **v0.8.1 Persistence + shortcuts + history**
   Scope: Save/Save As/Open `.cygp` menus (`apps/photo/src/ui/menubar.rs`,
   `apps/photo/src/persistence/`), `shortcuts.rs` → `app.rs::handle_action` wiring,
   minimal History panel (reads `engines/photo-engine/src/history.rs`).
   DoD: open → edit → save → reopen without loss.
-- [ ] **v0.8.2 Basic transforms**: crop, H/V flip, 90° rotation (`ui/viewport/canvas.rs`, `math-utils`).
+- [x] **v0.8.2 Basic transforms**: crop, H/V flip, 90° rotation (`ui/viewport/canvas.rs`, `math-utils`).
   DoD: every transform goes through PRE-mutation `push_coalesced`.
-- [ ] **v0.8.3 Adjustments**: Levels + Curves + HSL, param editing in the inspector
+- [x] **v0.8.3 Adjustments**: Levels + Curves + HSL, param editing in the inspector
   (`engines/photo-engine/src/nodes/`, `apps/photo/src/ui/features/inspector/`).
   DoD: presets + re-editing after save/load.
-- [ ] **v0.8.4 Export v1 + histogram**: WebP/TIFF (`export.rs`), size estimate, histogram on `preview_buf`.
+- [x] **v0.8.4 Export v1 + histogram**: WebP/TIFF (`export.rs`), size estimate, histogram on `preview_buf`.
   DoD: export with no PNG/JPEG regression.
 
 ## v0.9 "Photo Persona"

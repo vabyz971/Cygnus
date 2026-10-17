@@ -18,7 +18,7 @@
 
 //! Worker-to-UI responses: [`PhotoEngineResponse`].
 
-use super::preview::PreviewImage;
+use super::preview::{PreviewImage, ProxyLayerImage};
 use crate::ui::features::layers::{
     PhotoLayerInfo, PhotoLayerThumb, flattened_len, snapshot_layers, snapshot_layers_with,
 };
@@ -92,6 +92,35 @@ pub enum PhotoEngineResponse {
     ExportDone {
         /// Written file path.
         path: PathBuf,
+    },
+    /// Drag proxy ready (see `PrepareDragProxy`): flattened stack
+    /// below and above the layer (`None` = nothing there) plus the layer
+    /// appearance, drawn GPU-side through the live transform.
+    DragProxyReady {
+        /// Dragged layer.
+        layer: Uuid,
+        /// Composite of everything below.
+        below: Option<PreviewImage>,
+        /// The layer's own pixels (filters and masks baked).
+        image: ProxyLayerImage,
+        /// Composite of everything above, over transparency.
+        above: Option<PreviewImage>,
+    },
+    /// The stack cannot be split around `layer` (non-Normal blend,
+    /// adjustment above, nested layer…): the drag keeps live renders.
+    DragProxyUnavailable {
+        /// Requested layer.
+        layer: Uuid,
+    },
+    /// Export size estimate (O006): `bytes` = `None` when the
+    /// document is empty or the format cannot be estimated.
+    ExportSizeEstimated {
+        /// Format extension the estimate was computed for.
+        ext: String,
+        /// JPEG quality used (echoed so the UI can match its request).
+        quality: u8,
+        /// Estimated byte count.
+        bytes: Option<u64>,
     },
     /// `.cygp` project saved (O001: Save/Save As).
     ProjectSaved {

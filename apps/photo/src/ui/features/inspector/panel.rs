@@ -55,6 +55,26 @@ pub enum InspectorAction {
         /// New value.
         value: f32,
     },
+    /// Set a text parameter of the focused filter (curve editor).
+    SetFilterText {
+        /// Owning layer.
+        owner: Uuid,
+        /// Targeted filter.
+        id: Uuid,
+        /// Parameter key (e.g. `"points"`).
+        key: String,
+        /// New value.
+        value: String,
+    },
+    /// Install a built-in preset on the focused filter.
+    ApplyPreset {
+        /// Owning layer.
+        owner: Uuid,
+        /// Targeted filter.
+        id: Uuid,
+        /// Preset id.
+        preset: String,
+    },
 }
 
 /// Inspector panel (direct content, no chrome: the title is

@@ -26,6 +26,7 @@
 //! (via [`PhotoAction`](crate::commands::PhotoAction)), never the
 //! canvas. Pan/zoom stay 100% local (state-only).
 
+use cygnus_ui::theme::UiThemeExt;
 use cygnus_ui::viewport::{Viewport, ViewportAction, ViewportState, ViewportTool};
 use uuid::Uuid;
 
@@ -258,11 +259,12 @@ impl<'a> PhotoCanvas<'a> {
         // as drawing: current available + zoom/pan).
         let dest = image_size.and_then(|size| {
             (size.x > 0.0 && size.y > 0.0).then(|| {
-                Viewport::fit_dest(
+                Viewport::fit_dest_with_margin(
                     ui.available_rect_before_wrap(),
                     size,
                     state.zoom(),
                     state.offset(),
+                    ui.cygnus_theme().spacing.xl,
                 )
             })?
         });

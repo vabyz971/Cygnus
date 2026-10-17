@@ -353,6 +353,7 @@ pub fn draw_menu_bar(
                             PhotoDockTab::Inspector,
                             PhotoDockTab::Layers,
                             PhotoDockTab::History,
+                            PhotoDockTab::Histogram,
                         ] {
                             if menu_item(ui, theme, catalog.get(tab.title_key())) {
                                 actions.push(PhotoMenuAction::ShowDockTab(tab));

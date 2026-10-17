@@ -337,6 +337,9 @@ pub struct TransformDrag {
     pub grab_angle: f32,
     /// Start angles kept for normalization context.
     pub start_rotation: f32,
+    /// At least one live frame reached the worker (cancel must undo).
+    /// Stays false for proxy-driven drags (nothing applied until release).
+    pub applied: bool,
 }
 
 impl TransformDrag {
@@ -378,6 +381,7 @@ impl TransformDrag {
             grab_proj: along.0 * axis.0 + along.1 * axis.1,
             grab_angle: (grab_doc.1 - center.1).atan2(grab_doc.0 - center.0),
             start_rotation: start.rotation_deg,
+            applied: false,
         })
     }
 

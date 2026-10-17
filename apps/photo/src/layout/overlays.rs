@@ -63,7 +63,23 @@ fn draw_export_overlay(
     ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
-    if let Some(request) = draw_export_dialog(ctx, &mut app.shell.export_dialog) {
+    // Size estimate (O006): debounced worker request per format/quality.
+    if let Some((ext, quality)) = app
+        .shell
+        .export_dialog
+        .poll_estimate(std::time::Instant::now())
+    {
+        actions.push(PhotoAction::EstimateExportSize { ext, quality });
+    } else if app.shell.export_dialog.estimate_pending() {
+        ctx.shared
+            .ctx()
+            .request_repaint_after(crate::ui::dialogs::ESTIMATE_DEBOUNCE);
+    }
+    let estimate = app
+        .active_doc_opt()
+        .and_then(|doc| doc.ui.export_estimate.clone());
+    if let Some(request) = draw_export_dialog(ctx, &mut app.shell.export_dialog, estimate.as_ref())
+    {
         actions.push(PhotoAction::ExportDocument {
             path: request.path,
             quality: request.quality,

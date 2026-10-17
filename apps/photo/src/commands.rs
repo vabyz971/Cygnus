@@ -66,6 +66,11 @@ pub enum PhotoAction {
     OpenExportDialog,
     /// Export the active document (folder created by the app if needed).
     ExportDocument { path: PathBuf, quality: u8 },
+    /// Ask the worker to split the stack around a layer about to be
+    /// dragged (GPU drag proxy, no history).
+    PrepareDragProxy { layer: Uuid },
+    /// Ask the worker for an export size estimate (O006, dialog).
+    EstimateExportSize { ext: String, quality: u8 },
     /// Close the active tab.
     CloseTab,
     /// Undo / redo (worker).
@@ -125,6 +130,27 @@ pub enum PhotoAction {
         key: String,
         /// New value.
         value: f32,
+    },
+    /// Set a text parameter of a live filter (curve points, O005;
+    /// worker, coalesced continuous gesture).
+    SetFilterText {
+        /// Owning layer.
+        layer: Uuid,
+        /// Targeted filter.
+        filter: Uuid,
+        /// Parameter key (e.g. `"points"`).
+        key: String,
+        /// New value.
+        value: String,
+    },
+    /// Install a built-in adjustment preset (O005, one history step).
+    ApplyFilterPreset {
+        /// Owning layer.
+        layer: Uuid,
+        /// Targeted filter.
+        filter: Uuid,
+        /// Preset id (`photo_engine::presets_for`).
+        preset: String,
     },
     /// Select a layer (local UI state).
     SelectLayer(Uuid),

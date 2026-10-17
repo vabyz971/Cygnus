@@ -232,6 +232,28 @@ pub enum PhotoEngineCommand {
         /// New value.
         value: f32,
     },
+    /// Set a text parameter of a live filter (curve points, O005),
+    /// coalesced like [`Self::SetFilterParam`].
+    SetFilterText {
+        /// Owning pixel layer.
+        layer: Uuid,
+        /// Targeted filter.
+        filter: Uuid,
+        /// Parameter key (e.g. `"points"`).
+        key: String,
+        /// New value.
+        value: String,
+    },
+    /// Install a built-in preset on a live filter (O005): complete
+    /// parameter set, one discrete history step.
+    ApplyFilterPreset {
+        /// Owning pixel layer.
+        layer: Uuid,
+        /// Targeted filter.
+        filter: Uuid,
+        /// Preset id (`photo_engine::presets_for`).
+        preset: String,
+    },
     /// Enable/disable a mask (toggle, keeping its pixels).
     ToggleMask {
         /// Owner (layer or filter sub-layer).
@@ -274,10 +296,27 @@ pub enum PhotoEngineCommand {
     /// Delete a filter from a pixel layer.
     RemoveFilter { layer: Uuid, filter: Uuid },
     /// Export the composite (format inferred from the extension: png, jpg,
-    /// jpeg, gif — gif = first frame, no animated transparency).
+    /// jpeg, webp, tif, tiff, gif — gif = first frame, no animated
+    /// transparency).
     Export {
         /// Destination path.
         path: PathBuf,
+        /// JPEG quality 1..=100 (ignored outside JPEG).
+        quality: u8,
+    },
+    /// Split the stack around a layer about to be dragged (drag proxy):
+    /// replies `DragProxyReady` (below / layer / above textures) or
+    /// `DragProxyUnavailable` (stack not splittable). No history, no
+    /// mutation: the canvas then moves the layer GPU-side until release.
+    PrepareDragProxy {
+        /// Layer about to be dragged.
+        layer: Uuid,
+    },
+    /// Estimate the exported file size (O006, export dialog): replies
+    /// `ExportSizeEstimated`, no history, no render.
+    EstimateExportSize {
+        /// Format extension (`"png"`, `"jpg"`, `"webp"`, `"tiff"`…).
+        ext: String,
         /// JPEG quality 1..=100 (ignored outside JPEG).
         quality: u8,
     },
@@ -347,11 +386,15 @@ impl PhotoEngineCommand {
             Self::MoveFilterTo { .. } => "move_filter_to",
             Self::ToggleFilter { .. } => "toggle_filter",
             Self::SetFilterParam { .. } => "set_filter_param",
+            Self::SetFilterText { .. } => "set_filter_text",
+            Self::ApplyFilterPreset { .. } => "apply_filter_preset",
             Self::ToggleMask { .. } => "toggle_mask",
             Self::MoveMask { .. } => "move_mask",
             Self::MoveMaskTo { .. } => "move_mask_to",
             Self::RemoveFilter { .. } => "remove_filter",
             Self::Export { .. } => "export",
+            Self::EstimateExportSize { .. } => "estimate_export_size",
+            Self::PrepareDragProxy { .. } => "prepare_drag_proxy",
             Self::SaveProject { .. } => "save_project",
             Self::LoadProject { .. } => "load_project",
             Self::Refresh => "refresh",
@@ -433,6 +476,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::DeleteLayer(_)
         | PhotoEngineCommand::AddFilter { .. }
         | PhotoEngineCommand::SetFilterParam { .. }
+        | PhotoEngineCommand::SetFilterText { .. }
+        | PhotoEngineCommand::ApplyFilterPreset { .. }
         | PhotoEngineCommand::ToggleFilter { .. }
         | PhotoEngineCommand::ToggleMask { .. }
         | PhotoEngineCommand::MoveFilter { .. }
@@ -455,7 +500,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::StateOnly,
         ),
-        PhotoEngineCommand::Export { .. } | PhotoEngineCommand::SaveProject { .. } => {
+        PhotoEngineCommand::Export { .. }
+        | PhotoEngineCommand::EstimateExportSize { .. }
+        | PhotoEngineCommand::PrepareDragProxy { .. }
+        | PhotoEngineCommand::SaveProject { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)
         }
     }

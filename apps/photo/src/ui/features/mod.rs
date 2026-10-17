@@ -20,6 +20,7 @@
 //! actions bubbled as [`PhotoAction`](crate::commands::PhotoAction),
 //! cygnus-ui-only styling.
 
+pub mod histogram;
 pub mod history;
 pub mod inspector;
 pub mod layers;
