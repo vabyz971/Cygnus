@@ -10,12 +10,26 @@ struct Params {
     m: vec4<f32>,        // m00, m01, m10, m11
     t_size: vec4<f32>,   // tx, ty, layer width, layer height
     misc: vec4<f32>,     // opacity (0..1), blend mode id, target w, target h
+    // Coverage mask (R channel) multiplied into the layer alpha:
+    // mask pixel = target pixel - offset; `outside` beyond its bounds.
+    cover: vec4<f32>,    // offset x, offset y, outside value, enabled (0/1)
 };
 
 @group(0) @binding(0) var acc_in: texture_2d<f32>;
 @group(0) @binding(1) var layer: texture_2d<f32>;
 @group(0) @binding(2) var acc_out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<uniform> p: Params;
+@group(0) @binding(4) var cover: texture_2d<f32>;
+
+fn coverage(px: vec2<i32>) -> f32 {
+    if (p.cover.w < 0.5) { return 1.0; }
+    let mp = px - vec2<i32>(p.cover.xy);
+    let size = vec2<i32>(textureDimensions(cover));
+    if (mp.x < 0 || mp.y < 0 || mp.x >= size.x || mp.y >= size.y) {
+        return p.cover.z;
+    }
+    return textureLoad(cover, mp, 0).r;
+}
 
 fn blend_channel(b: f32, t: f32, mode: u32) -> f32 {
     if (mode == 1u) { return b * t; }
@@ -59,7 +73,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         p.m.z * center.x + p.m.w * center.y + p.t_size.y,
     );
     var t = sample_layer(q);
-    t.a = t.a * p.misc.x;
+    t.a = t.a * p.misc.x * coverage(px);
     if (t.a <= 0.001) {
         textureStore(acc_out, px, b);
         return;

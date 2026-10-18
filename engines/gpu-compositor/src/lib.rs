@@ -101,6 +101,8 @@ pub struct DrawGroup<'a> {
     pub opacity: f32,
     /// Blend mode id (see [`DrawLayer::blend`]).
     pub blend: u32,
+    /// Optional mask restricting the group (canvas space).
+    pub coverage: Option<Coverage<'a>>,
 }
 
 /// One element of a frame.
@@ -129,6 +131,20 @@ struct Params {
     m: [f32; 4],
     t_size: [f32; 4],
     misc: [f32; 4],
+    cover: [f32; 4],
+}
+
+/// Coverage mask: R channel (0..=255 → 0..=1) multiplying a group's
+/// alpha. Mask pixel = target pixel − `offset`; `outside` applies beyond
+/// its bounds (1 = visible, 0 = hidden).
+#[derive(Clone, Copy)]
+pub struct Coverage<'a> {
+    /// Mask pixels (upload with [`Compositor::upload_rgba`]).
+    pub texture: &'a LayerTexture,
+    /// Target pixel of the mask's top-left texel.
+    pub offset: (i32, i32),
+    /// Coverage beyond the mask bounds.
+    pub outside: f32,
 }
 
 /// Requests a device without any window (workers without UI, tests).
@@ -177,6 +193,36 @@ fn compute_pipeline(device: &wgpu::Device, source: &str, label: &str) -> wgpu::C
     })
 }
 
+/// 1x1 opaque white texture view (neutral coverage).
+fn white_texel(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("compositor-white"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &[255, 255, 255, 255],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: None,
+        },
+        size,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn mip_count(width: u32, height: u32) -> u32 {
     32 - width.max(height).max(1).leading_zeros()
 }
@@ -205,6 +251,8 @@ pub struct Compositor {
     present: wgpu::ComputePipeline,
     downsample: wgpu::ComputePipeline,
     targets: Option<Targets>,
+    /// 1x1 white coverage bound when a pass has no mask.
+    no_cover: wgpu::TextureView,
     /// Root accumulator holding the last frame (straight alpha).
     last_acc: usize,
 }
@@ -225,6 +273,7 @@ impl Compositor {
                 include_str!("shaders/downsample.wgsl"),
                 "downsample",
             ),
+            no_cover: white_texel(device, queue),
             device: device.clone(),
             queue: queue.clone(),
             targets: None,
@@ -371,6 +420,7 @@ impl Compositor {
         to_layer: Affine,
         opacity: f32,
         blend: u32,
+        coverage: Option<Coverage<'_>>,
         size: (u32, u32),
         keep_alive: &mut Vec<wgpu::Buffer>,
     ) {
@@ -388,6 +438,10 @@ impl Compositor {
                 size.0 as f32,
                 size.1 as f32,
             ],
+            cover: match coverage {
+                Some(c) => [c.offset.0 as f32, c.offset.1 as f32, c.outside, 1.0],
+                None => [0.0, 0.0, 1.0, 0.0],
+            },
         };
         let uniform = self
             .device
@@ -415,6 +469,12 @@ impl Compositor {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        coverage.map_or(&self.no_cover, |c| &c.texture.view),
+                    ),
                 },
             ],
         });
@@ -458,6 +518,7 @@ impl Compositor {
                     layer.to_layer,
                     layer.opacity,
                     layer.blend,
+                    None,
                     size,
                     keep_alive,
                 ),
@@ -475,6 +536,7 @@ impl Compositor {
                         Affine::placed_at(0.0, 0.0),
                         group.opacity,
                         group.blend,
+                        group.coverage,
                         size,
                         keep_alive,
                     );
@@ -813,6 +875,7 @@ mod tests {
                 items: vec![layer(&top)],
                 opacity: 0.5,
                 blend: 0,
+                coverage: None,
             }),
         ];
         c.composite_tree((1, 1), &items).expect("frame");
@@ -836,6 +899,7 @@ mod tests {
                 })],
                 opacity: 1.0,
                 blend: 0,
+                coverage: None,
             }),
         ];
         c.composite_tree((1, 1), &items).expect("frame");
@@ -846,12 +910,52 @@ mod tests {
                 items: vec![layer(&base)],
                 opacity: 1.0,
                 blend: 0,
+                coverage: None,
             })],
             opacity: 1.0,
             blend: 0,
+            coverage: None,
         })];
         c.composite_tree((1, 1), &nested).expect("frame");
         assert_eq!(c.read_rgba().expect("readback"), vec![200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn group_coverage_masks_with_offset_and_outside_value() {
+        let Some(mut c) = gpu() else { return };
+        let red = c
+            .upload_rgba(3, 1, &solid(3, 1, [255, 0, 0, 255]))
+            .expect("rouge");
+        // Mask 1x1: half coverage, placed at target x = 1.
+        let mask = c.upload_rgba(1, 1, &[128, 128, 128, 255]).expect("masque");
+        let group = |outside: f32| {
+            [DrawItem::Group(DrawGroup {
+                items: vec![DrawItem::Layer(DrawLayer {
+                    texture: &red,
+                    to_layer: Affine::placed_at(0.0, 0.0),
+                    opacity: 1.0,
+                    blend: 0,
+                })],
+                opacity: 1.0,
+                blend: 0,
+                coverage: Some(Coverage {
+                    texture: &mask,
+                    offset: (1, 0),
+                    outside,
+                }),
+            })]
+        };
+        c.composite_tree((3, 1), &group(1.0)).expect("frame");
+        let px = c.read_rgba().expect("readback");
+        assert_eq!(px[3], 255, "hors masque visible (outside = 1)");
+        assert!(
+            (i16::from(px[7]) - 128).abs() <= 1,
+            "demi-couverture : {px:?}"
+        );
+        assert_eq!(px[11], 255);
+        c.composite_tree((3, 1), &group(0.0)).expect("frame");
+        let px = c.read_rgba().expect("readback");
+        assert_eq!((px[3], px[11]), (0, 0), "hors masque caché (outside = 0)");
     }
 
     #[test]

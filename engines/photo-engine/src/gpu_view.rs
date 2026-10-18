@@ -24,15 +24,15 @@
 //! resolution, so the canvas can show real pixels when zoomed in.
 //!
 //! Scope: pixel and vector layers (any transform, opacity, blend mode)
-//! and groups, composited in isolation like the CPU path. Adjustment
-//! layers, group live filters / masks, clipped children and canvas-space
-//! vector masks keep the CPU path ([`GpuView::supports`]).
+//! and groups (masks included), composited in isolation like the CPU
+//! path. Adjustment layers, group live filters, clipped children and
+//! canvas-space vector masks keep the CPU path ([`GpuView::supports`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use gpu_compositor::request_headless_device;
-use gpu_compositor::{Affine, Compositor, DrawGroup, DrawItem, DrawLayer, LayerTexture};
+use gpu_compositor::{Affine, Compositor, Coverage, DrawGroup, DrawItem, DrawLayer, LayerTexture};
 use image::DynamicImage;
 use uuid::Uuid;
 
@@ -85,6 +85,8 @@ enum Plan {
         blend: u32,
     },
     Group {
+        /// Owner of a cached coverage texture (masked groups only).
+        mask: Option<Uuid>,
         items: Vec<Plan>,
         opacity: f32,
         blend: u32,
@@ -94,6 +96,7 @@ enum Plan {
 /// Plan → compositor items (textures borrowed from the cache).
 fn draw_items<'a>(
     textures: &'a HashMap<Uuid, (Arc<DynamicImage>, LayerTexture)>,
+    masks: &'a HashMap<Uuid, (u64, LayerTexture)>,
     plan: &[Plan],
     origin: (f32, f32),
 ) -> Vec<DrawItem<'a>> {
@@ -114,16 +117,48 @@ fn draw_items<'a>(
                 }))
             }
             Plan::Group {
+                mask,
                 items,
                 opacity,
                 blend,
             } => Some(DrawItem::Group(DrawGroup {
-                items: draw_items(textures, items, origin),
+                items: draw_items(textures, masks, items, origin),
                 opacity: *opacity,
                 blend: *blend,
+                // CPU convention: group masks sit at the accumulator's
+                // top-left, fully visible beyond their bounds.
+                coverage: mask
+                    .and_then(|id| masks.get(&id))
+                    .map(|(_, texture)| Coverage {
+                        texture,
+                        offset: (0, 0),
+                        outside: 1.0,
+                    }),
             })),
         })
         .collect()
+}
+
+/// CPU group-mask coverage (`combine_group_masks`): each mask contributes
+/// its R value (inverted if asked) inside its bounds and 255 beyond,
+/// multiplied with integer truncation; RGBA with coverage in R.
+fn group_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
+    let (w, h) = masks.iter().fold((0u32, 0u32), |(w, h), m| {
+        (w.max(m.image.width()), h.max(m.image.height()))
+    });
+    let mut cover = vec![255u8; w as usize * h as usize];
+    for m in masks {
+        let (mw, mh) = (m.image.width(), m.image.height());
+        for y in 0..mh {
+            for x in 0..mw {
+                let p = m.image.get_pixel(x, y)[0];
+                let v = if m.inverted { 255 - p } else { p };
+                let c = &mut cover[(y * w + x) as usize];
+                *c = ((u32::from(*c) * u32::from(v)) / 255) as u8;
+            }
+        }
+    }
+    cover.iter().flat_map(|&c| [c, c, c, 255]).collect()
 }
 
 /// Recursive support check (see the module docs).
@@ -131,11 +166,7 @@ fn supported(nodes: &[LayerNode]) -> bool {
     nodes.iter().filter(|n| n.visible()).all(|node| match node {
         LayerNode::Pixel(l) => l.children.is_empty(),
         LayerNode::Vector(v) => !v.masks.iter().any(|m| m.enabled),
-        LayerNode::Group(g) => {
-            !g.filter_layers.iter().any(|f| f.enabled)
-                && !g.masks.iter().any(|m| m.enabled)
-                && supported(&g.children)
-        }
+        LayerNode::Group(g) => !g.filter_layers.iter().any(|f| f.enabled) && supported(&g.children),
         LayerNode::Adjustment(_) => false,
     })
 }
@@ -144,6 +175,8 @@ fn supported(nodes: &[LayerNode]) -> bool {
 pub struct GpuView {
     compositor: Compositor,
     textures: HashMap<Uuid, (Arc<DynamicImage>, LayerTexture)>,
+    /// Combined group coverage per group id, keyed by mask signature.
+    masks: HashMap<Uuid, (u64, LayerTexture)>,
 }
 
 impl GpuView {
@@ -153,6 +186,7 @@ impl GpuView {
         Self {
             compositor: Compositor::new(device, queue),
             textures: HashMap::new(),
+            masks: HashMap::new(),
         }
     }
 
@@ -179,6 +213,31 @@ impl GpuView {
         Some(())
     }
 
+    /// Combined coverage of a group's enabled masks, uploaded when the
+    /// masks changed. `Some(None)` = no active mask; `None` = upload
+    /// failure (CPU fallback).
+    fn group_coverage(
+        &mut self,
+        id: Uuid,
+        masks: &[crate::document::LayerMask],
+    ) -> Option<Option<Uuid>> {
+        let active: Vec<_> = masks.iter().filter(|m| m.enabled).collect();
+        if active.is_empty() {
+            return Some(None);
+        }
+        let signature = crate::renderer::mask_signature(masks);
+        if self.masks.get(&id).is_some_and(|(s, _)| *s == signature) {
+            return Some(Some(id));
+        }
+        let rgba = group_coverage_rgba(&active);
+        let (w, h) = active.iter().fold((0, 0), |(w, h), m| {
+            (w.max(m.image.width()), h.max(m.image.height()))
+        });
+        let texture = self.compositor.upload_rgba(w, h, &rgba)?;
+        self.masks.insert(id, (signature, texture));
+        Some(Some(id))
+    }
+
     /// Plans `nodes` (bottom first), uploading changed appearances.
     fn plan(
         &mut self,
@@ -198,7 +257,12 @@ impl GpuView {
                     if g.opacity <= 0.01 {
                         continue;
                     }
+                    let mask = self.group_coverage(g.id, &g.masks)?;
+                    if mask.is_some() {
+                        live.push(g.id);
+                    }
                     out.push(Plan::Group {
+                        mask,
                         items: self.plan(&g.children, resolve, live)?,
                         opacity: g.opacity / 100.0,
                         blend: g.blend_mode.id(),
@@ -255,7 +319,8 @@ impl GpuView {
         let mut live = Vec::new();
         let plan = self.plan(nodes, resolve, &mut live)?;
         self.textures.retain(|id, _| live.contains(id));
-        let items = draw_items(&self.textures, &plan, origin);
+        self.masks.retain(|id, _| live.contains(id));
+        let items = draw_items(&self.textures, &self.masks, &plan, origin);
         let texture = self.compositor.composite_tree(size, &items)?.clone();
         Some(GpuFrame {
             texture,
@@ -503,14 +568,55 @@ mod tests {
     }
 
     #[test]
+    fn masked_groups_match_the_cpu_reference() {
+        let Some(mut view) = view() else { return };
+        for inverted in [false, true] {
+            let mut doc = Document::new(20, 14);
+            doc.push_layer(layer(
+                gradient(20, 14, 255, 20),
+                0.0,
+                0.0,
+                100.0,
+                BlendMode::Normal,
+            ));
+            let mut group = GroupLayer::new(
+                "masqué",
+                vec![layer(
+                    gradient(14, 10, 255, 21),
+                    3.0,
+                    2.0,
+                    100.0,
+                    BlendMode::Normal,
+                )],
+            );
+            // Gradient mask smaller than the frame: beyond it, visible.
+            let mut mask = crate::document::LayerMask::full(12, 8);
+            mask.image = Arc::new(ImageBuffer::from_fn(12, 8, |x, y| {
+                let v = ((x * 20 + y * 9) % 256) as u8;
+                Rgba([v, v, v, 255])
+            }));
+            mask.inverted = inverted;
+            group.masks.push(mask);
+            let mut second = crate::document::LayerMask::full(6, 6);
+            second.image = Arc::new(ImageBuffer::from_pixel(6, 6, Rgba([128, 128, 128, 255])));
+            group.masks.push(second);
+            group.opacity = 90.0;
+            doc.push_layer(LayerNode::Group(group));
+            assert_parity(&doc, &mut view, 1);
+        }
+    }
+
+    #[test]
     fn unsupported_content_keeps_the_cpu_path() {
         let mut doc = Document::new(8, 8);
         doc.push_layer(LayerNode::Group(GroupLayer::new("g", Vec::new())));
         assert!(GpuView::supports(&doc), "groupe simple pris en charge");
-        let mut masked = GroupLayer::new("m", Vec::new());
-        masked.masks.push(crate::document::LayerMask::full(8, 8));
-        doc.push_layer(LayerNode::Group(masked));
-        assert!(!GpuView::supports(&doc), "masque de groupe : chemin CPU");
+        let mut filtered = GroupLayer::new("f", Vec::new());
+        let mut f = crate::filters::new_filter_layer("levels").expect("connu");
+        f.enabled = true;
+        filtered.filter_layers.push(f);
+        doc.push_layer(LayerNode::Group(filtered));
+        assert!(!GpuView::supports(&doc), "filtre de groupe : chemin CPU");
         doc.root[1].set_visible(false);
         assert!(GpuView::supports(&doc), "un nœud masqué ne bloque pas");
         doc.push_layer(LayerNode::Adjustment(
