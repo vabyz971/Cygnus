@@ -60,6 +60,27 @@ pub fn apply_effect(img: &DynamicImage, brightness: f32, contrast: f32) -> Dynam
     DynamicImage::ImageRgba8(out)
 }
 
+/// The CPU path's per-channel mapping as a 256-entry table (same math
+/// as [`apply_effect`]'s fallback loop, value for value): lets other
+/// backends (the GPU compositor) apply it exactly.
+#[must_use]
+pub fn lut(brightness: f32, contrast: f32) -> [u8; 256] {
+    let b = (brightness * 2.55) as i32;
+    let contrast_factor = if contrast < 0.0 {
+        1.0 + contrast / 100.0
+    } else {
+        1.0 + contrast / 50.0
+    };
+    let mut table = [0u8; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        let mut v = i as f32;
+        v = (v - 128.0) * contrast_factor + 128.0;
+        v += b as f32;
+        *slot = v.clamp(0.0f32, 255.0f32) as u8;
+    }
+    table
+}
+
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
     let input = ctx.input()?;
     let b = ctx.param("brightness", 0.0);

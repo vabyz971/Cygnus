@@ -23,16 +23,20 @@
 //! symmetric plane as the CPU composite (same origin), at full document
 //! resolution, so the canvas can show real pixels when zoomed in.
 //!
-//! Scope: pixel and vector layers (any transform, opacity, blend mode)
-//! and groups (masks included), composited in isolation like the CPU
-//! path. Adjustment layers, group live filters, clipped children and
+//! Scope: pixel and vector layers (any transform, opacity, blend mode),
+//! groups (masks included) composited in isolation, and adjustment
+//! layers made of point-wise effects (levels, curves, brightness /
+//! contrast, saturation, HSL; masks included). Neighborhood effects
+//! (blur) in adjustments, group live filters, clipped children and
 //! canvas-space vector masks keep the CPU path ([`GpuView::supports`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use gpu_compositor::request_headless_device;
-use gpu_compositor::{Affine, Compositor, Coverage, DrawGroup, DrawItem, DrawLayer, LayerTexture};
+use gpu_compositor::{
+    Affine, Compositor, Coverage, DrawAdjust, DrawGroup, DrawItem, DrawLayer, LayerTexture, PixelOp,
+};
 use image::DynamicImage;
 use uuid::Uuid;
 
@@ -91,6 +95,79 @@ enum Plan {
         opacity: f32,
         blend: u32,
     },
+    Adjust {
+        /// Owner of a cached coverage texture (masked adjustments only).
+        mask: Option<Uuid>,
+        ops: Vec<PixelOp>,
+        opacity: f32,
+    },
+}
+
+/// Float parameter with the effect's default (as `NodeCtx::param`).
+fn param(f: &crate::document::FilterNode, key: &str, default: f32) -> f32 {
+    f.params
+        .get(key)
+        .and_then(datatypes::ParamValue::as_float)
+        .unwrap_or(default)
+}
+
+/// GPU steps of an adjustment chain, `None` when it holds an effect the
+/// GPU path does not evaluate (neighborhood ops like blur). Disabled and
+/// unknown effects are skipped, neutral ones dropped (the CPU leaves the
+/// pixels untouched for them too).
+fn pixel_ops(filters: &[crate::document::FilterNode]) -> Option<Vec<PixelOp>> {
+    use crate::nodes::{brightness_contrast, curves, hsl, levels};
+    let mut ops = Vec::new();
+    for f in filters.iter().filter(|f| f.enabled) {
+        crate::nodes::find(&f.type_id)?;
+        match f.type_id.as_str() {
+            levels::TYPE_ID => ops.push(PixelOp::Lut(Box::new(
+                levels::Levels {
+                    in_black: param(f, "in_black", 0.0),
+                    in_white: param(f, "in_white", 255.0),
+                    gamma: param(f, "gamma", 1.0),
+                    out_black: param(f, "out_black", 0.0),
+                    out_white: param(f, "out_white", 255.0),
+                }
+                .lut(),
+            ))),
+            curves::TYPE_ID => {
+                let text = match f.params.get(curves::POINTS_KEY) {
+                    Some(datatypes::ParamValue::Text(text)) => text.as_str(),
+                    _ => curves::IDENTITY,
+                };
+                ops.push(PixelOp::Lut(Box::new(curves::lut(&curves::parse_points(
+                    text,
+                )))));
+            }
+            "brightness_contrast" => ops.push(PixelOp::Lut(Box::new(brightness_contrast::lut(
+                param(f, "brightness", 0.0),
+                param(f, "contrast", 0.0),
+            )))),
+            "color_correct" => {
+                let s = param(f, "saturation", 1.0).clamp(0.0, 3.0);
+                if (s - 1.0).abs() >= 0.01 {
+                    ops.push(PixelOp::Saturation(s));
+                }
+            }
+            hsl::TYPE_ID => {
+                let (hue, saturation, lightness) = (
+                    param(f, "hue", 0.0),
+                    param(f, "saturation", 0.0),
+                    param(f, "lightness", 0.0),
+                );
+                if hue.abs() >= 0.01 || saturation.abs() >= 0.01 || lightness.abs() >= 0.01 {
+                    ops.push(PixelOp::Hsl {
+                        hue,
+                        saturation,
+                        lightness,
+                    });
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(ops)
 }
 
 /// Plan → compositor items (textures borrowed from the cache).
@@ -135,6 +212,19 @@ fn draw_items<'a>(
                         outside: 1.0,
                     }),
             })),
+            Plan::Adjust { mask, ops, opacity } => Some(DrawItem::Adjust(DrawAdjust {
+                ops: ops.clone(),
+                opacity: *opacity,
+                // CPU convention: adjustment masks live in document space
+                // (buffer − rounded origin), hidden beyond their bounds.
+                coverage: mask
+                    .and_then(|id| masks.get(&id))
+                    .map(|(_, texture)| Coverage {
+                        texture,
+                        offset: (origin.0.round() as i32, origin.1.round() as i32),
+                        outside: 0.0,
+                    }),
+            })),
         })
         .collect()
 }
@@ -161,13 +251,39 @@ fn group_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
     cover.iter().flat_map(|&c| [c, c, c, 255]).collect()
 }
 
+/// CPU adjustment-mask coverage (`combined_adjustment_coverage`): each
+/// mask contributes its R value (inverted if asked) inside its bounds and
+/// 0 beyond, multiplied with integer truncation; RGBA with coverage in R.
+fn adjustment_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
+    let (w, h) = masks.iter().fold((0u32, 0u32), |(w, h), m| {
+        (w.max(m.image.width()), h.max(m.image.height()))
+    });
+    let mut cover = vec![255u8; w as usize * h as usize];
+    for m in masks {
+        let (mw, mh) = (m.image.width(), m.image.height());
+        for y in 0..h {
+            for x in 0..w {
+                let v = if x < mw && y < mh {
+                    let p = m.image.get_pixel(x, y)[0];
+                    if m.inverted { 255 - p } else { p }
+                } else {
+                    0
+                };
+                let c = &mut cover[(y * w + x) as usize];
+                *c = ((u32::from(*c) * u32::from(v)) / 255) as u8;
+            }
+        }
+    }
+    cover.iter().flat_map(|&c| [c, c, c, 255]).collect()
+}
+
 /// Recursive support check (see the module docs).
 fn supported(nodes: &[LayerNode]) -> bool {
     nodes.iter().filter(|n| n.visible()).all(|node| match node {
         LayerNode::Pixel(l) => l.children.is_empty(),
         LayerNode::Vector(v) => !v.masks.iter().any(|m| m.enabled),
         LayerNode::Group(g) => !g.filter_layers.iter().any(|f| f.enabled) && supported(&g.children),
-        LayerNode::Adjustment(_) => false,
+        LayerNode::Adjustment(a) => pixel_ops(&a.filters).is_some(),
     })
 }
 
@@ -213,13 +329,15 @@ impl GpuView {
         Some(())
     }
 
-    /// Combined coverage of a group's enabled masks, uploaded when the
-    /// masks changed. `Some(None)` = no active mask; `None` = upload
-    /// failure (CPU fallback).
-    fn group_coverage(
+    /// Combined coverage of an owner's enabled masks (`combine` = the
+    /// owner kind's CPU convention), uploaded when the masks changed.
+    /// `Some(None)` = no active mask; `None` = upload failure (CPU
+    /// fallback).
+    fn coverage(
         &mut self,
         id: Uuid,
         masks: &[crate::document::LayerMask],
+        combine: fn(&[&crate::document::LayerMask]) -> Vec<u8>,
     ) -> Option<Option<Uuid>> {
         let active: Vec<_> = masks.iter().filter(|m| m.enabled).collect();
         if active.is_empty() {
@@ -229,7 +347,7 @@ impl GpuView {
         if self.masks.get(&id).is_some_and(|(s, _)| *s == signature) {
             return Some(Some(id));
         }
-        let rgba = group_coverage_rgba(&active);
+        let rgba = combine(&active);
         let (w, h) = active.iter().fold((0, 0), |(w, h), m| {
             (w.max(m.image.width()), h.max(m.image.height()))
         });
@@ -257,7 +375,7 @@ impl GpuView {
                     if g.opacity <= 0.01 {
                         continue;
                     }
-                    let mask = self.group_coverage(g.id, &g.masks)?;
+                    let mask = self.coverage(g.id, &g.masks, group_coverage_rgba)?;
                     if mask.is_some() {
                         live.push(g.id);
                     }
@@ -269,7 +387,25 @@ impl GpuView {
                     });
                     continue;
                 }
-                LayerNode::Adjustment(_) => return None,
+                LayerNode::Adjustment(a) => {
+                    if a.opacity <= 0.01 {
+                        continue;
+                    }
+                    let ops = pixel_ops(&a.filters)?;
+                    if ops.is_empty() {
+                        continue;
+                    }
+                    let mask = self.coverage(a.id, &a.masks, adjustment_coverage_rgba)?;
+                    if mask.is_some() {
+                        live.push(a.id);
+                    }
+                    out.push(Plan::Adjust {
+                        mask,
+                        ops,
+                        opacity: a.opacity / 100.0,
+                    });
+                    continue;
+                }
             };
             if opacity <= 0.01 {
                 continue;
@@ -606,6 +742,133 @@ mod tests {
         }
     }
 
+    fn node(
+        type_id: &str,
+        params: &[(&str, datatypes::ParamValue)],
+    ) -> crate::document::FilterNode {
+        let mut f = crate::document::FilterNode::new(type_id);
+        f.enabled = true;
+        for (k, v) in params {
+            f.params.insert((*k).to_owned(), v.clone());
+        }
+        f
+    }
+
+    fn adjustment(
+        filters: Vec<crate::document::FilterNode>,
+        opacity: f32,
+    ) -> crate::document::AdjustmentLayer {
+        let mut a = crate::document::AdjustmentLayer::new("réglage", filters);
+        a.opacity = opacity;
+        a
+    }
+
+    #[test]
+    fn adjustments_match_the_cpu_reference() {
+        use datatypes::ParamValue::{Float, Text};
+        let Some(mut view) = view() else { return };
+        let chains = vec![
+            vec![node(
+                "levels",
+                &[("in_black", Float(30.0)), ("gamma", Float(1.4))],
+            )],
+            vec![node(
+                "curves",
+                &[("points", Text(String::from("0,0;64,40;192,215;255,255")))],
+            )],
+            vec![node(
+                "brightness_contrast",
+                &[("brightness", Float(20.0)), ("contrast", Float(-30.0))],
+            )],
+            vec![node("color_correct", &[("saturation", Float(0.4))])],
+            vec![node(
+                "hsl",
+                &[
+                    ("hue", Float(45.0)),
+                    ("saturation", Float(30.0)),
+                    ("lightness", Float(-20.0)),
+                ],
+            )],
+            vec![
+                node("levels", &[("out_white", Float(220.0))]),
+                node("hsl", &[("hue", Float(-90.0))]),
+                node("color_correct", &[("saturation", Float(1.8))]),
+            ],
+        ];
+        for chain in chains {
+            // One step: within one level. Chained steps: a one-level float
+            // difference (HSL) can be amplified by the next step (a 1.8x
+            // saturation turns it into two).
+            let tolerance = if chain.len() > 1 { 2 } else { 1 };
+            for opacity in [100.0, 55.0] {
+                let mut doc = Document::new(20, 14);
+                doc.push_layer(layer(
+                    gradient(20, 14, 255, 30),
+                    0.0,
+                    0.0,
+                    100.0,
+                    BlendMode::Normal,
+                ));
+                doc.push_layer(layer(
+                    gradient(10, 8, 200, 31),
+                    4.0,
+                    3.0,
+                    80.0,
+                    BlendMode::Normal,
+                ));
+                doc.push_layer(LayerNode::Adjustment(adjustment(chain.clone(), opacity)));
+                assert_parity(&doc, &mut view, tolerance);
+            }
+        }
+    }
+
+    #[test]
+    fn masked_adjustments_and_adjustments_in_groups_match() {
+        use datatypes::ParamValue::Float;
+        let Some(mut view) = view() else { return };
+        for inverted in [false, true] {
+            let mut doc = Document::new(20, 14);
+            doc.push_layer(layer(
+                gradient(20, 14, 255, 40),
+                0.0,
+                0.0,
+                100.0,
+                BlendMode::Normal,
+            ));
+            // A layer sticking out grows the plane: the document-space
+            // mask must follow the origin.
+            doc.push_layer(layer(
+                gradient(8, 8, 255, 41),
+                15.0,
+                -4.0,
+                100.0,
+                BlendMode::Normal,
+            ));
+            let mut adj = adjustment(vec![node("levels", &[("in_white", Float(150.0))])], 100.0);
+            let mut mask = crate::document::LayerMask::full(20, 14);
+            mask.image = Arc::new(ImageBuffer::from_fn(20, 14, |x, y| {
+                let v = ((x * 13 + y * 17) % 256) as u8;
+                Rgba([v, v, v, 255])
+            }));
+            mask.inverted = inverted;
+            adj.masks.push(mask);
+            doc.push_layer(LayerNode::Adjustment(adj));
+            // Adjustment inside a group: applies to the group only.
+            let group = GroupLayer::new(
+                "groupe",
+                vec![
+                    layer(gradient(10, 6, 255, 42), 2.0, 6.0, 100.0, BlendMode::Normal),
+                    LayerNode::Adjustment(adjustment(
+                        vec![node("color_correct", &[("saturation", Float(0.0))])],
+                        70.0,
+                    )),
+                ],
+            );
+            doc.push_layer(LayerNode::Group(group));
+            assert_parity(&doc, &mut view, 1);
+        }
+    }
+
     #[test]
     fn unsupported_content_keeps_the_cpu_path() {
         let mut doc = Document::new(8, 8);
@@ -619,9 +882,14 @@ mod tests {
         assert!(!GpuView::supports(&doc), "filtre de groupe : chemin CPU");
         doc.root[1].set_visible(false);
         assert!(GpuView::supports(&doc), "un nœud masqué ne bloque pas");
+        let mut blur = crate::document::FilterNode::new("blur");
+        blur.enabled = true;
         doc.push_layer(LayerNode::Adjustment(
-            crate::document::AdjustmentLayer::new("réglage", Vec::new()),
+            crate::document::AdjustmentLayer::new("flou", vec![blur]),
         ));
-        assert!(!GpuView::supports(&doc), "calque de réglage : chemin CPU");
+        assert!(
+            !GpuView::supports(&doc),
+            "réglage de voisinage : chemin CPU"
+        );
     }
 }

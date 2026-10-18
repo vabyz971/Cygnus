@@ -2700,12 +2700,14 @@ mod tests {
                 ..
             }
         ));
-        // ...adjustment layers keep the CPU path.
+        // ...neighborhood adjustments (blur) keep the CPU path.
+        let mut blur = crate::document::FilterNode::new("blur");
+        blur.enabled = true;
         worker
             .document
             .push_layer(LayerNode::Adjustment(crate::AdjustmentLayer::new(
-                "réglage",
-                Vec::new(),
+                "flou",
+                vec![blur],
             )));
         let adjusted = worker.apply(PhotoEngineCommand::Refresh);
         assert!(matches!(
