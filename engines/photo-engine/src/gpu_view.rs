@@ -23,15 +23,16 @@
 //! symmetric plane as the CPU composite (same origin), at full document
 //! resolution, so the canvas can show real pixels when zoomed in.
 //!
-//! Scope (v1): flat stacks of pixel and vector layers (any transform,
-//! opacity, blend mode). Groups, adjustment layers, clipped children and
-//! canvas-space vector masks keep the CPU path ([`GpuView::supports`]).
+//! Scope: pixel and vector layers (any transform, opacity, blend mode)
+//! and groups, composited in isolation like the CPU path. Adjustment
+//! layers, group live filters / masks, clipped children and canvas-space
+//! vector masks keep the CPU path ([`GpuView::supports`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use gpu_compositor::request_headless_device;
-use gpu_compositor::{Affine, Compositor, DrawLayer, LayerTexture};
+use gpu_compositor::{Affine, Compositor, DrawGroup, DrawItem, DrawLayer, LayerTexture};
 use image::DynamicImage;
 use uuid::Uuid;
 
@@ -75,6 +76,70 @@ fn to_layer(transform: &Transform2D, size: (u32, u32), origin: (f32, f32)) -> Op
     })
 }
 
+/// What one frame draws, before textures are borrowed.
+enum Plan {
+    Layer {
+        id: Uuid,
+        transform: Transform2D,
+        opacity: f32,
+        blend: u32,
+    },
+    Group {
+        items: Vec<Plan>,
+        opacity: f32,
+        blend: u32,
+    },
+}
+
+/// Plan → compositor items (textures borrowed from the cache).
+fn draw_items<'a>(
+    textures: &'a HashMap<Uuid, (Arc<DynamicImage>, LayerTexture)>,
+    plan: &[Plan],
+    origin: (f32, f32),
+) -> Vec<DrawItem<'a>> {
+    plan.iter()
+        .filter_map(|step| match step {
+            Plan::Layer {
+                id,
+                transform,
+                opacity,
+                blend,
+            } => {
+                let (_, texture) = textures.get(id)?;
+                Some(DrawItem::Layer(DrawLayer {
+                    texture,
+                    to_layer: to_layer(transform, texture.size(), origin)?,
+                    opacity: *opacity,
+                    blend: *blend,
+                }))
+            }
+            Plan::Group {
+                items,
+                opacity,
+                blend,
+            } => Some(DrawItem::Group(DrawGroup {
+                items: draw_items(textures, items, origin),
+                opacity: *opacity,
+                blend: *blend,
+            })),
+        })
+        .collect()
+}
+
+/// Recursive support check (see the module docs).
+fn supported(nodes: &[LayerNode]) -> bool {
+    nodes.iter().filter(|n| n.visible()).all(|node| match node {
+        LayerNode::Pixel(l) => l.children.is_empty(),
+        LayerNode::Vector(v) => !v.masks.iter().any(|m| m.enabled),
+        LayerNode::Group(g) => {
+            !g.filter_layers.iter().any(|f| f.enabled)
+                && !g.masks.iter().any(|m| m.enabled)
+                && supported(&g.children)
+        }
+        LayerNode::Adjustment(_) => false,
+    })
+}
+
 /// GPU renderer of one document: compositor + layer texture cache.
 pub struct GpuView {
     compositor: Compositor,
@@ -95,15 +160,7 @@ impl GpuView {
     /// (see the module docs); hidden nodes never block it.
     #[must_use]
     pub fn supports(document: &Document) -> bool {
-        document
-            .root
-            .iter()
-            .filter(|n| n.visible())
-            .all(|node| match node {
-                LayerNode::Pixel(l) => l.children.is_empty(),
-                LayerNode::Vector(v) => !v.masks.iter().any(|m| m.enabled),
-                LayerNode::Group(_) | LayerNode::Adjustment(_) => false,
-            })
+        supported(&document.root)
     }
 
     /// Texture of `id`'s appearance, uploaded when it changed.
@@ -120,6 +177,52 @@ impl GpuView {
             self.textures.insert(id, (Arc::clone(image), texture));
         }
         Some(())
+    }
+
+    /// Plans `nodes` (bottom first), uploading changed appearances.
+    fn plan(
+        &mut self,
+        nodes: &[LayerNode],
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        live: &mut Vec<Uuid>,
+    ) -> Option<Vec<Plan>> {
+        let mut out = Vec::new();
+        for node in nodes.iter().filter(|n| n.visible()) {
+            let (id, transform, opacity, mode) = match node {
+                LayerNode::Pixel(l) => (l.id, l.transform, l.opacity, l.blend_mode),
+                LayerNode::Vector(v) => match v.placement() {
+                    Some(placed) => (v.id, placed, v.opacity, v.blend_mode),
+                    None => continue,
+                },
+                LayerNode::Group(g) => {
+                    if g.opacity <= 0.01 {
+                        continue;
+                    }
+                    out.push(Plan::Group {
+                        items: self.plan(&g.children, resolve, live)?,
+                        opacity: g.opacity / 100.0,
+                        blend: g.blend_mode.id(),
+                    });
+                    continue;
+                }
+                LayerNode::Adjustment(_) => return None,
+            };
+            if opacity <= 0.01 {
+                continue;
+            }
+            let Some(image) = resolve(id) else {
+                continue;
+            };
+            self.texture(id, &image)?;
+            live.push(id);
+            out.push(Plan::Layer {
+                id,
+                transform,
+                opacity: opacity / 100.0,
+                blend: mode.id(),
+            });
+        }
+        Some(out)
     }
 
     /// Composites the document (appearances from `resolve`). `None` when
@@ -149,41 +252,11 @@ impl GpuView {
             half_w - document.width as f32 / 2.0,
             half_h - document.height as f32 / 2.0,
         );
-        // Placement of each visible layer, bottom first.
-        let mut plan: Vec<(Uuid, Transform2D, f32, u32)> = Vec::new();
-        for node in nodes.iter().filter(|n| n.visible()) {
-            let (id, transform, opacity, mode) = match node {
-                LayerNode::Pixel(l) => (l.id, l.transform, l.opacity, l.blend_mode),
-                LayerNode::Vector(v) => match v.placement() {
-                    Some(placed) => (v.id, placed, v.opacity, v.blend_mode),
-                    None => continue,
-                },
-                _ => continue,
-            };
-            if opacity <= 0.01 {
-                continue;
-            }
-            let Some(image) = resolve(id) else {
-                continue;
-            };
-            self.texture(id, &image)?;
-            plan.push((id, transform, opacity / 100.0, mode.id()));
-        }
-        self.textures
-            .retain(|id, _| plan.iter().any(|(p, ..)| p == id));
-        let layers: Vec<DrawLayer<'_>> = plan
-            .iter()
-            .filter_map(|(id, transform, opacity, blend)| {
-                let (_, texture) = self.textures.get(id)?;
-                Some(DrawLayer {
-                    texture,
-                    to_layer: to_layer(transform, texture.size(), origin)?,
-                    opacity: *opacity,
-                    blend: *blend,
-                })
-            })
-            .collect();
-        let texture = self.compositor.composite(size, &layers)?.clone();
+        let mut live = Vec::new();
+        let plan = self.plan(nodes, resolve, &mut live)?;
+        self.textures.retain(|id, _| live.contains(id));
+        let items = draw_items(&self.textures, &plan, origin);
+        let texture = self.compositor.composite_tree(size, &items)?.clone();
         Some(GpuFrame {
             texture,
             size,
@@ -387,11 +460,62 @@ mod tests {
     }
 
     #[test]
-    fn groups_keep_the_cpu_path() {
+    fn groups_match_the_cpu_reference() {
+        let Some(mut view) = view() else { return };
+        for (group_mode, child_mode) in [
+            (BlendMode::Normal, BlendMode::Normal),
+            (BlendMode::Multiply, BlendMode::Normal),
+            (BlendMode::Normal, BlendMode::Screen),
+            (BlendMode::Overlay, BlendMode::Darken),
+        ] {
+            let mut doc = Document::new(24, 16);
+            doc.push_layer(layer(
+                gradient(24, 16, 255, 10),
+                0.0,
+                0.0,
+                100.0,
+                BlendMode::Normal,
+            ));
+            let mut inner = GroupLayer::new(
+                "dedans",
+                vec![layer(gradient(6, 6, 220, 11), 2.0, 2.0, 100.0, child_mode)],
+            );
+            inner.opacity = 80.0;
+            let mut group = GroupLayer::new(
+                "groupe",
+                vec![
+                    layer(
+                        gradient(12, 10, 255, 12),
+                        4.0,
+                        3.0,
+                        100.0,
+                        BlendMode::Normal,
+                    ),
+                    layer(gradient(8, 8, 180, 13), 9.0, 5.0, 70.0, child_mode),
+                    LayerNode::Group(inner),
+                ],
+            );
+            group.opacity = 60.0;
+            group.blend_mode = group_mode;
+            doc.push_layer(LayerNode::Group(group));
+            assert_parity(&doc, &mut view, 1);
+        }
+    }
+
+    #[test]
+    fn unsupported_content_keeps_the_cpu_path() {
         let mut doc = Document::new(8, 8);
         doc.push_layer(LayerNode::Group(GroupLayer::new("g", Vec::new())));
-        assert!(!GpuView::supports(&doc));
-        doc.root[0].set_visible(false);
-        assert!(GpuView::supports(&doc), "un groupe masqué ne bloque pas");
+        assert!(GpuView::supports(&doc), "groupe simple pris en charge");
+        let mut masked = GroupLayer::new("m", Vec::new());
+        masked.masks.push(crate::document::LayerMask::full(8, 8));
+        doc.push_layer(LayerNode::Group(masked));
+        assert!(!GpuView::supports(&doc), "masque de groupe : chemin CPU");
+        doc.root[1].set_visible(false);
+        assert!(GpuView::supports(&doc), "un nœud masqué ne bloque pas");
+        doc.push_layer(LayerNode::Adjustment(
+            crate::document::AdjustmentLayer::new("réglage", Vec::new()),
+        ));
+        assert!(!GpuView::supports(&doc), "calque de réglage : chemin CPU");
     }
 }

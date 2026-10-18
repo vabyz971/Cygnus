@@ -2617,12 +2617,27 @@ mod tests {
                 ..
             }
         ));
-        // A group: CPU path only.
+        // Groups render on the GPU too...
         let ids = vec![worker.document.root[0].id()];
         let _ = worker.document.group(&ids, "g");
         let grouped = worker.apply(PhotoEngineCommand::Refresh);
         assert!(matches!(
             grouped,
+            PhotoEngineResponse::LayersChanged {
+                gpu_frame: Some(_),
+                ..
+            }
+        ));
+        // ...adjustment layers keep the CPU path.
+        worker
+            .document
+            .push_layer(LayerNode::Adjustment(crate::AdjustmentLayer::new(
+                "réglage",
+                Vec::new(),
+            )));
+        let adjusted = worker.apply(PhotoEngineCommand::Refresh);
+        assert!(matches!(
+            adjusted,
             PhotoEngineResponse::LayersChanged {
                 gpu_frame: None,
                 ..
