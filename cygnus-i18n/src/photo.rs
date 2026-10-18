@@ -441,6 +441,34 @@ pub enum PhotoTextKey {
     FilterNameCurves,
     /// Live filter name.
     FilterNameHsl,
+    /// Minimize the window.
+    WindowMinimize,
+    /// Maximize / restore the window.
+    WindowMaximize,
+    /// Adjustments section title (focused filter or mask).
+    AdjustmentsTitle,
+    /// Adjustments section caption.
+    NonDestructive,
+    /// Adjustments section empty state.
+    AdjustmentsEmpty,
+    /// Histogram axis: middle tones.
+    HistogramMidtones,
+    /// Histogram statistic: mean.
+    HistogramMean,
+    /// Histogram statistic: standard deviation.
+    HistogramStdDev,
+    /// Hide a dock panel (section menu).
+    HidePanel,
+    /// Document channel depth (8 bits).
+    BitDepth8,
+    /// Tool switcher tooltip.
+    ToolLabel,
+    /// Swap primary and secondary colors.
+    SwapColors,
+    /// Primary (brush) color swatch.
+    PrimaryColor,
+    /// Secondary color swatch.
+    SecondaryColor,
 }
 
 /// Photo catalog bound to a language.
@@ -660,6 +688,20 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::FilterNameLevels,
     PhotoTextKey::FilterNameCurves,
     PhotoTextKey::FilterNameHsl,
+    PhotoTextKey::WindowMinimize,
+    PhotoTextKey::WindowMaximize,
+    PhotoTextKey::AdjustmentsTitle,
+    PhotoTextKey::NonDestructive,
+    PhotoTextKey::AdjustmentsEmpty,
+    PhotoTextKey::HistogramMidtones,
+    PhotoTextKey::HistogramMean,
+    PhotoTextKey::HistogramStdDev,
+    PhotoTextKey::HidePanel,
+    PhotoTextKey::BitDepth8,
+    PhotoTextKey::ToolLabel,
+    PhotoTextKey::SwapColors,
+    PhotoTextKey::PrimaryColor,
+    PhotoTextKey::SecondaryColor,
 ];
 
 impl PhotoCatalog {
@@ -897,6 +939,20 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::FilterNameLevels => "Niveaux",
         PhotoTextKey::FilterNameCurves => "Courbes",
         PhotoTextKey::FilterNameHsl => "Teinte / Saturation / Luminosité",
+        PhotoTextKey::WindowMinimize => "Réduire",
+        PhotoTextKey::WindowMaximize => "Agrandir",
+        PhotoTextKey::AdjustmentsTitle => "Réglages",
+        PhotoTextKey::NonDestructive => "Non destructif",
+        PhotoTextKey::AdjustmentsEmpty => "Sélectionnez un filtre ou un masque dans les calques",
+        PhotoTextKey::HistogramMidtones => "Tons moyens",
+        PhotoTextKey::HistogramMean => "Moyenne",
+        PhotoTextKey::HistogramStdDev => "Écart type",
+        PhotoTextKey::HidePanel => "Masquer le panneau",
+        PhotoTextKey::BitDepth8 => "8 bits",
+        PhotoTextKey::ToolLabel => "Outil",
+        PhotoTextKey::SwapColors => "Permuter les couleurs",
+        PhotoTextKey::PrimaryColor => "Couleur principale",
+        PhotoTextKey::SecondaryColor => "Couleur secondaire",
     }
 }
 
@@ -1114,6 +1170,20 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::FilterNameLevels => "Levels",
         PhotoTextKey::FilterNameCurves => "Curves",
         PhotoTextKey::FilterNameHsl => "Hue / Saturation / Lightness",
+        PhotoTextKey::WindowMinimize => "Minimize",
+        PhotoTextKey::WindowMaximize => "Maximize",
+        PhotoTextKey::AdjustmentsTitle => "Adjustments",
+        PhotoTextKey::NonDestructive => "Non-destructive",
+        PhotoTextKey::AdjustmentsEmpty => "Select a filter or mask in the layers",
+        PhotoTextKey::HistogramMidtones => "Midtones",
+        PhotoTextKey::HistogramMean => "Mean",
+        PhotoTextKey::HistogramStdDev => "Std. dev.",
+        PhotoTextKey::HidePanel => "Hide panel",
+        PhotoTextKey::BitDepth8 => "8-bit",
+        PhotoTextKey::ToolLabel => "Tool",
+        PhotoTextKey::SwapColors => "Swap colors",
+        PhotoTextKey::PrimaryColor => "Primary color",
+        PhotoTextKey::SecondaryColor => "Secondary color",
     }
 }
 
