@@ -97,7 +97,7 @@ struct MaskDto {
 }
 
 fn default_mask_name() -> String {
-    String::from("Masque")
+    String::from("Mask")
 }
 
 #[derive(Serialize, Deserialize)]

@@ -605,7 +605,9 @@ fn draw_layers_panel(
                 .style(menu_style(theme))
                 .show(|ui| {
                     for (name, type_id) in filter_types {
-                        if menu_row(ui, theme, name) {
+                        let label =
+                            crate::ui::naming::filter_display_name(type_id, texts).unwrap_or(name);
+                        if menu_row(ui, theme, label) {
                             if let Some(layer) = sel.selected {
                                 actions.push(LayerPanelAction::AddFilter {
                                     layer,

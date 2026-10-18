@@ -51,12 +51,12 @@ impl Document {
     /// Blank document with a first opaque WHITE layer at the
     /// document dimensions (« Créer un document » without an image,
     /// Affinity-style: white background, no transparent checkerboard).
-    pub fn with_blank_layer(width: u32, height: u32) -> Self {
+    pub fn with_blank_layer(width: u32, height: u32, name: impl Into<String>) -> Self {
         let mut doc = Self::new(width.max(1), height.max(1));
         let white =
             image::RgbaImage::from_pixel(doc.width, doc.height, image::Rgba([255, 255, 255, 255]));
         doc.push_layer(LayerNode::Pixel(PixelLayer::new(
-            "Calque 1",
+            name,
             Arc::new(DynamicImage::ImageRgba8(white)),
         )));
         doc
@@ -515,7 +515,7 @@ impl Document {
     /// Groups the given nodes (same siblings) into a new group inserted
     /// in place of the lowest one. The stack's relative order is
     /// preserved. Returns the created group's id.
-    pub fn group(&mut self, ids: &[Uuid]) -> Option<Uuid> {
+    pub fn group(&mut self, ids: &[Uuid], name: impl Into<String>) -> Option<Uuid> {
         let first = *ids.first()?;
         let (list, _) = find_owner_list(&mut self.root, first)?;
         // Positions computed once, sorted (stack order)
@@ -530,7 +530,7 @@ impl Document {
             children.push(list.remove(i));
         }
         children.reverse();
-        let group = LayerNode::Group(GroupLayer::new("Groupe", children));
+        let group = LayerNode::Group(GroupLayer::new(name, children));
         let gid = group.id();
         let at = (*idxs.first()?).min(list.len());
         list.insert(at, group);

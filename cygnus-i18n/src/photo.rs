@@ -419,6 +419,28 @@ pub enum PhotoTextKey {
     ErrorProjectVersionHint,
     /// Error: project load failed.
     ErrorLoadProject,
+    /// Base name of a new pixel layer.
+    DefaultLayerName,
+    /// Base name of a new vector shape.
+    DefaultShapeName,
+    /// Base name of a new mask.
+    DefaultMaskName,
+    /// Name of a new group.
+    DefaultGroupName,
+    /// Title of a new unsaved document.
+    UntitledDocument,
+    /// Live filter name.
+    FilterNameBrightnessContrast,
+    /// Live filter name.
+    FilterNameBlur,
+    /// Live filter name.
+    FilterNameColorCorrect,
+    /// Live filter name.
+    FilterNameLevels,
+    /// Live filter name.
+    FilterNameCurves,
+    /// Live filter name.
+    FilterNameHsl,
 }
 
 /// Photo catalog bound to a language.
@@ -627,6 +649,17 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::ErrorUnsupportedProjectVersion,
     PhotoTextKey::ErrorProjectVersionHint,
     PhotoTextKey::ErrorLoadProject,
+    PhotoTextKey::DefaultLayerName,
+    PhotoTextKey::DefaultShapeName,
+    PhotoTextKey::DefaultMaskName,
+    PhotoTextKey::DefaultGroupName,
+    PhotoTextKey::UntitledDocument,
+    PhotoTextKey::FilterNameBrightnessContrast,
+    PhotoTextKey::FilterNameBlur,
+    PhotoTextKey::FilterNameColorCorrect,
+    PhotoTextKey::FilterNameLevels,
+    PhotoTextKey::FilterNameCurves,
+    PhotoTextKey::FilterNameHsl,
 ];
 
 impl PhotoCatalog {
@@ -853,6 +886,17 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
             "les projets au format 1 et 2 ne sont plus lisibles"
         }
         PhotoTextKey::ErrorLoadProject => "Ouverture du projet impossible",
+        PhotoTextKey::DefaultLayerName => "Calque",
+        PhotoTextKey::DefaultShapeName => "Forme",
+        PhotoTextKey::DefaultMaskName => "Masque",
+        PhotoTextKey::DefaultGroupName => "Groupe",
+        PhotoTextKey::UntitledDocument => "Sans titre",
+        PhotoTextKey::FilterNameBrightnessContrast => "Luminosité / Contraste",
+        PhotoTextKey::FilterNameBlur => "Flou",
+        PhotoTextKey::FilterNameColorCorrect => "Correction couleur",
+        PhotoTextKey::FilterNameLevels => "Niveaux",
+        PhotoTextKey::FilterNameCurves => "Courbes",
+        PhotoTextKey::FilterNameHsl => "Teinte / Saturation / Luminosité",
     }
 }
 
@@ -1059,6 +1103,17 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::ErrorUnsupportedProjectVersion => "Unsupported project version",
         PhotoTextKey::ErrorProjectVersionHint => "projects in format 1 and 2 can no longer be read",
         PhotoTextKey::ErrorLoadProject => "Cannot open the project",
+        PhotoTextKey::DefaultLayerName => "Layer",
+        PhotoTextKey::DefaultShapeName => "Shape",
+        PhotoTextKey::DefaultMaskName => "Mask",
+        PhotoTextKey::DefaultGroupName => "Group",
+        PhotoTextKey::UntitledDocument => "Untitled",
+        PhotoTextKey::FilterNameBrightnessContrast => "Brightness / Contrast",
+        PhotoTextKey::FilterNameBlur => "Blur",
+        PhotoTextKey::FilterNameColorCorrect => "Color correction",
+        PhotoTextKey::FilterNameLevels => "Levels",
+        PhotoTextKey::FilterNameCurves => "Curves",
+        PhotoTextKey::FilterNameHsl => "Hue / Saturation / Lightness",
     }
 }
 

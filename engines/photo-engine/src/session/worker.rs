@@ -88,6 +88,8 @@ pub struct EngineWorker {
     pub(crate) last_surface_us: u128,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
+    /// Names of created items, in the UI language (`SetDefaultNames`).
+    pub(crate) names: super::naming::DefaultNames,
     /// Display-scale appearances (reused while their source holds).
     pub(crate) scaled_appearances: crate::document::ScaledAppearances,
 }
@@ -190,6 +192,7 @@ impl EngineWorker {
             last_surface_pixels: 0,
             last_surface_us: 0,
             metrics: WorkerMetrics::default(),
+            names: super::naming::DefaultNames::default(),
             scaled_appearances: crate::document::ScaledAppearances::default(),
         }
     }
@@ -1265,7 +1268,10 @@ impl EngineWorker {
                 self.push_history(None);
                 let (width, height) = (self.document.width.max(1), self.document.height.max(1));
                 let blank = image::DynamicImage::new_rgba8(width, height);
-                let name = format!("Calque {}", self.document.root.len() + 1);
+                let name = super::naming::DefaultNames::numbered(
+                    &self.names.layer,
+                    self.document.root.len() + 1,
+                );
                 self.document
                     .push_layer(crate::LayerNode::Pixel(crate::PixelLayer::new(
                         name,
@@ -1291,7 +1297,10 @@ impl EngineWorker {
                     NewVectorShape::Polygon => crate::polygon(cx, cy, side / 4.0, 6),
                     NewVectorShape::Star => crate::star(cx, cy, side / 4.0, side / 8.0, 5),
                 };
-                let name = format!("Forme {}", self.document.root.len() + 1);
+                let name = super::naming::DefaultNames::numbered(
+                    &self.names.shape,
+                    self.document.root.len() + 1,
+                );
                 // Origin-consumed normalization: paths are shifted so
                 // their bounds start near (0, 0) and the origin is
                 // folded into the transform offset. The frame then
@@ -1387,7 +1396,7 @@ impl EngineWorker {
                 }
             },
             PhotoEngineCommand::AddFilter { layer, filter_type } => {
-                let Some(filter) = crate::new_filter_layer(&filter_type) else {
+                let Some(mut filter) = crate::new_filter_layer(&filter_type) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
                         error: EngineError::UnknownFilter {
                             type_id: filter_type,
@@ -1399,6 +1408,7 @@ impl EngineWorker {
                 if !is_pixel {
                     return Mutation::unchanged();
                 }
+                filter.name = self.names.filter(&filter_type, &filter.name).to_owned();
                 self.push_history(None);
                 // Re-read after the history push (fresh borrow).
                 if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
@@ -1440,6 +1450,10 @@ impl EngineWorker {
                         error: EngineError::NothingToExport,
                     },
                 })
+            }
+            PhotoEngineCommand::SetDefaultNames(names) => {
+                self.names = names;
+                Mutation::unchanged()
             }
             PhotoEngineCommand::PrepareDragProxy { layer } => {
                 Mutation::immediate(self.drag_proxy_response(layer))
@@ -1523,7 +1537,8 @@ impl EngineWorker {
                     .unwrap_or((self.document.width.max(1), self.document.height.max(1)));
                 if let Some(masks) = self.document.masks_of_mut(layer) {
                     let mut mask = crate::LayerMask::full(width, height);
-                    mask.name = format!("Masque {}", masks.len() + 1);
+                    mask.name =
+                        super::naming::DefaultNames::numbered(&self.names.mask, masks.len() + 1);
                     masks.push(mask);
                 }
                 touch_mask_owner(&mut self.document, layer);
@@ -2476,7 +2491,7 @@ mod tests {
         worker.apply(PhotoEngineCommand::AddMask { layer: id });
         let masks = worker.document.masks_of(id).expect("masques");
         assert_eq!(masks.len(), 1);
-        assert_eq!(masks[0].name, "Masque 1");
+        assert_eq!(masks[0].name, "Mask 1", "neutral engine default");
         let mask_id = masks[0].id;
         // UI snapshot: the mask shows in the HUD.
         let layers = snapshot_layers(&worker.document);
@@ -2548,6 +2563,64 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn created_items_use_the_supplied_default_names() {
+        let mut worker = EngineWorker::new(three_layer_doc());
+        // Neutral English until the UI sends its names.
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        assert_eq!(
+            worker.document.root.last().map(|n| n.name()),
+            Some("Layer 4")
+        );
+        let mut names = super::super::naming::DefaultNames {
+            layer: String::from("Calque"),
+            shape: String::from("Forme"),
+            mask: String::from("Masque"),
+            group: String::from("Groupe"),
+            ..Default::default()
+        };
+        names
+            .filters
+            .insert(String::from("levels"), String::from("Niveaux"));
+        let response = worker.apply(PhotoEngineCommand::SetDefaultNames(names));
+        assert!(worker.history.undo_steps().len() == 1, "pas d'historique");
+        assert!(!matches!(
+            response,
+            PhotoEngineResponse::LayersChanged { .. }
+        ));
+        worker.apply(PhotoEngineCommand::AddEmptyLayer);
+        assert_eq!(
+            worker.document.root.last().map(|n| n.name()),
+            Some("Calque 5")
+        );
+        worker.apply(PhotoEngineCommand::AddVectorLayer {
+            shape: NewVectorShape::Rect,
+        });
+        assert_eq!(
+            worker.document.root.last().map(|n| n.name()),
+            Some("Forme 6")
+        );
+        let id = worker.document.root[0].id();
+        worker.apply(PhotoEngineCommand::AddMask { layer: id });
+        assert_eq!(
+            worker.document.masks_of(id).map(|m| m[0].name.clone()),
+            Some(String::from("Masque 1"))
+        );
+        worker.apply(PhotoEngineCommand::AddFilter {
+            layer: id,
+            filter_type: String::from("levels"),
+        });
+        worker.apply(PhotoEngineCommand::AddFilter {
+            layer: id,
+            filter_type: String::from("curves"),
+        });
+        let names: Vec<String> = match worker.document.find(id) {
+            Some(LayerNode::Pixel(p)) => p.filter_layers.iter().map(|f| f.name.clone()).collect(),
+            _ => Vec::new(),
+        };
+        assert_eq!(names, ["Niveaux", "Curves"], "registre en repli");
     }
 
     #[test]

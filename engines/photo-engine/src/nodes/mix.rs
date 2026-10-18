@@ -26,11 +26,11 @@ use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType}
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    let mut def = NodeDefinition::new("mix", "Mélange", NodeCategory::Compositing)
+    let mut def = NodeDefinition::new("mix", "Mix", NodeCategory::Compositing)
         .param("count", ParamValue::Int(2))
         .param("blend_mode", ParamValue::Enum("Normal".into()))
         .header_color([0.45, 0.35, 0.65])
-        .description("Superpose 2 à 6 images (ajouter/retirer des entrées)");
+        .description("Stacks 2 to 6 images (add/remove inputs)");
     for i in 1..=MIX_MAX_INPUTS {
         def = def.input(SocketDef::new(
             mix_socket(i),

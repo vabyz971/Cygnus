@@ -35,6 +35,7 @@ pub mod features;
 pub mod ink_overlay;
 pub mod menubar;
 pub mod modebar;
+pub mod naming;
 pub mod optionsbar;
 /// Perf measurement probes (temporary diagnostics, tests only).
 #[cfg(test)]

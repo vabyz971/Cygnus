@@ -24,7 +24,7 @@ use rayon::prelude::*;
 pub fn definition() -> NodeDefinition {
     NodeDefinition::new(
         "brightness_contrast",
-        "Luminosité / Contraste",
+        "Brightness / Contrast",
         NodeCategory::Color,
     )
     .input(SocketDef::new("image", "Image", SocketType::Image))
@@ -32,7 +32,7 @@ pub fn definition() -> NodeDefinition {
     .param("brightness", ParamValue::Float(0.0))
     .param("contrast", ParamValue::Float(0.0))
     .header_color([0.75, 0.55, 0.15])
-    .description("Ajuste luminosité et contraste")
+    .description("Adjusts brightness and contrast")
 }
 
 pub fn apply_effect(img: &DynamicImage, brightness: f32, contrast: f32) -> DynamicImage {

@@ -28,7 +28,7 @@ use rayon::prelude::*;
 pub const TYPE_ID: &str = "levels";
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new(TYPE_ID, "Niveaux", NodeCategory::Color)
+    NodeDefinition::new(TYPE_ID, "Levels", NodeCategory::Color)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .output(SocketDef::new("image", "Image", SocketType::Image))
         .param("in_black", ParamValue::Float(0.0))
@@ -37,7 +37,7 @@ pub fn definition() -> NodeDefinition {
         .param("out_black", ParamValue::Float(0.0))
         .param("out_white", ParamValue::Float(255.0))
         .header_color([0.55, 0.55, 0.60])
-        .description("Points noir/blanc, gamma et plage de sortie")
+        .description("Black/white points, gamma and output range")
 }
 
 /// Levels settings (8-bit scale, gamma > 0).

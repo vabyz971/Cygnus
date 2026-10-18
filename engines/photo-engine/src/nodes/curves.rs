@@ -38,12 +38,12 @@ pub const IDENTITY: &str = "0,0;255,255";
 pub const MAX_POINTS: usize = 16;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new(TYPE_ID, "Courbes", NodeCategory::Color)
+    NodeDefinition::new(TYPE_ID, "Curves", NodeCategory::Color)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .output(SocketDef::new("image", "Image", SocketType::Image))
         .param(POINTS_KEY, ParamValue::Text(IDENTITY.to_owned()))
         .header_color([0.45, 0.55, 0.70])
-        .description("Courbe tonale RVB par points de contrôle")
+        .description("RGB tone curve through control points")
 }
 
 /// Parses `"x,y;x,y"` into points sorted by x, clamped to 0..=255,

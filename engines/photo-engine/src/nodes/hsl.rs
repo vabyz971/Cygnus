@@ -27,18 +27,14 @@ use rayon::prelude::*;
 pub const TYPE_ID: &str = "hsl";
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new(
-        TYPE_ID,
-        "Teinte / Saturation / Luminosité",
-        NodeCategory::Color,
-    )
-    .input(SocketDef::new("image", "Image", SocketType::Image))
-    .output(SocketDef::new("image", "Image", SocketType::Image))
-    .param("hue", ParamValue::Float(0.0))
-    .param("saturation", ParamValue::Float(0.0))
-    .param("lightness", ParamValue::Float(0.0))
-    .header_color([0.80, 0.40, 0.55])
-    .description("Rotation de teinte, saturation et luminosité")
+    NodeDefinition::new(TYPE_ID, "Hue / Saturation / Lightness", NodeCategory::Color)
+        .input(SocketDef::new("image", "Image", SocketType::Image))
+        .output(SocketDef::new("image", "Image", SocketType::Image))
+        .param("hue", ParamValue::Float(0.0))
+        .param("saturation", ParamValue::Float(0.0))
+        .param("lightness", ParamValue::Float(0.0))
+        .header_color([0.80, 0.40, 0.55])
+        .description("Hue rotation, saturation and lightness")
 }
 
 /// HSL settings (`hue` in degrees, the others in -100..=100).

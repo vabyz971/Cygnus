@@ -38,6 +38,7 @@ pub(crate) fn assert_send<T: Send>() {}
 pub mod commands;
 pub mod errors;
 pub mod metrics;
+pub mod naming;
 pub mod preview;
 pub mod responses;
 pub mod thumb_worker;
@@ -47,6 +48,7 @@ pub mod worker;
 pub use commands::{NewVectorShape, PhotoEngineCommand, RenderInvalidation, render_routing};
 pub use errors::EngineError;
 pub use metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
+pub use naming::DefaultNames;
 pub use preview::{
     PREVIEW_MAX_DIMENSION, PROXY_LAYER_MAX_DIMENSION, PreviewImage, ProxyLayerImage,
     render_preview, render_preview_timed,

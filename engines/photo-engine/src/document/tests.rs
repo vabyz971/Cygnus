@@ -42,11 +42,11 @@ fn px(img: &DynamicImage, x: u32, y: u32) -> [u8; 4] {
 
 #[test]
 fn blank_document_starts_with_sized_white_layer() {
-    let doc = Document::with_blank_layer(800, 600);
+    let doc = Document::with_blank_layer(800, 600, "Fond");
     assert_eq!((doc.width, doc.height), (800, 600));
     assert_eq!(doc.pixel_count(), 1);
     let layer = &doc.iter_pixels()[0];
-    assert_eq!(layer.name, "Calque 1");
+    assert_eq!(layer.name, "Fond", "nom fourni par l'appelant");
     assert_eq!(layer.dimensions(), (800, 600));
     // Opaque white background, Affinity-style (no transparent checkerboard).
     assert_eq!(px(&layer.source_image, 0, 0), [255, 255, 255, 255]);
@@ -55,7 +55,7 @@ fn blank_document_starts_with_sized_white_layer() {
 
 #[test]
 fn blank_document_clamps_to_1x1() {
-    let doc = Document::with_blank_layer(0, 0);
+    let doc = Document::with_blank_layer(0, 0, "Fond");
     assert_eq!((doc.width, doc.height), (1, 1));
     assert_eq!(doc.iter_pixels()[0].dimensions(), (1, 1));
 }
@@ -380,7 +380,7 @@ fn arbre_operations_structurelles() {
     // group(c, b) given out of order → stack order kept [b, c]? No:
     // b is at the bottom (index 0), c above (index 2 after moves? check)
     // Current state: [b, a, c] → grouping b and c gives group [b, c]
-    let gid = doc.group(&[idc, idb]).expect("group");
+    let gid = doc.group(&[idc, idb], "Groupe").expect("group");
     let LayerNode::Group(g) = &doc.root[0] else {
         panic!("groupe attendu en bas");
     };

@@ -257,6 +257,9 @@ pub struct OpenDocument {
     pub tx: std::sync::mpsc::Sender<crate::ui::engine_bridge::PhotoEngineCommand>,
     /// Worker responses (non-blocking poll).
     pub rx: Receiver<PhotoEngineResponse>,
+    /// Language of the default names last sent to the worker (resent
+    /// when the interface language changes).
+    pub names_language: Option<cygnus_i18n::Language>,
     // NOTE: the worker JoinHandle is not kept: the thread
     // exits on its own when the `Sender` is dropped (`recv` ends).
 }

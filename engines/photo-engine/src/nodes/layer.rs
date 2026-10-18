@@ -26,7 +26,7 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 use rayon::prelude::*;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("layer", "Calque", NodeCategory::Compositing)
+    NodeDefinition::new("layer", "Layer", NodeCategory::Compositing)
         .input(SocketDef::new("base", "Dessous", SocketType::Image))
         .input(SocketDef::new("top", "Dessus", SocketType::Image))
         .output(SocketDef::new("image", "Image", SocketType::Image))
@@ -35,7 +35,7 @@ pub fn definition() -> NodeDefinition {
         .param("offset_x", ParamValue::Float(0.0))
         .param("offset_y", ParamValue::Float(0.0))
         .header_color([0.45, 0.55, 0.85])
-        .description("Calque — superpose son image (ou entrée top) sur la base")
+        .description("Layer: stacks its image (or top input) over the base")
 }
 
 /// Input socket id #i of the Mix node (1-based)

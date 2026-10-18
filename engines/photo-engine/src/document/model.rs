@@ -215,7 +215,7 @@ impl LayerMask {
         let buf = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
         Self {
             id: Uuid::new_v4(),
-            name: String::from("Masque"),
+            name: String::from("Mask"),
             image: Arc::new(buf),
             enabled: true,
             inverted: false,

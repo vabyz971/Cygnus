@@ -310,6 +310,9 @@ pub enum PhotoEngineCommand {
         /// Layer about to be dragged.
         layer: Uuid,
     },
+    /// Names given to items created from now on (UI language, see
+    /// `session::naming`). No history, no render.
+    SetDefaultNames(super::naming::DefaultNames),
     /// Estimate the exported file size (O006, export dialog): replies
     /// `ExportSizeEstimated`, no history, no render.
     EstimateExportSize {
@@ -392,6 +395,7 @@ impl PhotoEngineCommand {
             Self::RemoveFilter { .. } => "remove_filter",
             Self::Export { .. } => "export",
             Self::EstimateExportSize { .. } => "estimate_export_size",
+            Self::SetDefaultNames(_) => "set_default_names",
             Self::PrepareDragProxy { .. } => "prepare_drag_proxy",
             Self::SaveProject { .. } => "save_project",
             Self::LoadProject { .. } => "load_project",
@@ -500,6 +504,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         ),
         PhotoEngineCommand::Export { .. }
         | PhotoEngineCommand::EstimateExportSize { .. }
+        | PhotoEngineCommand::SetDefaultNames(_)
         | PhotoEngineCommand::PrepareDragProxy { .. }
         | PhotoEngineCommand::SaveProject { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)

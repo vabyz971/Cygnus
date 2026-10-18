@@ -21,12 +21,12 @@ use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType}
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("output", "Sortie", NodeCategory::Output)
+    NodeDefinition::new("output", "Output", NodeCategory::Output)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .param("width", ParamValue::Int(1920))
         .param("height", ParamValue::Int(1080))
         .header_color([0.65, 0.20, 0.20])
-        .description("Sortie finale — rognée au gizmo (dimensions choisies)")
+        .description("Final output, cropped to the gizmo (chosen size)")
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {

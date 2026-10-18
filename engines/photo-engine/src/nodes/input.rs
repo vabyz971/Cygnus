@@ -21,10 +21,10 @@ use datatypes::{NodeCategory, NodeDefinition, SocketDef, SocketType};
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("input_image", "Image Source", NodeCategory::Input)
+    NodeDefinition::new("input_image", "Source image", NodeCategory::Input)
         .output(SocketDef::new("image", "Image", SocketType::Image))
         .header_color([0.25, 0.45, 0.75])
-        .description("Source d'image")
+        .description("Image source")
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {

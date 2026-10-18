@@ -54,6 +54,9 @@ pub struct PhotoApp {
     pub runtime: PhotoRuntimeState,
     /// Pending UI actions (drained each frame).
     pub queue: PhotoCommandQueue,
+    /// Interface language (French until the language preference is
+    /// wired): UI texts and default names of created items.
+    pub language: cygnus_i18n::Language,
     /// egui context the workers wake up when a response is ready
     /// (`None` in headless tests: polling on input still works).
     repaint: Option<egui::Context>,
@@ -77,6 +80,7 @@ impl PhotoApp {
             shell,
             runtime: PhotoRuntimeState::new(),
             queue: PhotoCommandQueue::new(),
+            language: cygnus_i18n::Language::Fr,
             repaint: None,
         };
         // No initial document: the user creates (or opens).
@@ -112,8 +116,9 @@ impl PhotoApp {
     /// with a first transparent layer at those dimensions.
     pub fn open_sized_tab(&mut self, width: u32, height: u32) {
         self.runtime.untitled_counter += 1;
-        let title = format!("Sans titre {}", self.runtime.untitled_counter);
-        self.spawn_document(title, Document::with_blank_layer(width, height));
+        let title = crate::ui::naming::untitled_title(self.language, self.runtime.untitled_counter);
+        let first = crate::ui::naming::first_layer_name(self.language);
+        self.spawn_document(title, Document::with_blank_layer(width, height, first));
     }
 
     /// Spawns a document's worker, adds its canvas tab
@@ -143,6 +148,7 @@ impl PhotoApp {
             ui,
             tx,
             rx,
+            names_language: None,
         });
         self.active = self.docs.len() - 1;
         push_canvas_tab(&mut self.shell.tree, PhotoDockTab::Canvas(id));
@@ -585,6 +591,21 @@ impl PhotoApp {
 
     /// Non-blocking poll: worker responses + file pickers.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        // Default names follow the interface language: (re)sent to every
+        // worker whose names are missing or stale (new document,
+        // language switch). Applies to items created afterwards.
+        for doc in &mut self.docs {
+            if doc.names_language != Some(self.language) {
+                let names = crate::ui::naming::default_names(self.language);
+                if doc
+                    .tx
+                    .send(PhotoEngineCommand::SetDefaultNames(names))
+                    .is_ok()
+                {
+                    doc.names_language = Some(self.language);
+                }
+            }
+        }
         for doc in &mut self.docs {
             while let Ok(response) = doc.rx.try_recv() {
                 apply_response(ctx, &mut doc.ui, response);
@@ -596,7 +617,10 @@ impl PhotoApp {
                 Ok(Some(path)) => {
                     if self.docs.is_empty() {
                         self.runtime.untitled_counter += 1;
-                        let title = format!("Sans titre {}", self.runtime.untitled_counter);
+                        let title = crate::ui::naming::untitled_title(
+                            self.language,
+                            self.runtime.untitled_counter,
+                        );
                         // Dimensions adjusted by the worker to the image.
                         self.spawn_document(title, Document::new(1, 1));
                     }
@@ -618,7 +642,7 @@ impl PhotoApp {
         if let Some(rx) = self.runtime.project_open_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
-                    let title = project_title(&path);
+                    let title = project_title(&path, self.language);
                     self.spawn_document(title, Document::new(1, 1));
                     if let Some(doc) = self.active_doc_mut_opt() {
                         doc.project_path = Some(path.clone());
@@ -642,8 +666,9 @@ impl PhotoApp {
         if let Some(rx) = self.runtime.project_save_picker.take() {
             match rx.try_recv() {
                 Ok(Some(path)) => {
+                    let language = self.language;
                     if let Some(doc) = self.active_doc_mut_opt() {
-                        doc.title = project_title(&path);
+                        doc.title = project_title(&path, language);
                         doc.project_path = Some(path.clone());
                         doc.ui.status = crate::ui::status::PhotoStatus::Saving(path.clone());
                         let _ = doc.tx.send(PhotoEngineCommand::SaveProject { path });
@@ -665,7 +690,7 @@ impl PhotoApp {
     /// One full frame: poll, workspace, action drain.
     pub fn draw(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         self.poll(ctx);
-        let photo_ctx = PhotoUiContext::for_frame(ctx);
+        let photo_ctx = PhotoUiContext::for_frame_in(ctx, self.language);
         PhotoWorkspace::show(ui, self, &photo_ctx);
         // Keyboard (O002): same flow as menus and panels — single queue.
         for action in crate::shortcuts::poll_shortcut_actions(ctx, &self.runtime.keys) {
@@ -690,12 +715,16 @@ impl Default for PhotoApp {
 }
 
 /// Tab title from a project path: name without extension
-/// ("rendu.cygp" → "rendu"), "Sans titre" fallback when unreadable.
-fn project_title(path: &Path) -> String {
+/// ("rendu.cygp" → "rendu"), "Untitled" (translated) when unreadable.
+fn project_title(path: &Path, language: cygnus_i18n::Language) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map(str::to_string)
-        .unwrap_or_else(|| String::from("Sans titre"))
+        .unwrap_or_else(|| {
+            cygnus_i18n::PhotoCatalog::new(language)
+                .get(cygnus_i18n::PhotoTextKey::UntitledDocument)
+                .to_owned()
+        })
 }
 
 /// Removes document `id` from `docs` and re-seats `active` (zero

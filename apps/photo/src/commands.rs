@@ -282,7 +282,7 @@ pub type PhotoCommandQueue = app_shell::ActionQueue<PhotoAction>;
 
 /// Display dependencies shared by the features.
 ///
-/// Built once per frame ([`PhotoUiContext::for_frame`]):
+/// Built once per frame ([`PhotoUiContext::for_frame_in`]):
 /// cloned egui context, theme, icon registry, translator. No
 /// documents, no engines, no mutable state — no GodContext.
 #[derive(Debug, Clone)]
@@ -292,16 +292,21 @@ pub struct PhotoUiContext {
 }
 
 impl PhotoUiContext {
-    /// Standard per-frame context (dark theme, icons,
-    /// French catalog: app language until the language
-    /// preference is wired).
+    /// Test context (French catalog); the app uses
+    /// [`Self::for_frame_in`] with its interface language.
+    #[cfg(test)]
     pub fn for_frame(ctx: &egui::Context) -> Self {
+        Self::for_frame_in(ctx, Language::Fr)
+    }
+
+    /// Per-frame context in the app's interface `language`.
+    pub fn for_frame_in(ctx: &egui::Context, language: Language) -> Self {
         Self {
             shared: UiContext::new(
                 ctx.clone(),
                 ctx.cygnus_theme(),
                 IconRegistry::new(),
-                Catalog::new(Language::Fr),
+                Catalog::new(language),
             ),
         }
     }
