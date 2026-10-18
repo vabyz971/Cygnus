@@ -562,7 +562,7 @@ impl Document {
     /// # Errors
     /// Returns an error if the layer does not exist.
     pub fn flip(&mut self, id: Uuid, horizontal: bool) -> Result<(), String> {
-        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
         let flipped = if horizontal {
             layer.source_image.fliph()
         } else {
@@ -606,7 +606,7 @@ impl Document {
     /// # Errors
     /// Returns an error if the layer does not exist.
     pub fn rotate(&mut self, id: Uuid, clockwise: bool) -> Result<(), String> {
-        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
         let (old_w, old_h) = layer.dimensions();
         let rotated = if clockwise {
             layer.source_image.rotate90()
@@ -674,13 +674,13 @@ impl Document {
         whiten: bool,
     ) -> Result<(), String> {
         if points.is_empty() || !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
-            return Err("trait vide".into());
+            return Err("empty stroke".into());
         }
         let Some(masks) = self.masks_of_mut(owner_id) else {
-            return Err("porteur introuvable".into());
+            return Err("mask owner not found".into());
         };
         let Some(mask) = masks.iter_mut().find(|m| m.id == mask_id) else {
-            return Err("masque introuvable".into());
+            return Err("mask not found".into());
         };
         let (w, h) = (mask.image.width(), mask.image.height());
         let mut buffer = mask.image.as_raw().to_vec();
@@ -693,7 +693,7 @@ impl Document {
         };
         crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry);
         let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
-            return Err("rastérisation impossible".into());
+            return Err("rasterization failed".into());
         };
         mask.image = Arc::new(image);
         mask.touch();
@@ -712,13 +712,13 @@ impl Document {
     /// # Errors
     /// Returns an error if the layer is not found or the rectangle exceeds the edges.
     pub fn crop(&mut self, id: Uuid, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
-        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
         let (iw, ih) = layer.dimensions();
         if w == 0 || h == 0 {
-            return Err("rogner : dimensions nulles".into());
+            return Err("crop: zero-sized rectangle".into());
         }
         if x < 0 || y < 0 || x + w as i32 > iw as i32 || y + h as i32 > ih as i32 {
-            return Err("rogner : la sélection dépasse les bords du calque".into());
+            return Err("crop: rectangle exceeds the layer bounds".into());
         }
         let cropped = layer.source_image.crop_imm(x as u32, y as u32, w, h);
         // Compensate the origin: the original (x,y) pixel stays at its world spot

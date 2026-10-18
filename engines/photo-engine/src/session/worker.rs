@@ -25,6 +25,7 @@ use super::commands::{
     DirtyMark, Mutation, NewVectorShape, PhotoEngineCommand, RenderInvalidation, SubmitDecision,
     fold_batch, mark_for_node, render_routing,
 };
+use super::errors::EngineError;
 use super::metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 use super::preview::{AppearanceFrameCache, PreviewImage, render_preview};
 use super::responses::PhotoEngineResponse;
@@ -328,7 +329,7 @@ impl EngineWorker {
         &mut self,
         id: Uuid,
         invalidation: RenderInvalidation,
-        apply: impl FnOnce(&mut Document) -> Result<(), String>,
+        apply: impl FnOnce(&mut Document) -> Result<(), EngineError>,
     ) -> Mutation {
         if !matches!(self.document.find(id), Some(crate::LayerNode::Pixel(_))) {
             return Mutation::unchanged();
@@ -336,7 +337,7 @@ impl EngineWorker {
         self.push_history(None);
         if let Err(error) = apply(&mut self.document) {
             self.history.cancel_last();
-            return Mutation::immediate(PhotoEngineResponse::EngineError { message: error });
+            return Mutation::immediate(PhotoEngineResponse::EngineError { error });
         }
         Mutation::changed(invalidation)
     }
@@ -1255,7 +1256,9 @@ impl EngineWorker {
                     Mutation::changed(invalidation)
                 }
                 Err(error) => Mutation::immediate(PhotoEngineResponse::EngineError {
-                    message: format!("Ouverture impossible : {}", error),
+                    error: EngineError::OpenImage {
+                        detail: error.to_string(),
+                    },
                 }),
             },
             PhotoEngineCommand::AddEmptyLayer => {
@@ -1345,39 +1348,39 @@ impl EngineWorker {
             }
             PhotoEngineCommand::FlipHorizontal(id) => self.mutate_pixels(id, invalidation, |doc| {
                 doc.flip(id, true)
-                    .map_err(|error| format!("Miroir impossible : {error}"))
+                    .map_err(|detail| EngineError::Flip { detail })
             }),
             PhotoEngineCommand::FlipVertical(id) => self.mutate_pixels(id, invalidation, |doc| {
                 doc.flip(id, false)
-                    .map_err(|error| format!("Miroir impossible : {error}"))
+                    .map_err(|detail| EngineError::Flip { detail })
             }),
             PhotoEngineCommand::RotateClockwise(id) => {
                 self.mutate_pixels(id, invalidation, |doc| {
                     doc.rotate(id, true)
-                        .map_err(|error| format!("Rotation impossible : {error}"))
+                        .map_err(|detail| EngineError::Rotate { detail })
                 })
             }
             PhotoEngineCommand::RotateCounterclockwise(id) => {
                 self.mutate_pixels(id, invalidation, |doc| {
                     doc.rotate(id, false)
-                        .map_err(|error| format!("Rotation impossible : {error}"))
+                        .map_err(|detail| EngineError::Rotate { detail })
                 })
             }
             PhotoEngineCommand::CropToDocument(id) => match crop_plan(&self.document, id) {
                 CropPlan::NotPixel => Mutation::unchanged(),
                 CropPlan::Transformed => Mutation::immediate(PhotoEngineResponse::EngineError {
-                    message: String::from("Rogner impossible : redressez le calque d'abord"),
+                    error: EngineError::CropTransformed,
                 }),
                 CropPlan::Outside => Mutation::immediate(PhotoEngineResponse::EngineError {
-                    message: String::from("Rogner impossible : calque hors document"),
+                    error: EngineError::CropOutside,
                 }),
                 CropPlan::Noop => Mutation::unchanged(),
                 CropPlan::Rect { x, y, w, h } => {
                     self.push_history(None);
-                    if let Err(error) = self.document.crop(id, x, y, w, h) {
+                    if let Err(detail) = self.document.crop(id, x, y, w, h) {
                         self.history.cancel_last();
                         return Mutation::immediate(PhotoEngineResponse::EngineError {
-                            message: format!("Rogner impossible : {error}"),
+                            error: EngineError::Crop { detail },
                         });
                     }
                     Mutation::changed(invalidation)
@@ -1386,7 +1389,9 @@ impl EngineWorker {
             PhotoEngineCommand::AddFilter { layer, filter_type } => {
                 let Some(filter) = crate::new_filter_layer(&filter_type) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
-                        message: format!("Filtre inconnu : {filter_type}"),
+                        error: EngineError::UnknownFilter {
+                            type_id: filter_type,
+                        },
                     });
                 };
                 let is_pixel =
@@ -1413,7 +1418,9 @@ impl EngineWorker {
                             match image.save(&path) {
                                 Ok(()) => PhotoEngineResponse::ExportDone { path },
                                 Err(error) => PhotoEngineResponse::EngineError {
-                                    message: format!("Export impossible : {error}"),
+                                    error: EngineError::Export {
+                                        detail: error.to_string(),
+                                    },
                                 },
                             }
                         } else {
@@ -1422,13 +1429,15 @@ impl EngineWorker {
                             match crate::export_image(&image, &path, format) {
                                 Ok(()) => PhotoEngineResponse::ExportDone { path },
                                 Err(error) => PhotoEngineResponse::EngineError {
-                                    message: format!("Export impossible : {error}"),
+                                    error: EngineError::Export {
+                                        detail: error.to_string(),
+                                    },
                                 },
                             }
                         }
                     }
                     None => PhotoEngineResponse::EngineError {
-                        message: String::from("Rien à exporter (document vide)"),
+                        error: EngineError::NothingToExport,
                     },
                 })
             }
@@ -1453,8 +1462,8 @@ impl EngineWorker {
             PhotoEngineCommand::SaveProject { path } => {
                 Mutation::immediate(match crate::project::save(&path, &self.document) {
                     Ok(()) => PhotoEngineResponse::ProjectSaved { path },
-                    Err(error) => PhotoEngineResponse::EngineError {
-                        message: format!("Enregistrement impossible : {error}"),
+                    Err(detail) => PhotoEngineResponse::EngineError {
+                        error: EngineError::SaveProject { detail },
                     },
                 })
             }
@@ -1473,7 +1482,14 @@ impl EngineWorker {
                         Mutation::changed(invalidation)
                     }
                     Err(error) => Mutation::immediate(PhotoEngineResponse::EngineError {
-                        message: format!("Ouverture impossible : {error}"),
+                        error: match error {
+                            crate::project::ProjectError::UnsupportedVersion(version) => {
+                                EngineError::UnsupportedProjectVersion { version }
+                            }
+                            crate::project::ProjectError::Other(detail) => {
+                                EngineError::LoadProject { detail }
+                            }
+                        },
                     }),
                 }
             }
@@ -1598,7 +1614,7 @@ impl EngineWorker {
                 }
                 let Some(found) = crate::find_preset(&type_id, &preset) else {
                     return Mutation::immediate(PhotoEngineResponse::EngineError {
-                        message: format!("Préréglage inconnu : {preset}"),
+                        error: EngineError::UnknownPreset { preset },
                     });
                 };
                 self.push_history(None);
@@ -2915,7 +2931,7 @@ mod tests {
         });
         let wide = match worker.apply(PhotoEngineCommand::Refresh) {
             PhotoEngineResponse::LayersChanged { preview, .. } => preview.expect("apercu"),
-            PhotoEngineResponse::EngineError { message } => panic!("{message}"),
+            PhotoEngineResponse::EngineError { error } => panic!("{error:?}"),
             PhotoEngineResponse::ExportDone { .. } => panic!("export inattendu"),
             PhotoEngineResponse::ProjectSaved { .. } => panic!("sauvegarde inattendue"),
             PhotoEngineResponse::ExportSizeEstimated { .. } => panic!("estimation inattendue"),
@@ -4134,8 +4150,8 @@ mod single_pass_tests {
             .expect("fixture v1");
         let mut worker = EngineWorker::new(three_layer_doc_for_fold());
         match worker.apply(PhotoEngineCommand::LoadProject { path }) {
-            PhotoEngineResponse::EngineError { message } => {
-                assert!(message.contains("non supportée"), "{message}");
+            PhotoEngineResponse::EngineError { error } => {
+                assert_eq!(error, EngineError::UnsupportedProjectVersion { version: 1 });
             }
             other => panic!("EngineError attendue, obtenue : {other:?}"),
         }

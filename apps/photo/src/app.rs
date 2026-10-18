@@ -132,7 +132,7 @@ impl PhotoApp {
         ));
         let ui = PhotoUiState {
             needs_repaint: true,
-            status: String::from("Prêt"),
+            status: crate::ui::status::PhotoStatus::Ready,
             ..Default::default()
         };
         let id = uuid::Uuid::new_v4();
@@ -220,7 +220,7 @@ impl PhotoApp {
                     .and_then(|doc| doc.project_path.clone())
                 {
                     if let Some(doc) = self.active_doc_mut_opt() {
-                        doc.ui.status = format!("Enregistrement : {}", path.display());
+                        doc.ui.status = crate::ui::status::PhotoStatus::Saving(path.clone());
                     }
                     self.send_active(PhotoEngineCommand::SaveProject { path });
                 } else {
@@ -608,7 +608,7 @@ impl PhotoApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     if let Some(doc) = self.active_doc_mut_opt() {
-                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                        doc.ui.status = crate::ui::status::PhotoStatus::PickerUnavailable;
                     }
                 }
             }
@@ -622,7 +622,7 @@ impl PhotoApp {
                     self.spawn_document(title, Document::new(1, 1));
                     if let Some(doc) = self.active_doc_mut_opt() {
                         doc.project_path = Some(path.clone());
-                        doc.ui.status = format!("Chargement : {}", path.display());
+                        doc.ui.status = crate::ui::status::PhotoStatus::Loading(path.clone());
                         let _ = doc.tx.send(PhotoEngineCommand::LoadProject { path });
                     }
                 }
@@ -632,7 +632,7 @@ impl PhotoApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     if let Some(doc) = self.active_doc_mut_opt() {
-                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                        doc.ui.status = crate::ui::status::PhotoStatus::PickerUnavailable;
                     }
                 }
             }
@@ -645,7 +645,7 @@ impl PhotoApp {
                     if let Some(doc) = self.active_doc_mut_opt() {
                         doc.title = project_title(&path);
                         doc.project_path = Some(path.clone());
-                        doc.ui.status = format!("Enregistrement : {}", path.display());
+                        doc.ui.status = crate::ui::status::PhotoStatus::Saving(path.clone());
                         let _ = doc.tx.send(PhotoEngineCommand::SaveProject { path });
                     }
                 }
@@ -655,7 +655,7 @@ impl PhotoApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     if let Some(doc) = self.active_doc_mut_opt() {
-                        doc.ui.status = String::from("Dialogue de fichier indisponible");
+                        doc.ui.status = crate::ui::status::PhotoStatus::PickerUnavailable;
                     }
                 }
             }
@@ -822,7 +822,7 @@ mod tests {
                 .expect("doc")
                 .ui
                 .status
-                .contains("Enregistré :")
+                .eq(&crate::ui::status::PhotoStatus::Saved(path.clone()))
             {
                 break;
             }
@@ -1237,10 +1237,15 @@ mod tests {
             &ctx,
             &mut ui,
             PhotoEngineResponse::EngineError {
-                message: String::from("echec test"),
+                error: photo_engine::session::EngineError::NothingToExport,
             },
         );
-        assert_eq!(ui.status, "echec test");
+        assert_eq!(
+            ui.status,
+            crate::ui::status::PhotoStatus::Error(
+                photo_engine::session::EngineError::NothingToExport
+            )
+        );
     }
 
     #[test]

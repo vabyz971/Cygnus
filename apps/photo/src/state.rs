@@ -183,8 +183,8 @@ pub struct PhotoUiState {
     pub history_undo: Vec<String>,
     /// Redoable step labels (O003).
     pub history_redo: Vec<String>,
-    /// Status message.
-    pub status: String,
+    /// Status-bar message (translated at display time).
+    pub status: crate::ui::status::PhotoStatus,
     /// Canvas grid.
     pub show_grid: bool,
     /// Explicit repaint requested.
@@ -505,7 +505,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         ui.texture_upload_bytes += image.width as u64 * image.height as u64 * 4;
                         ui.last_preview = Some(image);
                         ui.displayed_revision = Some(revision);
-                        ui.status.clear();
+                        ui.status = crate::ui::status::PhotoStatus::None;
                         // The commit render landed: the drag proxy hands over.
                         if matches!(
                             ui.drag_proxy,
@@ -569,16 +569,16 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             presentation.thumb_sync_us = t_thumbs.elapsed().as_micros();
             ui.needs_repaint = true;
         }
-        PhotoEngineResponse::EngineError { message } => {
-            ui.status = message;
+        PhotoEngineResponse::EngineError { error } => {
+            ui.status = crate::ui::status::PhotoStatus::Error(error);
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ExportDone { path } => {
-            ui.status = format!("Exporté : {}", path.display());
+            ui.status = crate::ui::status::PhotoStatus::Exported(path);
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::ProjectSaved { path } => {
-            ui.status = format!("Enregistré : {}", path.display());
+            ui.status = crate::ui::status::PhotoStatus::Saved(path);
             ui.needs_repaint = true;
         }
         PhotoEngineResponse::DragProxyReady {
@@ -713,10 +713,15 @@ mod tests {
             &ctx,
             &mut ui,
             PhotoEngineResponse::EngineError {
-                message: String::from("echec test"),
+                error: photo_engine::session::EngineError::NothingToExport,
             },
         );
-        assert_eq!(ui.status, "echec test");
+        assert_eq!(
+            ui.status,
+            crate::ui::status::PhotoStatus::Error(
+                photo_engine::session::EngineError::NothingToExport
+            )
+        );
     }
 
     #[test]
@@ -730,7 +735,10 @@ mod tests {
                 path: PathBuf::from("/tmp/test.png"),
             },
         );
-        assert!(ui.status.contains("test.png"));
+        assert_eq!(
+            ui.status,
+            crate::ui::status::PhotoStatus::Exported(PathBuf::from("/tmp/test.png"))
+        );
     }
 
     #[test]
@@ -817,7 +825,10 @@ mod tests {
                 path: PathBuf::from("/tmp/projet.cygp"),
             },
         );
-        assert!(ui.status.contains("projet.cygp"));
+        assert_eq!(
+            ui.status,
+            crate::ui::status::PhotoStatus::Saved(PathBuf::from("/tmp/projet.cygp"))
+        );
     }
 
     fn preview_at_revision(revision: RenderRevision) -> PhotoEngineResponse {

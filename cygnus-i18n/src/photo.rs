@@ -377,6 +377,48 @@ pub enum PhotoTextKey {
     HistoryOpToggleMask,
     /// History step: Edit.
     HistoryOpEdit,
+    /// Separator between a label and its value.
+    LabelSeparator,
+    /// Status: document ready.
+    StatusReady,
+    /// Status: export written.
+    StatusExported,
+    /// Status: project saved.
+    StatusSaved,
+    /// Status: project save in progress.
+    StatusSaving,
+    /// Status: project load in progress.
+    StatusLoading,
+    /// Status: native file dialog unavailable.
+    StatusPickerUnavailable,
+    /// Error: image cannot be opened.
+    ErrorOpenImage,
+    /// Error: mirror failed.
+    ErrorFlip,
+    /// Error: rotation failed.
+    ErrorRotate,
+    /// Error: crop on a transformed layer.
+    ErrorCropTransformed,
+    /// Error: crop on a layer outside the document.
+    ErrorCropOutside,
+    /// Error: crop failed.
+    ErrorCrop,
+    /// Error: unknown filter type.
+    ErrorUnknownFilter,
+    /// Error: unknown preset.
+    ErrorUnknownPreset,
+    /// Error: empty document export.
+    ErrorNothingToExport,
+    /// Error: export failed.
+    ErrorExport,
+    /// Error: project save failed.
+    ErrorSaveProject,
+    /// Error: foreign project format version.
+    ErrorUnsupportedProjectVersion,
+    /// Hint after an unsupported project version.
+    ErrorProjectVersionHint,
+    /// Error: project load failed.
+    ErrorLoadProject,
 }
 
 /// Photo catalog bound to a language.
@@ -564,6 +606,27 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::HistoryOpPreset,
     PhotoTextKey::HistoryOpToggleMask,
     PhotoTextKey::HistoryOpEdit,
+    PhotoTextKey::LabelSeparator,
+    PhotoTextKey::StatusReady,
+    PhotoTextKey::StatusExported,
+    PhotoTextKey::StatusSaved,
+    PhotoTextKey::StatusSaving,
+    PhotoTextKey::StatusLoading,
+    PhotoTextKey::StatusPickerUnavailable,
+    PhotoTextKey::ErrorOpenImage,
+    PhotoTextKey::ErrorFlip,
+    PhotoTextKey::ErrorRotate,
+    PhotoTextKey::ErrorCropTransformed,
+    PhotoTextKey::ErrorCropOutside,
+    PhotoTextKey::ErrorCrop,
+    PhotoTextKey::ErrorUnknownFilter,
+    PhotoTextKey::ErrorUnknownPreset,
+    PhotoTextKey::ErrorNothingToExport,
+    PhotoTextKey::ErrorExport,
+    PhotoTextKey::ErrorSaveProject,
+    PhotoTextKey::ErrorUnsupportedProjectVersion,
+    PhotoTextKey::ErrorProjectVersionHint,
+    PhotoTextKey::ErrorLoadProject,
 ];
 
 impl PhotoCatalog {
@@ -767,6 +830,29 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::HistoryOpPreset => "Préréglage",
         PhotoTextKey::HistoryOpToggleMask => "Basculer le masque",
         PhotoTextKey::HistoryOpEdit => "Édition",
+        PhotoTextKey::LabelSeparator => " : ",
+        PhotoTextKey::StatusReady => "Prêt",
+        PhotoTextKey::StatusExported => "Exporté",
+        PhotoTextKey::StatusSaved => "Enregistré",
+        PhotoTextKey::StatusSaving => "Enregistrement",
+        PhotoTextKey::StatusLoading => "Chargement",
+        PhotoTextKey::StatusPickerUnavailable => "Dialogue de fichier indisponible",
+        PhotoTextKey::ErrorOpenImage => "Ouverture impossible",
+        PhotoTextKey::ErrorFlip => "Miroir impossible",
+        PhotoTextKey::ErrorRotate => "Rotation impossible",
+        PhotoTextKey::ErrorCropTransformed => "Rogner impossible : redressez le calque d'abord",
+        PhotoTextKey::ErrorCropOutside => "Rogner impossible : calque hors document",
+        PhotoTextKey::ErrorCrop => "Rogner impossible",
+        PhotoTextKey::ErrorUnknownFilter => "Filtre inconnu",
+        PhotoTextKey::ErrorUnknownPreset => "Préréglage inconnu",
+        PhotoTextKey::ErrorNothingToExport => "Rien à exporter (document vide)",
+        PhotoTextKey::ErrorExport => "Export impossible",
+        PhotoTextKey::ErrorSaveProject => "Enregistrement impossible",
+        PhotoTextKey::ErrorUnsupportedProjectVersion => "Version de projet non supportée",
+        PhotoTextKey::ErrorProjectVersionHint => {
+            "les projets au format 1 et 2 ne sont plus lisibles"
+        }
+        PhotoTextKey::ErrorLoadProject => "Ouverture du projet impossible",
     }
 }
 
@@ -952,6 +1038,27 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::HistoryOpPreset => "Preset",
         PhotoTextKey::HistoryOpToggleMask => "Toggle mask",
         PhotoTextKey::HistoryOpEdit => "Edit",
+        PhotoTextKey::LabelSeparator => ": ",
+        PhotoTextKey::StatusReady => "Ready",
+        PhotoTextKey::StatusExported => "Exported",
+        PhotoTextKey::StatusSaved => "Saved",
+        PhotoTextKey::StatusSaving => "Saving",
+        PhotoTextKey::StatusLoading => "Loading",
+        PhotoTextKey::StatusPickerUnavailable => "File dialog unavailable",
+        PhotoTextKey::ErrorOpenImage => "Cannot open image",
+        PhotoTextKey::ErrorFlip => "Cannot flip",
+        PhotoTextKey::ErrorRotate => "Cannot rotate",
+        PhotoTextKey::ErrorCropTransformed => "Cannot crop: straighten the layer first",
+        PhotoTextKey::ErrorCropOutside => "Cannot crop: the layer is outside the document",
+        PhotoTextKey::ErrorCrop => "Cannot crop",
+        PhotoTextKey::ErrorUnknownFilter => "Unknown filter",
+        PhotoTextKey::ErrorUnknownPreset => "Unknown preset",
+        PhotoTextKey::ErrorNothingToExport => "Nothing to export (empty document)",
+        PhotoTextKey::ErrorExport => "Export failed",
+        PhotoTextKey::ErrorSaveProject => "Cannot save the project",
+        PhotoTextKey::ErrorUnsupportedProjectVersion => "Unsupported project version",
+        PhotoTextKey::ErrorProjectVersionHint => "projects in format 1 and 2 can no longer be read",
+        PhotoTextKey::ErrorLoadProject => "Cannot open the project",
     }
 }
 

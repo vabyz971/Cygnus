@@ -83,8 +83,8 @@ pub enum PhotoEngineResponse {
     },
     /// Non-blocking failure (e.g. undecodable).
     EngineError {
-        /// Message displayable in the status bar.
-        message: String,
+        /// What failed, with its parameters (translated UI-side).
+        error: super::errors::EngineError,
     },
     /// PNG export finished.
     ExportDone {

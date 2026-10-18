@@ -101,32 +101,32 @@ pub fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
 /// Encodes the image in memory.
 ///
 /// # Errors
-/// Encoder failure — descriptive message in French.
+/// Encoder failure — technical message (English).
 pub fn encode_image(img: &DynamicImage, format: ExportFormat) -> Result<Vec<u8>, String> {
     let mut out = Cursor::new(Vec::new());
     match format {
         ExportFormat::Png => img
             .write_to(&mut out, image::ImageFormat::Png)
-            .map_err(|e| format!("Encodage PNG : {e}"))?,
+            .map_err(|e| format!("PNG encoding: {e}"))?,
         ExportFormat::Jpeg { quality } => {
             let flattened = flatten_on_white(img);
             let encoder =
                 image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
             flattened
                 .write_with_encoder(encoder)
-                .map_err(|e| format!("Encodage JPEG : {e}"))?;
+                .map_err(|e| format!("JPEG encoding: {e}"))?;
         }
         ExportFormat::WebP => {
             let rgba = DynamicImage::ImageRgba8(img.to_rgba8());
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut out);
             rgba.write_with_encoder(encoder)
-                .map_err(|e| format!("Encodage WebP : {e}"))?;
+                .map_err(|e| format!("WebP encoding: {e}"))?;
         }
         ExportFormat::Tiff => {
             let rgba = DynamicImage::ImageRgba8(img.to_rgba8());
             let encoder = image::codecs::tiff::TiffEncoder::new(&mut out);
             rgba.write_with_encoder(encoder)
-                .map_err(|e| format!("Encodage TIFF : {e}"))?;
+                .map_err(|e| format!("TIFF encoding: {e}"))?;
         }
     }
     Ok(out.into_inner())
@@ -135,10 +135,10 @@ pub fn encode_image(img: &DynamicImage, format: ExportFormat) -> Result<Vec<u8>,
 /// Writes the image to disk in the requested format.
 ///
 /// # Errors
-/// Encoding or disk-write error — descriptive message in French.
+/// Encoding or disk-write error — technical message (English).
 pub fn export_image(img: &DynamicImage, path: &Path, format: ExportFormat) -> Result<(), String> {
     let bytes = encode_image(img, format)?;
-    std::fs::write(path, bytes).map_err(|e| format!("Écriture de {}: {e}", path.display()))
+    std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 /// Estimated file size in bytes for `format`.

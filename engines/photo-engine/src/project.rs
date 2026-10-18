@@ -326,15 +326,15 @@ impl FilterLayer {
 fn png_encode(img: &DynamicImage, name: &str) -> Result<Vec<u8>, String> {
     let mut png = Vec::new();
     img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|e| format!("Encodage PNG du calque « {name} » : {e}"))?;
+        .map_err(|e| format!("PNG encoding of layer \"{name}\": {e}"))?;
     Ok(png)
 }
 
 fn png_decode(png_base64: &str, name: &str) -> Result<DynamicImage, String> {
     let png = base64::engine::general_purpose::STANDARD
         .decode(png_base64)
-        .map_err(|e| format!("Calque « {name} » corrompu : {e}"))?;
-    image::load_from_memory(&png).map_err(|e| format!("Calque « {name} » illisible : {e}"))
+        .map_err(|e| format!("layer \"{name}\" is corrupted: {e}"))?;
+    image::load_from_memory(&png).map_err(|e| format!("layer \"{name}\" is unreadable: {e}"))
 }
 
 fn masks_to_dto(masks: &[crate::document::LayerMask], name: &str) -> Result<Vec<MaskDto>, String> {
@@ -583,6 +583,25 @@ impl std::fmt::Debug for LoadedProject {
 /// # Errors
 /// PNG encoding error of a layer, JSON serialization or disk write —
 /// descriptive message in French for the user.
+/// Project load failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectError {
+    /// The file was written by a format version this build cannot read
+    /// (v3 migrated, v4 to the current one native; v1 and v2 refused).
+    UnsupportedVersion(u32),
+    /// Unreadable file, invalid JSON or corrupted layer (technical detail).
+    Other(String),
+}
+
+impl std::fmt::Display for ProjectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedVersion(v) => write!(f, "unsupported project version {v}"),
+            Self::Other(detail) => f.write_str(detail),
+        }
+    }
+}
+
 pub fn save(path: &Path, doc: &Document) -> Result<(), String> {
     let root: Result<Vec<LayerNodeDto>, String> = doc.root.iter().map(node_to_dto).collect();
     let file = ProjectFile {
@@ -592,8 +611,8 @@ pub fn save(path: &Path, doc: &Document) -> Result<(), String> {
         root: root?,
     };
     let json =
-        serde_json::to_vec_pretty(&file).map_err(|e| format!("Sérialisation du projet : {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("Écriture de {}: {e}", path.display()))
+        serde_json::to_vec_pretty(&file).map_err(|e| format!("project serialization: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("writing {}: {e}", path.display()))
 }
 
 /// Loads a `.cygp`. v5 read natively, v4 read natively (v5 fields absent
@@ -601,10 +620,12 @@ pub fn save(path: &Path, doc: &Document) -> Result<(), String> {
 /// other version is refused.
 ///
 /// # Errors
-/// Unreadable file, invalid JSON, foreign version, or corrupted layer
-/// — descriptive message in French.
-pub fn load(path: &Path) -> Result<LoadedProject, String> {
-    let json = std::fs::read(path).map_err(|e| format!("Lecture de {}: {e}", path.display()))?;
+/// [`ProjectError::UnsupportedVersion`] for a foreign format version;
+/// [`ProjectError::Other`] (technical English detail) for an unreadable
+/// file, invalid JSON or a corrupted layer.
+pub fn load(path: &Path) -> Result<LoadedProject, ProjectError> {
+    let json = std::fs::read(path)
+        .map_err(|e| ProjectError::Other(format!("reading {}: {e}", path.display())))?;
     // Version probe BEFORE full deserialization: a project from another
     // era must be refused with the right message, not a missing-fields
     // error.
@@ -612,27 +633,22 @@ pub fn load(path: &Path) -> Result<LoadedProject, String> {
     struct VersionProbe {
         version: u32,
     }
-    let probe: VersionProbe =
-        serde_json::from_slice(&json).map_err(|e| format!("Projet invalide : {e}"))?;
+    let probe: VersionProbe = serde_json::from_slice(&json)
+        .map_err(|e| ProjectError::Other(format!("invalid project: {e}")))?;
     let legacy_v3 = match probe.version {
         FORMAT_VERSION | 5 | 4 => false,
         3 => true,
-        v => {
-            return Err(format!(
-                "Version de projet non supportée : {v} (v3 migrée, v4, v5 et v6 natives). \
-                 Les projets au format 1 et 2 ne sont plus lisibles.",
-            ));
-        }
+        v => return Err(ProjectError::UnsupportedVersion(v)),
     };
-    let file: ProjectFile =
-        serde_json::from_slice(&json).map_err(|e| format!("Projet invalide : {e}"))?;
+    let file: ProjectFile = serde_json::from_slice(&json)
+        .map_err(|e| ProjectError::Other(format!("invalid project: {e}")))?;
 
     let root: Result<Vec<LayerNode>, String> = file
         .root
         .into_iter()
         .map(|n| node_from_dto(n, legacy_v3))
         .collect();
-    let root = root?;
+    let root = root.map_err(ProjectError::Other)?;
 
     let source_name = path
         .file_stem()
@@ -812,7 +828,7 @@ mod tests {
         std::fs::write(&path, r#"{"version":1,"width":4,"height":4,"layers":[]}"#)
             .expect("écriture fixture v1");
         let err = load(&path).expect_err("v1 doit être refusée");
-        assert!(err.contains("non supportée"), "{err}");
+        assert_eq!(err, ProjectError::UnsupportedVersion(1));
         std::fs::remove_file(&path).ok();
     }
 

@@ -38,9 +38,9 @@ pub fn show(ui: &mut egui::Ui, app: &PhotoApp, ctx: &PhotoUiContext) {
                 match app.active_doc_opt() {
                     Some(doc) => {
                         ui.label(body_text(theme, doc.ui.tool.hint(texts)));
-                        if !doc.ui.status.is_empty() {
+                        if let Some(message) = doc.ui.status.message(texts) {
                             ui.separator();
-                            ui.label(body_text(theme, &doc.ui.status));
+                            ui.label(body_text(theme, &message));
                         }
                     }
                     None => {
