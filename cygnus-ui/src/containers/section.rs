@@ -61,6 +61,29 @@ impl<'a> Section<'a> {
     }
 }
 
+/// Panel section header row: strong title on the left, `trailing`
+/// widgets laid out right-to-left (caption, overflow menu…), one
+/// tab-bar height tall so it lines up with dock tab bars.
+pub fn section_header<R>(
+    ui: &mut egui::Ui,
+    theme: &CygnusTheme,
+    title: &str,
+    trailing: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.horizontal(|ui| {
+        ui.set_min_height(theme.sizes.tab_height);
+        ui.label(
+            egui::RichText::new(title)
+                .size(theme.typography.body_size)
+                .strong()
+                .color(theme.colors.fg_strong),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), trailing)
+            .inner
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +97,11 @@ mod tests {
                 Section::new("Transform").show(ui, &theme, |ui| {
                     ui.label("contenu");
                 });
+                let trailing = section_header(ui, &theme, "Histogramme", |ui| {
+                    ui.label("RVB");
+                    7
+                });
+                assert_eq!(trailing, 7);
             });
         })
         .drop_without_applying_deltas();

@@ -31,6 +31,7 @@ pub mod select;
 pub mod slider;
 pub mod tabs;
 pub mod toggle;
+pub mod value_field;
 
 pub use button::{Button, ButtonSize, ButtonVariant, menu_row};
 pub use checkbox::Checkbox;
@@ -41,6 +42,7 @@ pub use reorderable_list::{
     HierarchicalDrop, ReorderableList, compute_target_index, draw_drop_indicator, item_background,
 };
 pub use select::{Select, sanitize_selected};
-pub use slider::Slider;
+pub use slider::{Slider, SliderValue};
 pub use tabs::Tabs;
 pub use toggle::Toggle;
+pub use value_field::ValueField;

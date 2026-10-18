@@ -110,7 +110,8 @@ impl<'a> Button<'a> {
         let text_color = match self.variant {
             ButtonVariant::Ghost => theme.colors.fg_secondary,
             ButtonVariant::Secondary => theme.colors.fg_primary,
-            ButtonVariant::Primary | ButtonVariant::Danger => theme.colors.fg_strong,
+            ButtonVariant::Primary => theme.colors.fg_on_accent,
+            ButtonVariant::Danger => theme.colors.fg_strong,
         };
         let height = match self.size {
             ButtonSize::Small => theme.sizes.button_sm,

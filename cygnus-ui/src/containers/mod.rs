@@ -35,7 +35,7 @@ pub use card::Card;
 pub use collapsible::Collapsible;
 pub use dock_style::{DockResizeState, DockStyle, DockTabState};
 pub use panel::Panel;
-pub use section::Section;
+pub use section::{Section, section_header};
 pub use split::Split;
 pub use stack::Stack;
 pub use toolbar::Toolbar;

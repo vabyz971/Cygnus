@@ -33,7 +33,7 @@ pub mod typography;
 pub mod visuals;
 
 pub use borders::CygnusBorders;
-pub use colors::CygnusColors;
+pub use colors::{CygnusColors, user_color};
 pub use context::{THEME_DATA_ID, UiThemeExt, install_theme};
 pub use radius::CygnusRadius;
 pub use sizes::CygnusSizes;

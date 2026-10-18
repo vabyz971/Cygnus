@@ -248,8 +248,7 @@ impl Viewport {
         let theme = ui.cygnus_theme();
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        ui.painter()
-            .rect_filled(rect, 0.0, theme.colors.bg_tertiary);
+        ui.painter().rect_filled(rect, 0.0, theme.colors.bg_canvas);
 
         match self.texture_id {
             Some(texture_id) => {

@@ -46,6 +46,7 @@ pub struct IconButton {
     icon: Icon,
     tooltip: Option<String>,
     selected: bool,
+    size: Option<f32>,
 }
 
 impl IconButton {
@@ -55,6 +56,7 @@ impl IconButton {
             icon,
             tooltip: None,
             selected: false,
+            size: None,
         }
     }
 
@@ -69,6 +71,13 @@ impl IconButton {
     #[must_use]
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Square button side (defaults to `sizes.icon_button`).
+    #[must_use]
+    pub fn size(mut self, side: f32) -> Self {
+        self.size = Some(side);
         self
     }
 
@@ -91,16 +100,22 @@ impl IconButton {
                 widgets.hovered.bg_fill = theme.colors.item_hover;
                 widgets.hovered.fg_stroke = egui::Stroke::new(1.0, theme.colors.fg_primary);
                 widgets.active.bg_fill = theme.colors.item_selected;
-                ui.add(
-                    egui::Button::new(registry.colored(
-                        self.icon,
-                        theme.typography.icon_size,
-                        color,
-                    ))
-                    .frame(false)
-                    .corner_radius(theme.radius.sm)
-                    .min_size(egui::vec2(theme.sizes.icon_button, theme.sizes.icon_button)),
-                )
+                let mut button = egui::Button::new(registry.colored(
+                    self.icon,
+                    theme.typography.icon_size,
+                    color,
+                ))
+                .frame(true)
+                .frame_when_inactive(self.selected)
+                .corner_radius(theme.radius.sm)
+                .min_size(egui::Vec2::splat(
+                    self.size.unwrap_or(theme.sizes.icon_button),
+                ));
+                // Selected: resting pill fill behind the accent glyph.
+                if self.selected {
+                    button = button.fill(theme.colors.item_selected);
+                }
+                ui.add(button)
             })
             .inner;
         match self.tooltip {

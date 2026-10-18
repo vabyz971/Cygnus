@@ -102,6 +102,22 @@ impl IconRegistry {
             Icon::Error => CygnusIcon::Error,
             Icon::Remove => CygnusIcon::Remove,
             Icon::LayerAdd => CygnusIcon::LayerAdd,
+            Icon::More => CygnusIcon::More,
+            Icon::Minimize => CygnusIcon::Minimize,
+            Icon::Maximize => CygnusIcon::Maximize,
+            Icon::Camera => CygnusIcon::Camera,
+            Icon::Pen => CygnusIcon::Pen,
+            Icon::Stacks => CygnusIcon::Stacks,
+            Icon::SplitView => CygnusIcon::SplitView,
+            Icon::Workspace => CygnusIcon::Workspace,
+            Icon::Lock => CygnusIcon::Lock,
+            Icon::Tune => CygnusIcon::Tune,
+            Icon::Curve => CygnusIcon::Curve,
+            Icon::History => CygnusIcon::History,
+            Icon::ChevronRight => CygnusIcon::ChevronRight,
+            Icon::Swap => CygnusIcon::Swap,
+            Icon::Contrast => CygnusIcon::Contrast,
+            Icon::Grid => CygnusIcon::Grid,
         }
     }
 }
@@ -158,6 +174,22 @@ pub const ALL_ICONS: &[Icon] = &[
     Icon::Info,
     Icon::ExpandMore,
     Icon::ExpandLess,
+    Icon::More,
+    Icon::Minimize,
+    Icon::Maximize,
+    Icon::Camera,
+    Icon::Pen,
+    Icon::Stacks,
+    Icon::SplitView,
+    Icon::Workspace,
+    Icon::Lock,
+    Icon::Tune,
+    Icon::Curve,
+    Icon::History,
+    Icon::ChevronRight,
+    Icon::Swap,
+    Icon::Contrast,
+    Icon::Grid,
 ];
 
 /// Standard Cygnus icon button: frameless, hover background, optional tooltip.
@@ -247,7 +279,7 @@ mod tests {
         // is added without being registered in ALL_ICONS.
         // (`Open` and `Folder` share the folder glyph but count as two
         // distinct usages, hence 48 vs 47 on the glyph side.)
-        assert_eq!(ALL_ICONS.len(), 48);
+        assert_eq!(ALL_ICONS.len(), 64);
     }
 
     #[test]

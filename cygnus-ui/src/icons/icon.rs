@@ -122,4 +122,36 @@ pub enum Icon {
     Remove,
     /// Add a layer.
     LayerAdd,
+    /// Overflow menu (three horizontal dots).
+    More,
+    /// Minimize the window.
+    Minimize,
+    /// Maximize / restore the window.
+    Maximize,
+    /// Raster (pixel) persona.
+    Camera,
+    /// Vector persona / pen.
+    Pen,
+    /// Layout persona (stacked pages).
+    Stacks,
+    /// Side-by-side view.
+    SplitView,
+    /// Panel layout (dock).
+    Workspace,
+    /// Locked item.
+    Lock,
+    /// Adjustment settings.
+    Tune,
+    /// Tone curve.
+    Curve,
+    /// Step history.
+    History,
+    /// Disclosure / next.
+    ChevronRight,
+    /// Swap two values (colors).
+    Swap,
+    /// Tone adjustment.
+    Contrast,
+    /// Grid overlay.
+    Grid,
 }
