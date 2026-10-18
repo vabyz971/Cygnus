@@ -3007,6 +3007,7 @@ dependencies = [
  "bytemuck",
  "datatypes",
  "engine-runtime",
+ "gpu-compositor",
  "image",
  "kurbo",
  "math-utils",

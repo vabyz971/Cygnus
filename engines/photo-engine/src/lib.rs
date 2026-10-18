@@ -23,6 +23,7 @@ pub mod document;
 pub mod export;
 pub mod filters;
 pub mod gpu;
+pub mod gpu_view;
 pub mod histogram;
 pub mod history;
 pub mod interaction;
