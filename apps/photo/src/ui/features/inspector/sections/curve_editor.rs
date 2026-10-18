@@ -98,11 +98,14 @@ pub fn curve_editor(
     salt: impl std::hash::Hash + std::fmt::Debug,
     text: &str,
 ) -> Option<String> {
-    let side = ui
+    // Wide plot (about 2:1) so the curve fits the side column without
+    // pushing the sliders below the fold; the mapping is per axis.
+    let width = ui
         .available_width()
         .clamp(theme.sizes.preset_card, 4.0 * theme.sizes.preset_card);
+    let height = (width * 0.48).max(theme.sizes.preset_card);
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
     let drag_id = ui.id().with(("curve_drag", salt));
     let to_screen = |p: [f32; 2]| {
         egui::pos2(

@@ -31,7 +31,7 @@ use super::types::{
     PhotoLayerInfo, find_filter_in, find_filter_position, find_layer_in, find_mask_position,
 };
 use crate::commands::PhotoUiContext;
-use cygnus_ui::components::{IconButton, Select, Slider, menu_row, menu_style};
+use cygnus_ui::components::{IconButton, ValueField, menu_row, menu_style};
 use cygnus_ui::icons::Icon;
 use cygnus_ui::primitives::Text;
 use cygnus_ui::theme::CygnusTheme;
@@ -196,11 +196,9 @@ impl LayersPanel {
     }
 }
 
-/// Affinity-style header: opacity (worker-coalesced slider +
-/// compact value field) + the selection's blend mode (compact
-/// combo). Two grid rows share one label column so controls align;
-/// the combo and the value field stay small, the slider fills the
-/// rest. Without a selection, controls are
+/// Header row: the selection's blend mode (compact combo) on the
+/// left, its opacity (compact scrub field, worker-coalesced) on the
+/// right. Without a selection, controls are
 /// disabled (never implicitly adopting the layer above); visibility
 /// is set at each row's eye, never here.
 fn draw_selection_header(
@@ -233,35 +231,32 @@ fn draw_selection_header(
         return actions;
     }
     ui.add_enabled_ui(enabled, |ui| {
-        egui::Grid::new("layer_header_params")
-            .num_columns(2)
-            .spacing(egui::vec2(theme.spacing.sm, theme.spacing.xs))
-            .show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
+            egui::ComboBox::from_id_salt("layer_header_blend")
+                .width(theme.sizes.preset_card * 1.3)
+                .selected_text(options.get(choice).copied().unwrap_or(""))
+                .show_ui(ui, |ui| {
+                    for (index, option) in options.iter().enumerate() {
+                        ui.selectable_value(&mut choice, index, *option);
+                    }
+                })
+                .response
+                .on_hover_text(texts.get(cygnus_i18n::PhotoTextKey::BlendLabel));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Right-to-left: the field first, its label after.
+                let label = texts.get(cygnus_i18n::PhotoTextKey::OpacityLabel);
+                ValueField::new(label, 0.0..=100.0)
+                    .unit("%")
+                    .hide_label()
+                    .show(ui, theme, &mut opacity);
                 ui.label(
-                    egui::RichText::new(texts.get(cygnus_i18n::PhotoTextKey::OpacityLabel))
+                    egui::RichText::new(label)
                         .size(theme.typography.body_size)
                         .color(theme.colors.fg_secondary),
                 );
-                ui.horizontal(|ui| {
-                    Slider::new("", 0.0..=100.0).show(ui, theme, &mut opacity);
-                    // Compact value field (derived token width).
-                    ui.add_sized(
-                        egui::vec2(theme.sizes.icon_button * 2.0, theme.sizes.button_sm),
-                        egui::DragValue::new(&mut opacity)
-                            .range(0.0..=100.0)
-                            .speed(0.5),
-                    );
-                });
-                ui.end_row();
-                ui.label(
-                    egui::RichText::new(texts.get(cygnus_i18n::PhotoTextKey::BlendLabel))
-                        .size(theme.typography.body_size)
-                        .color(theme.colors.fg_secondary),
-                );
-                let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
-                Select::new("", &options).show(ui, theme, &mut choice);
-                ui.end_row();
             });
+        });
     });
     let Some(layer) = target else {
         ui.separator();
@@ -548,16 +543,10 @@ fn draw_layers_panel(
     {
         actions.push(action);
     }
-    // Bottom button bar: add image, empty layer, duplicate,
-    // mask, filter (catalog context menu), delete.
+    // Bottom button bar: creation on the left (empty layer, image,
+    // mask, filter catalog), duplicate and delete on the right.
+    ui.separator();
     ui.horizontal(|ui| {
-        if IconButton::new(Icon::ImageIcon)
-            .tooltip(texts.get(cygnus_i18n::PhotoTextKey::LayerFromImage))
-            .show(ui, theme)
-            .clicked()
-        {
-            actions.push(LayerPanelAction::AddImage);
-        }
         if IconButton::new(Icon::Add)
             .tooltip(texts.get(cygnus_i18n::PhotoTextKey::NewEmptyLayer))
             .show(ui, theme)
@@ -565,14 +554,14 @@ fn draw_layers_panel(
         {
             actions.push(LayerPanelAction::AddEmpty);
         }
+        if IconButton::new(Icon::ImageIcon)
+            .tooltip(texts.get(cygnus_i18n::PhotoTextKey::LayerFromImage))
+            .show(ui, theme)
+            .clicked()
+        {
+            actions.push(LayerPanelAction::AddImage);
+        }
         ui.add_enabled_ui(sel.selected.is_some(), |ui| {
-            if IconButton::new(Icon::Duplicate)
-                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DuplicateLayer))
-                .show(ui, theme)
-                .clicked()
-            {
-                actions.push(LayerPanelAction::Duplicate);
-            }
             if IconButton::new(Icon::Mask)
                 .tooltip(texts.get(cygnus_i18n::PhotoTextKey::AddMask))
                 .show(ui, theme)
@@ -598,7 +587,7 @@ fn draw_layers_panel(
             }
             // Filter-add context menu (Affinity-style: no
             // modal, the catalog opens at the button).
-            let filter_resp = IconButton::new(Icon::Settings)
+            let filter_resp = IconButton::new(Icon::Contrast)
                 .tooltip(texts.get(cygnus_i18n::PhotoTextKey::FilterList))
                 .show(ui, theme);
             egui::Popup::menu(&filter_resp)
@@ -618,13 +607,22 @@ fn draw_layers_panel(
                         }
                     }
                 });
-            if IconButton::new(Icon::Delete)
-                .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DeleteLayer))
-                .show(ui, theme)
-                .clicked()
-            {
-                actions.push(LayerPanelAction::Delete);
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if IconButton::new(Icon::Delete)
+                    .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DeleteLayer))
+                    .show(ui, theme)
+                    .clicked()
+                {
+                    actions.push(LayerPanelAction::Delete);
+                }
+                if IconButton::new(Icon::Duplicate)
+                    .tooltip(texts.get(cygnus_i18n::PhotoTextKey::DuplicateLayer))
+                    .show(ui, theme)
+                    .clicked()
+                {
+                    actions.push(LayerPanelAction::Duplicate);
+                }
+            });
         });
     });
     actions

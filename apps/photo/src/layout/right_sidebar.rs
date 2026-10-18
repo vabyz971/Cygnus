@@ -27,27 +27,68 @@
 //! Position-independent: visibility and placement via the dock
 //! (close + Window menu), plus via the `WorkspaceState`.
 
+use super::dock::PhotoDockTab;
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use crate::ui::{
     HistogramPanel, HistoryPanel, InspectorPanel, LayersPanel, history_panel_action_to_photo,
     inspector_action_to_photo, layer_panel_action_to_photo,
 };
+use cygnus_i18n::PhotoTextKey;
+use cygnus_ui::components::{IconButton, menu_row, menu_style};
+use cygnus_ui::containers::section_header;
+use cygnus_ui::icons::Icon;
+use cygnus_ui::theme::typography::caption_text;
 
-/// Inspector of the selected layer (tab content).
+/// Overflow button ("...") of a panel header or side tab bar: its
+/// menu hides `tab` (Window menu to reopen).
+pub fn panel_menu(
+    ui: &mut egui::Ui,
+    ctx: &PhotoUiContext,
+    tab: PhotoDockTab,
+    actions: &mut Vec<PhotoAction>,
+) {
+    let theme = ctx.shared.theme();
+    let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
+    let response = IconButton::new(Icon::More).show(ui, theme);
+    egui::Popup::menu(&response)
+        .style(menu_style(theme))
+        .show(|ui| {
+            if menu_row(ui, theme, texts.get(PhotoTextKey::HidePanel)) {
+                actions.push(PhotoAction::HideDockTab(tab));
+                ui.close();
+            }
+        });
+}
+
+/// Adjustments section: settings of the focused filter or mask
+/// (header + inspector content).
 pub fn draw_inspector_content(
     ui: &mut egui::Ui,
     doc: &OpenDocument,
     ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
+    let theme = ctx.shared.theme();
+    let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
+    let mut actions = Vec::new();
+    section_header(ui, theme, texts.get(PhotoTextKey::AdjustmentsTitle), |ui| {
+        panel_menu(ui, ctx, PhotoDockTab::Inspector, &mut actions);
+        ui.label(caption_text(theme, texts.get(PhotoTextKey::NonDestructive)));
+    });
     let selected = doc
         .ui
         .selected
         .and_then(|id| doc.ui.layers.iter().find(|layer| layer.id == id));
-    InspectorPanel::show(ui, ctx, selected, doc.ui.focused_attachment)
-        .into_iter()
-        .map(inspector_action_to_photo)
-        .collect()
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            actions.extend(
+                InspectorPanel::show(ui, ctx, selected, doc.ui.focused_attachment)
+                    .into_iter()
+                    .map(inspector_action_to_photo),
+            );
+        });
+    actions
 }
 
 /// Layer list (tab content).
@@ -98,13 +139,21 @@ pub fn draw_history_content(
         .collect()
 }
 
-/// Tone histogram of the displayed composite (tab content, read-only).
-pub fn draw_histogram_content(ui: &mut egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext) {
+/// Tone histogram of the displayed composite (header + plot,
+/// read-only apart from the panel menu).
+pub fn draw_histogram_content(
+    ui: &mut egui::Ui,
+    doc: &OpenDocument,
+    ctx: &PhotoUiContext,
+) -> Vec<PhotoAction> {
+    let mut actions = Vec::new();
     HistogramPanel::show(
         ui,
         ctx,
         doc.id,
         doc.ui.last_preview.as_ref(),
         Some(photo_engine::RenderRevision(doc.ui.last_preview_serial)),
+        |ui| panel_menu(ui, ctx, PhotoDockTab::Histogram, &mut actions),
     );
+    actions
 }

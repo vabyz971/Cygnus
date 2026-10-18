@@ -34,6 +34,7 @@ use cygnus_i18n::TextKey;
 use cygnus_ui::components::{IconButton, menu_row, menu_style};
 use cygnus_ui::icons::{Icon, IconRegistry};
 use cygnus_ui::theme::UiThemeExt;
+use photo_engine::BlendMode;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -308,24 +309,35 @@ pub fn draw_photo_layer_item(
             }
         }
         // Layer viewer: pixel thumbnail when available,
-        // else symbolic vignette (framed type icon).
-        if let Some(view) = thumb {
+        // else symbolic vignette (type icon), both framed.
+        let thumb_size = egui::Vec2::splat(theme.sizes.layer_thumb);
+        let thumb_rect = if let Some(view) = thumb {
             ui.add(
                 egui::Image::new(egui::load::SizedTexture::new(view.texture_id, view.size))
-                    .fit_to_exact_size(egui::vec2(
-                        theme.sizes.layer_thumb,
-                        theme.sizes.layer_thumb,
-                    )),
-            );
+                    .fit_to_exact_size(thumb_size)
+                    .corner_radius(theme.radius.xs),
+            )
+            .rect
         } else {
-            ui.add_sized(
-                egui::vec2(theme.sizes.layer_thumb, theme.sizes.layer_thumb),
-                egui::Button::new(
-                    IconRegistry::new().sized(layer.kind.icon(), theme.typography.icon_size),
-                )
-                .frame(true),
+            let (rect, _) = ui.allocate_exact_size(thumb_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, theme.radius.xs, theme.colors.bg_tertiary);
+            ui.put(
+                rect,
+                egui::Label::new(IconRegistry::new().colored(
+                    layer.kind.icon(),
+                    theme.typography.icon_size,
+                    theme.colors.fg_primary,
+                )),
             );
-        }
+            rect
+        };
+        ui.painter().rect_stroke(
+            thumb_rect,
+            theme.radius.xs,
+            egui::Stroke::new(theme.borders.thin, theme.colors.border),
+            egui::StrokeKind::Outside,
+        );
         ui.add_space(theme.spacing.xs);
         // Name: double-click = inline edit, Enter = confirm,
         // Escape = cancel, focus loss = confirm when modified.
@@ -351,10 +363,62 @@ pub fn draw_photo_layer_item(
             // Immediate focus when editing opens.
             edit.response.request_focus();
         } else {
-            let name_resp = ui.add(
-                egui::Label::new(egui::RichText::new(&layer.name).size(theme.typography.body_size))
-                    .truncate(),
-            );
+            // Attachment indicators on the right (filters, masks).
+            let indicators: Vec<Icon> = [
+                (layer.has_filters, Icon::Tune),
+                (layer.has_masks, Icon::Mask),
+            ]
+            .into_iter()
+            .filter_map(|(present, icon)| present.then_some(icon))
+            .collect();
+            let indicator_width = indicators.len() as f32 * theme.sizes.icon_button;
+            let name_width =
+                (ui.available_width() - indicator_width - theme.spacing.sm).max(theme.spacing.xl);
+            let name_resp = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(name_width, theme.sizes.layer_row),
+                    egui::Layout::top_down(egui::Align::LEFT).with_main_align(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let name_color = if selected {
+                            theme.colors.fg_strong
+                        } else {
+                            theme.colors.fg_primary
+                        };
+                        let name = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&layer.name)
+                                    .size(theme.typography.body_size)
+                                    .color(name_color),
+                            )
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(layer_subtitle(layer, texts))
+                                    .size(theme.typography.caption_size)
+                                    .color(theme.colors.fg_subdued),
+                            )
+                            .truncate(),
+                        );
+                        name
+                    },
+                )
+                .inner;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(theme.spacing.xs);
+                for icon in indicators {
+                    ui.add_sized(
+                        egui::Vec2::splat(theme.sizes.icon_button),
+                        egui::Label::new(IconRegistry::new().colored(
+                            icon,
+                            theme.typography.icon_size,
+                            theme.colors.fg_secondary,
+                        )),
+                    );
+                }
+            });
             if name_resp.double_clicked() {
                 rename.editing = Some(layer.id);
                 rename.buffer = layer.name.clone();
@@ -364,6 +428,17 @@ pub fn draw_photo_layer_item(
         // delete via the context menu or the bottom bar).
     });
     actions
+}
+
+/// Second line of a layer row: "Type · Blend · 100 %" (rows
+/// skip the blend mode while it is Normal).
+fn layer_subtitle(layer: &PhotoLayerInfo, texts: cygnus_i18n::PhotoCatalog) -> String {
+    let mut parts = vec![layer.kind.icon_label(texts).to_owned()];
+    if layer.blend_mode != BlendMode::Normal {
+        parts.push(layer.blend_mode.label().to_owned());
+    }
+    parts.push(format!("{} %", layer.opacity.round()));
+    parts.join(" \u{b7} ")
 }
 
 /// Child row of an attachment (live filter or mask): selectable

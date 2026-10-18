@@ -125,254 +125,247 @@ pub fn draw_menu_bar(
     texts: PhotoCatalog,
 ) -> Vec<PhotoMenuAction> {
     let mut actions = Vec::new();
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(
-            theme.spacing.xs as i8,
-            theme.spacing.xs as i8,
-        ))
-        .show(ui, |ui| {
-            // Apply the menu bar style (square corners)
-            // via a Scope to avoid polluting the global style.
-            let bar_style = {
-                let s = ui.style_mut();
-                menu_bar_style(theme).apply(s);
-                s.clone()
-            };
-            ui.scope_builder(egui::UiBuilder::new().style(bar_style), |ui| {
-                // Inner padding of menu titles (bigger clickable
-                // areas, airy bar), all from the theme. Dropdown
-                // items keep their fixed height (cygnus-ui min_size).
-                ui.spacing_mut().button_padding = egui::vec2(theme.spacing.sm, theme.spacing.sm);
-                egui::MenuBar::new().ui(ui, |ui| {
-                    ui.menu_button(catalog.get(TextKey::File), |ui| {
+    egui::Frame::NONE.show(ui, |ui| {
+        // Apply the menu bar style (square corners)
+        // via a Scope to avoid polluting the global style.
+        let bar_style = {
+            let s = ui.style_mut();
+            menu_bar_style(theme).apply(s);
+            // Subdued titles at rest, strong when hovered or open.
+            s.visuals.widgets.inactive.fg_stroke.color = theme.colors.fg_secondary;
+            s.clone()
+        };
+        ui.scope_builder(egui::UiBuilder::new().style(bar_style), |ui| {
+            // Inner padding of menu titles (bigger clickable
+            // areas, airy bar), all from the theme. Dropdown
+            // items keep their fixed height (cygnus-ui min_size).
+            ui.spacing_mut().button_padding = egui::vec2(theme.spacing.sm, theme.spacing.sm);
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(catalog.get(TextKey::File), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item(ui, theme, catalog.get(TextKey::NewDocument)) {
+                        actions.push(PhotoMenuAction::NewDocument);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::Open)) {
+                        actions.push(PhotoMenuAction::OpenImage);
+                    }
+                    if menu_item(ui, theme, texts.get(PhotoTextKey::OpenProject)) {
+                        actions.push(PhotoMenuAction::OpenProject);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Save),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::SaveProject);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::SaveAs),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::SaveProjectAs);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Export),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::Export);
+                    }
+                    ui.separator();
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::CloseDocument),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::CloseDocument);
+                    }
+                    if menu_item(ui, theme, catalog.get(TextKey::Quit)) {
+                        actions.push(PhotoMenuAction::Quit);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Edit), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Undo),
+                        availability.can_undo,
+                    ) {
+                        actions.push(PhotoMenuAction::Undo);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Redo),
+                        availability.can_redo,
+                    ) {
+                        actions.push(PhotoMenuAction::Redo);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Layer), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::NewEmptyLayer),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::AddEmptyLayer);
+                    }
+                    if menu_item(ui, theme, texts.get(PhotoTextKey::LayerFromImage)) {
+                        actions.push(PhotoMenuAction::OpenImage);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::DuplicateLayer),
+                        availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::DuplicateLayer);
+                    }
+                    // Transformations submenu (mirror, rotation,
+                    // crop): same style, closing handled by items.
+                    ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
                         menu_style(theme).apply(ui.style_mut());
-                        if menu_item(ui, theme, catalog.get(TextKey::NewDocument)) {
-                            actions.push(PhotoMenuAction::NewDocument);
-                        }
-                        if menu_item(ui, theme, catalog.get(TextKey::Open)) {
-                            actions.push(PhotoMenuAction::OpenImage);
-                        }
-                        if menu_item(ui, theme, texts.get(PhotoTextKey::OpenProject)) {
-                            actions.push(PhotoMenuAction::OpenProject);
-                        }
                         if menu_item_enabled(
                             ui,
                             theme,
-                            catalog.get(TextKey::Save),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::SaveProject);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::SaveAs),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::SaveProjectAs);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::Export),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::Export);
-                        }
-                        ui.separator();
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::CloseDocument),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::CloseDocument);
-                        }
-                        if menu_item(ui, theme, catalog.get(TextKey::Quit)) {
-                            actions.push(PhotoMenuAction::Quit);
-                        }
-                    });
-                    ui.menu_button(catalog.get(TextKey::Edit), |ui| {
-                        menu_style(theme).apply(ui.style_mut());
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::Undo),
-                            availability.can_undo,
-                        ) {
-                            actions.push(PhotoMenuAction::Undo);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::Redo),
-                            availability.can_redo,
-                        ) {
-                            actions.push(PhotoMenuAction::Redo);
-                        }
-                    });
-                    ui.menu_button(catalog.get(TextKey::Layer), |ui| {
-                        menu_style(theme).apply(ui.style_mut());
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::NewEmptyLayer),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::AddEmptyLayer);
-                        }
-                        if menu_item(ui, theme, texts.get(PhotoTextKey::LayerFromImage)) {
-                            actions.push(PhotoMenuAction::OpenImage);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::DuplicateLayer),
+                            texts.get(PhotoTextKey::FlipHorizontal),
                             availability.has_selection,
                         ) {
-                            actions.push(PhotoMenuAction::DuplicateLayer);
+                            actions.push(PhotoMenuAction::FlipHorizontal);
                         }
-                        // Transformations submenu (mirror, rotation,
-                        // crop): same style, closing handled by items.
-                        ui.menu_button(texts.get(PhotoTextKey::Transform), |ui| {
-                            menu_style(theme).apply(ui.style_mut());
-                            if menu_item_enabled(
-                                ui,
-                                theme,
-                                texts.get(PhotoTextKey::FlipHorizontal),
-                                availability.has_selection,
-                            ) {
-                                actions.push(PhotoMenuAction::FlipHorizontal);
-                            }
-                            if menu_item_enabled(
-                                ui,
-                                theme,
-                                texts.get(PhotoTextKey::FlipVertical),
-                                availability.has_selection,
-                            ) {
-                                actions.push(PhotoMenuAction::FlipVertical);
-                            }
-                            if menu_item_enabled(
-                                ui,
-                                theme,
-                                texts.get(PhotoTextKey::RotateClockwise),
-                                availability.has_selection,
-                            ) {
-                                actions.push(PhotoMenuAction::RotateClockwise);
-                            }
-                            if menu_item_enabled(
-                                ui,
-                                theme,
-                                texts.get(PhotoTextKey::RotateCounterclockwise),
-                                availability.has_selection,
-                            ) {
-                                actions.push(PhotoMenuAction::RotateCounterclockwise);
-                            }
-                            if menu_item_enabled(
-                                ui,
-                                theme,
-                                texts.get(PhotoTextKey::CropToDocument),
-                                availability.has_selection,
-                            ) {
-                                actions.push(PhotoMenuAction::CropToDocument);
-                            }
-                        });
                         if menu_item_enabled(
                             ui,
                             theme,
-                            texts.get(PhotoTextKey::AddMask),
+                            texts.get(PhotoTextKey::FlipVertical),
                             availability.has_selection,
                         ) {
-                            actions.push(PhotoMenuAction::AddMask);
+                            actions.push(PhotoMenuAction::FlipVertical);
                         }
                         if menu_item_enabled(
                             ui,
                             theme,
-                            texts.get(PhotoTextKey::DeleteLayer),
+                            texts.get(PhotoTextKey::RotateClockwise),
                             availability.has_selection,
                         ) {
-                            actions.push(PhotoMenuAction::DeleteLayer);
+                            actions.push(PhotoMenuAction::RotateClockwise);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::RotateCounterclockwise),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::RotateCounterclockwise);
+                        }
+                        if menu_item_enabled(
+                            ui,
+                            theme,
+                            texts.get(PhotoTextKey::CropToDocument),
+                            availability.has_selection,
+                        ) {
+                            actions.push(PhotoMenuAction::CropToDocument);
                         }
                     });
-                    ui.menu_button(catalog.get(TextKey::View), |ui| {
-                        menu_style(theme).apply(ui.style_mut());
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::Grid),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::ToggleGrid);
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::AddMask),
+                        availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::AddMask);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::DeleteLayer),
+                        availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::DeleteLayer);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::View), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::Grid),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::ToggleGrid);
+                    }
+                    // Check via the catalog (rendering identical to before).
+                    let crop_label = format!(
+                        "[{}] {}",
+                        if availability.preview_clip { "x" } else { " " },
+                        texts.get(PhotoTextKey::CropPreviewToDocument)
+                    );
+                    if menu_item_enabled(ui, theme, crop_label.as_str(), availability.has_document)
+                    {
+                        actions.push(PhotoMenuAction::TogglePreviewClip);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::ZoomIn),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::ZoomIn);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        catalog.get(TextKey::ZoomOut),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::ZoomOut);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::Zoom100),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::ZoomReset);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Window), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    // Pinned canvases (non-closable): only
+                    // tools, inspector, layers, and history
+                    // can be reopened.
+                    for tab in [
+                        PhotoDockTab::Tools,
+                        PhotoDockTab::Inspector,
+                        PhotoDockTab::Layers,
+                        PhotoDockTab::History,
+                        PhotoDockTab::Histogram,
+                    ] {
+                        if menu_item(ui, theme, catalog.get(tab.title_key())) {
+                            actions.push(PhotoMenuAction::ShowDockTab(tab));
                         }
-                        // Check via the catalog (rendering identical to before).
-                        let crop_label = format!(
-                            "[{}] {}",
-                            if availability.preview_clip { "x" } else { " " },
-                            texts.get(PhotoTextKey::CropPreviewToDocument)
-                        );
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            crop_label.as_str(),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::TogglePreviewClip);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::ZoomIn),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::ZoomIn);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            catalog.get(TextKey::ZoomOut),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::ZoomOut);
-                        }
-                        if menu_item_enabled(
-                            ui,
-                            theme,
-                            texts.get(PhotoTextKey::Zoom100),
-                            availability.has_document,
-                        ) {
-                            actions.push(PhotoMenuAction::ZoomReset);
-                        }
-                    });
-                    ui.menu_button(catalog.get(TextKey::Window), |ui| {
-                        menu_style(theme).apply(ui.style_mut());
-                        // Pinned canvases (non-closable): only
-                        // tools, inspector, layers, and history
-                        // can be reopened.
-                        for tab in [
-                            PhotoDockTab::Tools,
-                            PhotoDockTab::Inspector,
-                            PhotoDockTab::Layers,
-                            PhotoDockTab::History,
-                            PhotoDockTab::Histogram,
-                        ] {
-                            if menu_item(ui, theme, catalog.get(tab.title_key())) {
-                                actions.push(PhotoMenuAction::ShowDockTab(tab));
-                            }
-                        }
-                        ui.separator();
-                        if menu_item(ui, theme, texts.get(PhotoTextKey::ResetLayout)) {
-                            actions.push(PhotoMenuAction::ResetDockLayout);
-                        }
-                    });
-                    ui.menu_button(catalog.get(TextKey::Help), |ui| {
-                        menu_style(theme).apply(ui.style_mut());
-                        if menu_item(ui, theme, texts.get(PhotoTextKey::About)) {
-                            actions.push(PhotoMenuAction::ShowHelp);
-                        }
-                    });
+                    }
+                    ui.separator();
+                    if menu_item(ui, theme, texts.get(PhotoTextKey::ResetLayout)) {
+                        actions.push(PhotoMenuAction::ResetDockLayout);
+                    }
+                });
+                ui.menu_button(catalog.get(TextKey::Help), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item(ui, theme, texts.get(PhotoTextKey::About)) {
+                        actions.push(PhotoMenuAction::ShowHelp);
+                    }
                 });
             });
         });
+    });
     actions
 }
 

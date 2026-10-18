@@ -27,7 +27,9 @@ use crate::commands::PhotoUiContext;
 use crate::ui::features::layers::types::{AttachmentRef, PhotoSubLayerInfo};
 use cygnus_i18n::PhotoTextKey;
 use cygnus_ui::components::{Select, Slider, Toggle};
-use cygnus_ui::primitives::{Text, divider};
+use cygnus_ui::icons::{Icon, IconRegistry};
+use cygnus_ui::primitives::Text;
+use cygnus_ui::theme::typography::caption_text;
 use photo_engine::nodes::{curves, hsl, levels};
 
 /// Range of a float filter parameter, by effect type and registry key.
@@ -165,24 +167,44 @@ pub fn draw_attachment_section(
     let theme = ctx.shared.theme();
     let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
     let mut actions = Vec::new();
-    divider(ui, theme);
-    Text::heading(theme, &sub.name).show(ui);
-    Text::body(
-        theme,
-        if sub.is_filter {
-            texts.get(cygnus_i18n::PhotoTextKey::FilterLiveLabel)
-        } else {
-            texts.get(cygnus_i18n::PhotoTextKey::MaskLabel)
-        },
-    )
-    .show(ui);
-    let mut enabled = sub.enabled;
-    Toggle::new(if sub.is_filter {
-        texts.get(cygnus_i18n::PhotoTextKey::FilterActive)
+    // Title row: kind glyph + name, enable switch on the right.
+    let icon = if !sub.is_filter {
+        Icon::Mask
+    } else if sub.filter_type == curves::TYPE_ID {
+        Icon::Curve
     } else {
-        texts.get(cygnus_i18n::PhotoTextKey::MaskActive)
-    })
-    .show(ui, theme, &mut enabled);
+        Icon::Tune
+    };
+    let mut enabled = sub.enabled;
+    ui.horizontal(|ui| {
+        ui.label(IconRegistry::new().colored(
+            icon,
+            theme.typography.icon_size,
+            theme.colors.accent,
+        ));
+        ui.label(
+            egui::RichText::new(&sub.name)
+                .size(theme.typography.body_size)
+                .color(theme.colors.fg_strong),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            Toggle::new("")
+                .show(ui, theme, &mut enabled)
+                .on_hover_text(if sub.is_filter {
+                    texts.get(PhotoTextKey::FilterActive)
+                } else {
+                    texts.get(PhotoTextKey::MaskActive)
+                });
+            ui.label(caption_text(
+                theme,
+                if sub.is_filter {
+                    texts.get(PhotoTextKey::FilterLiveLabel)
+                } else {
+                    texts.get(PhotoTextKey::MaskLabel)
+                },
+            ));
+        });
+    });
     if enabled != sub.enabled {
         actions.push(InspectorAction::ToggleAttachment {
             owner: focus.owner,
@@ -213,6 +235,7 @@ pub fn draw_attachment_section(
             let current = sub.params.get(key).copied().unwrap_or(0.0);
             let mut value = current;
             Slider::new(&param_label(key, texts), param_range(&sub.filter_type, key))
+                .stacked()
                 .show(ui, theme, &mut value);
             if value != current {
                 actions.push(InspectorAction::SetFilterParam {

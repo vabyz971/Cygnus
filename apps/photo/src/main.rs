@@ -36,7 +36,13 @@ fn main() {
     eframe::run_native(
         "Cygnus Photo",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]),
+            // Client-side chrome (`ui::window_chrome`): the brand,
+            // menus and window buttons share the first row.
+            viewport: egui::ViewportBuilder::default()
+                .with_title("Cygnus Photo")
+                .with_inner_size([1566.0, 979.0])
+                .with_min_inner_size([960.0, 600.0])
+                .with_decorations(false),
             ..Default::default()
         },
         Box::new(|cc| {

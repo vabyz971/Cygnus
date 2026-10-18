@@ -378,6 +378,7 @@ mod tests {
             radius: 7.0,
             color: [10, 20, 30],
             opacity: 0.5,
+            ..PhotoBrushSettings::default()
         };
         let paint = ink_brush_params(&brush, false);
         assert_eq!(paint.radius, 7.0);
@@ -391,6 +392,7 @@ mod tests {
             radius: 3.0,
             color: [0, 0, 0],
             opacity: 9.0,
+            ..PhotoBrushSettings::default()
         };
         assert_eq!(ink_brush_params(&wild, false).opacity, 1.0);
     }

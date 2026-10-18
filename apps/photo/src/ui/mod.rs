@@ -45,6 +45,7 @@ pub mod status;
 pub mod toolbar;
 pub mod transform_overlay;
 pub mod viewport;
+pub mod window_chrome;
 
 pub use create_document::{
     CreateDocumentDialogState, NewDocumentChoice, draw_create_document_dialog,

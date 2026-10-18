@@ -14,14 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Histogram panel: RGB (three overlaid channels) or luminance view.
+//! Histogram panel: RGB (three overlaid filled channels) or luminance
+//! view, axis legend and luma statistics.
 
 use std::sync::Arc;
 
-use cygnus_i18n::PhotoTextKey;
-use cygnus_ui::components::Tabs;
-use cygnus_ui::primitives::Text;
+use cygnus_i18n::{PhotoTextKey, TextKey};
+use cygnus_ui::containers::section_header;
 use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::theme::typography::caption_text;
 use photo_engine::{Histogram, RenderRevision};
 
 use crate::commands::PhotoUiContext;
@@ -77,24 +78,62 @@ fn cached_histogram(
     histogram
 }
 
-/// Plots the bins of the visible channels.
+/// Bins lightly smoothed (5-tap box) so the plot reads as a curve.
+fn smoothed(bins: &[u32; 256]) -> [f32; 256] {
+    let mut out = [0.0; 256];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let lo = i.saturating_sub(2);
+        let hi = (i + 2).min(255);
+        let sum: u32 = bins[lo..=hi].iter().sum();
+        *slot = sum as f32 / (hi - lo + 1) as f32;
+    }
+    out
+}
+
+/// Filled area of one channel (vertical quads from the baseline) and
+/// its brighter outline.
+fn paint_channel(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    bins: &[u32; 256],
+    peak: f32,
+    color: egui::Color32,
+    line: egui::Stroke,
+) {
+    let values = smoothed(bins);
+    let x_at = |i: usize| rect.left() + i as f32 / 255.0 * rect.width();
+    let y_at = |v: f32| rect.bottom() - bar_height(v.round() as u32, peak as u32, rect.height());
+    let fill = color.gamma_multiply(0.45);
+    let mut mesh = egui::Mesh::default();
+    let mut outline = Vec::with_capacity(256);
+    for (i, value) in values.iter().enumerate() {
+        let top = egui::pos2(x_at(i), y_at(*value));
+        outline.push(top);
+        mesh.colored_vertex(egui::pos2(top.x, rect.bottom()), fill);
+        mesh.colored_vertex(top, fill);
+        if i > 0 {
+            let base = (i as u32 - 1) * 2;
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base + 1, base + 3, base + 2);
+        }
+    }
+    painter.add(mesh);
+    painter.add(egui::Shape::line(outline, line));
+}
+
+/// Plots the visible channels as overlapping filled curves.
 fn plot(ui: &mut egui::Ui, theme: &CygnusTheme, histogram: &Histogram, view: View) {
     let width = ui.available_width().max(theme.sizes.preset_card);
-    let height = (width * 0.5).max(theme.sizes.preset_card * 0.5);
+    let height = (width * 0.32).max(theme.sizes.preset_card * 0.6);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, theme.radius.sm, theme.colors.bg_tertiary);
+    let plot_rect = rect.shrink(theme.spacing.xxs);
     let channels: Vec<(&[u32; 256], egui::Color32)> = match view {
         View::Rgb => vec![
-            (&histogram.red, theme.colors.channel_red.gamma_multiply(0.6)),
-            (
-                &histogram.green,
-                theme.colors.channel_green.gamma_multiply(0.6),
-            ),
-            (
-                &histogram.blue,
-                theme.colors.channel_blue.gamma_multiply(0.6),
-            ),
+            (&histogram.blue, theme.colors.channel_blue),
+            (&histogram.green, theme.colors.channel_green),
+            (&histogram.red, theme.colors.channel_red),
         ],
         View::Luma => vec![(&histogram.luma, theme.colors.fg_secondary)],
     };
@@ -109,69 +148,134 @@ fn plot(ui: &mut egui::Ui, theme: &CygnusTheme, histogram: &Histogram, view: Vie
             .unwrap_or(0),
         View::Luma => histogram.luma.iter().copied().max().unwrap_or(0),
     };
-    let bin_w = rect.width() / 256.0;
     for (bins, color) in channels {
-        let stroke = egui::Stroke::new(bin_w.max(theme.borders.thin), color);
-        for (i, count) in bins.iter().enumerate() {
-            let h = bar_height(*count, peak, rect.height());
-            if h <= 0.0 {
-                continue;
-            }
-            let x = rect.left() + (i as f32 + 0.5) * bin_w;
-            painter.line_segment(
-                [
-                    egui::pos2(x, rect.bottom()),
-                    egui::pos2(x, rect.bottom() - h),
-                ],
-                stroke,
-            );
-        }
+        paint_channel(
+            &painter,
+            plot_rect,
+            bins,
+            peak as f32,
+            color,
+            egui::Stroke::new(theme.borders.thin, color.gamma_multiply(0.9)),
+        );
     }
-    painter.rect_stroke(
-        rect,
-        theme.radius.sm,
-        egui::Stroke::new(theme.borders.thin, theme.colors.border),
-        egui::StrokeKind::Inside,
-    );
 }
 
-/// Histogram panel (direct content, title carried by the dock tab).
+/// Decimal number in the interface language (comma in French).
+fn decimal(value: f32, language: cygnus_i18n::Language) -> String {
+    let text = format!("{value:.1}");
+    match language {
+        cygnus_i18n::Language::Fr => text.replace('.', ","),
+        cygnus_i18n::Language::En => text,
+    }
+}
+
+/// "0 / midtones / 255" axis under the plot, then the luma mean and
+/// standard deviation.
+fn legend(
+    ui: &mut egui::Ui,
+    theme: &CygnusTheme,
+    histogram: &Histogram,
+    texts: cygnus_i18n::PhotoCatalog,
+    language: cygnus_i18n::Language,
+) {
+    // Axis: one row, three anchors (left, center, right).
+    let font = egui::FontId::proportional(theme.typography.caption_size);
+    let row = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), row), egui::Sense::hover());
+    let painter = ui.painter();
+    for (anchor, pos, text) in [
+        (egui::Align2::LEFT_CENTER, rect.left_center(), "0"),
+        (
+            egui::Align2::CENTER_CENTER,
+            rect.center(),
+            texts.get(PhotoTextKey::HistogramMidtones),
+        ),
+        (egui::Align2::RIGHT_CENTER, rect.right_center(), "255"),
+    ] {
+        painter.text(pos, anchor, text, font.clone(), theme.colors.fg_subdued);
+    }
+    let Some((mean, deviation)) = histogram.luma_stats() else {
+        return;
+    };
+    let stat = |label: &str, value: f32| format!("{label} {}", decimal(value, language));
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(stat(texts.get(PhotoTextKey::HistogramMean), mean))
+                .size(theme.typography.caption_size)
+                .color(theme.colors.fg_secondary),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(stat(texts.get(PhotoTextKey::HistogramStdDev), deviation))
+                    .size(theme.typography.caption_size)
+                    .color(theme.colors.fg_secondary),
+            );
+        });
+    });
+}
+
+/// Histogram panel (section header + plot + legend).
 pub struct HistogramPanel;
 
 impl HistogramPanel {
     /// Draws the histogram of `preview` (`None` = empty document).
-    /// `salt` identifies the document (one cache per document).
+    /// `salt` identifies the document (one cache per document);
+    /// `menu` fills the header's overflow slot (right-most).
     pub fn show(
         ui: &mut egui::Ui,
         ctx: &PhotoUiContext,
         salt: impl std::hash::Hash + std::fmt::Debug + Copy,
         preview: Option<&PreviewImage>,
         revision: Option<RenderRevision>,
+        menu: impl FnOnce(&mut egui::Ui),
     ) {
         let theme = ctx.shared.theme();
-        let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
+        let language = ctx.shared.translator().language();
+        let texts = cygnus_i18n::PhotoCatalog::new(language);
+        let view_id = egui::Id::new(("photo_histogram_view", salt));
+        let mut view = ui.data(|d| d.get_temp::<View>(view_id)).unwrap_or_default();
+        section_header(
+            ui,
+            theme,
+            ctx.shared.translator().get(TextKey::Histogram),
+            |ui| {
+                menu(ui);
+                // Channel switch: click cycles RGB <-> luma.
+                let label = match view {
+                    View::Rgb => texts.get(PhotoTextKey::HistogramRgb),
+                    View::Luma => texts.get(PhotoTextKey::HistogramLuma),
+                };
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(label)
+                                .size(theme.typography.caption_size)
+                                .color(theme.colors.fg_secondary),
+                        )
+                        .frame_when_inactive(false),
+                    )
+                    .clicked()
+                {
+                    view = match view {
+                        View::Rgb => View::Luma,
+                        View::Luma => View::Rgb,
+                    };
+                }
+            },
+        );
+        ui.data_mut(|d| d.insert_temp(view_id, view));
         let Some(preview) = preview else {
-            Text::body(theme, texts.get(PhotoTextKey::HistogramEmpty)).show(ui);
+            ui.label(caption_text(theme, texts.get(PhotoTextKey::HistogramEmpty)));
             return;
         };
-        let view_id = egui::Id::new(("photo_histogram_view", salt));
-        let mut index = match ui.data(|d| d.get_temp::<View>(view_id)).unwrap_or_default() {
-            View::Rgb => 0,
-            View::Luma => 1,
-        };
-        let labels = [
-            texts.get(PhotoTextKey::HistogramRgb),
-            texts.get(PhotoTextKey::HistogramLuma),
-        ];
-        Tabs::new(&labels).show(ui, theme, &mut index);
-        let view = if index == 1 { View::Luma } else { View::Rgb };
-        ui.data_mut(|d| d.insert_temp(view_id, view));
         let histogram = cached_histogram(ui, salt, preview, revision);
         if histogram.samples == 0 {
-            Text::body(theme, texts.get(PhotoTextKey::HistogramEmpty)).show(ui);
+            ui.label(caption_text(theme, texts.get(PhotoTextKey::HistogramEmpty)));
             return;
         }
         plot(ui, theme, &histogram, view);
+        legend(ui, theme, &histogram, texts, language);
     }
 }
 
@@ -230,10 +334,29 @@ mod tests {
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let p = preview();
-                HistogramPanel::show(ui, &photo_ctx, 7u8, Some(&p), Some(RenderRevision(3)));
-                HistogramPanel::show(ui, &photo_ctx, 8u8, None, None);
+                HistogramPanel::show(
+                    ui,
+                    &photo_ctx,
+                    7u8,
+                    Some(&p),
+                    Some(RenderRevision(3)),
+                    |_| {},
+                );
+                HistogramPanel::show(ui, &photo_ctx, 8u8, None, None, |_| {});
             });
         })
         .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn decimals_follow_the_language() {
+        assert_eq!(decimal(112.84, cygnus_i18n::Language::Fr), "112,8");
+        assert_eq!(decimal(48.25, cygnus_i18n::Language::En), "48.2");
+    }
+
+    #[test]
+    fn smoothing_keeps_flat_bins_flat() {
+        let bins = [4u32; 256];
+        assert!(smoothed(&bins).iter().all(|v| (*v - 4.0).abs() < 1e-6));
     }
 }

@@ -16,12 +16,12 @@
 
 //! Inspector panel: focused attachment properties.
 //!
-//! Position-independent (the workspace decides placement, title
-//! carried by the dock tab). Selecting a layer ALONE leaves the
-//! panel empty (no visibility/opacity/blend duplicates, which
+//! Position-independent (the workspace decides placement and draws
+//! the section header). Selecting a layer ALONE shows the empty hint
+//! (no visibility/opacity/blend duplicates, which
 //! live in the Layers panel); only a focused
 //! attachment (live filter or mask, click on its tree row)
-//! shows its settings section. `None` = explicit empty state.
+//! shows its settings section.
 //! No worker send: everything bubbles as [`InspectorAction`].
 
 use super::sections::draw_attachment_section;
@@ -91,8 +91,15 @@ impl InspectorPanel {
     ) -> Vec<InspectorAction> {
         let theme = ctx.shared.theme();
         let texts = cygnus_i18n::PhotoCatalog::new(ctx.shared.translator().language());
+        let empty = |ui: &mut egui::Ui| {
+            Text::caption(
+                theme,
+                texts.get(cygnus_i18n::PhotoTextKey::AdjustmentsEmpty),
+            )
+            .show(ui);
+        };
         let Some(layer) = selected else {
-            Text::body(theme, texts.get(cygnus_i18n::PhotoTextKey::NoLayerSelected)).show(ui);
+            empty(ui);
             return Vec::new();
         };
         // Lone layer: empty panel (layer settings live
@@ -100,6 +107,7 @@ impl InspectorPanel {
         // its section: owner = selection, or one of its filters
         // (filter-owned masks).
         let Some(focus) = focused else {
+            empty(ui);
             return Vec::new();
         };
         let owner_is_layer = focus.owner == layer.id;

@@ -14,90 +14,48 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Active-tool settings bar of PHOTO (under the menu).
+//! Active-tool settings of PHOTO (context bar, after the tool
+//! switcher).
 //!
-//! Resumes the old interface: brush (size, opacity, color),
-//! eraser (size, opacity), other tools (contextual help).
-//! Nothing when the tool has no settings — the bar stays empty.
+//! Brush and eraser: compact size / opacity fields (drag to scrub,
+//! click for a slider). Other tools carry no settings yet: their
+//! usage hint stands in, subdued.
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
-use cygnus_ui::components::{Slider, Toggle};
+use cygnus_ui::components::ValueField;
 use cygnus_ui::theme::CygnusTheme;
-use cygnus_ui::theme::typography::body_text;
+use cygnus_ui::theme::typography::caption_text;
 
-/// Draws the active tool's settings (updates `brush` and
-/// `show_grid` in place, no channel: purely local state).
+/// Largest brush diameter offered by the size field (image pixels).
+const MAX_BRUSH_SIZE: f32 = 500.0;
+
+/// Draws the active tool's settings (updates `brush` in place, no
+/// channel: purely local state).
 pub fn draw_tool_options(
     ui: &mut egui::Ui,
     tool: PhotoCanvasTool,
     brush: &mut PhotoBrushSettings,
-    show_grid: &mut bool,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
 ) {
     match tool {
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser => {
-            let title = if tool == PhotoCanvasTool::Brush {
-                texts.get(PhotoTextKey::BrushHint)
-            } else {
-                texts.get(PhotoTextKey::EraserHint)
-            };
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, title));
-                ui.separator();
-                let mut size = brush.radius * 2.0;
-                Slider::new(texts.get(PhotoTextKey::SizeLabel), 1.0..=200.0)
-                    .show(ui, theme, &mut size);
-                brush.radius = (size / 2.0).clamp(0.5, 100.0);
-                let mut opacity = brush.opacity;
-                Slider::new(texts.get(PhotoTextKey::OpacityLabel), 0.0..=1.0).show(
-                    ui,
-                    theme,
-                    &mut opacity,
-                );
-                brush.opacity = opacity.clamp(0.0, 1.0);
-                if tool == PhotoCanvasTool::Brush {
-                    ui.label(body_text(theme, texts.get(PhotoTextKey::ColorLabel)));
-                    let mut color = brush.color;
-                    egui::color_picker::color_edit_button_srgb(ui, &mut color);
-                    brush.color = color;
-                }
-            });
+            ui.spacing_mut().item_spacing.x = theme.spacing.sm;
+            let mut size = brush.radius * 2.0;
+            ValueField::new(texts.get(PhotoTextKey::SizeLabel), 1.0..=MAX_BRUSH_SIZE)
+                .unit("px")
+                .show(ui, theme, &mut size);
+            brush.radius = (size / 2.0).clamp(0.5, MAX_BRUSH_SIZE / 2.0);
+            ui.add_space(theme.spacing.sm);
+            let mut opacity = brush.opacity;
+            ValueField::new(texts.get(PhotoTextKey::OpacityLabel), 0.0..=1.0)
+                .percent()
+                .show(ui, theme, &mut opacity);
+            brush.opacity = opacity.clamp(0.0, 1.0);
         }
-        PhotoCanvasTool::Move => {
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, texts.get(PhotoTextKey::MoveTitle)));
-                ui.separator();
-                Toggle::new(texts.get(PhotoTextKey::GridLabel)).show(ui, theme, show_grid);
-            });
-        }
-        PhotoCanvasTool::Node => {
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, texts.get(PhotoTextKey::NodeHint)));
-                ui.separator();
-                Toggle::new(texts.get(PhotoTextKey::GridLabel)).show(ui, theme, show_grid);
-            });
-        }
-        PhotoCanvasTool::Pan => {
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, texts.get(PhotoTextKey::PanHintText)));
-            });
-        }
-        PhotoCanvasTool::Zoom => {
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, texts.get(PhotoTextKey::ZoomHintText)));
-            });
-        }
-        PhotoCanvasTool::Eyedropper => {
-            ui.horizontal(|ui| {
-                ui.label(body_text(theme, texts.get(PhotoTextKey::EyedropperHint)));
-                ui.separator();
-                ui.label(body_text(
-                    theme,
-                    texts.get(PhotoTextKey::EyedropperHintText),
-                ));
-            });
+        other => {
+            ui.label(caption_text(theme, other.hint(texts)));
         }
     }
 }
@@ -120,15 +78,16 @@ mod tests {
             PhotoCanvasTool::Eyedropper,
         ] {
             let mut brush = PhotoBrushSettings::default();
-            let mut show_grid = false;
+            let before = brush;
             let theme = cygnus_ui::theme::CygnusTheme::dark();
             let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    draw_tool_options(ui, tool, &mut brush, &mut show_grid, &theme, texts);
+                    ui.horizontal(|ui| draw_tool_options(ui, tool, &mut brush, &theme, texts));
                 });
             })
             .drop_without_applying_deltas();
+            assert_eq!(brush, before, "aucun changement sans interaction");
         }
     }
 }

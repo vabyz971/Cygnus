@@ -14,19 +14,43 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Top bar: menus + modes/tools (full width).
+//! Top bars, full width:
 //!
-//! Contents delegated to the domain widgets (`menubar`, `modebar`); here
-//! we only place the `egui::Panel`s and convert the widget
-//! actions into [`PhotoAction`](crate::commands::PhotoAction).
+//! 1. title bar — brand, menus, window drag area and buttons (the OS
+//!    decorations are off, see `ui::window_chrome`);
+//! 2. persona row — Pixel / Vector / Layout tabs, quick actions on
+//!    the right (history, view toggles, layout, export);
+//! 3. context bar — tool switcher and the active tool's settings.
+//!
+//! Rows 1 and 2 share the chrome surface; rows 2 and 3 only exist
+//! with an open document. Contents are delegated to the domain widgets
+//! (`menubar`, `modebar`); here we only place the `egui::Panel`s and
+//! convert the widget actions into
+//! [`PhotoAction`](crate::commands::PhotoAction).
 
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
-use crate::ui::modebar::draw_persona_switch;
+use crate::ui::modebar::{QuickAction, QuickActionState, draw_persona_switch, draw_quick_actions};
+use crate::ui::window_chrome::{drag_area, window_controls};
 use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
 };
-use cygnus_i18n::PhotoCatalog;
+use cygnus_i18n::{PhotoCatalog, PhotoTextKey, TextKey};
+use cygnus_ui::theme::CygnusTheme;
+
+/// Product name shown at the left of the title bar.
+const BRAND: &str = "Cygnus Photo";
+
+/// Panel frame of a top row: `fill`, horizontal `md` margins,
+/// vertical `margin_y`.
+fn row_frame(theme: &CygnusTheme, fill: egui::Color32, margin_y: f32) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(fill)
+        .inner_margin(egui::Margin::symmetric(
+            theme.spacing.md as i8,
+            margin_y as i8,
+        ))
+}
 
 /// Converts a menu action into an app action.
 fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
@@ -61,18 +85,23 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
     }
 }
 
-/// Row 1: menu bar (File, Edit, Layer…).
+/// Row 1: title bar (brand, menus, drag area, window buttons).
 pub fn show_menu_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
     ctx: &PhotoUiContext,
 ) -> Vec<PhotoAction> {
     let mut actions = Vec::new();
+    let theme = ctx.shared.theme();
+    let has_document = app.active_doc_opt().is_some();
     egui::Panel::top("photo_menubar")
         .resizable(false)
+        // Without a document the title bar ends the chrome.
+        .show_separator_line(!has_document)
+        .frame(row_frame(theme, theme.colors.bg_primary, theme.spacing.xxs))
         .show(ui, |ui| {
             let availability = MenuAvailability {
-                has_document: app.active_doc_opt().is_some(),
+                has_document,
                 can_undo: app.active_doc_opt().is_some_and(|doc| doc.ui.can_undo),
                 can_redo: app.active_doc_opt().is_some_and(|doc| doc.ui.can_redo),
                 has_selection: app
@@ -80,24 +109,53 @@ pub fn show_menu_bar(
                     .is_some_and(|doc| doc.ui.selected.is_some()),
                 preview_clip: app.active_doc_opt().is_some_and(|doc| doc.ui.preview_clip),
             };
-            actions.extend(
-                draw_menu_bar(
-                    ui,
-                    availability,
-                    ctx.shared.theme(),
-                    ctx.shared.translator(),
-                    PhotoCatalog::new(ctx.shared.translator().language()),
-                )
-                .into_iter()
-                .map(menu_action_to_photo),
-            );
+            let translator = ctx.shared.translator();
+            let texts = PhotoCatalog::new(translator.language());
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(BRAND)
+                        .size(theme.typography.body_size)
+                        .strong()
+                        .color(theme.colors.fg_strong),
+                );
+                ui.add_space(theme.spacing.md);
+                actions.extend(
+                    draw_menu_bar(ui, availability, theme, translator, texts)
+                        .into_iter()
+                        .map(menu_action_to_photo),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    window_controls(
+                        ui,
+                        theme,
+                        [
+                            texts.get(PhotoTextKey::WindowMinimize),
+                            texts.get(PhotoTextKey::WindowMaximize),
+                            translator.get(TextKey::Close),
+                        ],
+                    );
+                    let size = egui::vec2(ui.available_width(), theme.sizes.button_md);
+                    drag_area(ui, size);
+                });
+            });
         });
     actions
 }
 
-/// Row 2: context bar — personas first (Affinity's toolbar), then
-/// the tool settings, view toggles right-aligned.
-/// Absent with no open document.
+/// Converts a quick action into an app action.
+fn quick_action_to_photo(action: QuickAction) -> PhotoAction {
+    match action {
+        QuickAction::Undo => PhotoAction::Undo,
+        QuickAction::Redo => PhotoAction::Redo,
+        QuickAction::ToggleGrid => PhotoAction::ToggleGrid,
+        QuickAction::ToggleClip => PhotoAction::TogglePreviewClip,
+        QuickAction::ResetLayout => PhotoAction::ResetDockLayout,
+        QuickAction::Export => PhotoAction::OpenExportDialog,
+    }
+}
+
+/// Rows 2 and 3: persona row (quick actions on the right) then the
+/// context bar. Absent with no open document.
 pub fn show_mode_bar(
     ui: &mut egui::Ui,
     app: &mut PhotoApp,
@@ -107,34 +165,53 @@ pub fn show_mode_bar(
     let Some(doc) = app.active_doc_mut_opt() else {
         return actions;
     };
-    egui::Panel::top("photo_modebar")
+    let theme = ctx.shared.theme();
+    let translator = ctx.shared.translator();
+    let texts = PhotoCatalog::new(translator.language());
+    egui::Panel::top("photo_personabar")
         .resizable(false)
+        .frame(row_frame(theme, theme.colors.bg_primary, theme.spacing.sm))
         .show(ui, |ui| {
-            let translator = ctx.shared.translator();
-            let texts = PhotoCatalog::new(translator.language());
-            let theme = ctx.shared.theme();
-            let outcome = ui
-                .horizontal(|ui| {
-                    if let Some(mode) = draw_persona_switch(ui, &mut doc.ui.edit_mode, theme)
-                        && !mode.supports(doc.ui.tool)
-                    {
-                        // Tool missing from the new persona: fall back.
-                        actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
-                    }
-                    ui.separator();
-                    draw_photo_modebar(
-                        ui,
-                        doc.ui.tool,
-                        &mut doc.ui.brush,
-                        &mut doc.ui.show_grid,
-                        doc.ui.preview_clip,
-                        ctx.shared.theme(),
-                        texts,
-                    )
-                })
-                .inner;
-            if outcome.toggle_mask {
-                actions.push(PhotoAction::TogglePreviewClip);
+            ui.horizontal(|ui| {
+                if let Some(mode) = draw_persona_switch(ui, &mut doc.ui.edit_mode, theme)
+                    && !mode.supports(doc.ui.tool)
+                {
+                    // Tool missing from the new persona: fall back.
+                    actions.push(PhotoAction::SetTool(PhotoCanvasTool::Move));
+                }
+                let state = QuickActionState {
+                    can_undo: doc.ui.can_undo,
+                    can_redo: doc.ui.can_redo,
+                    show_grid: doc.ui.show_grid,
+                    preview_clip: doc.ui.preview_clip,
+                };
+                let clicked = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        draw_quick_actions(ui, state, theme, translator, texts)
+                    })
+                    .inner;
+                actions.extend(clicked.map(quick_action_to_photo));
+            });
+        });
+    egui::Panel::top("photo_contextbar")
+        .resizable(false)
+        .frame(row_frame(
+            theme,
+            theme.colors.bg_secondary,
+            theme.spacing.xs,
+        ))
+        .show(ui, |ui| {
+            ui.set_min_height(theme.sizes.button_md);
+            let outcome = draw_photo_modebar(
+                ui,
+                doc.ui.edit_mode,
+                doc.ui.tool,
+                &mut doc.ui.brush,
+                theme,
+                texts,
+            );
+            if let Some(tool) = outcome.tool {
+                actions.push(PhotoAction::SetTool(tool));
             }
         });
     actions

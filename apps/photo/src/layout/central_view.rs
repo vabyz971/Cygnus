@@ -641,7 +641,7 @@ fn paint_drag_proxy(ui: &egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext, slo
         (Some(DragProxyState::Ending(proxy, transform)), _) => (proxy, *transform),
         _ => return,
     };
-    let backdrop = ctx.shared.theme().colors.bg_tertiary;
+    let backdrop = ctx.shared.theme().colors.bg_canvas;
     let shapes = proxy_shapes(proxy, &transform, slots.mapping, backdrop);
     let painter = ui.painter();
     painter.set(slots.under, egui::Shape::Vec(shapes.under));

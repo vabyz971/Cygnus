@@ -90,6 +90,8 @@ pub struct PhotoBrushSettings {
     pub color: [u8; 3],
     /// Opacity 0..=1.
     pub opacity: f32,
+    /// Secondary RGB color (rail swatch, swapped with `color`).
+    pub secondary: [u8; 3],
 }
 
 impl Default for PhotoBrushSettings {
@@ -98,6 +100,7 @@ impl Default for PhotoBrushSettings {
             radius: 8.0,
             color: [255, 255, 255],
             opacity: 1.0,
+            secondary: [0, 0, 0],
         }
     }
 }

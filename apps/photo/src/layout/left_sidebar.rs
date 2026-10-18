@@ -37,7 +37,7 @@ pub fn draw_tools_content(
     let outcome = draw_tool_rail(
         ui,
         &mut doc.ui.tool,
-        &mut doc.ui.brush.color,
+        &mut doc.ui.brush,
         doc.ui.edit_mode,
         theme,
         texts,

@@ -25,7 +25,7 @@
 use crate::commands::PhotoUiContext;
 use cygnus_ui::viewport::draw_crosshair;
 
-/// Document boundary: accented frame around the DOCUMENT's
+/// Document boundary: hairline frame around the DOCUMENT's
 /// screen rect (`None` = no image, nothing to draw), with
 /// its dimensions at top left (`label`, e.g. `"800 x 600"`).
 pub fn draw_document_bounds(
@@ -41,7 +41,7 @@ pub fn draw_document_bounds(
     painter.rect_stroke(
         dest,
         0.0,
-        egui::Stroke::new(theme.borders.medium, theme.colors.accent),
+        egui::Stroke::new(theme.borders.thin, theme.colors.border),
         egui::StrokeKind::Outside,
     );
     if let Some(label) = label {

@@ -17,20 +17,21 @@
 //! PHOTO tool rail (left panel, domain widget).
 //!
 //! Vertical icon bar with a tooltip showing each
-//! tool's name. Content follows the edit mode (see `super::modebar`:
+//! tool's name, color swatches underneath. Content follows the edit mode (see `super::modebar`:
 //! all tools in Pixel, navigation only in Vector/Layout).
 //! cygnus-ui-only styling.
 
 use super::modebar::PhotoEditMode;
+use super::viewport::PhotoBrushSettings;
 use super::viewport::PhotoCanvasTool;
 use crate::ui::NewVectorShape;
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
-use cygnus_ui::components::{menu_row, menu_style};
-use cygnus_ui::icons::{Icon, IconRegistry};
-use cygnus_ui::theme::CygnusTheme;
+use cygnus_ui::components::{IconButton, menu_row, menu_style};
+use cygnus_ui::icons::Icon;
+use cygnus_ui::theme::{CygnusTheme, user_color};
 
 /// Icon + contextual help of a rail tool.
-fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str) {
+pub(crate) fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'static str) {
     match tool {
         PhotoCanvasTool::Move => (Icon::MoveTool, texts.get(PhotoTextKey::MoveHint)),
         PhotoCanvasTool::Node => (Icon::Node, texts.get(PhotoTextKey::NodeHint)),
@@ -52,89 +53,123 @@ pub struct ToolRailOutcome {
     pub new_shape: Option<NewVectorShape>,
 }
 
-/// Draws the compact vertical tool rail (32 px, brush
-/// color right after the tools, Affinity-style) for the current
-/// `mode` and returns the frame outcome.
+/// One color swatch of the rail (click = picker popup).
+fn swatch(
+    ui: &mut egui::Ui,
+    theme: &CygnusTheme,
+    rect: egui::Rect,
+    color: &mut [u8; 3],
+    tip: &str,
+) {
+    let id = ui.make_persistent_id(("photo_swatch", tip));
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_text(tip);
+    let fill = user_color(*color);
+    let painter = ui.painter();
+    painter.rect_filled(rect, theme.radius.xs, fill);
+    painter.rect_stroke(
+        rect,
+        theme.radius.xs,
+        egui::Stroke::new(theme.borders.thin, theme.colors.fg_subdued),
+        egui::StrokeKind::Outside,
+    );
+    egui::Popup::menu(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let mut picked = fill;
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut picked,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                *color = [picked.r(), picked.g(), picked.b()];
+            }
+        });
+}
+
+/// Primary/secondary swatches (overlapping squares, Photoshop-style)
+/// and the swap button under them.
+fn color_swatches(
+    ui: &mut egui::Ui,
+    brush: &mut PhotoBrushSettings,
+    theme: &CygnusTheme,
+    texts: PhotoCatalog,
+) {
+    let side = theme.sizes.button_xs + theme.spacing.xxs;
+    let offset = theme.spacing.sm;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(side + offset, side + offset),
+        egui::Sense::hover(),
+    );
+    let back = egui::Rect::from_min_size(
+        rect.min + egui::vec2(offset, offset),
+        egui::vec2(side, side),
+    );
+    let front = egui::Rect::from_min_size(rect.min, egui::vec2(side, side));
+    // Secondary first: the primary overlaps it (and wins the clicks).
+    swatch(
+        ui,
+        theme,
+        back,
+        &mut brush.secondary,
+        texts.get(PhotoTextKey::SecondaryColor),
+    );
+    swatch(
+        ui,
+        theme,
+        front,
+        &mut brush.color,
+        texts.get(PhotoTextKey::PrimaryColor),
+    );
+    if IconButton::new(Icon::Swap)
+        .tooltip(texts.get(PhotoTextKey::SwapColors))
+        .show(ui, theme)
+        .clicked()
+    {
+        std::mem::swap(&mut brush.color, &mut brush.secondary);
+    }
+}
+
+/// Draws the vertical tool rail for the current `mode` and returns
+/// the frame outcome.
 ///
-/// Hover and selection painted with theme tokens
-/// (`item_hover`, `item_selected`): buttons are frameless,
-/// the background is drawn before the button (behind the icon).
-/// The shape menu (vector creation) sits below the tools in every
-/// mode — creation is allowed everywhere, personas switch later.
+/// Icon buttons (accent glyph on a pill when selected, theme hover),
+/// then the vector shape menu (Vector persona only) and the color
+/// swatches.
 pub fn draw_tool_rail(
     ui: &mut egui::Ui,
     current_tool: &mut PhotoCanvasTool,
-    brush_color: &mut [u8; 3],
+    brush: &mut PhotoBrushSettings,
     mode: PhotoEditMode,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
 ) -> ToolRailOutcome {
     let mut outcome = ToolRailOutcome::default();
     ui.vertical_centered(|ui| {
-        for (index, tool) in mode.tools().iter().enumerate() {
+        ui.spacing_mut().item_spacing.y = theme.spacing.xs;
+        ui.add_space(theme.spacing.sm);
+        for tool in mode.tools() {
             let tool = *tool;
             let (icon, tip) = tool_icon(tool, texts);
-            let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
-            let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
-            // Appear fade (native egui) toward hover/selection.
-            let active = *current_tool == tool;
-            let fade = ui.ctx().animate_bool_with_time(
-                ui.make_persistent_id(("photo_tool_hover", index)),
-                active || hover.hovered(),
-                0.12,
-            );
-            if fade > 0.0 {
-                let base = if active {
-                    theme.colors.item_selected
-                } else {
-                    theme.colors.item_hover
-                };
-                ui.painter()
-                    .rect_filled(rect, theme.radius.sm, base.gamma_multiply(fade));
-            }
-            let response = ui
-                .put(
-                    rect,
-                    egui::Button::new(
-                        IconRegistry::new().sized(icon, theme.typography.heading_size),
-                    )
-                    .frame(false),
-                )
-                .on_hover_text(tip);
+            let response = IconButton::new(icon)
+                .tooltip(tip)
+                .selected(*current_tool == tool)
+                .size(theme.sizes.tool_button)
+                .show(ui, theme);
             if response.clicked() {
                 *current_tool = tool;
                 outcome.tool = Some(tool);
             }
         }
-        ui.separator();
         // Vector creation lives in the Vector persona (Affinity
-        // parity: shapes belong to Designer, not Photo). Other
-        // personas show tools only.
+        // parity: shapes belong to Designer, not Photo).
         if mode == PhotoEditMode::Vector {
-            // Vector shape creation (same button visuals, no tool switch).
-            let size = egui::vec2(theme.sizes.tool_button, theme.sizes.tool_button);
-            let (rect, hover) = ui.allocate_exact_size(size, egui::Sense::hover());
-            let fade = ui.ctx().animate_bool_with_time(
-                ui.make_persistent_id("photo_shape_menu"),
-                hover.hovered(),
-                0.12,
-            );
-            if fade > 0.0 {
-                ui.painter().rect_filled(
-                    rect,
-                    theme.radius.sm,
-                    theme.colors.item_hover.gamma_multiply(fade),
-                );
-            }
-            let shape_resp = ui
-                .put(
-                    rect,
-                    egui::Button::new(
-                        IconRegistry::new().sized(Icon::Shape, theme.typography.heading_size),
-                    )
-                    .frame(false),
-                )
-                .on_hover_text(texts.get(PhotoTextKey::NewVectorLayer));
+            ui.separator();
+            let shape_resp = IconButton::new(Icon::Shape)
+                .tooltip(texts.get(PhotoTextKey::NewVectorLayer))
+                .size(theme.sizes.tool_button)
+                .show(ui, theme);
             egui::Popup::menu(&shape_resp)
                 .style(menu_style(theme))
                 .show(|ui| {
@@ -156,9 +191,9 @@ pub fn draw_tool_rail(
                         }
                     }
                 });
-            ui.separator();
         }
-        egui::color_picker::color_edit_button_srgb(ui, brush_color);
+        ui.add_space(theme.spacing.md);
+        color_swatches(ui, brush, theme, texts);
     });
     outcome
 }
@@ -174,14 +209,14 @@ mod tests {
         let theme = CygnusTheme::dark();
         let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
         let mut tool = PhotoCanvasTool::Move;
-        let mut color = [255u8, 255, 255];
+        let mut brush = PhotoBrushSettings::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(
                     draw_tool_rail(
                         ui,
                         &mut tool,
-                        &mut color,
+                        &mut brush,
                         PhotoEditMode::Pixel,
                         &theme,
                         texts
@@ -206,10 +241,10 @@ mod tests {
             PhotoEditMode::Layout,
         ] {
             let mut tool = PhotoCanvasTool::Move;
-            let mut color = [255u8, 255, 255];
+            let mut brush = PhotoBrushSettings::default();
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let _ = draw_tool_rail(ui, &mut tool, &mut color, mode, &theme, texts);
+                    let _ = draw_tool_rail(ui, &mut tool, &mut brush, mode, &theme, texts);
                 });
             })
             .drop_without_applying_deltas();

@@ -266,6 +266,8 @@ pub enum PhotoAction {
     },
     /// Reopen a closed dock tab (tools, inspector, layers).
     ShowDockTab(PhotoDockTab),
+    /// Hide a dock panel, keeping its slot (section menu).
+    HideDockTab(PhotoDockTab),
     /// Restore the default dock layout.
     ResetDockLayout,
     /// Open the help window.

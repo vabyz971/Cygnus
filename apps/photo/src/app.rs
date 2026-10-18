@@ -598,6 +598,11 @@ impl PhotoApp {
             PhotoAction::ShowDockTab(tab) => {
                 ensure_tab(&mut self.shell.tree, tab);
             }
+            PhotoAction::HideDockTab(tab) => {
+                if let Some(tile) = self.shell.tree.tiles.find_pane(&tab) {
+                    self.shell.tree.tiles.set_visible(tile, false);
+                }
+            }
             PhotoAction::ResetDockLayout => {
                 let canvases = self
                     .doc_ids()

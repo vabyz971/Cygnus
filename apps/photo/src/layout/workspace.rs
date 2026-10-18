@@ -32,7 +32,9 @@ impl PhotoWorkspace {
     /// Draws a full frame and queues the actions into `app.queue`.
     pub fn show(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) {
         let mut actions = Vec::new();
-        // 1-2. Top: menus then modes/options (full width).
+        // 0. Undecorated window: border presses resize first.
+        crate::ui::window_chrome::resize_edges(ui.ctx(), ctx.shared.theme());
+        // 1-2. Top: title bar then persona / context bars (full width).
         actions.extend(top_bar::show_menu_bar(ui, app, ctx));
         actions.extend(top_bar::show_mode_bar(ui, app, ctx));
         // 3. Bottom status bar (reserved before the central area).

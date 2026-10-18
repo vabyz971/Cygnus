@@ -24,27 +24,29 @@
 //! Domain contents (left_sidebar / central_view / right_sidebar)
 //! ```
 //!
-//! The top (menus, modes) and bottom (status) bars stay fixed
-//! `egui::Panel`s. Each open document has its
-//! "Canvas" panel, titled `name | zoom %` and CLOSABLE (tab cross):
-//! activating it activates the document, closing it closes the document (back
-//! to welcome if it was the last one). The tool rail is compact,
-//! titled with a drag icon (the tab bar carries DnD);
-//! the inspector sits above the layers, both with inner
-//! `sm` padding. Hiding another panel (cross) makes it
-//! invisible while keeping its slot; the Window menu shows it again
-//! ([`PhotoAction::ShowDockTab`](crate::commands::PhotoAction)).
-//! Styling inherits from egui (hence the Cygnus theme): no hardcoded
-//! color here.
+//! The top (title, personas, context) and bottom (status) bars stay
+//! fixed `egui::Panel`s. Layout, left to right: the tool rail (bare
+//! pane, pinned width), the document tabs, then the side column —
+//! Histogram and Adjustments (bare panes drawing their own section
+//! header) above the Layers / History tabs. Bare panes have no tab
+//! bar: their header overflow menu hides them, the Window menu shows
+//! them again ([`PhotoAction::ShowDockTab`](crate::commands::PhotoAction)).
+//! Each open document has its own closable canvas tab (glyph + name,
+//! accent top edge when active): activating it activates the document,
+//! closing it closes the document (back to welcome if it was the last
+//! one). Styling inherits from egui (hence the Cygnus theme): no
+//! hardcoded color here.
 
 use super::{central_view, left_sidebar, right_sidebar};
 use crate::app::{PhotoApp, remove_document};
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::state::OpenDocument;
 use app_shell::dock::DockTab;
+use app_shell::dock::set_linear_shares;
 use cygnus_i18n::TextKey;
 use cygnus_ui::containers::{DockResizeState, DockStyle, DockTabState};
 use cygnus_ui::icons::{Icon, IconRegistry};
+use cygnus_ui::theme::CygnusTheme;
 use egui_tiles::{Behavior, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -99,19 +101,86 @@ impl DockTab for PhotoDockTab {
     }
 }
 
-/// Default photo layout: canvas at center, tools on the left,
-/// inspector above layers on the right, History tabbed
-/// with layers (see `app-shell::dock::default_tree`).
+/// Width shares of the root row: rail (re-pinned to a fixed pixel
+/// width every frame, see [`pin_tools_width`]), canvases, side column.
+const SHARE_TOOLS: f32 = 1.0;
+/// Canvas share of the root row.
+const SHARE_CANVAS: f32 = 23.0;
+/// Side column share of the root row (~1/5 of the window).
+const SHARE_SIDE: f32 = 6.0;
+
+/// Default photo layout: tool rail on the left, document tabs in the
+/// center, and the side column — Histogram, Adjustments (inspector),
+/// then Layers tabbed with History.
 pub fn default_tree(canvases: Vec<PhotoDockTab>) -> Tree<PhotoDockTab> {
-    let mut tree = app_shell::dock::default_tree(
-        PhotoDockTab::Tools,
-        canvases,
-        PhotoDockTab::Inspector,
-        PhotoDockTab::Layers,
+    debug_assert!(
+        canvases.iter().all(|tab| tab.canvas_id().is_some()),
+        "la racine ne porte que des canevas"
     );
-    ensure_history_tabbed(&mut tree);
-    ensure_histogram_tabbed(&mut tree);
-    tree
+    let mut tiles = Tiles::default();
+    let tools = tiles.insert_pane(PhotoDockTab::Tools);
+    let canvas_ids: Vec<TileId> = canvases
+        .into_iter()
+        .map(|tab| tiles.insert_pane(tab))
+        .collect();
+    let canvas_tabs = tiles.insert_tab_tile(canvas_ids);
+    let histogram = tiles.insert_pane(PhotoDockTab::Histogram);
+    let inspector = tiles.insert_pane(PhotoDockTab::Inspector);
+    let layers = tiles.insert_pane(PhotoDockTab::Layers);
+    let history = tiles.insert_pane(PhotoDockTab::History);
+    let layer_tabs = tiles.insert_tab_tile(vec![layers, history]);
+    let side = tiles.insert_vertical_tile(vec![histogram, inspector, layer_tabs]);
+    let root = tiles.insert_horizontal_tile(vec![tools, canvas_tabs, side]);
+    set_linear_shares(
+        &mut tiles,
+        root,
+        &[
+            (tools, SHARE_TOOLS),
+            (canvas_tabs, SHARE_CANVAS),
+            (side, SHARE_SIDE),
+        ],
+    );
+    set_linear_shares(
+        &mut tiles,
+        side,
+        &[(histogram, 2.1), (inspector, 3.4), (layer_tabs, 4.5)],
+    );
+    Tree::new("cygnus-tree", root, tiles)
+}
+
+/// Rail width in points: one tool button plus side margins.
+fn tools_width(theme: &CygnusTheme) -> f32 {
+    theme.sizes.tool_button + theme.spacing.md * 2.0 - theme.spacing.xxs
+}
+
+/// Keeps the tool rail at a fixed pixel width inside its row (shares
+/// are proportional, so the rail would otherwise grow and shrink with
+/// the window). No-op when the rail was docked elsewhere.
+fn pin_tools_width(tree: &mut Tree<PhotoDockTab>, total_width: f32, rail: f32) {
+    let Some(tools) = tree.tiles.find_pane(&PhotoDockTab::Tools) else {
+        return;
+    };
+    let Some(parent) = tree.tiles.parent_of(tools) else {
+        return;
+    };
+    let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) =
+        tree.tiles.get_mut(parent)
+    else {
+        return;
+    };
+    if linear.dir != egui_tiles::LinearDir::Horizontal || total_width <= rail {
+        return;
+    }
+    let others: f32 = linear
+        .children
+        .iter()
+        .filter(|child| **child != tools)
+        .map(|child| linear.shares[*child])
+        .sum();
+    let fraction = rail / total_width;
+    linear
+        .shares
+        .set_share(tools, others * fraction / (1.0 - fraction));
 }
 
 /// Histogram tabbed next to History (O006).
@@ -185,12 +254,18 @@ pub fn ensure_history_tabbed(tree: &mut Tree<PhotoDockTab>) {
 /// behavior never takes the whole `PhotoApp`, otherwise `Tree::ui`
 /// (which borrows the tree) would refuse to compile.
 pub fn show_tree(ui: &mut egui::Ui, app: &mut PhotoApp, ctx: &PhotoUiContext) -> Vec<PhotoAction> {
+    pin_tools_width(
+        &mut app.shell.tree,
+        ui.available_width(),
+        tools_width(ctx.shared.theme()),
+    );
     let mut behavior = PhotoTreeBehavior {
         docs: &mut app.docs,
         active: &mut app.active,
         filter_types: &app.runtime.filter_types,
         ctx,
         actions: Vec::new(),
+        active_canvas_tabs: Default::default(),
     };
     app.shell.tree.ui(&mut behavior, ui);
     behavior.actions
@@ -205,17 +280,99 @@ fn dock_tab_state(state: &egui_tiles::TabState) -> DockTabState {
     }
 }
 
-/// Tile content with inner `sm` padding (inspector,
-/// layers): styling stays 100% theme tokens.
+/// Side-panel tile: raised surface (`bg_secondary`) with inner `md`
+/// horizontal / `xs` vertical padding; styling stays 100% theme tokens.
 fn padded_tile<R>(
     ui: &mut egui::Ui,
     ctx: &PhotoUiContext,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
+    let theme = ctx.shared.theme();
+    ui.painter()
+        .rect_filled(ui.max_rect(), 0.0, theme.colors.bg_secondary);
     egui::Frame::NONE
-        .inner_margin(egui::Margin::same(ctx.shared.theme().spacing.sm as i8))
+        .inner_margin(egui::Margin::symmetric(
+            theme.spacing.md as i8,
+            theme.spacing.xs as i8,
+        ))
         .show(ui, add_contents)
         .inner
+}
+
+/// Tab title made of a glyph then a label (one galley, so the tab
+/// text color applies to both).
+fn glyph_title(
+    theme: &CygnusTheme,
+    icon: Icon,
+    label: &str,
+    suffix: Option<String>,
+) -> egui::WidgetText {
+    let style = egui::Style::default();
+    let mut job = egui::text::LayoutJob::default();
+    IconRegistry::new()
+        .sized(icon, theme.typography.icon_size)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+    egui::RichText::new(format!("  {label}"))
+        .size(theme.typography.body_size)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+    if let Some(suffix) = suffix {
+        egui::RichText::new(format!("  {suffix}"))
+            .size(theme.typography.body_size)
+            .color(theme.colors.fg_subdued)
+            .append_to(
+                &mut job,
+                &style,
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+    }
+    job.into()
+}
+
+/// Plain (glyph-less) tab title with an optional subdued suffix
+/// ("Layers  4").
+fn counted_title(theme: &CygnusTheme, label: &str, suffix: Option<String>) -> egui::WidgetText {
+    let Some(suffix) = suffix else {
+        return label.into();
+    };
+    let style = egui::Style::default();
+    let mut job = egui::text::LayoutJob::default();
+    egui::RichText::new(label)
+        .size(theme.typography.body_size)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+    egui::RichText::new(format!("  {suffix}"))
+        .size(theme.typography.body_size)
+        .color(theme.colors.fg_subdued)
+        .append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+    job.into()
+}
+
+/// True when `tile` holds a canvas pane.
+fn is_canvas_tile(tiles: &Tiles<PhotoDockTab>, tile: TileId) -> bool {
+    matches!(
+        tiles.get(tile),
+        Some(egui_tiles::Tile::Pane(PhotoDockTab::Canvas(_)))
+    )
 }
 
 /// `egui_tiles` behavior: translated titles + domain contents.
@@ -236,6 +393,8 @@ struct PhotoTreeBehavior<'a> {
     ctx: &'a PhotoUiContext,
     /// Domain actions collected during the frame.
     actions: Vec<PhotoAction>,
+    /// Canvas tabs painted active this frame (see `tab_bg_color`).
+    active_canvas_tabs: std::cell::RefCell<Vec<TileId>>,
 }
 
 impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
@@ -249,40 +408,38 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                     self.ctx.shared.theme().typography.body_size,
                 )
                 .into(),
-            // Document title: name + resolution + zoom (resolution
-            // lives here, never as an overlay on the canvas). (Color profile
-            // and 16/32-bit depth: the engine is 100% RGBA 8-bit
-            // with no profile — add here when `Document`
-            // exposes that metadata.)
-            PhotoDockTab::Canvas(id) => self
-                .docs
-                .iter()
-                .find(|doc| doc.id == id)
-                .map(|doc| {
-                    // True zoom: screen pixels per document pixel (the
-                    // viewport zoom is relative to the fitted preview).
-                    let zoom = match (doc.ui.last_dest, doc.ui.preview_geom) {
-                        (Some(dest), Some(geom)) if geom.full_size.x > 0.0 => {
-                            (dest.width() / geom.full_size.x * 100.0).round()
-                        }
-                        _ => (doc.ui.viewport.zoom() * 100.0).round(),
-                    };
-                    match doc.ui.preview_geom {
-                        Some(geom) => format!(
-                            "{} | {}x{} | {}%",
-                            doc.title, geom.doc_size.x as u32, geom.doc_size.y as u32, zoom
-                        ),
-                        None => format!("{} | {}%", doc.title, zoom),
-                    }
-                })
-                .unwrap_or_else(|| {
-                    self.ctx
-                        .shared
-                        .translator()
-                        .get(TextKey::Canvas)
-                        .to_string()
-                })
-                .into(),
+            // Document title: glyph + name (resolution, depth and
+            // zoom live in the status bar, never on the canvas).
+            PhotoDockTab::Canvas(id) => {
+                let theme = self.ctx.shared.theme();
+                let title = self
+                    .docs
+                    .iter()
+                    .find(|doc| doc.id == id)
+                    .map(|doc| doc.title.clone())
+                    .unwrap_or_else(|| {
+                        self.ctx
+                            .shared
+                            .translator()
+                            .get(TextKey::Canvas)
+                            .to_string()
+                    });
+                glyph_title(theme, Icon::ImageIcon, &title, None)
+            }
+            // Layers: title + top-level count of the active document.
+            PhotoDockTab::Layers => {
+                let count = self
+                    .docs
+                    .get(*self.active)
+                    .map(|doc| doc.ui.layers.len())
+                    .filter(|count| *count > 0)
+                    .map(|count| count.to_string());
+                counted_title(
+                    self.ctx.shared.theme(),
+                    self.ctx.shared.translator().get(pane.title_key()),
+                    count,
+                )
+            }
             _ => self.ctx.shared.translator().get(pane.title_key()).into(),
         }
     }
@@ -364,19 +521,19 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
                     ui.label(texts.get(cygnus_i18n::PhotoTextKey::NoDocument));
                     return UiResponse::None;
                 };
-                padded_tile(ui, ctx, |ui| {
-                    right_sidebar::draw_histogram_content(ui, doc, ctx);
+                let inner = padded_tile(ui, ctx, |ui| {
+                    right_sidebar::draw_histogram_content(ui, doc, ctx)
                 });
+                self.actions.extend(inner);
             }
         }
         UiResponse::None
     }
 
-    /// Every tab is closable: a canvas cross closes
-    /// its document (see `on_tab_close`), any other panel's cross
-    /// hides it while keeping its slot (Window menu to reopen).
-    fn is_tab_closable(&self, _tiles: &Tiles<PhotoDockTab>, _tile_id: TileId) -> bool {
-        true
+    /// Only canvas tabs carry a cross (it closes the document); side
+    /// panels hide through their header overflow menu instead.
+    fn is_tab_closable(&self, tiles: &Tiles<PhotoDockTab>, tile_id: TileId) -> bool {
+        is_canvas_tile(tiles, tile_id)
     }
 
     fn on_tab_close(&mut self, tiles: &mut Tiles<PhotoDockTab>, tile_id: TileId) -> bool {
@@ -413,14 +570,73 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         DockStyle::new(self.ctx.shared.theme()).tab_bar_color()
     }
 
+    /// The active document tab takes the canvas surface (it merges
+    /// with the canvas below); side panel tabs stay text-only.
     fn tab_bg_color(
         &self,
         _visuals: &egui::Visuals,
-        _tiles: &Tiles<PhotoDockTab>,
-        _tile_id: TileId,
+        tiles: &Tiles<PhotoDockTab>,
+        tile_id: TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Color32 {
-        DockStyle::new(self.ctx.shared.theme()).tab_bg_color(dock_tab_state(state))
+        let theme = self.ctx.shared.theme();
+        if state.is_being_dragged {
+            return DockStyle::new(theme).tab_bg_color(dock_tab_state(state));
+        }
+        if state.active && is_canvas_tile(tiles, tile_id) {
+            // Remembered for `on_tab_button` (accent edge), which
+            // gets no tab state.
+            self.active_canvas_tabs.borrow_mut().push(tile_id);
+            theme.colors.bg_canvas
+        } else {
+            egui::Color32::TRANSPARENT
+        }
+    }
+
+    /// Accent top edge on the active document tab.
+    fn on_tab_button(
+        &mut self,
+        tiles: &mut Tiles<PhotoDockTab>,
+        tile_id: TileId,
+        button_response: egui::Response,
+    ) -> egui::Response {
+        if is_canvas_tile(tiles, tile_id) && self.active_canvas_tabs.borrow().contains(&tile_id) {
+            let theme = self.ctx.shared.theme();
+            let rect = button_response.rect;
+            let width = theme.borders.medium;
+            button_response
+                .ctx
+                .layer_painter(button_response.layer_id)
+                .hline(
+                    rect.x_range(),
+                    rect.top() + width / 2.0,
+                    egui::Stroke::new(width, theme.colors.accent),
+                );
+        }
+        button_response
+    }
+
+    /// Overflow menu at the right of side tab bars (hides the active
+    /// panel); document tab bars get nothing.
+    fn top_bar_right_ui(
+        &mut self,
+        tiles: &Tiles<PhotoDockTab>,
+        ui: &mut egui::Ui,
+        _tile_id: TileId,
+        tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        let Some(active) = tabs.active else {
+            return;
+        };
+        let Some(egui_tiles::Tile::Pane(pane)) = tiles.get(active) else {
+            return;
+        };
+        if pane.canvas_id().is_some() {
+            return;
+        }
+        ui.add_space(self.ctx.shared.theme().spacing.sm);
+        right_sidebar::panel_menu(ui, self.ctx, *pane, &mut self.actions);
     }
 
     fn tab_outline_stroke(
@@ -468,10 +684,13 @@ impl Behavior<PhotoDockTab> for PhotoTreeBehavior<'_> {
         DockStyle::new(self.ctx.shared.theme()).drag_preview_stroke()
     }
 
-    /// Tab bar everywhere (even single-pane, dock-style).
+    /// Bare panes keep no tab bar (rail, histogram, adjustments draw
+    /// their own header) while a lone document keeps its tab: single
+    /// child tab containers are never pruned.
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
         egui_tiles::SimplificationOptions {
-            all_panes_must_have_tabs: true,
+            all_panes_must_have_tabs: false,
+            prune_single_child_tabs: false,
             ..Default::default()
         }
     }
@@ -585,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn all_tabs_are_closable() {
+    fn only_canvas_tabs_are_closable() {
         let ctx = egui::Context::default();
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let mut app = PhotoApp::new();
@@ -595,13 +814,14 @@ mod tests {
             filter_types: &[],
             ctx: &photo_ctx,
             actions: Vec::new(),
+            active_canvas_tabs: Default::default(),
         };
         let tree = default_tree(vec![canvas(1)]);
         for tab in FIXED_TABS {
             let tile = find_tile(&tree, tab).expect("panneau présent");
             assert!(
-                behavior.is_tab_closable(&tree.tiles, tile),
-                "{tab:?} fermable"
+                !behavior.is_tab_closable(&tree.tiles, tile),
+                "{tab:?} masqué par son menu, sans croix"
             );
         }
         let canvas_tile = find_tile(&tree, canvas(1)).expect("canevas présent");
@@ -635,6 +855,7 @@ mod tests {
                 filter_types: &[],
                 ctx: &photo_ctx,
                 actions: Vec::new(),
+                active_canvas_tabs: Default::default(),
             };
             assert!(behavior.on_tab_close(&mut tree.tiles, tile));
             tree.remove_recursively(tile);
@@ -652,6 +873,7 @@ mod tests {
                 filter_types: &[],
                 ctx: &photo_ctx,
                 actions: Vec::new(),
+                active_canvas_tabs: Default::default(),
             };
             assert!(behavior.on_tab_close(&mut tree.tiles, tile));
             tree.remove_recursively(tile);
@@ -665,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_title_shows_document_name_and_zoom() {
+    fn canvas_title_shows_document_name() {
         let ctx = egui::Context::default();
         let photo_ctx = PhotoUiContext::for_frame(&ctx);
         let mut app = PhotoApp::new();
@@ -678,46 +900,35 @@ mod tests {
             .expect("document présent")
             .title
             .clone();
-        // Without preview: name + zoom (fallback before the first response).
-        {
-            let mut behavior = PhotoTreeBehavior {
-                docs: &mut app.docs,
-                active: &mut app.active,
-                filter_types: &[],
-                ctx: &photo_ctx,
-                actions: Vec::new(),
-            };
-            let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
-            assert!(
-                title.text().starts_with(expected.as_str()),
-                "titre inattendu : {}",
-                title.text()
-            );
-            assert!(title.text().contains('|'), "zoom absent du titre");
-        }
-        // With preview: resolution joins the title (never the overlay).
-        app.active_doc_mut_opt().expect("doc actif").ui.preview_geom =
-            Some(crate::state::PreviewGeom {
-                thumb_size: egui::vec2(800.0, 600.0),
-                full_size: egui::vec2(800.0, 600.0),
-                origin: egui::Vec2::ZERO,
-                doc_size: egui::vec2(800.0, 600.0),
-            });
-        {
-            let mut behavior = PhotoTreeBehavior {
-                docs: &mut app.docs,
-                active: &mut app.active,
-                filter_types: &[],
-                ctx: &photo_ctx,
-                actions: Vec::new(),
-            };
-            let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
-            assert!(
-                title.text().contains("800x600"),
-                "résolution absente du titre : {}",
-                title.text()
-            );
-        }
+        let mut behavior = PhotoTreeBehavior {
+            docs: &mut app.docs,
+            active: &mut app.active,
+            filter_types: &[],
+            ctx: &photo_ctx,
+            actions: Vec::new(),
+            active_canvas_tabs: Default::default(),
+        };
+        let title = behavior.tab_title_for_pane(&PhotoDockTab::Canvas(doc_id));
+        assert!(
+            title.text().ends_with(expected.as_str()),
+            "titre inattendu : {}",
+            title.text()
+        );
+        assert!(!title.text().contains('%'), "zoom dans la barre d'état");
+    }
+
+    #[test]
+    fn rail_width_is_pinned_in_pixels() {
+        let mut tree = default_tree(vec![canvas(1)]);
+        pin_tools_width(&mut tree, 1000.0, 50.0);
+        let tools = find_tile(&tree, PhotoDockTab::Tools).expect("outils présents");
+        let root = tree.root().expect("racine présente");
+        let Some(egui_tiles::Tile::Container(Container::Linear(linear))) = tree.tiles.get(root)
+        else {
+            panic!("racine horizontale attendue");
+        };
+        let total: f32 = linear.shares.iter().map(|(_, share)| *share).sum();
+        assert!((linear.shares[tools] / total - 0.05).abs() < 1e-4);
     }
 
     #[test]
@@ -731,6 +942,7 @@ mod tests {
             filter_types: &[],
             ctx: &photo_ctx,
             actions: Vec::new(),
+            active_canvas_tabs: Default::default(),
         };
         let title = behavior.tab_title_for_pane(&PhotoDockTab::Tools);
         assert!(!title.text().is_empty(), "titre graphique attendu");
@@ -787,13 +999,14 @@ mod tests {
     }
 
     #[test]
-    fn histogram_joins_the_history_tabs_once() {
+    fn histogram_sits_above_the_adjustments_once() {
         let mut tree = default_tree(vec![canvas(1)]);
-        let history = find_tile(&tree, PhotoDockTab::History).expect("historique présent");
+        let inspector = find_tile(&tree, PhotoDockTab::Inspector).expect("réglages présents");
         let histogram = find_tile(&tree, PhotoDockTab::Histogram).expect("histogramme présent");
         assert_eq!(
-            tree.tiles.parent_of(history),
-            tree.tiles.parent_of(histogram)
+            tree.tiles.parent_of(inspector),
+            tree.tiles.parent_of(histogram),
+            "même colonne latérale"
         );
         ensure_histogram_tabbed(&mut tree);
         let count = tree
