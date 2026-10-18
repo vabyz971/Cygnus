@@ -105,12 +105,68 @@ pub struct DrawGroup<'a> {
     pub coverage: Option<Coverage<'a>>,
 }
 
+/// One point-wise adjustment step (alpha untouched), quantized like the
+/// CPU reference.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PixelOp {
+    /// Same 256-entry table on R, G and B (levels, curves,
+    /// brightness / contrast).
+    Lut(Box<[u8; 256]>),
+    /// Saturation factor around Rec.601 gray (truncated).
+    Saturation(f32),
+    /// HSL shift: hue degrees, saturation and lightness in -100..=100
+    /// (rounded).
+    Hsl {
+        /// Hue rotation in degrees.
+        hue: f32,
+        /// -100..=100.
+        saturation: f32,
+        /// -100..=100.
+        lightness: f32,
+    },
+}
+
+/// An adjustment: `ops` applied to the accumulated image, mixed back by
+/// `opacity` x coverage.
+pub struct DrawAdjust<'a> {
+    /// Steps, in order (empty = no-op).
+    pub ops: Vec<PixelOp>,
+    /// 0..=1.
+    pub opacity: f32,
+    /// Optional mask restricting the adjustment.
+    pub coverage: Option<Coverage<'a>>,
+}
+
 /// One element of a frame.
 pub enum DrawItem<'a> {
     /// A placed layer.
     Layer(DrawLayer<'a>),
     /// A group composited in isolation.
     Group(DrawGroup<'a>),
+    /// An adjustment of everything below it (within its group).
+    Adjust(DrawAdjust<'a>),
+}
+
+/// True when some adjustment needs the scratch pair.
+fn has_adjust(items: &[DrawItem<'_>]) -> bool {
+    items.iter().any(|item| match item {
+        DrawItem::Adjust(a) => !a.ops.is_empty(),
+        DrawItem::Group(g) => has_adjust(&g.items),
+        DrawItem::Layer(_) => false,
+    })
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct OpParams {
+    op: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MixParams {
+    misc: [f32; 4],
+    cover: [f32; 4],
 }
 
 /// Nesting depth of a frame (root = 1).
@@ -118,7 +174,7 @@ fn depth_of(items: &[DrawItem<'_>]) -> usize {
     1 + items
         .iter()
         .map(|item| match item {
-            DrawItem::Layer(_) => 0,
+            DrawItem::Layer(_) | DrawItem::Adjust(_) => 0,
             DrawItem::Group(g) => depth_of(&g.items),
         })
         .max()
@@ -240,6 +296,8 @@ struct Targets {
     size: (u32, u32),
     /// One accumulator pair per nesting level (index 0 = root).
     levels: Vec<[wgpu::Texture; 2]>,
+    /// Adjustment scratch pair (created on the first adjustment).
+    scratch: Option<[wgpu::Texture; 2]>,
     output: wgpu::Texture,
 }
 
@@ -250,6 +308,8 @@ pub struct Compositor {
     composite: wgpu::ComputePipeline,
     present: wgpu::ComputePipeline,
     downsample: wgpu::ComputePipeline,
+    adjust: wgpu::ComputePipeline,
+    mix: wgpu::ComputePipeline,
     targets: Option<Targets>,
     /// 1x1 white coverage bound when a pass has no mask.
     no_cover: wgpu::TextureView,
@@ -273,6 +333,8 @@ impl Compositor {
                 include_str!("shaders/downsample.wgsl"),
                 "downsample",
             ),
+            adjust: compute_pipeline(device, include_str!("shaders/adjust.wgsl"), "adjust"),
+            mix: compute_pipeline(device, include_str!("shaders/mix.wgsl"), "mix"),
             no_cover: white_texel(device, queue),
             device: device.clone(),
             queue: queue.clone(),
@@ -372,6 +434,7 @@ impl Compositor {
             self.targets = Some(Targets {
                 size,
                 levels: Vec::new(),
+                scratch: None,
                 output,
             });
         }
@@ -385,6 +448,150 @@ impl Compositor {
                 t.levels.push(pair);
             }
         }
+    }
+
+    fn ensure_scratch(&mut self, size: (u32, u32)) {
+        if self.targets.as_ref().is_some_and(|t| t.scratch.is_none()) {
+            let pair = [self.accumulator(size), self.accumulator(size)];
+            if let Some(t) = self.targets.as_mut() {
+                t.scratch = Some(pair);
+            }
+        }
+    }
+
+    /// One adjustment step `src` → `dst`.
+    fn op_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::TextureView,
+        dst: &wgpu::TextureView,
+        op: &PixelOp,
+        size: (u32, u32),
+        keep_alive: &mut Vec<wgpu::Buffer>,
+    ) {
+        let (params, table) = match op {
+            PixelOp::Lut(table) => ([0.0, 0.0, 0.0, 0.0], Some(table)),
+            PixelOp::Saturation(s) => ([1.0, *s, 0.0, 0.0], None),
+            PixelOp::Hsl {
+                hue,
+                saturation,
+                lightness,
+            } => ([2.0, *hue, *saturation, *lightness], None),
+        };
+        let lut_view = match table {
+            Some(table) => {
+                let rgba: Vec<u8> = table.iter().flat_map(|&v| [v, v, v, 255]).collect();
+                match self.upload_rgba(256, 1, &rgba) {
+                    Some(t) => t.view,
+                    None => return,
+                }
+            }
+            None => self.no_cover.clone(),
+        };
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("compositor-op"),
+                contents: bytemuck::bytes_of(&OpParams { op: params }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compositor-op-bind"),
+            layout: &self.adjust.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&lut_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(dst),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("compositor-op"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.adjust);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(size.0.div_ceil(WORKGROUP), size.1.div_ceil(WORKGROUP), 1);
+        drop(pass);
+        keep_alive.push(uniform);
+    }
+
+    /// Mix `src` and `adjusted` into `dst` (weight x coverage).
+    #[allow(clippy::too_many_arguments)]
+    fn mix_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::TextureView,
+        adjusted: &wgpu::TextureView,
+        dst: &wgpu::TextureView,
+        weight: f32,
+        coverage: Option<Coverage<'_>>,
+        size: (u32, u32),
+        keep_alive: &mut Vec<wgpu::Buffer>,
+    ) {
+        let params = MixParams {
+            misc: [weight.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            cover: match coverage {
+                Some(c) => [c.offset.0 as f32, c.offset.1 as f32, c.outside, 1.0],
+                None => [0.0, 0.0, 1.0, 0.0],
+            },
+        };
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("compositor-mix"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compositor-mix-bind"),
+            layout: &self.mix.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(adjusted),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(dst),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        coverage.map_or(&self.no_cover, |c| &c.texture.view),
+                    ),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("compositor-mix"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.mix);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(size.0.div_ceil(WORKGROUP), size.1.div_ceil(WORKGROUP), 1);
+        drop(pass);
+        keep_alive.push(uniform);
     }
 
     /// Clears an accumulator to transparent (render pass: `clear_texture`
@@ -541,6 +748,35 @@ impl Compositor {
                         keep_alive,
                     );
                 }
+                DrawItem::Adjust(adjust) => {
+                    if adjust.ops.is_empty() {
+                        continue;
+                    }
+                    let Some(scratch) = &targets.scratch else {
+                        continue;
+                    };
+                    let tmp = [
+                        scratch[0].create_view(&wgpu::TextureViewDescriptor::default()),
+                        scratch[1].create_view(&wgpu::TextureViewDescriptor::default()),
+                    ];
+                    let mut input = &views[current];
+                    let mut k = 0usize;
+                    for op in &adjust.ops {
+                        self.op_pass(encoder, input, &tmp[k], op, size, keep_alive);
+                        input = &tmp[k];
+                        k = 1 - k;
+                    }
+                    self.mix_pass(
+                        encoder,
+                        &views[current],
+                        input,
+                        &views[next],
+                        adjust.opacity,
+                        adjust.coverage,
+                        size,
+                        keep_alive,
+                    );
+                }
             }
             current = next;
         }
@@ -582,6 +818,9 @@ impl Compositor {
             return None;
         }
         self.ensure_targets(size, depth_of(items));
+        if has_adjust(items) {
+            self.ensure_scratch(size);
+        }
         let targets = self.targets.as_ref()?;
         let mut encoder = self
             .device
@@ -956,6 +1195,70 @@ mod tests {
         c.composite_tree((3, 1), &group(0.0)).expect("frame");
         let px = c.read_rgba().expect("readback");
         assert_eq!((px[3], px[11]), (0, 0), "hors masque caché (outside = 0)");
+    }
+
+    #[test]
+    fn adjustments_apply_ops_then_mix() {
+        let Some(mut c) = gpu() else { return };
+        let red = c
+            .upload_rgba(2, 1, &[200, 40, 40, 255, 200, 40, 40, 255])
+            .expect("rouge");
+        let frame = |c: &mut Compositor, ops: Vec<PixelOp>, opacity: f32, coverage| {
+            let items = [
+                DrawItem::Layer(DrawLayer {
+                    texture: &red,
+                    to_layer: Affine::placed_at(0.0, 0.0),
+                    opacity: 1.0,
+                    blend: 0,
+                }),
+                DrawItem::Adjust(DrawAdjust {
+                    ops,
+                    opacity,
+                    coverage,
+                }),
+            ];
+            c.composite_tree((2, 1), &items).expect("frame");
+            c.read_rgba().expect("readback")
+        };
+        // LUT inversion.
+        let mut table = [0u8; 256];
+        for (i, v) in table.iter_mut().enumerate() {
+            *v = 255 - i as u8;
+        }
+        let px = frame(&mut c, vec![PixelOp::Lut(Box::new(table))], 1.0, None);
+        assert_eq!(&px[..4], &[55, 215, 215, 255]);
+        // Full desaturation: gray 0.299*200 + 0.587*40 + 0.114*40 = 87.84 → 87.
+        let px = frame(&mut c, vec![PixelOp::Saturation(0.0)], 1.0, None);
+        assert_eq!(&px[..4], &[87, 87, 87, 255]);
+        // Hue +120: red-dominant becomes green-dominant.
+        let px = frame(
+            &mut c,
+            vec![PixelOp::Hsl {
+                hue: 120.0,
+                saturation: 0.0,
+                lightness: 0.0,
+            }],
+            1.0,
+            None,
+        );
+        assert!(px[1] > px[0] && px[1] > px[2], "{px:?}");
+        // Chained ops + half opacity: (200 + 55) / 2 = 127.5 → 128.
+        let px = frame(&mut c, vec![PixelOp::Lut(Box::new(table))], 0.5, None);
+        assert_eq!(px[0], 128);
+        // Coverage hiding the right pixel (outside = 0).
+        let mask = c.upload_rgba(1, 1, &[255, 255, 255, 255]).expect("masque");
+        let px = frame(
+            &mut c,
+            vec![PixelOp::Lut(Box::new(table))],
+            1.0,
+            Some(Coverage {
+                texture: &mask,
+                offset: (0, 0),
+                outside: 0.0,
+            }),
+        );
+        assert_eq!(px[0], 55, "couvert : ajusté");
+        assert_eq!(px[4], 200, "hors masque : intact");
     }
 
     #[test]
