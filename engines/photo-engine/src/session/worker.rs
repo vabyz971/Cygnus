@@ -88,6 +88,8 @@ pub struct EngineWorker {
     pub(crate) last_surface_us: u128,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
+    /// GPU renderer on the UI's device (`AttachGpu`), if any.
+    pub(crate) gpu_view: Option<crate::gpu_view::GpuView>,
     /// Names of created items, in the UI language (`SetDefaultNames`).
     pub(crate) names: super::naming::DefaultNames,
     /// Display-scale appearances (reused while their source holds).
@@ -192,6 +194,7 @@ impl EngineWorker {
             last_surface_pixels: 0,
             last_surface_us: 0,
             metrics: WorkerMetrics::default(),
+            gpu_view: None,
             names: super::naming::DefaultNames::default(),
             scaled_appearances: crate::document::ScaledAppearances::default(),
         }
@@ -511,6 +514,13 @@ impl EngineWorker {
             // Sliding window: the next response will report its delta.
             self.last_surface_pixels = self.render_worker.surface_stats().pixels_written;
             self.last_surface_us = self.render_worker.surface_stats().update_us;
+            // Full-resolution GPU frame (renderer cache: unchanged layers
+            // keep their textures, a move only re-blends on the GPU).
+            let document = &self.document;
+            let gpu_frame = self
+                .gpu_view
+                .as_mut()
+                .and_then(|view| view.render(document, &|id| document.appearance_image_any(id)));
             PhotoEngineResponse::LayersChanged {
                 layers,
                 preview,
@@ -519,6 +529,7 @@ impl EngineWorker {
                 can_redo,
                 undo_labels,
                 redo_labels,
+                gpu_frame,
             }
         } else {
             self.metrics.last = Some(OpMetrics {
@@ -1450,6 +1461,10 @@ impl EngineWorker {
                         error: EngineError::NothingToExport,
                     },
                 })
+            }
+            PhotoEngineCommand::AttachGpu { device, queue } => {
+                self.gpu_view = Some(crate::gpu_view::GpuView::new(&device, &queue));
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
             }
             PhotoEngineCommand::SetDefaultNames(names) => {
                 self.names = names;
@@ -2563,6 +2578,56 @@ mod tests {
             _ => panic!("pixels attendus"),
         };
         assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn attached_gpu_produces_full_resolution_frames() {
+        let Some((device, queue)) = gpu_compositor::request_headless_device() else {
+            eprintln!("no GPU adapter: test skipped");
+            return;
+        };
+        let mut worker = EngineWorker::new(three_layer_doc());
+        let response = worker.apply(PhotoEngineCommand::AttachGpu { device, queue });
+        let PhotoEngineResponse::LayersChanged {
+            preview: Some(preview),
+            gpu_frame: Some(frame),
+            ..
+        } = response
+        else {
+            panic!("frame GPU attendue");
+        };
+        assert_eq!(
+            frame.size,
+            (preview.full_width, preview.full_height),
+            "même plan que l'aperçu CPU"
+        );
+        assert_eq!(frame.doc_size, (8, 8));
+        assert!(worker.history.undo_steps().is_empty(), "pas d'historique");
+        // Moving a layer keeps the frame flowing (textures reused).
+        let id = worker.document.root[2].id();
+        let moved = worker.apply(PhotoEngineCommand::MoveLayer {
+            layer: id,
+            dx: 1.0,
+            dy: 0.0,
+        });
+        assert!(matches!(
+            moved,
+            PhotoEngineResponse::LayersChanged {
+                gpu_frame: Some(_),
+                ..
+            }
+        ));
+        // A group: CPU path only.
+        let ids = vec![worker.document.root[0].id()];
+        let _ = worker.document.group(&ids, "g");
+        let grouped = worker.apply(PhotoEngineCommand::Refresh);
+        assert!(matches!(
+            grouped,
+            PhotoEngineResponse::LayersChanged {
+                gpu_frame: None,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -310,6 +310,15 @@ pub enum PhotoEngineCommand {
         /// Layer about to be dragged.
         layer: Uuid,
     },
+    /// Renders on the UI's GPU device from now on (full-resolution
+    /// frames in `LayersChanged::gpu_frame`, no CPU readback). Triggers
+    /// a render so the first frame arrives at once.
+    AttachGpu {
+        /// The UI's device (eframe's wgpu render state).
+        device: wgpu::Device,
+        /// Its queue.
+        queue: wgpu::Queue,
+    },
     /// Names given to items created from now on (UI language, see
     /// `session::naming`). No history, no render.
     SetDefaultNames(super::naming::DefaultNames),
@@ -396,6 +405,7 @@ impl PhotoEngineCommand {
             Self::Export { .. } => "export",
             Self::EstimateExportSize { .. } => "estimate_export_size",
             Self::SetDefaultNames(_) => "set_default_names",
+            Self::AttachGpu { .. } => "attach_gpu",
             Self::PrepareDragProxy { .. } => "prepare_drag_proxy",
             Self::SaveProject { .. } => "save_project",
             Self::LoadProject { .. } => "load_project",
@@ -494,7 +504,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::UndoSteps { .. }
         | PhotoEngineCommand::RedoSteps { .. }
         | PhotoEngineCommand::Refresh
-        | PhotoEngineCommand::SetPreviewClip { .. } => {
+        | PhotoEngineCommand::SetPreviewClip { .. }
+        | PhotoEngineCommand::AttachGpu { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Composite)
         }
         PhotoEngineCommand::RenameLayer { layer, .. }

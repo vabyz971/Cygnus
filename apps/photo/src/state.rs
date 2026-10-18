@@ -447,6 +447,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             can_redo,
             undo_labels,
             redo_labels,
+            gpu_frame: _,
         } => {
             ui.layers = layers;
             ui.can_undo = can_undo;
@@ -855,6 +856,7 @@ mod tests {
             can_redo: false,
             undo_labels: Vec::new(),
             redo_labels: Vec::new(),
+            gpu_frame: None,
         }
     }
 

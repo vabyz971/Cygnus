@@ -52,6 +52,11 @@ pub enum PhotoEngineResponse {
         /// Redoable step operation ids, oldest to
         /// newest (the UI shows the last one first = next redo).
         redo_labels: Vec<String>,
+        /// Full-resolution GPU frame on the UI's device (`AttachGpu`),
+        /// when the document is GPU-renderable: displayed instead of
+        /// `preview`, which stays for CPU consumers (histogram,
+        /// eyedropper) and as the fallback.
+        gpu_frame: Option<crate::gpu_view::GpuFrame>,
     },
     /// Fresh state WITHOUT a new render (e.g. rename, no-op): the UI
     /// updates the panel and keeps the displayed texture.
