@@ -307,6 +307,76 @@ pub enum PhotoTextKey {
     SizeUnitKilobytes,
     /// Megabyte unit suffix.
     SizeUnitMegabytes,
+    /// History step: Visibility.
+    HistoryOpVisibility,
+    /// History step: Isolate.
+    HistoryOpIsolate,
+    /// History step: Reorder.
+    HistoryOpReorder,
+    /// History step: Nest.
+    HistoryOpNest,
+    /// History step: Fold / unfold.
+    HistoryOpFold,
+    /// History step: Opacity.
+    HistoryOpOpacity,
+    /// History step: Blend mode.
+    HistoryOpBlend,
+    /// History step: Brush stroke.
+    HistoryOpBrushStroke,
+    /// History step: Paint mask.
+    HistoryOpPaintMask,
+    /// History step: Move.
+    HistoryOpMove,
+    /// History step: Transform.
+    HistoryOpTransform,
+    /// History step: Vector nodes.
+    HistoryOpVectorNodes,
+    /// History step: Open image.
+    HistoryOpOpenImage,
+    /// History step: New layer.
+    HistoryOpNewLayer,
+    /// History step: New shape.
+    HistoryOpNewShape,
+    /// History step: Duplicate.
+    HistoryOpDuplicate,
+    /// History step: Duplicate filter.
+    HistoryOpDuplicateFilter,
+    /// History step: Delete.
+    HistoryOpDelete,
+    /// History step: Add filter.
+    HistoryOpAddFilter,
+    /// History step: Rename.
+    HistoryOpRename,
+    /// History step: Add mask.
+    HistoryOpAddMask,
+    /// History step: Remove mask.
+    HistoryOpRemoveMask,
+    /// History step: Move filter.
+    HistoryOpMoveFilter,
+    /// History step: Move mask.
+    HistoryOpMoveMask,
+    /// History step: Remove filter.
+    HistoryOpRemoveFilter,
+    /// History step: Flip horizontal.
+    HistoryOpFlipHorizontal,
+    /// History step: Flip vertical.
+    HistoryOpFlipVertical,
+    /// History step: Rotate clockwise.
+    HistoryOpRotateClockwise,
+    /// History step: Rotate counterclockwise.
+    HistoryOpRotateCounterclockwise,
+    /// History step: Crop to document.
+    HistoryOpCropToDocument,
+    /// History step: Toggle filter.
+    HistoryOpToggleFilter,
+    /// History step: Filter setting.
+    HistoryOpFilterSetting,
+    /// History step: Preset.
+    HistoryOpPreset,
+    /// History step: Toggle mask.
+    HistoryOpToggleMask,
+    /// History step: Edit.
+    HistoryOpEdit,
 }
 
 /// Photo catalog bound to a language.
@@ -459,6 +529,41 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::TiffNote,
     PhotoTextKey::SizeUnitKilobytes,
     PhotoTextKey::SizeUnitMegabytes,
+    PhotoTextKey::HistoryOpVisibility,
+    PhotoTextKey::HistoryOpIsolate,
+    PhotoTextKey::HistoryOpReorder,
+    PhotoTextKey::HistoryOpNest,
+    PhotoTextKey::HistoryOpFold,
+    PhotoTextKey::HistoryOpOpacity,
+    PhotoTextKey::HistoryOpBlend,
+    PhotoTextKey::HistoryOpBrushStroke,
+    PhotoTextKey::HistoryOpPaintMask,
+    PhotoTextKey::HistoryOpMove,
+    PhotoTextKey::HistoryOpTransform,
+    PhotoTextKey::HistoryOpVectorNodes,
+    PhotoTextKey::HistoryOpOpenImage,
+    PhotoTextKey::HistoryOpNewLayer,
+    PhotoTextKey::HistoryOpNewShape,
+    PhotoTextKey::HistoryOpDuplicate,
+    PhotoTextKey::HistoryOpDuplicateFilter,
+    PhotoTextKey::HistoryOpDelete,
+    PhotoTextKey::HistoryOpAddFilter,
+    PhotoTextKey::HistoryOpRename,
+    PhotoTextKey::HistoryOpAddMask,
+    PhotoTextKey::HistoryOpRemoveMask,
+    PhotoTextKey::HistoryOpMoveFilter,
+    PhotoTextKey::HistoryOpMoveMask,
+    PhotoTextKey::HistoryOpRemoveFilter,
+    PhotoTextKey::HistoryOpFlipHorizontal,
+    PhotoTextKey::HistoryOpFlipVertical,
+    PhotoTextKey::HistoryOpRotateClockwise,
+    PhotoTextKey::HistoryOpRotateCounterclockwise,
+    PhotoTextKey::HistoryOpCropToDocument,
+    PhotoTextKey::HistoryOpToggleFilter,
+    PhotoTextKey::HistoryOpFilterSetting,
+    PhotoTextKey::HistoryOpPreset,
+    PhotoTextKey::HistoryOpToggleMask,
+    PhotoTextKey::HistoryOpEdit,
 ];
 
 impl PhotoCatalog {
@@ -627,6 +732,41 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::TiffNote => "TIFF non compressé, transparence conservée",
         PhotoTextKey::SizeUnitKilobytes => "Ko",
         PhotoTextKey::SizeUnitMegabytes => "Mo",
+        PhotoTextKey::HistoryOpVisibility => "Visibilité",
+        PhotoTextKey::HistoryOpIsolate => "Isoler",
+        PhotoTextKey::HistoryOpReorder => "Réordonner",
+        PhotoTextKey::HistoryOpNest => "Imbriquer",
+        PhotoTextKey::HistoryOpFold => "Replier / déplier",
+        PhotoTextKey::HistoryOpOpacity => "Opacité",
+        PhotoTextKey::HistoryOpBlend => "Fusion",
+        PhotoTextKey::HistoryOpBrushStroke => "Coup de pinceau",
+        PhotoTextKey::HistoryOpPaintMask => "Peindre le masque",
+        PhotoTextKey::HistoryOpMove => "Déplacer",
+        PhotoTextKey::HistoryOpTransform => "Transformer",
+        PhotoTextKey::HistoryOpVectorNodes => "Nœuds vecteur",
+        PhotoTextKey::HistoryOpOpenImage => "Ouvrir une image",
+        PhotoTextKey::HistoryOpNewLayer => "Nouveau calque",
+        PhotoTextKey::HistoryOpNewShape => "Nouvelle forme",
+        PhotoTextKey::HistoryOpDuplicate => "Dupliquer",
+        PhotoTextKey::HistoryOpDuplicateFilter => "Dupliquer le filtre",
+        PhotoTextKey::HistoryOpDelete => "Supprimer",
+        PhotoTextKey::HistoryOpAddFilter => "Ajouter un filtre",
+        PhotoTextKey::HistoryOpRename => "Renommer",
+        PhotoTextKey::HistoryOpAddMask => "Ajouter un masque",
+        PhotoTextKey::HistoryOpRemoveMask => "Supprimer le masque",
+        PhotoTextKey::HistoryOpMoveFilter => "Déplacer le filtre",
+        PhotoTextKey::HistoryOpMoveMask => "Déplacer le masque",
+        PhotoTextKey::HistoryOpRemoveFilter => "Supprimer le filtre",
+        PhotoTextKey::HistoryOpFlipHorizontal => "Miroir horizontal",
+        PhotoTextKey::HistoryOpFlipVertical => "Miroir vertical",
+        PhotoTextKey::HistoryOpRotateClockwise => "Rotation horaire",
+        PhotoTextKey::HistoryOpRotateCounterclockwise => "Rotation antihoraire",
+        PhotoTextKey::HistoryOpCropToDocument => "Rogner au document",
+        PhotoTextKey::HistoryOpToggleFilter => "Basculer le filtre",
+        PhotoTextKey::HistoryOpFilterSetting => "Réglage du filtre",
+        PhotoTextKey::HistoryOpPreset => "Préréglage",
+        PhotoTextKey::HistoryOpToggleMask => "Basculer le masque",
+        PhotoTextKey::HistoryOpEdit => "Édition",
     }
 }
 
@@ -777,6 +917,41 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::TiffNote => "Uncompressed TIFF, transparency kept",
         PhotoTextKey::SizeUnitKilobytes => "KB",
         PhotoTextKey::SizeUnitMegabytes => "MB",
+        PhotoTextKey::HistoryOpVisibility => "Visibility",
+        PhotoTextKey::HistoryOpIsolate => "Isolate",
+        PhotoTextKey::HistoryOpReorder => "Reorder",
+        PhotoTextKey::HistoryOpNest => "Nest",
+        PhotoTextKey::HistoryOpFold => "Fold / unfold",
+        PhotoTextKey::HistoryOpOpacity => "Opacity",
+        PhotoTextKey::HistoryOpBlend => "Blend mode",
+        PhotoTextKey::HistoryOpBrushStroke => "Brush stroke",
+        PhotoTextKey::HistoryOpPaintMask => "Paint mask",
+        PhotoTextKey::HistoryOpMove => "Move",
+        PhotoTextKey::HistoryOpTransform => "Transform",
+        PhotoTextKey::HistoryOpVectorNodes => "Vector nodes",
+        PhotoTextKey::HistoryOpOpenImage => "Open image",
+        PhotoTextKey::HistoryOpNewLayer => "New layer",
+        PhotoTextKey::HistoryOpNewShape => "New shape",
+        PhotoTextKey::HistoryOpDuplicate => "Duplicate",
+        PhotoTextKey::HistoryOpDuplicateFilter => "Duplicate filter",
+        PhotoTextKey::HistoryOpDelete => "Delete",
+        PhotoTextKey::HistoryOpAddFilter => "Add filter",
+        PhotoTextKey::HistoryOpRename => "Rename",
+        PhotoTextKey::HistoryOpAddMask => "Add mask",
+        PhotoTextKey::HistoryOpRemoveMask => "Remove mask",
+        PhotoTextKey::HistoryOpMoveFilter => "Move filter",
+        PhotoTextKey::HistoryOpMoveMask => "Move mask",
+        PhotoTextKey::HistoryOpRemoveFilter => "Remove filter",
+        PhotoTextKey::HistoryOpFlipHorizontal => "Flip horizontal",
+        PhotoTextKey::HistoryOpFlipVertical => "Flip vertical",
+        PhotoTextKey::HistoryOpRotateClockwise => "Rotate clockwise",
+        PhotoTextKey::HistoryOpRotateCounterclockwise => "Rotate counterclockwise",
+        PhotoTextKey::HistoryOpCropToDocument => "Crop to document",
+        PhotoTextKey::HistoryOpToggleFilter => "Toggle filter",
+        PhotoTextKey::HistoryOpFilterSetting => "Filter setting",
+        PhotoTextKey::HistoryOpPreset => "Preset",
+        PhotoTextKey::HistoryOpToggleMask => "Toggle mask",
+        PhotoTextKey::HistoryOpEdit => "Edit",
     }
 }
 

@@ -23,6 +23,7 @@
 //! (snapshot `undo_labels`/`redo_labels`); the current state and the
 //! empty state use [`PhotoCatalog`](cygnus_i18n::PhotoCatalog).
 
+use super::labels::history_label;
 use crate::commands::PhotoUiContext;
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 
@@ -72,8 +73,8 @@ impl HistoryPanel {
                 {
                     actions.push(HistoryPanelAction::Back(undo.len() as u32));
                 }
-                for (index, label) in undo.iter().enumerate() {
-                    let row = format!("{}. {label}", index + 1);
+                for (index, op) in undo.iter().enumerate() {
+                    let row = format!("{}. {}", index + 1, history_label(op, texts));
                     if index + 1 == undo.len() {
                         // Head = current state: selection background,
                         // deliberately non-clickable.
@@ -85,8 +86,11 @@ impl HistoryPanel {
                         )));
                     }
                 }
-                for (from_top, label) in redo.iter().rev().enumerate() {
-                    if ui.selectable_label(false, label).clicked() {
+                for (from_top, op) in redo.iter().rev().enumerate() {
+                    if ui
+                        .selectable_label(false, history_label(op, texts))
+                        .clicked()
+                    {
                         actions.push(HistoryPanelAction::Forward(forward_steps_for_redo_click(
                             from_top,
                         )));

@@ -46,10 +46,10 @@ pub enum PhotoEngineResponse {
         can_undo: bool,
         /// Redo depth.
         can_redo: bool,
-        /// Undoable step labels, oldest to newest
-        /// (History panel, O003).
+        /// Undoable step operation ids (`op_name`, translated by the
+        /// UI), oldest to newest (History panel, O003).
         undo_labels: Vec<String>,
-        /// Redoable step labels, oldest to
+        /// Redoable step operation ids, oldest to
         /// newest (the UI shows the last one first = next redo).
         redo_labels: Vec<String>,
     },
@@ -62,11 +62,11 @@ pub enum PhotoEngineResponse {
         revision: RenderRevision,
         /// History depths (to grey out undo/redo).
         can_undo: bool,
-        /// Profondeur redo.
+        /// Redo depth.
         can_redo: bool,
-        /// Undoable step labels (O003, like `LayersChanged`).
+        /// Undoable step operation ids (O003, like `LayersChanged`).
         undo_labels: Vec<String>,
-        /// Redoable step labels (O003).
+        /// Redoable step operation ids (O003).
         redo_labels: Vec<String>,
     },
     /// Secondary thumbnail arrived AFTER the canvas (Phase 6G.3): the

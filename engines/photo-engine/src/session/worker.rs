@@ -42,8 +42,8 @@ use uuid::Uuid;
 /// Worker state: live document + undo/redo history.
 pub struct EngineWorker {
     pub(crate) document: Document,
-    /// History stacks: PRE-mutation snapshot + French label
-    /// of the operation (History panel, O003). `undo` oldest
+    /// History stacks: PRE-mutation snapshot + operation id
+    /// (`op_name`, translated by the History panel, O003). `undo` oldest
     /// to newest, `redo` in undo order.
     pub(crate) history: History<crate::history::Snapshot, PhotoGesture>,
     /// Operation name (`op_name`) of the command being
@@ -168,51 +168,6 @@ fn crop_plan(document: &Document, id: Uuid) -> CropPlan {
     }
 }
 
-/// French label of a history step from the operation name
-/// (`op_name`). "Édition" fallback when unknown (never empty in UI).
-fn history_label(op: &str) -> String {
-    String::from(match op {
-        "toggle_visibility" => "Visibilité",
-        "isolate_layer" => "Isoler",
-        "reorder_nodes" => "Réordonner",
-        "move_into_parent" => "Imbriquer",
-        "toggle_collapsed" => "Replier / déplier",
-        "set_opacity" => "Opacité",
-        "set_blend_mode" => "Fusion",
-        "paint_stroke" => "Coup de pinceau",
-        "paint_mask" => "Peindre le masque",
-        "move_layer" => "Déplacer",
-        "set_transform" => "Transformer",
-        "set_vector_paths" => "Nœuds vecteur",
-        "open_image" => "Ouvrir une image",
-        "add_empty_layer" => "Nouveau calque",
-        "add_vector_layer" => "Nouvelle forme",
-        "duplicate_layer" => "Dupliquer",
-        "duplicate_filter" => "Dupliquer le filtre",
-        "delete_layer" => "Supprimer",
-        "add_filter" => "Ajouter un filtre",
-        "rename_layer" => "Renommer",
-        "add_mask" => "Ajouter un masque",
-        "remove_mask" => "Supprimer le masque",
-        "move_filter" => "Déplacer le filtre",
-        "move_filter_to" => "Déplacer le filtre",
-        "move_mask" => "Déplacer le masque",
-        "move_mask_to" => "Déplacer le masque",
-        "remove_filter" => "Supprimer le filtre",
-        "flip_horizontal" => "Miroir horizontal",
-        "flip_vertical" => "Miroir vertical",
-        "rotate_clockwise" => "Rotation horaire",
-        "rotate_counterclockwise" => "Rotation antihoraire",
-        "crop_to_document" => "Rogner au document",
-        "toggle_filter" => "Basculer le filtre",
-        "set_filter_param" => "Réglage du filtre",
-        "set_filter_text" => "Réglage du filtre",
-        "apply_filter_preset" => "Préréglage",
-        "toggle_mask" => "Basculer le masque",
-        _ => "Édition",
-    })
-}
-
 impl EngineWorker {
     /// Creates a worker on an existing document.
     pub fn new(document: Document) -> Self {
@@ -250,7 +205,9 @@ impl EngineWorker {
     /// name set by `apply`/`apply_batch`): a coalesced
     /// gesture (no push) drops its label with its duplicate.
     fn push_history(&mut self, coalesce_layer: Option<Uuid>) {
-        let label = history_label(self.pending_label.take().unwrap_or("edit"));
+        // Stable operation id (`op_name`): the UI translates it, the
+        // engine stays language-free.
+        let label = self.pending_label.take().unwrap_or("edit");
         // `document` and `history` are disjoint fields: the lazy
         // snapshot only runs when a step is really recorded.
         let document = &self.document;
@@ -2095,7 +2052,7 @@ mod tests {
         assert_eq!(chain[1].type_id, chain[0].type_id);
         assert_eq!(
             worker.history.undo_steps().last().map(|s| s.label.as_str()),
-            Some("Dupliquer le filtre")
+            Some("duplicate_filter")
         );
         // Unknown filter: no-op, no history.
         let undo_len = worker.history.undo_steps().len();
@@ -2124,7 +2081,7 @@ mod tests {
         assert!(!worker.document.find(ids[2]).expect("voisin").visible());
         assert_eq!(
             worker.history.undo_steps().last().map(|s| s.label.as_str()),
-            Some("Isoler")
+            Some("isolate_layer")
         );
         // Inconnu : sans effet, sans historique.
         let undo_len = worker.history.undo_steps().len();
@@ -2692,7 +2649,7 @@ mod tests {
             2,
             "préréglage = étape distincte"
         );
-        assert_eq!(worker.history.undo_steps()[1].label, "Préréglage");
+        assert_eq!(worker.history.undo_steps()[1].label, "apply_filter_preset");
         // Unknown preset: clean error, no history entry.
         let response = worker.apply(PhotoEngineCommand::ApplyFilterPreset {
             layer: id,
@@ -2739,7 +2696,7 @@ mod tests {
         }
         assert_eq!(param(&worker), 30.0);
         assert_eq!(worker.history.undo_steps().len(), 1, "geste coalescé");
-        assert_eq!(worker.history.undo_steps()[0].label, "Réglage du filtre");
+        assert_eq!(worker.history.undo_steps()[0].label, "set_filter_param");
         // Guards: NaN, empty key, unknown ids = no-op without snapshot.
         worker.apply(PhotoEngineCommand::SetFilterParam {
             layer: id,
@@ -2838,7 +2795,7 @@ mod tests {
         );
         assert_eq!(
             worker.history.undo_steps().last().map(|s| s.label.as_str()),
-            Some("Transformer")
+            Some("set_transform")
         );
         let current = match worker.document.find(id).expect("present") {
             crate::LayerNode::Pixel(pixels) => pixels.transform,
@@ -4203,7 +4160,7 @@ mod single_pass_tests {
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         };
-        assert_eq!(undo_labels, vec!["Nouveau calque", "Visibilité"]);
+        assert_eq!(undo_labels, vec!["add_empty_layer", "toggle_visibility"]);
         assert!(redo_labels.is_empty());
         // One undo: the label travels to redo.
         match worker.apply(PhotoEngineCommand::Undo) {
@@ -4212,8 +4169,8 @@ mod single_pass_tests {
                 redo_labels,
                 ..
             } => {
-                assert_eq!(undo_labels, vec!["Nouveau calque"]);
-                assert_eq!(redo_labels, vec!["Visibilité"]);
+                assert_eq!(undo_labels, vec!["add_empty_layer"]);
+                assert_eq!(redo_labels, vec!["toggle_visibility"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4237,7 +4194,7 @@ mod single_pass_tests {
                 assert!(!can_undo);
                 assert!(can_redo);
                 assert!(undo_labels.is_empty());
-                assert_eq!(redo_labels, vec!["Nouveau calque", "Nouveau calque"]);
+                assert_eq!(redo_labels, vec!["add_empty_layer", "add_empty_layer"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4249,8 +4206,8 @@ mod single_pass_tests {
                 redo_labels,
                 ..
             } => {
-                assert_eq!(undo_labels, vec!["Nouveau calque"]);
-                assert_eq!(redo_labels, vec!["Nouveau calque"]);
+                assert_eq!(undo_labels, vec!["add_empty_layer"]);
+                assert_eq!(redo_labels, vec!["add_empty_layer"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4299,7 +4256,7 @@ mod single_pass_tests {
                 ..
             } => {
                 assert_ne!(apercu.rgba, avant, "miroir visible");
-                assert_eq!(undo_labels, vec!["Miroir horizontal"]);
+                assert_eq!(undo_labels, vec!["flip_horizontal"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4315,7 +4272,7 @@ mod single_pass_tests {
         let avant = preview_rgba(&worker.apply(PhotoEngineCommand::Refresh));
         match worker.apply(PhotoEngineCommand::RotateClockwise(id)) {
             PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
-                assert_eq!(undo_labels, vec!["Rotation horaire"]);
+                assert_eq!(undo_labels, vec!["rotate_clockwise"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4404,7 +4361,7 @@ mod single_pass_tests {
             filter: fid,
         }) {
             PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
-                assert_eq!(undo_labels, vec!["Basculer le filtre"]);
+                assert_eq!(undo_labels, vec!["toggle_filter"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4462,7 +4419,7 @@ mod single_pass_tests {
             opacity: 1.0,
         }) {
             PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
-                assert_eq!(undo_labels, vec!["Peindre le masque"]);
+                assert_eq!(undo_labels, vec!["paint_mask"]);
             }
             other => panic!("LayersChanged attendu, obtenu : {other:?}"),
         }
@@ -4791,7 +4748,7 @@ mod single_pass_tests {
             } => {
                 assert!(can_undo);
                 assert!(
-                    undo_labels.iter().all(|l| l == "Nouvelle forme"),
+                    undo_labels.iter().all(|l| l == "add_vector_layer"),
                     "{undo_labels:?}"
                 );
             }
@@ -4835,7 +4792,7 @@ mod single_pass_tests {
         match worker.apply(PhotoEngineCommand::Refresh) {
             PhotoEngineResponse::LayersChanged { undo_labels, .. } => {
                 assert!(
-                    undo_labels.iter().any(|l| l == "Nœuds vecteur"),
+                    undo_labels.iter().any(|l| l == "set_vector_paths"),
                     "{undo_labels:?}"
                 );
             }

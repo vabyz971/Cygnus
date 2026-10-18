@@ -969,7 +969,7 @@ mod tests {
         loop {
             app.poll(&ctx);
             let history = &app.active_doc_opt().expect("doc").ui.history_undo;
-            if history.iter().any(|label| label == "Miroir horizontal") {
+            if history.iter().any(|op| op == "flip_horizontal") {
                 break;
             }
             assert!(start.elapsed() < Duration::from_secs(30), "flip attendu");
@@ -1036,7 +1036,7 @@ mod tests {
                 .ui
                 .history_undo
                 .iter()
-                .any(|label| label == "Peindre le masque")
+                .any(|op| op == "paint_mask")
             {
                 break;
             }
@@ -1146,7 +1146,7 @@ mod tests {
                 .ui
                 .history_undo
                 .iter()
-                .any(|label| label == "Peindre le masque")
+                .any(|op| op == "paint_mask")
             {
                 break;
             }
