@@ -88,6 +88,9 @@ pub struct EngineWorker {
     pub(crate) last_surface_us: u128,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics).
     pub metrics: WorkerMetrics,
+    /// The last response carried a GPU frame but no CPU preview: one is
+    /// computed when the queue goes quiet (`refresh_cpu_preview`).
+    pub(crate) cpu_preview_stale: bool,
     /// GPU renderer on the UI's device (`AttachGpu`), if any.
     pub(crate) gpu_view: Option<crate::gpu_view::GpuView>,
     /// Names of created items, in the UI language (`SetDefaultNames`).
@@ -194,6 +197,7 @@ impl EngineWorker {
             last_surface_pixels: 0,
             last_surface_us: 0,
             metrics: WorkerMetrics::default(),
+            cpu_preview_stale: false,
             gpu_view: None,
             names: super::naming::DefaultNames::default(),
             scaled_appearances: crate::document::ScaledAppearances::default(),
@@ -254,6 +258,42 @@ impl EngineWorker {
             .find(layer)
             .map_or(DirtyMark::Global, mark_for_node);
         Mutation::changed(invalidation).with_dirty(dirty)
+    }
+
+    /// Full-resolution GPU frame (renderer cache: unchanged layers keep
+    /// their textures, a move only re-blends on the GPU). `None` without
+    /// an attached device or for content the GPU path does not cover.
+    fn render_gpu_frame(&mut self) -> Option<crate::gpu_view::GpuFrame> {
+        let document = &self.document;
+        self.gpu_view
+            .as_mut()
+            .and_then(|view| view.render(document, &|id| document.appearance_image_any(id)))
+    }
+
+    /// Deferred CPU preview (histogram, eyedropper) after GPU-only
+    /// responses: same pipeline as `respond`, sent as `PreviewRefreshed`
+    /// for the current render revision.
+    pub fn refresh_cpu_preview(&mut self) -> Option<PhotoEngineResponse> {
+        if !self.cpu_preview_stale {
+            return None;
+        }
+        self.cpu_preview_stale = false;
+        let preview = match self.render_preview_scaled() {
+            Some((preview, _, _)) => preview,
+            None => {
+                let frame = AppearanceFrameCache::build(&self.document);
+                let (preview, _, _) = self.render_preview_incremental(&frame);
+                if preview.is_some() {
+                    let rendered = self.render_worker.take_rendered_tiles();
+                    self.render_worker.cache_mut().consume_rendered(&rendered);
+                }
+                preview
+            }
+        }?;
+        Some(PhotoEngineResponse::PreviewRefreshed {
+            preview,
+            revision: self.revision,
+        })
     }
 
     /// Splits the stack around `layer` for a GPU-side drag (see
@@ -390,17 +430,32 @@ impl EngineWorker {
         let thumb_hits_before = self.metrics.thumb.cache_hits;
         let thumb_misses_before = self.metrics.thumb.cache_misses;
         self.poll_thumb_results();
+        // GPU frame first (UI device attached, document supported): the
+        // canvas shows it, so the CPU preview is deferred to the next quiet
+        // moment (`idle`) instead of costing every gesture tick.
+        let composite = invalidation == RenderInvalidation::Composite;
+        let gpu_frame = if composite {
+            self.render_gpu_frame()
+        } else {
+            None
+        };
+        let cpu_now = composite && gpu_frame.is_none();
+        if gpu_frame.is_some() {
+            self.cpu_preview_stale = true;
+        } else if cpu_now {
+            self.cpu_preview_stale = false;
+        }
         // Display-scale pass first (large documents): appearances and
         // composite at the preview scale, no full-resolution frame at all.
         // Otherwise the exact full-resolution frame feeds the tile pipeline.
         let t_frame = std::time::Instant::now();
-        let scaled = if invalidation == RenderInvalidation::Composite {
+        let scaled = if cpu_now {
             self.render_preview_scaled()
         } else {
             None
         };
-        let frame = (invalidation == RenderInvalidation::Composite && scaled.is_none())
-            .then(|| AppearanceFrameCache::build(&self.document));
+        let frame =
+            (cpu_now && scaled.is_none()).then(|| AppearanceFrameCache::build(&self.document));
         let frame_us = t_frame.elapsed().as_micros();
         // Secondary task: submitted AFTER the frame (entries are
         // cloned, state frozen by the finished mutation) and BEFORE the
@@ -514,13 +569,6 @@ impl EngineWorker {
             // Sliding window: the next response will report its delta.
             self.last_surface_pixels = self.render_worker.surface_stats().pixels_written;
             self.last_surface_us = self.render_worker.surface_stats().update_us;
-            // Full-resolution GPU frame (renderer cache: unchanged layers
-            // keep their textures, a move only re-blends on the GPU).
-            let document = &self.document;
-            let gpu_frame = self
-                .gpu_view
-                .as_mut()
-                .and_then(|view| view.render(document, &|id| document.appearance_image_any(id)));
             PhotoEngineResponse::LayersChanged {
                 layers,
                 preview,
@@ -1840,6 +1888,17 @@ impl EngineLoop for EngineWorker {
     fn apply_batch(&mut self, batch: Vec<PhotoEngineCommand>) -> Vec<PhotoEngineResponse> {
         EngineWorker::apply_batch(self, batch)
     }
+
+    fn idle_delay(&self) -> Option<std::time::Duration> {
+        // Short enough to feel immediate after a gesture, long enough to
+        // skip every tick of it.
+        self.cpu_preview_stale
+            .then_some(std::time::Duration::from_millis(80))
+    }
+
+    fn idle(&mut self) -> Vec<PhotoEngineResponse> {
+        self.refresh_cpu_preview().into_iter().collect()
+    }
 }
 
 /// Starts the engine worker on a background thread (generic loop of
@@ -2588,19 +2647,32 @@ mod tests {
         };
         let mut worker = EngineWorker::new(three_layer_doc());
         let response = worker.apply(PhotoEngineCommand::AttachGpu { device, queue });
+        // GPU frame now, CPU preview deferred to the next quiet moment.
         let PhotoEngineResponse::LayersChanged {
-            preview: Some(preview),
+            preview: None,
             gpu_frame: Some(frame),
+            revision,
             ..
         } = response
         else {
-            panic!("frame GPU attendue");
+            panic!("frame GPU seule attendue");
         };
+        use engine_runtime::EngineLoop as _;
+        assert!(worker.idle_delay().is_some(), "aperçu CPU en attente");
+        let Some(PhotoEngineResponse::PreviewRefreshed {
+            preview,
+            revision: refreshed,
+        }) = worker.refresh_cpu_preview()
+        else {
+            panic!("aperçu différé attendu");
+        };
+        assert_eq!(refreshed, revision, "même révision de rendu");
         assert_eq!(
             frame.size,
             (preview.full_width, preview.full_height),
             "même plan que l'aperçu CPU"
         );
+        assert!(worker.idle_delay().is_none(), "plus rien en attente");
         assert_eq!(frame.doc_size, (8, 8));
         assert!(worker.history.undo_steps().is_empty(), "pas d'historique");
         // Moving a layer keeps the frame flowing (textures reused).
@@ -3088,6 +3160,7 @@ mod tests {
             PhotoEngineResponse::ExportDone { .. } => panic!("export inattendu"),
             PhotoEngineResponse::ProjectSaved { .. } => panic!("sauvegarde inattendue"),
             PhotoEngineResponse::ExportSizeEstimated { .. } => panic!("estimation inattendue"),
+            PhotoEngineResponse::PreviewRefreshed { .. } => panic!("aperçu différé inattendu"),
             PhotoEngineResponse::DragProxyReady { .. }
             | PhotoEngineResponse::DragProxyUnavailable { .. } => panic!("proxy inattendu"),
             PhotoEngineResponse::StateChanged { .. } => panic!("rendu attendu"),

@@ -233,8 +233,8 @@ fn probe_4d_gpu_frames_4k() {
         });
     }
     eprintln!(
-        "10 ticks opacité (GPU attaché): {}ms/tick",
-        t.elapsed().as_millis() / 10
+        "10 ticks opacité (GPU attaché): {}µs/tick",
+        t.elapsed().as_micros() / 10
     );
     report(&worker);
 }

@@ -208,6 +208,9 @@ pub struct PhotoUiState {
     /// On-screen rect of the preview texture last frame (true zoom
     /// readout: screen pixels per document pixel).
     pub last_dest: Option<egui::Rect>,
+    /// Bumped whenever `last_preview` changes (histogram cache key: a
+    /// deferred preview refreshes the data of the same render revision).
+    pub last_preview_serial: u64,
     /// Latest full-resolution GPU frame (`None` = CPU preview shown).
     pub gpu_frame: Option<photo_engine::gpu_view::GpuFrame>,
     /// Its registration with egui's renderer (managed by the app's poll,
@@ -533,6 +536,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         ui.gpu_frame = gpu_frame;
                         presentation.preview_apply_us = t_preview.elapsed().as_micros();
                         ui.last_preview = Some(image);
+                        ui.last_preview_serial += 1;
                         ui.displayed_revision = Some(revision);
                         ui.status = crate::ui::status::PhotoStatus::None;
                         // The commit render landed: the drag proxy hands over.
@@ -544,13 +548,44 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         }
                     }
                 }
-                None => {
-                    ui.texture_cache.clear();
-                    ui.last_preview = None;
-                    ui.preview_geom = None;
-                    ui.displayed_revision = None;
-                    ui.gpu_frame = None;
-                }
+                None => match gpu_frame {
+                    // GPU-only response (gesture tick): display the frame,
+                    // keep the CPU preview data; a `PreviewRefreshed`
+                    // follows once the worker goes quiet.
+                    Some(frame) => {
+                        let fresh = ui
+                            .displayed_revision
+                            .is_none_or(|shown| revision.is_newer_than(shown));
+                        if fresh {
+                            ui.preview_geom = Some(PreviewGeom {
+                                thumb_size: egui::vec2(frame.size.0 as f32, frame.size.1 as f32),
+                                full_size: egui::vec2(frame.size.0 as f32, frame.size.1 as f32),
+                                origin: egui::vec2(frame.origin.0, frame.origin.1),
+                                doc_size: egui::vec2(
+                                    frame.doc_size.0 as f32,
+                                    frame.doc_size.1 as f32,
+                                ),
+                            });
+                            ui.gpu_frame = Some(frame);
+                            ui.displayed_revision = Some(revision);
+                            ui.status = crate::ui::status::PhotoStatus::None;
+                            if matches!(
+                                ui.drag_proxy,
+                                Some(crate::ui::drag_proxy::DragProxyState::Ending(..))
+                            ) {
+                                ui.drag_proxy = None;
+                            }
+                        }
+                    }
+                    None => {
+                        ui.texture_cache.clear();
+                        ui.last_preview = None;
+                        ui.last_preview_serial += 1;
+                        ui.preview_geom = None;
+                        ui.displayed_revision = None;
+                        ui.gpu_frame = None;
+                    }
+                },
             }
             ui.needs_repaint = true;
         }
@@ -610,6 +645,15 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
         PhotoEngineResponse::ProjectSaved { path } => {
             ui.status = crate::ui::status::PhotoStatus::Saved(path);
             ui.needs_repaint = true;
+        }
+        PhotoEngineResponse::PreviewRefreshed { preview, revision } => {
+            // Data for the histogram / eyedropper of the frame on screen
+            // (an older revision is stale: a newer render is coming).
+            if ui.displayed_revision == Some(revision) {
+                ui.last_preview = Some(preview);
+                ui.last_preview_serial += 1;
+                ui.needs_repaint = true;
+            }
         }
         PhotoEngineResponse::DragProxyReady {
             layer,
@@ -819,6 +863,35 @@ mod tests {
             ui.drag_proxy,
             Some(DragProxyState::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn deferred_preview_only_feeds_the_displayed_revision() {
+        let ctx = egui::Context::default();
+        let mut ui = PhotoUiState::default();
+        apply_response(&ctx, &mut ui, preview_at_revision(RenderRevision(4)));
+        let serial = ui.last_preview_serial;
+        let refreshed = |revision| PhotoEngineResponse::PreviewRefreshed {
+            preview: PreviewImage {
+                width: 1,
+                height: 1,
+                rgba: vec![9, 9, 9, 255],
+                full_width: 1,
+                full_height: 1,
+                origin_x: 0.0,
+                origin_y: 0.0,
+                doc_width: 1,
+                doc_height: 1,
+            },
+            revision,
+        };
+        // Stale revision: ignored.
+        apply_response(&ctx, &mut ui, refreshed(RenderRevision(3)));
+        assert_eq!(ui.last_preview_serial, serial);
+        // Displayed revision: data refreshed, histogram key bumped.
+        apply_response(&ctx, &mut ui, refreshed(RenderRevision(4)));
+        assert_eq!(ui.last_preview_serial, serial + 1);
+        assert_eq!(ui.last_preview.as_ref().map(|p| p.rgba[0]), Some(9));
     }
 
     #[test]

@@ -105,6 +105,6 @@ pub fn draw_histogram_content(ui: &mut egui::Ui, doc: &OpenDocument, ctx: &Photo
         ctx,
         doc.id,
         doc.ui.last_preview.as_ref(),
-        doc.ui.displayed_revision,
+        Some(photo_engine::RenderRevision(doc.ui.last_preview_serial)),
     );
 }

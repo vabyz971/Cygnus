@@ -38,7 +38,8 @@ pub enum PhotoEngineResponse {
     LayersChanged {
         /// Snapshot for the UI.
         layers: Vec<PhotoLayerInfo>,
-        /// Composite preview for the canvas (`None` when empty).
+        /// Composite preview for the canvas (`None` when empty, or when
+        /// `gpu_frame` is set: then it follows as `PreviewRefreshed`).
         preview: Option<PreviewImage>,
         /// Produced render revision.
         revision: RenderRevision,
@@ -57,6 +58,15 @@ pub enum PhotoEngineResponse {
         /// `preview`, which stays for CPU consumers (histogram,
         /// eyedropper) and as the fallback.
         gpu_frame: Option<crate::gpu_view::GpuFrame>,
+    },
+    /// Deferred CPU preview of the render `revision` (sent when the queue
+    /// went quiet after GPU-only responses): feeds the histogram and the
+    /// eyedropper; the display keeps the GPU frame.
+    PreviewRefreshed {
+        /// Capped CPU composite.
+        preview: PreviewImage,
+        /// Render revision it belongs to.
+        revision: RenderRevision,
     },
     /// Fresh state WITHOUT a new render (e.g. rename, no-op): the UI
     /// updates the panel and keeps the displayed texture.
