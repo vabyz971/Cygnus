@@ -22,9 +22,15 @@
 //! renders once), sends the responses, then calls the wake callback so an
 //! idle UI loop picks them up immediately (egui only repaints on input
 //! otherwise). Dropping the UI `Sender` stops the thread cleanly.
+//!
+//! Deferred work: an engine with something to do "when the user pauses"
+//! (e.g. a CPU preview skipped during a gesture) reports an idle delay;
+//! if no command arrives within it, [`EngineLoop::idle`] runs and its
+//! responses are sent like any other.
 
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 /// Called by the worker after answering (the app requests a repaint;
 /// a closure keeps the runtime free of any UI crate).
@@ -40,6 +46,18 @@ pub trait EngineLoop {
     /// Applies every queued command (one render at most) and returns the
     /// responses, in order.
     fn apply_batch(&mut self, batch: Vec<Self::Command>) -> Vec<Self::Response>;
+
+    /// Quiet time after which [`Self::idle`] should run (`None` = no
+    /// deferred work: the loop blocks until the next command).
+    fn idle_delay(&self) -> Option<Duration> {
+        None
+    }
+
+    /// Deferred work, run once the queue stayed empty for
+    /// [`Self::idle_delay`]; returns responses to send.
+    fn idle(&mut self) -> Vec<Self::Response> {
+        Vec::new()
+    }
 }
 
 /// Starts the engine on its own thread. `make` builds the engine ON that
@@ -56,7 +74,28 @@ where
 {
     std::thread::spawn(move || {
         let mut engine = make();
-        'worker: while let Ok(first) = commands.recv() {
+        'worker: loop {
+            let first = match engine.idle_delay() {
+                Some(delay) => match commands.recv_timeout(delay) {
+                    Ok(command) => command,
+                    Err(RecvTimeoutError::Timeout) => {
+                        for response in engine.idle() {
+                            if responses.send(response).is_err() {
+                                break 'worker;
+                            }
+                        }
+                        if let Some(wake) = &wake {
+                            wake();
+                        }
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                },
+                None => match commands.recv() {
+                    Ok(command) => command,
+                    Err(_) => break,
+                },
+            };
             let mut batch = vec![first];
             while let Ok(next) = commands.try_recv() {
                 batch.push(next);
@@ -115,6 +154,45 @@ mod tests {
         drop(tx);
         handle.join().expect("arrêt propre");
         assert!(woken.load(Ordering::SeqCst) >= 1, "UI réveillée");
+    }
+
+    /// Defers one "refresh" after each batch, done when idle.
+    struct Deferred {
+        pending: bool,
+    }
+
+    impl EngineLoop for Deferred {
+        type Command = i32;
+        type Response = &'static str;
+
+        fn apply_batch(&mut self, _batch: Vec<i32>) -> Vec<&'static str> {
+            self.pending = true;
+            vec!["applied"]
+        }
+
+        fn idle_delay(&self) -> Option<Duration> {
+            self.pending.then_some(Duration::from_millis(20))
+        }
+
+        fn idle(&mut self) -> Vec<&'static str> {
+            self.pending = false;
+            vec!["refreshed"]
+        }
+    }
+
+    #[test]
+    fn deferred_work_runs_once_the_queue_is_quiet() {
+        let (tx, rx) = channel();
+        let (resp_tx, resp_rx) = channel();
+        let handle = spawn_engine(|| Deferred { pending: false }, rx, resp_tx, None);
+        tx.send(1).expect("envoi");
+        let wait = Duration::from_secs(5);
+        assert_eq!(resp_rx.recv_timeout(wait).expect("réponse"), "applied");
+        assert_eq!(resp_rx.recv_timeout(wait).expect("au repos"), "refreshed");
+        // Nothing more pending: the loop blocks again, no extra idle run.
+        assert!(resp_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(tx);
+        handle.join().expect("arrêt propre");
     }
 
     #[test]
