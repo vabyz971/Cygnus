@@ -28,6 +28,7 @@ The crate name sometimes differs from the folder — use `-p` with the crate nam
 | `core/tiles` | `tiles` (spatial invalidation: grid, dirty bitset, CPU/GPU cache, progressive scheduler — pure CPU) |
 | `core/engine-runtime` | `engine-runtime` (generic engine worker: snapshot undo/redo with gesture coalescing, latest-value-wins batch folding, background thread loop + UI wake — no domain, UI or GPU) |
 | `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project, `snapshot` (layer-tree data for the UI), `session` (the editing worker: commands, rendering, thumbnails, on `engine-runtime`); `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
+| `engines/gpu-compositor` | `gpu-compositor` (domain-free wgpu compute compositor: layers = texture + affine + opacity + blend mode, CPU-identical blend math, premultiplied mip-mapped output for egui; runs on the caller's device) |
 | `engines/vector-engine` | `vector-engine` (paths, shapes, styles, booleans + `VectorBackend` trait — no wgpu) |
 | `engines/layout-engine` | `layout-engine` (frames, constraints, algorithm + `apply_to_scene` — no wgpu/egui) |
 | `engines/text-engine` | `text-engine` (model → layout → glyph runs; measurement for layout) |

@@ -9,6 +9,7 @@ members = [
     "core/tiles",
     "core/engine-runtime",
     "engines/photo-engine",
+    "engines/gpu-compositor",
     "engines/video-engine",
     "engines/audio-engine",
     "engines/vector-engine",
