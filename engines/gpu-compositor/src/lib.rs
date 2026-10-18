@@ -91,6 +91,38 @@ pub struct DrawLayer<'a> {
     pub blend: u32,
 }
 
+/// A group: its items composited in isolation (transparent start, same
+/// frame size and origin), the result blended into the parent with the
+/// group's opacity and blend mode.
+pub struct DrawGroup<'a> {
+    /// Children, bottom first.
+    pub items: Vec<DrawItem<'a>>,
+    /// 0..=1.
+    pub opacity: f32,
+    /// Blend mode id (see [`DrawLayer::blend`]).
+    pub blend: u32,
+}
+
+/// One element of a frame.
+pub enum DrawItem<'a> {
+    /// A placed layer.
+    Layer(DrawLayer<'a>),
+    /// A group composited in isolation.
+    Group(DrawGroup<'a>),
+}
+
+/// Nesting depth of a frame (root = 1).
+fn depth_of(items: &[DrawItem<'_>]) -> usize {
+    1 + items
+        .iter()
+        .map(|item| match item {
+            DrawItem::Layer(_) => 0,
+            DrawItem::Group(g) => depth_of(&g.items),
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
@@ -160,7 +192,8 @@ fn view_level(texture: &wgpu::Texture, level: u32) -> wgpu::TextureView {
 /// Size-dependent targets, rebuilt only when the frame size changes.
 struct Targets {
     size: (u32, u32),
-    acc: [wgpu::Texture; 2],
+    /// One accumulator pair per nesting level (index 0 = root).
+    levels: Vec<[wgpu::Texture; 2]>,
     output: wgpu::Texture,
 }
 
@@ -172,7 +205,7 @@ pub struct Compositor {
     present: wgpu::ComputePipeline,
     downsample: wgpu::ComputePipeline,
     targets: Option<Targets>,
-    /// Accumulator holding the last frame (straight alpha).
+    /// Root accumulator holding the last frame (straight alpha).
     last_acc: usize,
 }
 
@@ -248,31 +281,36 @@ impl Compositor {
         })
     }
 
-    fn ensure_targets(&mut self, size: (u32, u32)) -> Option<&Targets> {
-        if self.targets.as_ref().is_none_or(|t| t.size != size) {
-            let extent = wgpu::Extent3d {
+    fn accumulator(&self, size: (u32, u32)) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("compositor-acc"),
+            size: wgpu::Extent3d {
                 width: size.0,
                 height: size.1,
                 depth_or_array_layers: 1,
-            };
-            let acc = || {
-                self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("compositor-acc"),
-                    size: extent,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: FORMAT,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::STORAGE_BINDING
-                        | wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                })
-            };
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    }
+
+    /// Targets for a `size` frame with `depth` nesting levels.
+    fn ensure_targets(&mut self, size: (u32, u32), depth: usize) {
+        if self.targets.as_ref().is_none_or(|t| t.size != size) {
             let output = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("compositor-output"),
-                size: extent,
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: mip_count(size.0, size.1),
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -284,45 +322,29 @@ impl Compositor {
             });
             self.targets = Some(Targets {
                 size,
-                acc: [acc(), acc()],
+                levels: Vec::new(),
                 output,
             });
         }
-        self.targets.as_ref()
+        let missing = self
+            .targets
+            .as_ref()
+            .map_or(0, |t| depth.saturating_sub(t.levels.len()));
+        for _ in 0..missing {
+            let pair = [self.accumulator(size), self.accumulator(size)];
+            if let Some(t) = self.targets.as_mut() {
+                t.levels.push(pair);
+            }
+        }
     }
 
-    /// Composites `layers` (bottom first) into a `size` frame and returns
-    /// the output texture (premultiplied, gamma space, full mip chain),
-    /// stable across frames of the same size. `None` for an empty or
-    /// oversized frame.
-    pub fn composite(
-        &mut self,
-        size: (u32, u32),
-        layers: &[DrawLayer<'_>],
-    ) -> Option<&wgpu::Texture> {
-        let max = self.max_dimension();
-        if size.0 == 0 || size.1 == 0 || size.0 > max || size.1 > max {
-            return None;
-        }
-        let device = self.device.clone();
-        let composite_layout = self.composite.get_bind_group_layout(0);
-        let present_layout = self.present.get_bind_group_layout(0);
-        let downsample_layout = self.downsample.get_bind_group_layout(0);
-        let targets = self.ensure_targets(size)?;
-        let acc_views = [
-            targets.acc[0].create_view(&wgpu::TextureViewDescriptor::default()),
-            targets.acc[1].create_view(&wgpu::TextureViewDescriptor::default()),
-        ];
-        let groups = (size.0.div_ceil(WORKGROUP), size.1.div_ceil(WORKGROUP));
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("compositor-frame"),
-        });
-        // 1. Transparent start (a clearing render pass: `clear_texture`
-        // needs an optional feature the UI device may lack).
+    /// Clears an accumulator to transparent (render pass: `clear_texture`
+    /// needs an optional feature the UI device may lack).
+    fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("compositor-clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &acc_views[0],
+                view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -335,77 +357,190 @@ impl Compositor {
             occlusion_query_set: None,
             multiview_mask: None,
         }));
-        let mut current = 0usize;
-        // 2. One pass per layer.
-        let mut keep_alive = Vec::with_capacity(layers.len());
-        for layer in layers {
-            let (lw, lh) = layer.texture.size;
-            let params = Params {
-                m: layer.to_layer.m,
-                t_size: [
-                    layer.to_layer.t[0],
-                    layer.to_layer.t[1],
-                    lw as f32,
-                    lh as f32,
-                ],
-                misc: [
-                    layer.opacity.clamp(0.0, 1.0),
-                    layer.blend as f32,
-                    size.0 as f32,
-                    size.1 as f32,
-                ],
-            };
-            let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    }
+
+    /// One blend pass: `src` + layer → `dst`.
+    #[allow(clippy::too_many_arguments)]
+    fn blend_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::TextureView,
+        layer: &wgpu::TextureView,
+        layer_size: (u32, u32),
+        dst: &wgpu::TextureView,
+        to_layer: Affine,
+        opacity: f32,
+        blend: u32,
+        size: (u32, u32),
+        keep_alive: &mut Vec<wgpu::Buffer>,
+    ) {
+        let params = Params {
+            m: to_layer.m,
+            t_size: [
+                to_layer.t[0],
+                to_layer.t[1],
+                layer_size.0 as f32,
+                layer_size.1 as f32,
+            ],
+            misc: [
+                opacity.clamp(0.0, 1.0),
+                blend as f32,
+                size.0 as f32,
+                size.1 as f32,
+            ],
+        };
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("compositor-params"),
                 contents: bytemuck::bytes_of(&params),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-            let next = 1 - current;
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("compositor-layer-bind"),
-                layout: &composite_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&acc_views[current]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&layer.texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&acc_views[next]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: uniform.as_entire_binding(),
-                    },
-                ],
-            });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("compositor-layer"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.composite);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups.0, groups.1, 1);
-            }
-            keep_alive.push(uniform);
-            current = next;
-        }
-        // 3. Present (premultiply) + mip chain.
-        let targets = self.targets.as_ref()?;
-        let levels = targets.output.mip_level_count();
-        let level0 = view_level(&targets.output, 0);
-        let present_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compositor-present-bind"),
-            layout: &present_layout,
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compositor-layer-bind"),
+            layout: &self.composite.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&acc_views[current]),
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(layer),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(dst),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("compositor-layer"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.composite);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(size.0.div_ceil(WORKGROUP), size.1.div_ceil(WORKGROUP), 1);
+        drop(pass);
+        keep_alive.push(uniform);
+    }
+
+    /// Encodes `items` at nesting `depth`; returns which accumulator of
+    /// that level holds the result.
+    fn encode_level(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        targets: &Targets,
+        items: &[DrawItem<'_>],
+        depth: usize,
+        keep_alive: &mut Vec<wgpu::Buffer>,
+    ) -> usize {
+        let size = targets.size;
+        let views = [
+            targets.levels[depth][0].create_view(&wgpu::TextureViewDescriptor::default()),
+            targets.levels[depth][1].create_view(&wgpu::TextureViewDescriptor::default()),
+        ];
+        Self::clear(encoder, &views[0]);
+        let mut current = 0usize;
+        for item in items {
+            let next = 1 - current;
+            match item {
+                DrawItem::Layer(layer) => self.blend_pass(
+                    encoder,
+                    &views[current],
+                    &layer.texture.view,
+                    layer.texture.size,
+                    &views[next],
+                    layer.to_layer,
+                    layer.opacity,
+                    layer.blend,
+                    size,
+                    keep_alive,
+                ),
+                DrawItem::Group(group) => {
+                    let inner =
+                        self.encode_level(encoder, targets, &group.items, depth + 1, keep_alive);
+                    let result = targets.levels[depth + 1][inner]
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    self.blend_pass(
+                        encoder,
+                        &views[current],
+                        &result,
+                        size,
+                        &views[next],
+                        Affine::placed_at(0.0, 0.0),
+                        group.opacity,
+                        group.blend,
+                        size,
+                        keep_alive,
+                    );
+                }
+            }
+            current = next;
+        }
+        current
+    }
+
+    /// Composites `layers` (bottom first) into a `size` frame; see
+    /// [`Self::composite_tree`].
+    pub fn composite(
+        &mut self,
+        size: (u32, u32),
+        layers: &[DrawLayer<'_>],
+    ) -> Option<&wgpu::Texture> {
+        let items: Vec<DrawItem<'_>> = layers
+            .iter()
+            .map(|l| {
+                DrawItem::Layer(DrawLayer {
+                    texture: l.texture,
+                    to_layer: l.to_layer,
+                    opacity: l.opacity,
+                    blend: l.blend,
+                })
+            })
+            .collect();
+        self.composite_tree(size, &items)
+    }
+
+    /// Composites a tree of layers and groups (bottom first) into a
+    /// `size` frame and returns the output texture (premultiplied, gamma
+    /// space, full mip chain), stable across frames of the same size.
+    /// `None` for an empty or oversized frame.
+    pub fn composite_tree(
+        &mut self,
+        size: (u32, u32),
+        items: &[DrawItem<'_>],
+    ) -> Option<&wgpu::Texture> {
+        let max = self.max_dimension();
+        if size.0 == 0 || size.1 == 0 || size.0 > max || size.1 > max {
+            return None;
+        }
+        self.ensure_targets(size, depth_of(items));
+        let targets = self.targets.as_ref()?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("compositor-frame"),
+            });
+        let mut keep_alive = Vec::new();
+        let result = self.encode_level(&mut encoder, targets, items, 0, &mut keep_alive);
+        // Present (premultiply) + mip chain.
+        let groups = (size.0.div_ceil(WORKGROUP), size.1.div_ceil(WORKGROUP));
+        let acc_view =
+            targets.levels[0][result].create_view(&wgpu::TextureViewDescriptor::default());
+        let levels = targets.output.mip_level_count();
+        let level0 = view_level(&targets.output, 0);
+        let present_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compositor-present-bind"),
+            layout: &self.present.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&acc_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -427,9 +562,9 @@ impl Compositor {
             let dst = view_level(&targets.output, level);
             let w = (size.0 >> level).max(1);
             let h = (size.1 >> level).max(1);
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("compositor-mip-bind"),
-                layout: &downsample_layout,
+                layout: &self.downsample.get_bind_group_layout(0),
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -451,7 +586,7 @@ impl Compositor {
         }
         self.queue.submit(Some(encoder.finish()));
         drop(keep_alive);
-        self.last_acc = current;
+        self.last_acc = result;
         self.targets.as_ref().map(|t| &t.output)
     }
 
@@ -466,7 +601,8 @@ impl Compositor {
     #[must_use]
     pub fn read_rgba(&self) -> Option<Vec<u8>> {
         let targets = self.targets.as_ref()?;
-        read_texture(&self.device, &self.queue, &targets.acc[self.last_acc], 0)
+        let root = targets.levels.first()?;
+        read_texture(&self.device, &self.queue, &root[self.last_acc], 0)
     }
 
     /// Reads mip `level` of the output (premultiplied), blocking.
@@ -654,6 +790,68 @@ mod tests {
         let level2 = c.read_output_level(2).expect("level 2");
         assert_eq!(level2.len(), 4);
         assert!((i16::from(level2[0]) - 100).abs() <= 1);
+    }
+
+    #[test]
+    fn groups_composite_in_isolation_then_blend() {
+        let Some(mut c) = gpu() else { return };
+        let base = c.upload_rgba(1, 1, &[200, 100, 50, 255]).expect("base");
+        let top = c.upload_rgba(1, 1, &[0, 0, 255, 255]).expect("top");
+        let layer = |texture| {
+            DrawItem::Layer(DrawLayer {
+                texture,
+                to_layer: Affine::placed_at(0.0, 0.0),
+                opacity: 1.0,
+                blend: 0,
+            })
+        };
+        // Group at 50 % holding an opaque blue: half blue over the base,
+        // same as the layer at 50 % (isolation is invisible here)...
+        let items = [
+            layer(&base),
+            DrawItem::Group(DrawGroup {
+                items: vec![layer(&top)],
+                opacity: 0.5,
+                blend: 0,
+            }),
+        ];
+        c.composite_tree((1, 1), &items).expect("frame");
+        let px = c.read_rgba().expect("readback");
+        assert!(
+            (i16::from(px[0]) - 100).abs() <= 1 && (i16::from(px[2]) - 152).abs() <= 1,
+            "{px:?}"
+        );
+        // ...whereas a Multiply child inside a group multiplies against
+        // the group's transparent start, never the base: with the CPU
+        // reference math (no special case for a transparent base) that
+        // yields opaque black, then drawn over the base.
+        let items = [
+            layer(&base),
+            DrawItem::Group(DrawGroup {
+                items: vec![DrawItem::Layer(DrawLayer {
+                    texture: &top,
+                    to_layer: Affine::placed_at(0.0, 0.0),
+                    opacity: 1.0,
+                    blend: 1,
+                })],
+                opacity: 1.0,
+                blend: 0,
+            }),
+        ];
+        c.composite_tree((1, 1), &items).expect("frame");
+        assert_eq!(c.read_rgba().expect("readback"), vec![0, 0, 0, 255]);
+        // Nested groups reuse deeper accumulator pairs.
+        let nested = [DrawItem::Group(DrawGroup {
+            items: vec![DrawItem::Group(DrawGroup {
+                items: vec![layer(&base)],
+                opacity: 1.0,
+                blend: 0,
+            })],
+            opacity: 1.0,
+            blend: 0,
+        })];
+        c.composite_tree((1, 1), &nested).expect("frame");
+        assert_eq!(c.read_rgba().expect("readback"), vec![200, 100, 50, 255]);
     }
 
     #[test]
