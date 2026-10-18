@@ -85,6 +85,31 @@ impl Histogram {
             .max()
             .unwrap_or(0)
     }
+
+    /// Mean and standard deviation of the luma channel (0..=255
+    /// scale), `None` when nothing was counted.
+    #[must_use]
+    pub fn luma_stats(&self) -> Option<(f32, f32)> {
+        let total: f64 = self.luma.iter().map(|count| f64::from(*count)).sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let mean = self
+            .luma
+            .iter()
+            .enumerate()
+            .map(|(value, count)| value as f64 * f64::from(*count))
+            .sum::<f64>()
+            / total;
+        let variance = self
+            .luma
+            .iter()
+            .enumerate()
+            .map(|(value, count)| (value as f64 - mean).powi(2) * f64::from(*count))
+            .sum::<f64>()
+            / total;
+        Some((mean as f32, variance.sqrt() as f32))
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +156,16 @@ mod tests {
         let h = Histogram::from_rgba(&[]);
         assert_eq!(h.samples, 0);
         assert_eq!(h.peak(), 0);
+    }
+
+    #[test]
+    fn luma_stats_mean_and_deviation() {
+        assert_eq!(Histogram::default().luma_stats(), None);
+        let mut histogram = Histogram::default();
+        histogram.luma[100] = 1;
+        histogram.luma[200] = 1;
+        let (mean, deviation) = histogram.luma_stats().expect("statistiques");
+        assert!((mean - 150.0).abs() < 1e-4);
+        assert!((deviation - 50.0).abs() < 1e-4);
     }
 }
