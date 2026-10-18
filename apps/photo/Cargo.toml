@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 eframe.workspace = true
+wgpu.workspace = true
 egui.workspace = true
 egui_animation.workspace = true
 egui_tiles.workspace = true

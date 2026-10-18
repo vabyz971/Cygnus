@@ -32,6 +32,7 @@ pub mod dialogs;
 pub mod drag_proxy;
 pub mod engine_bridge;
 pub mod features;
+pub mod gpu_display;
 pub mod ink_overlay;
 pub mod menubar;
 pub mod modebar;

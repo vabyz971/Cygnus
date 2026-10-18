@@ -43,7 +43,9 @@ fn main() {
             cygnus_ui::theme::setup_fonts(&cc.egui_ctx);
             cygnus_ui::theme::apply_cygnus_theme(&cc.egui_ctx);
             Ok(Box::new(
-                app::PhotoApp::new().with_repaint_context(cc.egui_ctx.clone()),
+                app::PhotoApp::new()
+                    .with_repaint_context(cc.egui_ctx.clone())
+                    .with_render_state(cc.wgpu_render_state.clone()),
             ))
         }),
     )

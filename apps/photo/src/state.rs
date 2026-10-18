@@ -208,6 +208,11 @@ pub struct PhotoUiState {
     /// On-screen rect of the preview texture last frame (true zoom
     /// readout: screen pixels per document pixel).
     pub last_dest: Option<egui::Rect>,
+    /// Latest full-resolution GPU frame (`None` = CPU preview shown).
+    pub gpu_frame: Option<photo_engine::gpu_view::GpuFrame>,
+    /// Its registration with egui's renderer (managed by the app's poll,
+    /// which owns the render state).
+    pub gpu_display: Option<crate::ui::gpu_display::GpuDisplay>,
     /// GPU drag proxy of the layer being moved (see `ui::drag_proxy`).
     pub drag_proxy: Option<crate::ui::drag_proxy::DragProxyState>,
 }
@@ -447,7 +452,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             can_redo,
             undo_labels,
             redo_labels,
-            gpu_frame: _,
+            gpu_frame,
         } => {
             ui.layers = layers;
             ui.can_undo = can_undo;
@@ -483,30 +488,50 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                         .displayed_revision
                         .is_none_or(|shown| revision.is_newer_than(shown));
                     if fresh {
-                        ui.preview_geom = Some(PreviewGeom {
-                            thumb_size: egui::vec2(image.width as f32, image.height as f32),
-                            full_size: egui::vec2(
-                                image.full_width as f32,
-                                image.full_height as f32,
-                            ),
-                            origin: egui::vec2(image.origin_x, image.origin_y),
-                            doc_size: egui::vec2(image.doc_width as f32, image.doc_height as f32),
+                        // GPU frame: displayed at full resolution (its own
+                        // geometry, no CPU upload); the CPU preview stays
+                        // for the histogram and the eyedropper.
+                        ui.preview_geom = Some(match &gpu_frame {
+                            Some(frame) => PreviewGeom {
+                                thumb_size: egui::vec2(frame.size.0 as f32, frame.size.1 as f32),
+                                full_size: egui::vec2(frame.size.0 as f32, frame.size.1 as f32),
+                                origin: egui::vec2(frame.origin.0, frame.origin.1),
+                                doc_size: egui::vec2(
+                                    frame.doc_size.0 as f32,
+                                    frame.doc_size.1 as f32,
+                                ),
+                            },
+                            None => PreviewGeom {
+                                thumb_size: egui::vec2(image.width as f32, image.height as f32),
+                                full_size: egui::vec2(
+                                    image.full_width as f32,
+                                    image.full_height as f32,
+                                ),
+                                origin: egui::vec2(image.origin_x, image.origin_y),
+                                doc_size: egui::vec2(
+                                    image.doc_width as f32,
+                                    image.doc_height as f32,
+                                ),
+                            },
                         });
                         let t_preview = std::time::Instant::now();
-                        let t_color = std::time::Instant::now();
-                        let color = egui::ColorImage::from_rgba_unmultiplied(
-                            [image.width as usize, image.height as usize],
-                            &image.rgba,
-                        );
-                        presentation.colorimage_us = t_color.elapsed().as_micros();
-                        let t_set = std::time::Instant::now();
-                        ui.texture_cache.update(ctx, "photo_preview", color);
-                        presentation.texture_set_us = t_set.elapsed().as_micros();
+                        if gpu_frame.is_none() {
+                            let t_color = std::time::Instant::now();
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                [image.width as usize, image.height as usize],
+                                &image.rgba,
+                            );
+                            presentation.colorimage_us = t_color.elapsed().as_micros();
+                            let t_set = std::time::Instant::now();
+                            ui.texture_cache.update(ctx, "photo_preview", color);
+                            presentation.texture_set_us = t_set.elapsed().as_micros();
+                            // TEMPORARY INSTRUMENTATION.
+                            ui.texture_uploads += 1;
+                            // INSTRUMENTATION 6G.1: uploaded volume (bytes).
+                            ui.texture_upload_bytes += image.width as u64 * image.height as u64 * 4;
+                        }
+                        ui.gpu_frame = gpu_frame;
                         presentation.preview_apply_us = t_preview.elapsed().as_micros();
-                        // TEMPORARY INSTRUMENTATION.
-                        ui.texture_uploads += 1;
-                        // INSTRUMENTATION 6G.1: uploaded volume (bytes).
-                        ui.texture_upload_bytes += image.width as u64 * image.height as u64 * 4;
                         ui.last_preview = Some(image);
                         ui.displayed_revision = Some(revision);
                         ui.status = crate::ui::status::PhotoStatus::None;
@@ -524,6 +549,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                     ui.last_preview = None;
                     ui.preview_geom = None;
                     ui.displayed_revision = None;
+                    ui.gpu_frame = None;
                 }
             }
             ui.needs_repaint = true;

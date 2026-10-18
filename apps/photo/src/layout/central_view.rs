@@ -684,7 +684,14 @@ pub fn draw_canvas_content(
         });
         doc.ui.needs_repaint = true;
     }
-    let texture = doc.ui.texture_cache.texture();
+    // GPU frame when available (full resolution, zero-copy), else the
+    // CPU preview texture.
+    let texture = doc
+        .ui
+        .gpu_frame
+        .as_ref()
+        .and_then(|frame| crate::ui::gpu_display::texture_for(doc.ui.gpu_display.as_ref(), frame))
+        .or_else(|| doc.ui.texture_cache.texture());
     // Infinite plane: the thumbnail may extend past the document (layer
     // moved out of frame) and be downscaled (1600 px cap) — the
     // mapping brings every gesture back to exact document pixels.
@@ -865,12 +872,17 @@ pub fn draw_canvas_content(
         && let (Some(world), Some(preview)) =
             (outcome.pointer_world.last(), doc.ui.last_preview.as_ref())
     {
-        let origin = geom.map(|g| g.origin).unwrap_or(egui::Vec2::ZERO);
-        let to_thumb = 1.0 / mapping.thumb_to_doc.max(f32::EPSILON);
+        // The CPU preview's OWN geometry (the canvas may show a GPU frame
+        // with another scale and origin).
+        let to_thumb = if preview.full_width > 0 {
+            preview.width as f32 / preview.full_width as f32
+        } else {
+            1.0
+        };
         let sampled = sample_preview_color(
             preview,
-            origin.x + world.x * to_thumb,
-            origin.y + world.y * to_thumb,
+            preview.origin_x + world.x * to_thumb,
+            preview.origin_y + world.y * to_thumb,
         );
         if let Some(color) = sampled {
             doc.ui.brush.color = color;

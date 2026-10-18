@@ -30,6 +30,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub use gpu_compositor::request_headless_device;
 use gpu_compositor::{Affine, Compositor, DrawLayer, LayerTexture};
 use image::DynamicImage;
 use uuid::Uuid;

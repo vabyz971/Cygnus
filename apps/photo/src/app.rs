@@ -57,6 +57,10 @@ pub struct PhotoApp {
     /// Interface language (French until the language preference is
     /// wired): UI texts and default names of created items.
     pub language: cygnus_i18n::Language,
+    /// eframe's wgpu state: workers composite on this device and the
+    /// canvas shows their frames without CPU readback (`None` in tests
+    /// or with a non-wgpu backend: CPU previews only).
+    render_state: Option<eframe::egui_wgpu::RenderState>,
     /// egui context the workers wake up when a response is ready
     /// (`None` in headless tests: polling on input still works).
     repaint: Option<egui::Context>,
@@ -81,6 +85,7 @@ impl PhotoApp {
             runtime: PhotoRuntimeState::new(),
             queue: PhotoCommandQueue::new(),
             language: cygnus_i18n::Language::Fr,
+            render_state: None,
             repaint: None,
         };
         // No initial document: the user creates (or opens).
@@ -97,6 +102,16 @@ impl PhotoApp {
     #[must_use]
     pub fn with_repaint_context(mut self, ctx: egui::Context) -> Self {
         self.repaint = Some(ctx);
+        self
+    }
+
+    /// Lets workers render on eframe's GPU device (zero-copy canvas).
+    #[must_use]
+    pub fn with_render_state(
+        mut self,
+        render_state: Option<eframe::egui_wgpu::RenderState>,
+    ) -> Self {
+        self.render_state = render_state;
         self
     }
 
@@ -152,6 +167,14 @@ impl PhotoApp {
         });
         self.active = self.docs.len() - 1;
         push_canvas_tab(&mut self.shell.tree, PhotoDockTab::Canvas(id));
+        if let Some(render_state) = &self.render_state {
+            let _ = self.docs[self.active]
+                .tx
+                .send(PhotoEngineCommand::AttachGpu {
+                    device: render_state.device.clone(),
+                    queue: render_state.queue.clone(),
+                });
+        }
         let _ = self.docs[self.active].tx.send(PhotoEngineCommand::Refresh);
     }
 
@@ -682,6 +705,14 @@ impl PhotoApp {
                     if let Some(doc) = self.active_doc_mut_opt() {
                         doc.ui.status = crate::ui::status::PhotoStatus::PickerUnavailable;
                     }
+                }
+            }
+        }
+        // GPU frames: (re)register their texture with egui's renderer.
+        if let Some(render_state) = &self.render_state {
+            for doc in &mut self.docs {
+                if let Some(frame) = &doc.ui.gpu_frame {
+                    crate::ui::gpu_display::sync(render_state, &mut doc.ui.gpu_display, frame);
                 }
             }
         }

@@ -213,6 +213,33 @@ fn probe_4c_filter_slider_4k() {
 }
 
 #[test]
+fn probe_4d_gpu_frames_4k() {
+    // Worker cost per response with GPU frames attached (headless device):
+    // first frame uploads the layer textures, later ones only re-blend.
+    let Some((device, queue)) = photo_engine::gpu_view::request_headless_device() else {
+        eprintln!("no GPU adapter: probe skipped");
+        return;
+    };
+    let mut worker = EngineWorker::new(doc_4k());
+    let t = Instant::now();
+    worker.apply(PhotoEngineCommand::AttachGpu { device, queue });
+    eprintln!("gpu attach + first frame 4K: {}ms", t.elapsed().as_millis());
+    let id = layer_id(&worker, 1);
+    let t = Instant::now();
+    for i in 0..10 {
+        worker.apply(PhotoEngineCommand::SetOpacity {
+            layer: id,
+            opacity: 90.0 - i as f32,
+        });
+    }
+    eprintln!(
+        "10 ticks opacité (GPU attaché): {}ms/tick",
+        t.elapsed().as_millis() / 10
+    );
+    report(&worker);
+}
+
+#[test]
 fn probe_5_paint_stroke_4k() {
     let mut worker = EngineWorker::new(doc_4k());
     worker.apply(PhotoEngineCommand::Refresh);
