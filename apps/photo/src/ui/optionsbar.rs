@@ -81,6 +81,24 @@ pub fn draw_tool_options(
                 .percent()
                 .show(ui, theme, &mut opacity);
             brush.opacity = opacity.clamp(0.0, 1.0);
+            // Brush v2 tip: hardness, flow, spacing, then the stabilizer.
+            for (key, value, range) in [
+                (PhotoTextKey::HardnessLabel, &mut brush.hardness, 0.0..=1.0),
+                (PhotoTextKey::FlowLabel, &mut brush.flow, 0.01..=1.0),
+                (PhotoTextKey::SpacingLabel, &mut brush.spacing, 0.01..=2.0),
+                (
+                    PhotoTextKey::StabilizerLabel,
+                    &mut brush.stabilizer,
+                    0.0..=1.0,
+                ),
+            ] {
+                ui.add_space(theme.spacing.sm);
+                let (lo, hi) = (*range.start(), *range.end());
+                ValueField::new(texts.get(key), range)
+                    .percent()
+                    .show(ui, theme, value);
+                *value = value.clamp(lo, hi);
+            }
         }
         other => {
             ui.label(caption_text(theme, other.hint(texts)));

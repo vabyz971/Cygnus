@@ -574,6 +574,12 @@ impl PhotoApp {
                 }
             }
             PhotoAction::CommitStroke(paint) => {
+                // Tip dynamics first: the worker applies them to the
+                // stroke that follows (session state, no history).
+                if let Some(doc) = self.active_doc_opt() {
+                    let dynamics = doc.ui.brush.dynamics();
+                    self.send_active(PhotoEngineCommand::SetBrushDynamics(dynamics));
+                }
                 // Focused mask of the selected layer: the stroke
                 // goes into the mask (white/black), otherwise into
                 // the layer source (historical behavior). The focused

@@ -96,6 +96,46 @@ pub struct PhotoBrushSettings {
     pub opacity: f32,
     /// Secondary RGB color (rail swatch, swapped with `color`).
     pub secondary: [u8; 3],
+    /// Tip hardness 0..=1 (1 = hard edge).
+    pub hardness: f32,
+    /// Per-dab flow 0..=1 (1 = no build-up).
+    pub flow: f32,
+    /// Dab spacing, fraction of the diameter.
+    pub spacing: f32,
+    /// Stabilizer strength 0..=1 (0 = raw pointer).
+    pub stabilizer: f32,
+}
+
+/// Strongest stabilizer smoothing (a full 1.0 would freeze the stroke).
+const MAX_STABILIZER: f32 = 0.95;
+
+impl PhotoBrushSettings {
+    /// Engine tip dynamics of these settings.
+    #[must_use]
+    pub fn dynamics(&self) -> photo_engine::paint::BrushDynamics {
+        photo_engine::paint::BrushDynamics {
+            hardness: self.hardness,
+            flow: self.flow,
+            spacing: self.spacing,
+        }
+    }
+}
+
+/// Stabilizer ("lazy mouse"): each new point only moves part of the way
+/// from the previous smoothed point, `strength` 0 (raw) to
+/// [`MAX_STABILIZER`]. `previous` = last smoothed point of the gesture.
+fn stabilize(points: &mut [egui::Vec2], previous: Option<egui::Vec2>, strength: f32) {
+    let keep = strength.clamp(0.0, MAX_STABILIZER);
+    if keep <= 0.0 {
+        return;
+    }
+    let mut prev = previous;
+    for point in points.iter_mut() {
+        if let Some(q) = prev {
+            *point = q + (*point - q) * (1.0 - keep);
+        }
+        prev = Some(*point);
+    }
 }
 
 impl Default for PhotoBrushSettings {
@@ -105,6 +145,10 @@ impl Default for PhotoBrushSettings {
             color: [255, 255, 255],
             opacity: 1.0,
             secondary: [0, 0, 0],
+            hardness: 1.0,
+            flow: 1.0,
+            spacing: photo_engine::paint::LEGACY_SPACING,
+            stabilizer: 0.0,
         }
     }
 }
@@ -368,6 +412,13 @@ impl<'a> PhotoCanvas<'a> {
         // Phase 6G.3P: the gesture is reported incrementally for
         // the transient overlay (the app feeds `InteractionOverlay`,
         // never the worker before commit — see `PhotoCanvasOutcome`).
+        // Stabilizer: the smoothed points feed both the live overlay and
+        // the commit (same gesture on screen and in the document).
+        stabilize(
+            &mut outcome.pointer_world,
+            self.stroke.last().copied(),
+            self.brush.stabilizer,
+        );
         outcome.ink_gesture_started = self.stroke.is_empty() && !outcome.pointer_world.is_empty();
         outcome.ink_points = outcome.pointer_world.clone();
         outcome.ink_dragging = response.response.dragged_by(egui::PointerButton::Primary);
@@ -497,6 +548,24 @@ mod tests {
         assert!(released.finished);
         assert!(released.end.x > released.start.x && released.end.y > released.start.y);
         assert!(stroke.is_empty(), "gesture drained on release");
+    }
+
+    #[test]
+    fn stabilizer_pulls_points_toward_the_previous_one() {
+        let mut points = vec![egui::vec2(10.0, 0.0), egui::vec2(20.0, 0.0)];
+        stabilize(&mut points, Some(egui::Vec2::ZERO), 0.5);
+        assert_eq!(points[0], egui::vec2(5.0, 0.0));
+        assert_eq!(points[1], egui::vec2(12.5, 0.0));
+        let mut raw = vec![egui::vec2(10.0, 0.0)];
+        stabilize(&mut raw, Some(egui::Vec2::ZERO), 0.0);
+        assert_eq!(raw[0], egui::vec2(10.0, 0.0), "0 = raw pointer");
+        let mut first = vec![egui::vec2(3.0, 4.0)];
+        stabilize(&mut first, None, 0.9);
+        assert_eq!(
+            first[0],
+            egui::vec2(3.0, 4.0),
+            "the gesture starts at the cursor"
+        );
     }
 
     #[test]
