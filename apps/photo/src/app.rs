@@ -363,6 +363,35 @@ impl PhotoApp {
                     value,
                 });
             }
+            PhotoAction::SetMaskParams {
+                owner,
+                mask,
+                density,
+                feather,
+                inverted,
+            } => {
+                // Optimistic like `SetFilterParam`: sliders follow the
+                // gesture before the worker answers.
+                if let Some(doc) = self.active_doc_mut_opt()
+                    && let Some(sub) = mask_info_mut(&mut doc.ui.layers, owner, mask)
+                {
+                    use photo_engine::snapshot::{
+                        MASK_DENSITY_KEY, MASK_FEATHER_KEY, MASK_INVERTED_KEY,
+                    };
+                    sub.params.insert(MASK_DENSITY_KEY.to_owned(), density);
+                    sub.params.insert(MASK_FEATHER_KEY.to_owned(), feather);
+                    sub.params
+                        .insert(MASK_INVERTED_KEY.to_owned(), f32::from(u8::from(inverted)));
+                    doc.ui.needs_repaint = true;
+                }
+                self.send_active(PhotoEngineCommand::SetMaskParams {
+                    owner,
+                    mask,
+                    density,
+                    feather,
+                    inverted,
+                });
+            }
             PhotoAction::SetFilterText {
                 layer,
                 filter,
@@ -826,6 +855,27 @@ fn project_title(path: &Path, language: cygnus_i18n::Language) -> String {
                 .get(cygnus_i18n::PhotoTextKey::UntitledDocument)
                 .to_owned()
         })
+}
+
+/// Mask `mask` of `owner` in the layer snapshot (layer, filter or nested
+/// child pile), for optimistic updates.
+fn mask_info_mut(
+    layers: &mut [crate::ui::PhotoLayerInfo],
+    owner: uuid::Uuid,
+    mask: uuid::Uuid,
+) -> Option<&mut photo_engine::snapshot::PhotoSubLayerInfo> {
+    for layer in layers {
+        if layer.id == owner {
+            return layer.masks.iter_mut().find(|m| m.id == mask);
+        }
+        if let Some(filter) = layer.filters.iter_mut().find(|f| f.id == owner) {
+            return filter.masks.iter_mut().find(|m| m.id == mask);
+        }
+        if let Some(found) = mask_info_mut(&mut layer.children, owner, mask) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Removes document `id` from `docs` and re-seats `active` (zero

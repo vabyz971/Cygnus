@@ -66,6 +66,20 @@ pub enum InspectorAction {
         /// New value.
         value: String,
     },
+    /// Set the focused mask's properties (absolute values, coalesced
+    /// slider gesture worker-side).
+    SetMaskParams {
+        /// Mask owner.
+        owner: Uuid,
+        /// Targeted mask.
+        id: Uuid,
+        /// Density 0..=1.
+        density: f32,
+        /// Feather radius (mask pixels).
+        feather: f32,
+        /// Inverted coverage.
+        inverted: bool,
+    },
     /// Install a built-in preset on the focused filter.
     ApplyPreset {
         /// Owning layer.

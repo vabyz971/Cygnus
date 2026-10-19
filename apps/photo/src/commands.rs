@@ -131,6 +131,20 @@ pub enum PhotoAction {
         /// New value.
         value: f32,
     },
+    /// Set a mask's density, feather and inversion (worker, coalesced
+    /// continuous gesture).
+    SetMaskParams {
+        /// Mask owner.
+        owner: Uuid,
+        /// Targeted mask.
+        mask: Uuid,
+        /// Density 0..=1.
+        density: f32,
+        /// Feather radius (mask pixels).
+        feather: f32,
+        /// Inverted coverage.
+        inverted: bool,
+    },
     /// Set a text parameter of a live filter (curve points, O005;
     /// worker, coalesced continuous gesture).
     SetFilterText {

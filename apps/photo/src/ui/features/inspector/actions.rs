@@ -58,6 +58,19 @@ pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
             key,
             value,
         },
+        InspectorAction::SetMaskParams {
+            owner,
+            id,
+            density,
+            feather,
+            inverted,
+        } => PhotoAction::SetMaskParams {
+            owner,
+            mask: id,
+            density,
+            feather,
+            inverted,
+        },
         InspectorAction::ApplyPreset { owner, id, preset } => PhotoAction::ApplyFilterPreset {
             layer: owner,
             filter: id,
@@ -70,6 +83,27 @@ pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn mask_params_convert_to_the_app_action() {
+        let (owner, id) = (Uuid::new_v4(), Uuid::new_v4());
+        assert_eq!(
+            inspector_action_to_photo(InspectorAction::SetMaskParams {
+                owner,
+                id,
+                density: 0.5,
+                feather: 8.0,
+                inverted: true,
+            }),
+            PhotoAction::SetMaskParams {
+                owner,
+                mask: id,
+                density: 0.5,
+                feather: 8.0,
+                inverted: true,
+            }
+        );
+    }
 
     #[test]
     fn every_inspector_action_converts() {

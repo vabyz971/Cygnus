@@ -26,7 +26,7 @@ use super::curve_editor::curve_editor;
 use crate::commands::PhotoUiContext;
 use crate::ui::features::layers::types::{AttachmentRef, PhotoSubLayerInfo};
 use cygnus_i18n::PhotoTextKey;
-use cygnus_ui::components::{Select, Slider, Toggle};
+use cygnus_ui::components::{Select, Slider, SliderValue, Toggle};
 use cygnus_ui::icons::{Icon, IconRegistry};
 use cygnus_ui::primitives::Text;
 use cygnus_ui::theme::typography::caption_text;
@@ -157,6 +157,45 @@ fn draw_presets(
     }
 }
 
+/// Mask properties: density and feather sliders, invert switch. Any
+/// change sends the full (density, feather, inverted) triple.
+fn draw_mask_params(
+    ui: &mut egui::Ui,
+    theme: &cygnus_ui::theme::CygnusTheme,
+    texts: cygnus_i18n::PhotoCatalog,
+    focus: AttachmentRef,
+    sub: &PhotoSubLayerInfo,
+    actions: &mut Vec<InspectorAction>,
+) {
+    use photo_engine::snapshot::{MASK_DENSITY_KEY, MASK_FEATHER_KEY, MASK_INVERTED_KEY};
+    let get = |key: &str, default: f32| sub.params.get(key).copied().unwrap_or(default);
+    let (density, feather) = (get(MASK_DENSITY_KEY, 1.0), get(MASK_FEATHER_KEY, 0.0));
+    let inverted = get(MASK_INVERTED_KEY, 0.0) >= 0.5;
+    let (mut new_density, mut new_feather, mut new_inverted) = (density, feather, inverted);
+    Slider::new(texts.get(PhotoTextKey::MaskDensityLabel), 0.0..=1.0)
+        .stacked()
+        .value(SliderValue::Percent)
+        .show(ui, theme, &mut new_density);
+    Slider::new(
+        texts.get(PhotoTextKey::MaskFeatherLabel),
+        0.0..=photo_engine::document::MAX_MASK_FEATHER,
+    )
+    .stacked()
+    .show(ui, theme, &mut new_feather);
+    ui.horizontal(|ui| {
+        Toggle::new(texts.get(PhotoTextKey::MaskInvertLabel)).show(ui, theme, &mut new_inverted);
+    });
+    if (new_density, new_feather, new_inverted) != (density, feather, inverted) {
+        actions.push(InspectorAction::SetMaskParams {
+            owner: focus.owner,
+            id: focus.id,
+            density: new_density,
+            feather: new_feather,
+            inverted: new_inverted,
+        });
+    }
+}
+
 /// Draws the section and returns the actions (routed to the worker).
 pub fn draw_attachment_section(
     ui: &mut egui::Ui,
@@ -211,6 +250,9 @@ pub fn draw_attachment_section(
             id: focus.id,
             is_filter: sub.is_filter,
         });
+    }
+    if !sub.is_filter {
+        draw_mask_params(ui, theme, texts, focus, sub, &mut actions);
     }
     if sub.is_filter {
         draw_presets(ui, theme, texts, focus, sub, &mut actions);
