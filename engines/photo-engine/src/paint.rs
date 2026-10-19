@@ -47,11 +47,153 @@ pub struct BrushParams {
     pub mode: StrokeMode,
 }
 
+/// Dab spacing of the legacy hard brush, as a fraction of the diameter
+/// (one dab every radius/3).
+pub const LEGACY_SPACING: f32 = 1.0 / 6.0;
+
+/// Brush tip dynamics (Brush v2): edge softness, per-dab build-up and
+/// dab spacing. The default reproduces the legacy hard brush exactly.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BrushDynamics {
+    /// Fraction of the radius painted at full strength (1 = hard edge,
+    /// 0 = soft from the center).
+    pub hardness: f32,
+    /// Strength of each dab (0..=1); overlapping dabs build up toward
+    /// full coverage, capped by the stroke opacity.
+    pub flow: f32,
+    /// Distance between dabs as a fraction of the diameter.
+    pub spacing: f32,
+}
+
+impl Default for BrushDynamics {
+    fn default() -> Self {
+        Self {
+            hardness: 1.0,
+            flow: 1.0,
+            spacing: LEGACY_SPACING,
+        }
+    }
+}
+
+impl BrushDynamics {
+    /// True when the legacy hard path applies (bit-identical strokes).
+    #[must_use]
+    pub fn is_legacy(&self) -> bool {
+        self.hardness >= 1.0 && self.flow >= 1.0 && (self.spacing - LEGACY_SPACING).abs() < 1e-6
+    }
+
+    /// Values brought into range (non-finite → default).
+    #[must_use]
+    pub fn sanitized(self) -> Self {
+        let pick = |v: f32, lo: f32, hi: f32, fallback: f32| {
+            if v.is_finite() {
+                v.clamp(lo, hi)
+            } else {
+                fallback
+            }
+        };
+        Self {
+            hardness: pick(self.hardness, 0.0, 1.0, 1.0),
+            flow: pick(self.flow, 0.01, 1.0, 1.0),
+            spacing: pick(self.spacing, 0.01, 2.0, LEGACY_SPACING),
+        }
+    }
+
+    /// Coverage (0..=1) of a dab at normalized distance `t` (0 = center,
+    /// 1 = rim): full inside `hardness`, smoothstep falloff to the rim.
+    #[must_use]
+    pub fn falloff(&self, t: f32) -> f32 {
+        if t >= 1.0 {
+            return 0.0;
+        }
+        let inner = self.hardness.clamp(0.0, 1.0);
+        if t <= inner || inner >= 1.0 {
+            return 1.0;
+        }
+        let u = 1.0 - (t - inner) / (1.0 - inner);
+        u * u * (3.0 - 2.0 * u)
+    }
+}
+
+/// Places dabs every `step` along a polyline fed in pieces: the walked
+/// distance carries over between calls, so piecewise feeding (live
+/// overlay) and one-shot feeding (commit) put dabs at the same spots.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DabWalker {
+    last: Option<(f32, f32)>,
+    carry: f32,
+}
+
+impl DabWalker {
+    /// Walks `points` (continuing from the previous call), calling
+    /// `dab(x, y)` at each dab center. A first point equal to the
+    /// current position is just a continuation.
+    pub fn walk(&mut self, points: &[(f32, f32)], step: f32, mut dab: impl FnMut(f32, f32)) {
+        let step = step.max(0.5);
+        for &p in points {
+            let Some(last) = self.last else {
+                dab(p.0, p.1);
+                self.last = Some(p);
+                self.carry = 0.0;
+                continue;
+            };
+            let (dx, dy) = (p.0 - last.0, p.1 - last.1);
+            let dist = (dx * dx + dy * dy).sqrt();
+            if !dist.is_finite() || dist < f32::EPSILON {
+                continue;
+            }
+            let mut along = step - self.carry;
+            while along <= dist {
+                let t = along / dist;
+                dab(last.0 + dx * t, last.1 + dy * t);
+                along += step;
+            }
+            self.carry = dist - (along - step);
+            self.last = Some(p);
+        }
+    }
+}
+
+/// Builds up one soft dab into a coverage mask (same addressing and
+/// clipping contract as [`stamp_disc`]): `mask += (255 - mask) * flow * c`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stamp_soft_disc(
+    mask: &mut [u8],
+    stride: usize,
+    ox: i64,
+    oy: i64,
+    clip: (i64, i64, i64, i64),
+    cx: f32,
+    cy: f32,
+    rx: f32,
+    ry: f32,
+    dynamics: &BrushDynamics,
+) {
+    let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
+    let x0 = (cx - rx).floor().max(clip_x0 as f32) as i64;
+    let x1 = (cx + rx).ceil().min(clip_x1 as f32) as i64;
+    let y0 = (cy - ry).floor().max(clip_y0 as f32) as i64;
+    let y1 = (cy + ry).ceil().min(clip_y1 as f32) as i64;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let dx = (px as f32 + 0.5 - cx) / rx;
+            let dy = (py as f32 + 0.5 - cy) / ry;
+            let c = dynamics.falloff((dx * dx + dy * dy).sqrt()) * dynamics.flow;
+            if c <= 0.0 {
+                continue;
+            }
+            let mi = ((py - oy) as usize) * stride + ((px - ox) as usize);
+            let current = f32::from(mask[mi]);
+            mask[mi] = (current + (255.0 - current) * c).round().min(255.0) as u8;
+        }
+    }
+}
+
 /// Rasterizes a circular stroke into an RGBA8 buffer (w×h, LAYER space).
 ///
 /// * `points`: polyline in layer coordinates (pixel (0,0) center = 0.0)
 pub fn paint_stroke_rgba(rgba: &mut [u8], w: u32, h: u32, points: &[(f32, f32)], b: &BrushParams) {
-    paint_stroke_impl(rgba, w, h, points, b, b.radius, b.radius, None);
+    paint_stroke_impl(rgba, w, h, points, b, b.radius, b.radius, None, None);
 }
 
 /// Elliptical variant (independent X/Y radii) — lets the stroke follow a
@@ -66,7 +208,26 @@ pub fn paint_stroke_ellipse(
     rx: f32,
     ry: f32,
 ) {
-    paint_stroke_impl(rgba, w, h, points, b, rx, ry, None);
+    paint_stroke_impl(rgba, w, h, points, b, rx, ry, None, None);
+}
+
+/// Brush v2 stroke: [`paint_stroke_ellipse`] with tip `dynamics`
+/// (hardness, flow, spacing) and an optional selection `clip` (see
+/// [`paint_stroke_ellipse_clipped`]). Legacy dynamics take the exact
+/// legacy path.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_stroke_dynamic(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    b: &BrushParams,
+    rx: f32,
+    ry: f32,
+    dynamics: BrushDynamics,
+    clip: Option<&dyn Fn(f32, f32) -> f32>,
+) {
+    paint_stroke_impl(rgba, w, h, points, b, rx, ry, clip, Some(dynamics));
 }
 
 /// [`paint_stroke_ellipse`] limited by a selection: `clip(px, py)`
@@ -85,7 +246,7 @@ pub fn paint_stroke_ellipse_clipped(
     ry: f32,
     clip: &dyn Fn(f32, f32) -> f32,
 ) {
-    paint_stroke_impl(rgba, w, h, points, b, rx, ry, Some(clip));
+    paint_stroke_impl(rgba, w, h, points, b, rx, ry, Some(clip), None);
 }
 
 /// A stroke's bounding box grown by the radius (`pad`), in floats (the
@@ -326,6 +487,7 @@ fn paint_stroke_impl(
     rx: f32,
     ry: f32,
     clip: Option<&dyn Fn(f32, f32) -> f32>,
+    dynamics: Option<BrushDynamics>,
 ) {
     if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 || b.opacity <= 0.0 {
         return;
@@ -349,10 +511,21 @@ fn paint_stroke_impl(
 
     // --- 0/255 coverage mask ---
     let mut mask = vec![0u8; bw * bh];
-    stamp_polyline(
-        &mut mask, bw, bx0 as i64, by0 as i64, bx0 as i64, by0 as i64, bx1 as i64, by1 as i64,
-        points, rx, ry,
-    );
+    match dynamics.map(BrushDynamics::sanitized) {
+        Some(dynamics) if !dynamics.is_legacy() => {
+            let step = dynamics.spacing * 2.0 * rx.max(ry);
+            let clip_box = (bx0 as i64, by0 as i64, bx1 as i64, by1 as i64);
+            DabWalker::default().walk(points, step, |cx, cy| {
+                stamp_soft_disc(
+                    &mut mask, bw, bx0 as i64, by0 as i64, clip_box, cx, cy, rx, ry, &dynamics,
+                );
+            });
+        }
+        _ => stamp_polyline(
+            &mut mask, bw, bx0 as i64, by0 as i64, bx0 as i64, by0 as i64, bx1 as i64, by1 as i64,
+            points, rx, ry,
+        ),
+    }
     // Selection clip: coverage scaled by the selected fraction.
     if let Some(clip) = clip {
         for my in 0..bh {
@@ -743,5 +916,120 @@ mod tests {
         let alpha = |x: u32| rgba[((2 * w + x) * 4 + 3) as usize];
         assert_eq!(alpha(5), 255, "inside the selection: painted");
         assert_eq!(alpha(15), 0, "outside the selection: untouched");
+    }
+
+    fn soft_brush() -> BrushParams {
+        BrushParams {
+            radius: 8.0,
+            color: [255, 255, 255],
+            opacity: 1.0,
+            mode: StrokeMode::Paint,
+        }
+    }
+
+    #[test]
+    fn legacy_dynamics_match_the_hard_brush_exactly() {
+        let (w, h) = (40u32, 20u32);
+        let points = [(5.0, 10.0), (30.0, 12.0)];
+        let mut legacy = vec![0u8; (w * h * 4) as usize];
+        paint_stroke_ellipse(&mut legacy, w, h, &points, &soft_brush(), 4.0, 4.0);
+        let mut dynamic = vec![0u8; (w * h * 4) as usize];
+        paint_stroke_dynamic(
+            &mut dynamic,
+            w,
+            h,
+            &points,
+            &soft_brush(),
+            4.0,
+            4.0,
+            BrushDynamics::default(),
+            None,
+        );
+        assert_eq!(legacy, dynamic);
+    }
+
+    #[test]
+    fn hardness_softens_the_edge() {
+        let (w, h) = (40u32, 40u32);
+        let paint = |hardness: f32| {
+            let mut rgba = vec![0u8; (w * h * 4) as usize];
+            paint_stroke_dynamic(
+                &mut rgba,
+                w,
+                h,
+                &[(20.0, 20.0)],
+                &soft_brush(),
+                10.0,
+                10.0,
+                BrushDynamics {
+                    hardness,
+                    ..BrushDynamics::default()
+                },
+                None,
+            );
+            move |x: u32, y: u32| rgba[((y * w + x) * 4 + 3) as usize]
+        };
+        let soft = paint(0.0);
+        assert!(soft(20, 20) > 240, "near full at the center");
+        let edge = soft(27, 20);
+        assert!(edge > 0 && edge < 255, "partial near the rim: {edge}");
+        let hard = paint(1.0);
+        assert_eq!(hard(27, 20), 255, "hard brush: full up to the rim");
+    }
+
+    #[test]
+    fn low_flow_builds_up_with_overlap() {
+        let (w, h) = (60u32, 20u32);
+        let dynamics = BrushDynamics {
+            flow: 0.2,
+            ..BrushDynamics::default()
+        };
+        let mut single = vec![0u8; (w * h * 4) as usize];
+        paint_stroke_dynamic(
+            &mut single,
+            w,
+            h,
+            &[(30.0, 10.0)],
+            &soft_brush(),
+            6.0,
+            6.0,
+            dynamics,
+            None,
+        );
+        let mut stroke = vec![0u8; (w * h * 4) as usize];
+        paint_stroke_dynamic(
+            &mut stroke,
+            w,
+            h,
+            &[(20.0, 10.0), (40.0, 10.0)],
+            &soft_brush(),
+            6.0,
+            6.0,
+            dynamics,
+            None,
+        );
+        let alpha = |buf: &[u8]| buf[((10 * w + 30) * 4 + 3) as usize];
+        assert!(
+            alpha(&single) < 80,
+            "one dab stays faint: {}",
+            alpha(&single)
+        );
+        assert!(alpha(&stroke) > alpha(&single), "overlapping dabs build up");
+    }
+
+    #[test]
+    fn walker_places_the_same_dabs_piecewise_and_at_once() {
+        let points = [(0.0, 0.0), (10.0, 0.0), (10.0, 7.0), (25.0, 7.0)];
+        let mut once = Vec::new();
+        DabWalker::default().walk(&points, 3.0, |x, y| once.push((x, y)));
+        let mut pieces = Vec::new();
+        let mut walker = DabWalker::default();
+        walker.walk(&points[..2], 3.0, |x, y| pieces.push((x, y)));
+        // The overlay re-feeds its last point first: a continuation.
+        walker.walk(&points[1..], 3.0, |x, y| pieces.push((x, y)));
+        assert_eq!(once.len(), pieces.len());
+        for (a, b) in once.iter().zip(&pieces) {
+            assert!((a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
+        }
     }
 }

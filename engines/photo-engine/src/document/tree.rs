@@ -673,11 +673,21 @@ impl Document {
         opacity: f32,
         whiten: bool,
     ) -> Result<(), String> {
-        self.paint_mask_clipped(owner_id, mask_id, points, rx, ry, opacity, whiten, None)
+        self.paint_mask_clipped(
+            owner_id,
+            mask_id,
+            points,
+            (rx, ry),
+            opacity,
+            whiten,
+            crate::paint::BrushDynamics::default(),
+            None,
+        )
     }
 
-    /// [`Self::paint_mask`] limited by a selection: `clip(px, py)` is
-    /// the selected fraction of mask pixel `(px, py)` (see
+    /// [`Self::paint_mask`] with brush tip `dynamics` (hardness, flow,
+    /// spacing) and an optional selection `clip`: `clip(px, py)` is the
+    /// selected fraction of mask pixel `(px, py)` (see
     /// [`crate::selection::Selection::clip_for_layer`]).
     ///
     /// # Errors
@@ -688,10 +698,10 @@ impl Document {
         owner_id: Uuid,
         mask_id: Uuid,
         points: &[(f32, f32)],
-        rx: f32,
-        ry: f32,
+        (rx, ry): (f32, f32),
         opacity: f32,
         whiten: bool,
+        dynamics: crate::paint::BrushDynamics,
         clip: Option<&dyn Fn(f32, f32) -> f32>,
     ) -> Result<(), String> {
         if points.is_empty() || !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
@@ -712,19 +722,17 @@ impl Document {
             opacity: opacity.clamp(0.0, 1.0),
             mode: crate::paint::StrokeMode::Paint,
         };
-        match clip {
-            Some(clip) => crate::paint::paint_stroke_ellipse_clipped(
-                &mut buffer,
-                w,
-                h,
-                points,
-                &brush,
-                rx,
-                ry,
-                clip,
-            ),
-            None => crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry),
-        }
+        crate::paint::paint_stroke_dynamic(
+            &mut buffer,
+            w,
+            h,
+            points,
+            &brush,
+            rx,
+            ry,
+            dynamics,
+            clip,
+        );
         let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
             return Err("rasterization failed".into());
         };

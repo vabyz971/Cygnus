@@ -352,6 +352,10 @@ pub enum PhotoEngineCommand {
     /// state: clips the following brush / eraser / mask strokes, no
     /// history step, no render.
     SetSelection(Option<crate::Selection>),
+    /// Replace the brush tip dynamics (hardness, flow, spacing) used by
+    /// the following brush / eraser / mask strokes. Session state like
+    /// `SetSelection`: no history, no render.
+    SetBrushDynamics(crate::paint::BrushDynamics),
     /// Add a mask to `layer` filled from the active selection
     /// (selected = white). No-op without a selection.
     AddMaskFromSelection {
@@ -422,6 +426,7 @@ impl PhotoEngineCommand {
             Self::Refresh => "refresh",
             Self::SetPreviewClip { .. } => "set_preview_clip",
             Self::SetSelection(_) => "set_selection",
+            Self::SetBrushDynamics(_) => "set_brush_dynamics",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
     }
@@ -531,7 +536,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::SetDefaultNames(_)
         | PhotoEngineCommand::PrepareDragProxy { .. }
         | PhotoEngineCommand::SaveProject { .. }
-        | PhotoEngineCommand::SetSelection(_) => {
+        | PhotoEngineCommand::SetSelection(_)
+        | PhotoEngineCommand::SetBrushDynamics(_) => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)
         }
     }

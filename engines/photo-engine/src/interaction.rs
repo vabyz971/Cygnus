@@ -108,6 +108,10 @@ pub struct InteractionOverlay {
     metrics: InteractionMetrics,
     /// Selection limiting the feedback like the commit (document px).
     clip: Option<crate::Selection>,
+    /// Tip dynamics (Brush v2), same as the commit.
+    dynamics: crate::paint::BrushDynamics,
+    /// Dab placement carried across `add_points` calls.
+    walker: crate::paint::DabWalker,
 }
 
 impl InteractionOverlay {
@@ -136,6 +140,8 @@ impl InteractionOverlay {
             dirty: false,
             metrics: InteractionMetrics::default(),
             clip: None,
+            dynamics: crate::paint::BrushDynamics::default(),
+            walker: crate::paint::DabWalker::default(),
         }
     }
 
@@ -153,6 +159,7 @@ impl InteractionOverlay {
         self.w = 0;
         self.h = 0;
         self.last = None;
+        self.walker = crate::paint::DabWalker::default();
         self.generation = self.generation.wrapping_add(1);
         self.dirty = false;
         self.generation
@@ -162,6 +169,12 @@ impl InteractionOverlay {
     /// same way worker-side). Set before `begin_stroke`.
     pub fn set_clip(&mut self, clip: Option<crate::Selection>) {
         self.clip = clip;
+    }
+
+    /// Tip dynamics of the following gesture (same values the worker
+    /// gets). Set before `begin_stroke`.
+    pub fn set_dynamics(&mut self, dynamics: crate::paint::BrushDynamics) {
+        self.dynamics = dynamics.sanitized();
     }
 
     /// Current generation.
@@ -285,19 +298,39 @@ impl InteractionOverlay {
         // of the origin); clips stay the logical region — padding beyond is
         // never written nor read.
         let stride = self.cap_w as usize;
-        stamp_polyline(
-            &mut self.mask,
-            stride,
-            self.ox as i64,
-            self.oy as i64,
-            self.ox as i64,
-            self.oy as i64,
-            (self.ox + self.w as i32) as i64,
-            (self.oy + self.h as i32) as i64,
-            fresh,
-            rx,
-            ry,
-        );
+        if self.dynamics.is_legacy() {
+            stamp_polyline(
+                &mut self.mask,
+                stride,
+                self.ox as i64,
+                self.oy as i64,
+                self.ox as i64,
+                self.oy as i64,
+                (self.ox + self.w as i32) as i64,
+                (self.oy + self.h as i32) as i64,
+                fresh,
+                rx,
+                ry,
+            );
+        } else {
+            // Build-up dabs: the walker carries the spacing across
+            // packets, so dabs land where the commit puts them.
+            let dynamics = self.dynamics;
+            let (ox, oy) = (self.ox as i64, self.oy as i64);
+            let clip = (
+                ox,
+                oy,
+                (self.ox + self.w as i32) as i64,
+                (self.oy + self.h as i32) as i64,
+            );
+            let step = dynamics.spacing * 2.0 * rx.max(ry);
+            let mask = &mut self.mask;
+            self.walker.walk(fresh, step, |cx, cy| {
+                crate::paint::stamp_soft_disc(
+                    mask, stride, ox, oy, clip, cx, cy, rx, ry, &dynamics,
+                );
+            });
+        }
         // Recomposites the grown zone from the FULL mask (not from the image:
         // each final pixel only depends on the final mask — history-independent
         // exactness).

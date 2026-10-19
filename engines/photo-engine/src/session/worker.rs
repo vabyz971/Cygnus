@@ -55,6 +55,8 @@ pub struct EngineWorker {
     pub(crate) clip_to_doc: bool,
     /// Active pixel selection (mirrors the UI; clips strokes).
     pub(crate) selection: Option<crate::Selection>,
+    /// Brush tip dynamics of the following strokes (mirrors the UI).
+    pub(crate) brush_dynamics: crate::paint::BrushDynamics,
     /// Revision of the last produced composite (stale renders
     /// ignored UI-side).
     pub(crate) revision: RenderRevision,
@@ -187,6 +189,7 @@ impl EngineWorker {
             pending_label: None,
             clip_to_doc: false,
             selection: None,
+            brush_dynamics: crate::paint::BrushDynamics::default(),
             revision: RenderRevision::default(),
             pending_tile_plan: None,
             render_worker: crate::document::RenderWorker::new(
@@ -1169,30 +1172,20 @@ impl EngineWorker {
                         crate::paint::StrokeMode::Paint
                     },
                 };
-                match self.selection {
-                    Some(selection) => {
-                        let clip = selection.clip_for_layer(layer_transform, layer_w, layer_h);
-                        crate::paint::paint_stroke_ellipse_clipped(
-                            &mut buffer,
-                            width,
-                            height,
-                            &points,
-                            &brush,
-                            rx,
-                            ry,
-                            &clip,
-                        );
-                    }
-                    None => crate::paint::paint_stroke_ellipse(
-                        &mut buffer,
-                        width,
-                        height,
-                        &points,
-                        &brush,
-                        rx,
-                        ry,
-                    ),
-                }
+                let clip = self
+                    .selection
+                    .map(|selection| selection.clip_for_layer(layer_transform, layer_w, layer_h));
+                crate::paint::paint_stroke_dynamic(
+                    &mut buffer,
+                    width,
+                    height,
+                    &points,
+                    &brush,
+                    rx,
+                    ry,
+                    self.brush_dynamics,
+                    clip.as_ref().map(|clip| clip as &dyn Fn(f32, f32) -> f32),
+                );
                 if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
                     // Defensive re-read after the history push.
                     if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
@@ -1318,10 +1311,10 @@ impl EngineWorker {
                         owner,
                         mask,
                         &points,
-                        rx,
-                        ry,
+                        (rx, ry),
                         opacity,
                         !eraser,
+                        self.brush_dynamics,
                         clip.as_ref().map(|clip| clip as &dyn Fn(f32, f32) -> f32),
                     )
                     .is_err()
@@ -1876,6 +1869,10 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::SetBrushDynamics(dynamics) => {
+                self.brush_dynamics = dynamics.sanitized();
+                Mutation::unchanged()
+            }
             PhotoEngineCommand::SetSelection(selection) => {
                 // Session state: no history step, no pixels changed.
                 self.selection = selection;
@@ -2112,6 +2109,30 @@ mod tests {
             opacity: 1.0,
         });
         assert_eq!(layer_pixels(&worker, id).get_pixel(30, 10)[3], 255);
+    }
+
+    #[test]
+    fn brush_dynamics_soften_the_following_strokes() {
+        let (mut worker, id) = selection_worker();
+        worker.apply(PhotoEngineCommand::SetBrushDynamics(
+            crate::paint::BrushDynamics {
+                hardness: 0.0,
+                ..crate::paint::BrushDynamics::default()
+            },
+        ));
+        assert!(!worker.history.can_undo(), "dynamics are not an edit");
+        worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: id,
+            points: vec![(20.0, 10.0)],
+            eraser: false,
+            radius: 8.0,
+            color: [255, 255, 255],
+            opacity: 1.0,
+        });
+        let pixels = layer_pixels(&worker, id);
+        let edge = pixels.get_pixel(26, 10)[3];
+        assert!(edge > 0 && edge < 200, "soft edge: {edge}");
+        assert!(pixels.get_pixel(20, 10)[3] > 240);
     }
 
     #[test]
