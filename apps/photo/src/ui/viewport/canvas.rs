@@ -41,6 +41,10 @@ pub enum PhotoCanvasTool {
     /// Marquee selection (rectangle / ellipse): drag selects, click
     /// deselects.
     Select,
+    /// Freehand (lasso) selection: the drag path, closed on release.
+    Lasso,
+    /// Magic wand: click selects similar colors.
+    Wand,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -60,7 +64,12 @@ impl PhotoCanvasTool {
             Self::Move | Self::Node => ViewportTool::Move,
             Self::Pan => ViewportTool::Pan,
             Self::Zoom => ViewportTool::Zoom,
-            Self::Brush | Self::Eraser | Self::Eyedropper | Self::Select => ViewportTool::Brush,
+            Self::Brush
+            | Self::Eraser
+            | Self::Eyedropper
+            | Self::Select
+            | Self::Lasso
+            | Self::Wand => ViewportTool::Brush,
         }
     }
 
@@ -76,6 +85,8 @@ impl PhotoCanvasTool {
             Self::Move => texts.get(PhotoTextKey::MoveHintText),
             Self::Node => texts.get(PhotoTextKey::NodeHintText),
             Self::Select => texts.get(PhotoTextKey::SelectHintText),
+            Self::Lasso => texts.get(PhotoTextKey::LassoHintText),
+            Self::Wand => texts.get(PhotoTextKey::WandHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),
@@ -375,6 +386,32 @@ impl<'a> PhotoCanvas<'a> {
         }
         // Selection tool: reports the marquee corners (document pixels)
         // every frame of the gesture; the app builds the shape.
+        // Lasso: the whole drag path, reported every frame.
+        if self.tool == PhotoCanvasTool::Lasso {
+            if ui.input(|input| input.pointer.primary_pressed()) {
+                self.stroke.clear();
+            }
+            self.stroke.extend(outcome.pointer_world.iter().copied());
+            if !self.stroke.is_empty() {
+                let finished = response.response.drag_stopped() || response.response.clicked();
+                outcome.lasso = Some(LassoPath {
+                    points: self.stroke.iter().map(|v| (v.x, v.y)).collect(),
+                    finished,
+                });
+                if finished {
+                    self.stroke.clear();
+                }
+            }
+            return outcome;
+        }
+        // Wand: one click = one flood request.
+        if self.tool == PhotoCanvasTool::Wand {
+            self.stroke.clear();
+            if response.response.clicked() {
+                outcome.wand_click = outcome.pointer_world.last().copied();
+            }
+            return outcome;
+        }
         if self.tool == PhotoCanvasTool::Select {
             // A new press starts a fresh marquee (never leftovers of
             // another tool's gesture).
@@ -458,9 +495,22 @@ pub struct SelectionDrag {
     pub finished: bool,
 }
 
+/// Lasso path of the current gesture (document pixels).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LassoPath {
+    /// Path so far (closed implicitly).
+    pub points: Vec<(f32, f32)>,
+    /// True on release: the path becomes the selection.
+    pub finished: bool,
+}
+
 /// Result of [`PhotoCanvas::show`].
 #[derive(Debug, Clone, Default)]
 pub struct PhotoCanvasOutcome {
+    /// Lasso gesture (`None` = no lasso this frame).
+    pub lasso: Option<LassoPath>,
+    /// Magic wand click in document pixels.
+    pub wand_click: Option<egui::Vec2>,
     /// Selection tool gesture (`None` = no marquee this frame).
     pub selection_drag: Option<SelectionDrag>,
     /// Stroke to commit (`None` = nothing this frame; the app sends it).

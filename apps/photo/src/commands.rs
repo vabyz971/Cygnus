@@ -241,6 +241,13 @@ pub enum PhotoAction {
     /// Replace the active selection (`None` = deselect; mirrored to
     /// the worker, no history).
     SetSelection(Option<photo_engine::Selection>),
+    /// Magic wand click at document pixel `(x, y)` (worker flood).
+    MagicWand {
+        /// Document x.
+        x: f32,
+        /// Document y.
+        y: f32,
+    },
     /// Select the whole document.
     SelectAll,
     /// Drop the selection.

@@ -26,9 +26,9 @@
 //! until their own tools land): switching modes falls back to Move
 //! when the current tool does not exist there.
 
-use super::optionsbar::draw_tool_options;
+use super::optionsbar::{ToolOptions, draw_tool_options};
 use super::toolbar::tool_icon;
-use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
+use super::viewport::PhotoCanvasTool;
 use cygnus_i18n::{Catalog, PhotoCatalog, PhotoTextKey, TextKey};
 use cygnus_ui::components::{IconButton, menu_style};
 use cygnus_ui::icons::{Icon, IconRegistry};
@@ -77,6 +77,8 @@ impl PhotoEditMode {
             Self::Pixel => &[
                 PhotoCanvasTool::Move,
                 PhotoCanvasTool::Select,
+                PhotoCanvasTool::Lasso,
+                PhotoCanvasTool::Wand,
                 PhotoCanvasTool::Brush,
                 PhotoCanvasTool::Eraser,
                 PhotoCanvasTool::Eyedropper,
@@ -378,8 +380,7 @@ pub fn draw_photo_modebar(
     ui: &mut egui::Ui,
     mode: PhotoEditMode,
     tool: PhotoCanvasTool,
-    brush: &mut PhotoBrushSettings,
-    selection_kind: &mut photo_engine::SelectionKind,
+    options: ToolOptions<'_>,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
 ) -> ModeBarOutcome {
@@ -387,7 +388,7 @@ pub fn draw_photo_modebar(
     ui.horizontal(|ui| {
         outcome.tool = tool_switcher(ui, mode, tool, theme, texts);
         ui.separator();
-        draw_tool_options(ui, tool, brush, selection_kind, theme, texts);
+        draw_tool_options(ui, tool, options, theme, texts);
     });
     outcome
 }
@@ -395,6 +396,7 @@ pub fn draw_photo_modebar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::PhotoBrushSettings;
 
     #[test]
     fn pixel_mode_supports_every_tool() {
@@ -431,6 +433,7 @@ mod tests {
         let mut mode = PhotoEditMode::Pixel;
         let mut brush = PhotoBrushSettings::default();
         let mut kind = photo_engine::SelectionKind::default();
+        let mut wand = crate::state::WandSettings::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(draw_persona_switch(ui, &mut mode, &theme), None);
@@ -444,8 +447,11 @@ mod tests {
                     ui,
                     mode,
                     PhotoCanvasTool::Brush,
-                    &mut brush,
-                    &mut kind,
+                    ToolOptions {
+                        brush: &mut brush,
+                        selection_kind: &mut kind,
+                        wand: &mut wand,
+                    },
                     &theme,
                     texts,
                 );

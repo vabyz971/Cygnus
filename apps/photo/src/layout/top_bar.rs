@@ -31,6 +31,7 @@
 use crate::app::PhotoApp;
 use crate::commands::{PhotoAction, PhotoUiContext};
 use crate::ui::modebar::{QuickAction, QuickActionState, draw_persona_switch, draw_quick_actions};
+use crate::ui::optionsbar::ToolOptions;
 use crate::ui::window_chrome::{drag_area, window_controls};
 use crate::ui::{
     MenuAvailability, PhotoCanvasTool, PhotoMenuAction, draw_menu_bar, draw_photo_modebar,
@@ -213,8 +214,11 @@ pub fn show_mode_bar(
                 ui,
                 doc.ui.edit_mode,
                 doc.ui.tool,
-                &mut doc.ui.brush,
-                &mut doc.ui.selection_kind,
+                ToolOptions {
+                    brush: &mut doc.ui.brush,
+                    selection_kind: &mut doc.ui.selection_kind,
+                    wand: &mut doc.ui.wand,
+                },
                 theme,
                 texts,
             );

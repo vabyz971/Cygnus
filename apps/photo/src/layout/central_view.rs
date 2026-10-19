@@ -651,9 +651,10 @@ fn paint_drag_proxy(ui: &egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext, slo
     painter.set(slots.over, egui::Shape::Vec(shapes.over));
 }
 
-/// Marching ants of the marquee being dragged, else of the active
-/// selection, mapped document → screen through the exact document
-/// rect. Keeps a slow repaint going for the animation.
+/// Marching ants of the gesture in progress (marquee, lasso path),
+/// else of the active selection (cached outline), mapped document →
+/// screen through the exact document rect. Keeps a slow repaint going
+/// for the animation.
 fn draw_selection(
     ui: &egui::Ui,
     doc: &OpenDocument,
@@ -661,29 +662,41 @@ fn draw_selection(
     doc_rect: Option<egui::Rect>,
     geom: Option<crate::state::PreviewGeom>,
 ) {
-    let Some(selection) = doc.ui.selection_preview.or(doc.ui.selection) else {
-        return;
-    };
     let (Some(rect), Some(geom)) = (doc_rect, geom) else {
         return;
     };
     if geom.doc_size.x <= 0.0 {
         return;
     }
+    let polylines: Vec<Vec<(f32, f32)>> = if doc.ui.lasso_preview.len() >= 2 {
+        let mut path = doc.ui.lasso_preview.clone();
+        path.push(path[0]);
+        vec![path]
+    } else if let Some(marquee) = &doc.ui.selection_preview {
+        marquee.outline(MARQUEE_SEGMENTS)
+    } else {
+        doc.ui.selection_outline.clone()
+    };
+    if polylines.is_empty() {
+        return;
+    }
     let scale = rect.width() / geom.doc_size.x;
-    let outline: Vec<egui::Pos2> = selection
-        .outline(SELECTION_SEGMENTS)
-        .into_iter()
-        .map(|(x, y)| rect.min + egui::vec2(x, y) * scale)
+    let screen: Vec<Vec<egui::Pos2>> = polylines
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|(x, y)| rect.min + egui::vec2(*x, *y) * scale)
+                .collect()
+        })
         .collect();
     let phase = (ui.input(|input| input.time) * ANTS_SPEED) as f32;
-    draw_selection_outline(ui.painter(), ctx, &outline, phase);
+    draw_selection_outline(ui.painter(), ctx, &screen, phase);
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(ANTS_FRAME_MS));
 }
 
-/// Ellipse sampling of the selection outline.
-const SELECTION_SEGMENTS: usize = 96;
+/// Ellipse sampling of the marquee being dragged.
+const MARQUEE_SEGMENTS: usize = 96;
 /// Marching ants speed (screen points per second).
 const ANTS_SPEED: f64 = 12.0;
 /// Repaint period of the ants animation.
@@ -770,8 +783,11 @@ pub fn draw_canvas_content(
     // Phase 6G.3P: interactive feedback during the drag (NO worker
     // action here — the worker only sees the commit above, unchanged;
     // thumbnails are therefore deferred to commit, §11).
-    if doc.ui.tool == PhotoCanvasTool::Select {
-        // The marquee anchor lives in `stroke` across frames: only the
+    if matches!(
+        doc.ui.tool,
+        PhotoCanvasTool::Select | PhotoCanvasTool::Lasso
+    ) {
+        // The marquee anchor / lasso path lives in `stroke` across frames: only the
         // paint overlay goes (clearing `stroke` here collapsed every
         // marquee to the current frame's points).
         clear_ink_overlay(&mut doc.ui);
@@ -991,6 +1007,29 @@ pub fn draw_canvas_content(
         doc.ui.needs_repaint = true;
     } else if doc.ui.tool != PhotoCanvasTool::Select {
         doc.ui.selection_preview = None;
+    }
+    // Lasso: live path, closed into a selection on release.
+    if let Some(lasso) = outcome.lasso {
+        if lasso.finished {
+            doc.ui.lasso_preview.clear();
+            let size = geom.map(|g| (g.doc_size.x.max(1.0) as u32, g.doc_size.y.max(1.0) as u32));
+            let selection = size.and_then(|(width, height)| {
+                photo_engine::Selection::from_polygon(&lasso.points, width, height)
+            });
+            actions.push(PhotoAction::SetSelection(selection));
+        } else {
+            doc.ui.lasso_preview = lasso.points;
+        }
+        doc.ui.needs_repaint = true;
+    } else if doc.ui.tool != PhotoCanvasTool::Lasso {
+        doc.ui.lasso_preview.clear();
+    }
+    // Wand: worker flood on the exact composite.
+    if let Some(click) = outcome.wand_click {
+        actions.push(PhotoAction::MagicWand {
+            x: click.x,
+            y: click.y,
+        });
     }
     draw_selection(ui, doc, ctx, doc_rect, geom);
     if matches!(

@@ -23,7 +23,7 @@
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
-use cygnus_ui::components::{IconButton, ValueField};
+use cygnus_ui::components::{Checkbox, IconButton, ValueField};
 use cygnus_ui::icons::Icon;
 use cygnus_ui::theme::CygnusTheme;
 use cygnus_ui::theme::typography::caption_text;
@@ -32,17 +32,48 @@ use photo_engine::SelectionKind;
 /// Largest brush diameter offered by the size field (image pixels).
 const MAX_BRUSH_SIZE: f32 = 500.0;
 
-/// Draws the active tool's settings (updates `brush` in place, no
+/// Per-tool settings edited by the context bar (local UI state).
+pub struct ToolOptions<'a> {
+    /// Brush / eraser settings.
+    pub brush: &'a mut PhotoBrushSettings,
+    /// Marquee shape of the selection tool.
+    pub selection_kind: &'a mut SelectionKind,
+    /// Magic wand options.
+    pub wand: &'a mut crate::state::WandSettings,
+}
+
+/// Draws the active tool's settings (updates `options` in place, no
 /// channel: purely local state).
 pub fn draw_tool_options(
     ui: &mut egui::Ui,
     tool: PhotoCanvasTool,
-    brush: &mut PhotoBrushSettings,
-    selection_kind: &mut SelectionKind,
+    options: ToolOptions<'_>,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
 ) {
+    let ToolOptions {
+        brush,
+        selection_kind,
+        wand,
+    } = options;
     match tool {
+        PhotoCanvasTool::Wand => {
+            ui.spacing_mut().item_spacing.x = theme.spacing.sm;
+            ValueField::new(texts.get(PhotoTextKey::ToleranceLabel), 0.0..=255.0).show(
+                ui,
+                theme,
+                &mut wand.tolerance,
+            );
+            wand.tolerance = wand.tolerance.clamp(0.0, 255.0);
+            ui.add_space(theme.spacing.sm);
+            Checkbox::new(texts.get(PhotoTextKey::ContiguousLabel)).show(
+                ui,
+                theme,
+                &mut wand.contiguous,
+            );
+            ui.add_space(theme.spacing.sm);
+            ui.label(caption_text(theme, tool.hint(texts)));
+        }
         PhotoCanvasTool::Select => {
             for (kind, icon, label) in [
                 (
@@ -118,6 +149,8 @@ mod tests {
             PhotoCanvasTool::Move,
             PhotoCanvasTool::Select,
             PhotoCanvasTool::Node,
+            PhotoCanvasTool::Lasso,
+            PhotoCanvasTool::Wand,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
             PhotoCanvasTool::Brush,
@@ -126,13 +159,19 @@ mod tests {
         ] {
             let mut brush = PhotoBrushSettings::default();
             let mut kind = SelectionKind::default();
+            let mut wand = crate::state::WandSettings::default();
             let before = brush;
             let theme = cygnus_ui::theme::CygnusTheme::dark();
             let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        draw_tool_options(ui, tool, &mut brush, &mut kind, &theme, texts)
+                        let options = ToolOptions {
+                            brush: &mut brush,
+                            selection_kind: &mut kind,
+                            wand: &mut wand,
+                        };
+                        draw_tool_options(ui, tool, options, &theme, texts)
                     });
                 });
             })

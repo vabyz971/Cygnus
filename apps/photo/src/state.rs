@@ -100,7 +100,40 @@ pub(crate) struct CachedLayerThumb {
     size: egui::Vec2,
 }
 
+/// Magic wand options (context bar).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WandSettings {
+    /// Largest channel difference kept, 0..=255.
+    pub tolerance: f32,
+    /// Flood only from the clicked pixel.
+    pub contiguous: bool,
+}
+
+impl Default for WandSettings {
+    fn default() -> Self {
+        Self {
+            tolerance: 32.0,
+            contiguous: true,
+        }
+    }
+}
+
+/// Ellipse sampling of selection outlines.
+const SELECTION_SEGMENTS: usize = 96;
+
 impl PhotoUiState {
+    /// Replaces the active selection and refreshes its cached outline.
+    pub fn set_selection(&mut self, selection: Option<photo_engine::Selection>) {
+        self.selection_outline = selection
+            .as_ref()
+            .map(|selection| selection.outline(SELECTION_SEGMENTS))
+            .unwrap_or_default();
+        self.selection = selection;
+        self.selection_preview = None;
+        self.lasso_preview.clear();
+        self.needs_repaint = true;
+    }
+
     /// Thumbnail views for the Layers panel (texture id + size).
     pub fn thumb_views(&self) -> HashMap<Uuid, crate::ui::LayerThumbView> {
         self.thumb_cache
@@ -193,6 +226,13 @@ pub struct PhotoUiState {
     pub selection_preview: Option<photo_engine::Selection>,
     /// Marquee shape of the selection tool.
     pub selection_kind: photo_engine::SelectionKind,
+    /// Outline of `selection` in document pixels (marching ants),
+    /// computed once per selection change (bitmap tracing is not free).
+    pub selection_outline: Vec<Vec<(f32, f32)>>,
+    /// Lasso path being drawn (document pixels).
+    pub lasso_preview: Vec<(f32, f32)>,
+    /// Magic wand options.
+    pub wand: WandSettings,
     /// Explicit repaint requested.
     pub needs_repaint: bool,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics): applied worker
@@ -453,6 +493,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
     let t_apply = std::time::Instant::now();
     let mut presentation = PresentationTimings::default();
     match response {
+        PhotoEngineResponse::SelectionChanged { selection } => {
+            ui.set_selection(selection);
+        }
         PhotoEngineResponse::LayersChanged {
             layers,
             preview,

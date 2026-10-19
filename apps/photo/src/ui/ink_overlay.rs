@@ -228,7 +228,7 @@ pub fn feed_ink_frame(
     }
     if input.gesture_started {
         // Same selection clip as the worker commit.
-        state.ink_overlay.set_clip(state.selection);
+        state.ink_overlay.set_clip(state.selection.clone());
         state.ink_overlay.set_dynamics(input.brush.dynamics());
         state
             .ink_overlay

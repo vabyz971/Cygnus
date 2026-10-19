@@ -500,11 +500,22 @@ impl PhotoApp {
             }
             PhotoAction::SetSelection(selection) => {
                 if let Some(doc) = self.active_doc_mut_opt() {
-                    doc.ui.selection = selection;
-                    doc.ui.selection_preview = None;
-                    doc.ui.needs_repaint = true;
+                    doc.ui.set_selection(selection.clone());
                 }
                 self.send_active(PhotoEngineCommand::SetSelection(selection));
+            }
+            PhotoAction::MagicWand { x, y } => {
+                // Worker-side flood on the exact composite; the answer
+                // (`SelectionChanged`) updates the document selection.
+                if let Some(doc) = self.active_doc_opt() {
+                    let wand = doc.ui.wand;
+                    self.send_active(PhotoEngineCommand::MagicWand {
+                        x,
+                        y,
+                        tolerance: wand.tolerance.clamp(0.0, 255.0).round() as u8,
+                        contiguous: wand.contiguous,
+                    });
+                }
             }
             PhotoAction::SelectAll => {
                 let size = self
@@ -531,7 +542,7 @@ impl PhotoApp {
             PhotoAction::InvertSelection => {
                 let inverted = self
                     .active_doc_opt()
-                    .and_then(|doc| doc.ui.selection)
+                    .and_then(|doc| doc.ui.selection.clone())
                     .map(photo_engine::Selection::inverse);
                 if inverted.is_some() {
                     self.handle_action(ctx, PhotoAction::SetSelection(inverted));
@@ -1361,6 +1372,7 @@ mod tests {
             .expect("doc")
             .ui
             .selection
+            .clone()
             .expect("selection created on release");
         let (x0, y0, x1, y1) = selection.bounds();
         assert!(
@@ -1368,6 +1380,127 @@ mod tests {
             "half the document selected: {:?}",
             selection.bounds()
         );
+    }
+
+    /// App with one 400x300 document drawn until its canvas is placed;
+    /// returns the app, the context and the document screen rect.
+    fn app_with_placed_canvas() -> (PhotoApp, egui::Context, egui::Rect) {
+        let mut app = PhotoApp::new();
+        app.shell.new_doc_dialog.open = false;
+        app.open_sized_tab(400, 300);
+        let ctx = egui::Context::default();
+        cygnus_ui::theme::setup_fonts(&ctx);
+        for _ in 0..500 {
+            draw_frame(&mut app, &ctx, Vec::new());
+            let doc = app.active_doc_opt().expect("doc actif");
+            if doc.ui.preview_geom.is_some() && doc.ui.last_dest.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let dest = app
+            .active_doc_opt()
+            .and_then(|doc| doc.ui.last_dest)
+            .expect("canvas placé");
+        (app, ctx, dest)
+    }
+
+    /// One frame of the full workspace with `events`.
+    fn draw_frame(app: &mut PhotoApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let ctx_clone = ctx.clone();
+        ctx.run_ui(input, |ui| app.draw(&ctx_clone, ui))
+            .drop_without_applying_deltas();
+    }
+
+    fn primary(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    #[test]
+    fn lasso_drag_through_the_workspace_selects_the_polygon() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Lasso),
+        );
+        let at = |fx: f32, fy: f32| dest.min + egui::vec2(dest.width() * fx, dest.height() * fy);
+        let path = [at(0.2, 0.2), at(0.8, 0.2), at(0.8, 0.8), at(0.2, 0.8)];
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(path[0]), primary(path[0], true)],
+        );
+        for p in &path[1..] {
+            for step in 1..=3 {
+                let from = draw_target(&path, *p);
+                let q = from + (*p - from) * (step as f32 / 3.0);
+                draw_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(q)]);
+            }
+        }
+        assert!(
+            app.active_doc_opt().expect("doc").ui.lasso_preview.len() >= 3,
+            "lasso path visible while dragging"
+        );
+        let last = path[3];
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(last), primary(last, false)],
+        );
+        let doc = app.active_doc_opt().expect("doc");
+        let selection = doc.ui.selection.clone().expect("lasso selection");
+        assert_eq!(selection.coverage(200.5, 150.5), 1.0, "center selected");
+        assert_eq!(selection.coverage(10.5, 10.5), 0.0, "corner left out");
+        assert!(!doc.ui.selection_outline.is_empty(), "outline cached");
+    }
+
+    /// Previous point of `path` before `p` (lasso test helper).
+    fn draw_target(path: &[egui::Pos2], p: egui::Pos2) -> egui::Pos2 {
+        let index = path.iter().position(|q| *q == p).unwrap_or(1);
+        path[index.saturating_sub(1)]
+    }
+
+    #[test]
+    fn wand_click_routes_to_the_worker_and_adopts_its_selection() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        app.handle_action(&ctx, PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Wand));
+        let p = dest.center();
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(p), primary(p, true)],
+        );
+        draw_frame(&mut app, &ctx, vec![primary(p, false)]);
+        // The flood runs on the worker thread: poll until it answers.
+        for _ in 0..500 {
+            draw_frame(&mut app, &ctx, Vec::new());
+            if app.active_doc_opt().expect("doc").ui.selection.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let selection = app
+            .active_doc_opt()
+            .expect("doc")
+            .ui
+            .selection
+            .clone()
+            .expect("wand selection");
+        // Blank document: one uniform color, everything selected.
+        assert_eq!(selection.bounds(), (0.0, 0.0, 400.0, 300.0));
     }
 
     #[test]
@@ -1384,7 +1517,13 @@ mod tests {
                 origin: egui::Vec2::ZERO,
                 doc_size: egui::vec2(800.0, 600.0),
             });
-        let selection = |app: &PhotoApp| app.active_doc_opt().expect("doc actif").ui.selection;
+        let selection = |app: &PhotoApp| {
+            app.active_doc_opt()
+                .expect("doc actif")
+                .ui
+                .selection
+                .clone()
+        };
         app.handle_action(&ctx, PhotoAction::SelectAll);
         assert_eq!(
             selection(&app),
