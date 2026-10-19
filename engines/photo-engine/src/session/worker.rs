@@ -1174,6 +1174,7 @@ impl EngineWorker {
                 };
                 let clip = self
                     .selection
+                    .as_ref()
                     .map(|selection| selection.clip_for_layer(layer_transform, layer_w, layer_h));
                 crate::paint::paint_stroke_dynamic(
                     &mut buffer,
@@ -1301,7 +1302,7 @@ impl EngineWorker {
                 let points = crate::paint::resample_stroke(&local, rx.max(ry).max(2.0));
                 // Selection clip in the mask's own space (carrier source
                 // pixels, or document pixels for canvas-space owners).
-                let clip = self.selection.map(|selection| match space {
+                let clip = self.selection.as_ref().map(|selection| match space {
                     Some((t, w, h)) => selection.clip_for_layer(t, w, h),
                     None => selection.clip_for_layer(crate::Transform2D::default(), 1, 1),
                 });
@@ -1869,6 +1870,30 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::MagicWand {
+                x,
+                y,
+                tolerance,
+                contiguous,
+            } => {
+                // Exact document composite (what the user sees).
+                let selection = (x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0)
+                    .then(|| self.document.composite())
+                    .flatten()
+                    .and_then(|image| {
+                        let rgba = image.to_rgba8();
+                        crate::Selection::from_color(
+                            rgba.as_raw(),
+                            rgba.width(),
+                            rgba.height(),
+                            (x as u32, y as u32),
+                            tolerance,
+                            contiguous,
+                        )
+                    });
+                self.selection = selection.clone();
+                Mutation::immediate(PhotoEngineResponse::SelectionChanged { selection })
+            }
             PhotoEngineCommand::SetBrushDynamics(dynamics) => {
                 self.brush_dynamics = dynamics.sanitized();
                 Mutation::unchanged()
@@ -1879,7 +1904,7 @@ impl EngineWorker {
                 Mutation::unchanged()
             }
             PhotoEngineCommand::AddMaskFromSelection { layer } => {
-                let Some(selection) = self.selection else {
+                let Some(selection) = self.selection.clone() else {
                     return Mutation::unchanged();
                 };
                 if self.document.masks_of_mut(layer).is_none() {
@@ -2133,6 +2158,38 @@ mod tests {
         let edge = pixels.get_pixel(26, 10)[3];
         assert!(edge > 0 && edge < 200, "soft edge: {edge}");
         assert!(pixels.get_pixel(20, 10)[3] > 240);
+    }
+
+    #[test]
+    fn magic_wand_selects_the_clicked_color_and_answers() {
+        let mut doc = Document::new(40, 20);
+        let mut image = image::RgbaImage::from_pixel(40, 20, image::Rgba([10, 10, 10, 255]));
+        for y in 0..20 {
+            for x in 20..40 {
+                image.put_pixel(x, y, image::Rgba([240, 240, 240, 255]));
+            }
+        }
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+            "fond",
+            Arc::new(image::DynamicImage::ImageRgba8(image)),
+        )));
+        let mut worker = EngineWorker::new(doc);
+        let response = worker.apply(PhotoEngineCommand::MagicWand {
+            x: 5.0,
+            y: 5.0,
+            tolerance: 16,
+            contiguous: true,
+        });
+        let PhotoEngineResponse::SelectionChanged {
+            selection: Some(selection),
+        } = response
+        else {
+            panic!("selection attendue");
+        };
+        assert_eq!(selection.coverage(10.5, 10.5), 1.0, "dark half");
+        assert_eq!(selection.coverage(30.5, 10.5), 0.0, "light half");
+        assert_eq!(worker.selection, Some(selection), "worker keeps it");
+        assert!(!worker.history.can_undo());
     }
 
     #[test]
@@ -3350,6 +3407,7 @@ mod tests {
             PhotoEngineResponse::DragProxyReady { .. }
             | PhotoEngineResponse::DragProxyUnavailable { .. } => panic!("proxy inattendu"),
             PhotoEngineResponse::StateChanged { .. } => panic!("rendu attendu"),
+            PhotoEngineResponse::SelectionChanged { .. } => panic!("sélection inattendue"),
             PhotoEngineResponse::ThumbnailUpdated { .. } => {
                 panic!("pas de miniature seule sur apply solo")
             }

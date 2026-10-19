@@ -140,6 +140,12 @@ pub enum PhotoEngineResponse {
         /// Written file path.
         path: PathBuf,
     },
+    /// The worker computed a new selection (magic wand); the UI adopts
+    /// it as its active selection.
+    SelectionChanged {
+        /// New selection (`None` = nothing matched).
+        selection: Option<crate::Selection>,
+    },
 }
 
 // ---------------------------------------------------------------------------

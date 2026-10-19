@@ -481,7 +481,7 @@ impl InteractionOverlay {
             rgba[dst..dst + w * 4].copy_from_slice(&self.image[src..src + w * 4]);
         }
         // Selection: alpha scaled by the selected fraction (doc pixels).
-        if let Some(clip) = self.clip {
+        if let Some(clip) = &self.clip {
             for y in 0..h {
                 for x in 0..w {
                     let alpha = &mut rgba[(y * w + x) * 4 + 3];

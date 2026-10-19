@@ -356,6 +356,20 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Magic wand at document pixel `(x, y)`: selects the composite's
+    /// pixels within `tolerance` (largest channel difference) of the
+    /// clicked one, connected to it when `contiguous`. Replaces the
+    /// active selection and answers `SelectionChanged`.
+    MagicWand {
+        /// Click position, document pixels.
+        x: f32,
+        /// Click position, document pixels.
+        y: f32,
+        /// Largest channel difference kept (0..=255).
+        tolerance: u8,
+        /// Flood only from the clicked pixel.
+        contiguous: bool,
+    },
     /// Add a mask to `layer` filled from the active selection
     /// (selected = white). No-op without a selection.
     AddMaskFromSelection {
@@ -427,6 +441,7 @@ impl PhotoEngineCommand {
             Self::SetPreviewClip { .. } => "set_preview_clip",
             Self::SetSelection(_) => "set_selection",
             Self::SetBrushDynamics(_) => "set_brush_dynamics",
+            Self::MagicWand { .. } => "magic_wand",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
     }
@@ -537,7 +552,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::PrepareDragProxy { .. }
         | PhotoEngineCommand::SaveProject { .. }
         | PhotoEngineCommand::SetSelection(_)
-        | PhotoEngineCommand::SetBrushDynamics(_) => {
+        | PhotoEngineCommand::SetBrushDynamics(_)
+        | PhotoEngineCommand::MagicWand { .. } => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)
         }
     }
