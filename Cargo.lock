@@ -946,14 +946,14 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cygnus-i18n"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cygnus-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cygnus-i18n",
  "eframe",
@@ -2980,7 +2980,7 @@ dependencies = [
 
 [[package]]
 name = "photo"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "app-shell",
  "cygnus-i18n",
@@ -3002,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "photo-engine"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "bytemuck",
@@ -3155,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "preferences"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "log",
