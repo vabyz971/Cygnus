@@ -34,8 +34,8 @@ use crate::ui::{
     CanvasMapping, InkFrameInput, NodeDrag, NodePoint, NodeRef, PhotoCanvas, PhotoCanvasOutcome,
     PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, doc_to_screen,
     draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_node_overlay,
-    draw_transform_overlay, feed_ink_frame, frame_corners, hit_test_topmost, ink_tool_active,
-    path_nodes, point_in_quad, screen_to_doc, stability_action,
+    draw_selection_outline, draw_transform_overlay, feed_ink_frame, frame_corners,
+    hit_test_topmost, ink_tool_active, path_nodes, point_in_quad, screen_to_doc, stability_action,
 };
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 use cygnus_ui::components::{menu_row, menu_style};
@@ -651,6 +651,44 @@ fn paint_drag_proxy(ui: &egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext, slo
     painter.set(slots.over, egui::Shape::Vec(shapes.over));
 }
 
+/// Marching ants of the marquee being dragged, else of the active
+/// selection, mapped document → screen through the exact document
+/// rect. Keeps a slow repaint going for the animation.
+fn draw_selection(
+    ui: &egui::Ui,
+    doc: &OpenDocument,
+    ctx: &PhotoUiContext,
+    doc_rect: Option<egui::Rect>,
+    geom: Option<crate::state::PreviewGeom>,
+) {
+    let Some(selection) = doc.ui.selection_preview.or(doc.ui.selection) else {
+        return;
+    };
+    let (Some(rect), Some(geom)) = (doc_rect, geom) else {
+        return;
+    };
+    if geom.doc_size.x <= 0.0 {
+        return;
+    }
+    let scale = rect.width() / geom.doc_size.x;
+    let outline: Vec<egui::Pos2> = selection
+        .outline(SELECTION_SEGMENTS)
+        .into_iter()
+        .map(|(x, y)| rect.min + egui::vec2(x, y) * scale)
+        .collect();
+    let phase = (ui.input(|input| input.time) * ANTS_SPEED) as f32;
+    draw_selection_outline(ui.painter(), ctx, &outline, phase);
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(ANTS_FRAME_MS));
+}
+
+/// Ellipse sampling of the selection outline.
+const SELECTION_SEGMENTS: usize = 96;
+/// Marching ants speed (screen points per second).
+const ANTS_SPEED: f64 = 12.0;
+/// Repaint period of the ants animation.
+const ANTS_FRAME_MS: u64 = 120;
+
 /// Document canvas + overlays + eyedropper (dock tab content,
 /// no `CentralPanel`).
 pub fn draw_canvas_content(
@@ -931,6 +969,25 @@ pub fn draw_canvas_content(
         _ => outcome.dest_rect,
     };
     draw_document_bounds(ui.painter(), ctx, doc_rect, None);
+    // Selection tool: the marquee follows the drag, its release
+    // becomes the selection (a plain click deselects).
+    if let Some(drag) = outcome.selection_drag {
+        let marquee = photo_engine::Selection::from_drag(
+            doc.ui.selection_kind,
+            (drag.start.x, drag.start.y),
+            (drag.end.x, drag.end.y),
+        );
+        if drag.finished {
+            doc.ui.selection_preview = None;
+            actions.push(PhotoAction::SetSelection(marquee));
+        } else {
+            doc.ui.selection_preview = marquee;
+        }
+        doc.ui.needs_repaint = true;
+    } else if doc.ui.tool != PhotoCanvasTool::Select {
+        doc.ui.selection_preview = None;
+    }
+    draw_selection(ui, doc, ctx, doc_rect, geom);
     if matches!(
         doc.ui.tool,
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser

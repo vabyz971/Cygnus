@@ -75,6 +75,14 @@ pub enum PhotoMenuAction {
     AddMask,
     /// Delete the selected layer.
     DeleteLayer,
+    /// Select the whole document.
+    SelectAll,
+    /// Drop the pixel selection.
+    Deselect,
+    /// Invert the pixel selection.
+    InvertSelection,
+    /// Mask from the pixel selection on the selected layer.
+    MaskFromSelection,
     /// Toggle the canvas grid.
     ToggleGrid,
     /// Clip the preview to the document (else infinite plane: off-frame
@@ -109,6 +117,8 @@ pub struct MenuAvailability {
     pub has_selection: bool,
     /// The preview is clipped to the document (View menu check).
     pub preview_clip: bool,
+    /// A pixel selection (marquee) is active.
+    pub has_marquee: bool,
 }
 
 /// Draws the menu bar and returns the actions.
@@ -289,6 +299,42 @@ pub fn draw_menu_bar(
                         availability.has_selection,
                     ) {
                         actions.push(PhotoMenuAction::DeleteLayer);
+                    }
+                });
+                ui.menu_button(texts.get(PhotoTextKey::SelectionMenu), |ui| {
+                    menu_style(theme).apply(ui.style_mut());
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::SelectAll),
+                        availability.has_document,
+                    ) {
+                        actions.push(PhotoMenuAction::SelectAll);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::Deselect),
+                        availability.has_marquee,
+                    ) {
+                        actions.push(PhotoMenuAction::Deselect);
+                    }
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::InvertSelection),
+                        availability.has_marquee,
+                    ) {
+                        actions.push(PhotoMenuAction::InvertSelection);
+                    }
+                    ui.separator();
+                    if menu_item_enabled(
+                        ui,
+                        theme,
+                        texts.get(PhotoTextKey::MaskFromSelection),
+                        availability.has_marquee && availability.has_selection,
+                    ) {
+                        actions.push(PhotoMenuAction::MaskFromSelection);
                     }
                 });
                 ui.menu_button(catalog.get(TextKey::View), |ui| {

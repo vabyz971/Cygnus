@@ -227,6 +227,8 @@ pub fn feed_ink_frame(
         return None;
     }
     if input.gesture_started {
+        // Same selection clip as the worker commit.
+        state.ink_overlay.set_clip(state.selection);
         state
             .ink_overlay
             .begin_stroke(ink_brush_params(&input.brush, input.eraser));

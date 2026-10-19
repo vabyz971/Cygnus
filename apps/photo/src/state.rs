@@ -187,6 +187,12 @@ pub struct PhotoUiState {
     pub status: crate::ui::status::PhotoStatus,
     /// Canvas grid.
     pub show_grid: bool,
+    /// Active pixel selection (mirrored to the worker, clips strokes).
+    pub selection: Option<photo_engine::Selection>,
+    /// Marquee being dragged (drawn, not yet sent).
+    pub selection_preview: Option<photo_engine::Selection>,
+    /// Marquee shape of the selection tool.
+    pub selection_kind: photo_engine::SelectionKind,
     /// Explicit repaint requested.
     pub needs_repaint: bool,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics): applied worker

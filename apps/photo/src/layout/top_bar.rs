@@ -73,6 +73,10 @@ fn menu_action_to_photo(action: PhotoMenuAction) -> PhotoAction {
         PhotoMenuAction::CropToDocument => PhotoAction::CropSelectedToDocument,
         PhotoMenuAction::AddMask => PhotoAction::AddMaskToSelected,
         PhotoMenuAction::DeleteLayer => PhotoAction::DeleteSelectedLayer,
+        PhotoMenuAction::SelectAll => PhotoAction::SelectAll,
+        PhotoMenuAction::Deselect => PhotoAction::Deselect,
+        PhotoMenuAction::InvertSelection => PhotoAction::InvertSelection,
+        PhotoMenuAction::MaskFromSelection => PhotoAction::MaskFromSelection,
         PhotoMenuAction::ToggleGrid => PhotoAction::ToggleGrid,
         PhotoMenuAction::TogglePreviewClip => PhotoAction::TogglePreviewClip,
         PhotoMenuAction::ZoomIn => PhotoAction::ZoomIn,
@@ -108,6 +112,9 @@ pub fn show_menu_bar(
                     .active_doc_opt()
                     .is_some_and(|doc| doc.ui.selected.is_some()),
                 preview_clip: app.active_doc_opt().is_some_and(|doc| doc.ui.preview_clip),
+                has_marquee: app
+                    .active_doc_opt()
+                    .is_some_and(|doc| doc.ui.selection.is_some()),
             };
             let translator = ctx.shared.translator();
             let texts = PhotoCatalog::new(translator.language());
@@ -207,6 +214,7 @@ pub fn show_mode_bar(
                 doc.ui.edit_mode,
                 doc.ui.tool,
                 &mut doc.ui.brush,
+                &mut doc.ui.selection_kind,
                 theme,
                 texts,
             );

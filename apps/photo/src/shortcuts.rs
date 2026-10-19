@@ -47,6 +47,7 @@ pub enum PhotoShortcut {
     ToolNode,
     ToolHand,
     ToolZoom,
+    ToolSelect,
     // Edit
     Undo,
     Redo,
@@ -67,13 +68,17 @@ pub enum PhotoShortcut {
     // Layers
     NewLayer,
     DuplicateLayer,
+    // Selection
+    SelectAll,
+    Deselect,
+    InvertSelection,
     // Application
     OpenPreferences,
 }
 
 impl PhotoShortcut {
     /// Every action, stable display order in the window.
-    pub const ALL: [PhotoShortcut; 24] = [
+    pub const ALL: [PhotoShortcut; 28] = [
         PhotoShortcut::ToolBrush,
         PhotoShortcut::ToolEraser,
         PhotoShortcut::ToolEyedropper,
@@ -81,6 +86,7 @@ impl PhotoShortcut {
         PhotoShortcut::ToolNode,
         PhotoShortcut::ToolHand,
         PhotoShortcut::ToolZoom,
+        PhotoShortcut::ToolSelect,
         PhotoShortcut::Undo,
         PhotoShortcut::Redo,
         PhotoShortcut::DeleteLayer,
@@ -97,6 +103,9 @@ impl PhotoShortcut {
         PhotoShortcut::ToggleToolsPanel,
         PhotoShortcut::NewLayer,
         PhotoShortcut::DuplicateLayer,
+        PhotoShortcut::SelectAll,
+        PhotoShortcut::Deselect,
+        PhotoShortcut::InvertSelection,
         PhotoShortcut::OpenPreferences,
     ];
 
@@ -111,6 +120,10 @@ impl PhotoShortcut {
             Self::ToolNode => "tool_node",
             Self::ToolHand => "tool_hand",
             Self::ToolZoom => "tool_zoom",
+            Self::ToolSelect => "tool_select",
+            Self::SelectAll => "select_all",
+            Self::Deselect => "deselect",
+            Self::InvertSelection => "invert_selection",
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::DeleteLayer => "delete_layer",
@@ -142,6 +155,10 @@ impl PhotoShortcut {
             Self::ToolNode => "Nœuds",
             Self::ToolHand => "Main",
             Self::ToolZoom => "Zoom",
+            Self::ToolSelect => "Sélection",
+            Self::SelectAll => "Tout sélectionner",
+            Self::Deselect => "Désélectionner",
+            Self::InvertSelection => "Intervertir la sélection",
             Self::Undo => "Annuler",
             Self::Redo => "Rétablir",
             Self::DeleteLayer => "Supprimer le calque",
@@ -172,7 +189,9 @@ impl PhotoShortcut {
             | Self::ToolMove
             | Self::ToolNode
             | Self::ToolHand
-            | Self::ToolZoom => "Outils",
+            | Self::ToolZoom
+            | Self::ToolSelect => "Outils",
+            Self::SelectAll | Self::Deselect | Self::InvertSelection => "Sélection",
             Self::Undo | Self::Redo | Self::DeleteLayer => "Édition",
             Self::NewProject | Self::Open | Self::Save | Self::SaveAs | Self::Export => "Fichier",
             Self::ZoomIn
@@ -221,6 +240,10 @@ impl PhotoShortcut {
             Self::ToolNode => PhotoAction::SetTool(PhotoCanvasTool::Node),
             Self::ToolHand => PhotoAction::SetTool(PhotoCanvasTool::Pan),
             Self::ToolZoom => PhotoAction::SetTool(PhotoCanvasTool::Zoom),
+            Self::ToolSelect => PhotoAction::SetTool(PhotoCanvasTool::Select),
+            Self::SelectAll => PhotoAction::SelectAll,
+            Self::Deselect => PhotoAction::Deselect,
+            Self::InvertSelection => PhotoAction::InvertSelection,
             Self::Undo => PhotoAction::Undo,
             Self::Redo => PhotoAction::Redo,
             Self::DeleteLayer => PhotoAction::DeleteSelectedLayer,
@@ -427,7 +450,7 @@ mod tests {
         );
     }
 
-    /// All 24 shortcuts map to an action, except the 2 documented
+    /// All 28 shortcuts map to an action, except the 2 documented
     /// gaps (`ZoomFit`, `OpenPreferences`).
     #[test]
     fn every_shortcut_maps_or_is_documented_gap() {
@@ -444,7 +467,7 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(mapped, 22);
+        assert_eq!(mapped, 26);
     }
 
     /// Targeted conversions: tools, file (O001), layers, panels.

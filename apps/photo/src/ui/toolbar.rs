@@ -35,6 +35,7 @@ pub(crate) fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'
     match tool {
         PhotoCanvasTool::Move => (Icon::MoveTool, texts.get(PhotoTextKey::MoveHint)),
         PhotoCanvasTool::Node => (Icon::Node, texts.get(PhotoTextKey::NodeHint)),
+        PhotoCanvasTool::Select => (Icon::Marquee, texts.get(PhotoTextKey::SelectHint)),
         PhotoCanvasTool::Pan => (Icon::Hand, texts.get(PhotoTextKey::PanHint)),
         PhotoCanvasTool::Zoom => (Icon::Search, texts.get(PhotoTextKey::ZoomHint)),
         PhotoCanvasTool::Brush => (Icon::Brush, texts.get(PhotoTextKey::BrushHint)),

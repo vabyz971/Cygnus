@@ -55,6 +55,37 @@ pub fn draw_document_bounds(
     }
 }
 
+/// Dash and gap length of the marching ants, in screen points.
+const ANTS_DASH: f32 = 4.0;
+
+/// Selection outline ("marching ants"): closed `outline` (screen
+/// points) drawn as a dark hairline under light dashes shifted by
+/// `phase` (animated by the caller).
+pub fn draw_selection_outline(
+    painter: &egui::Painter,
+    ctx: &PhotoUiContext,
+    outline: &[egui::Pos2],
+    phase: f32,
+) {
+    if outline.len() < 2 {
+        return;
+    }
+    let theme = ctx.shared.theme();
+    let mut closed = outline.to_vec();
+    closed.push(outline[0]);
+    painter.add(egui::Shape::line(
+        closed.clone(),
+        egui::Stroke::new(theme.borders.thin, theme.colors.bg_canvas),
+    ));
+    painter.extend(egui::Shape::dashed_line_with_offset(
+        &closed,
+        egui::Stroke::new(theme.borders.thin, theme.colors.fg_strong),
+        &[ANTS_DASH],
+        &[ANTS_DASH],
+        phase.rem_euclid(ANTS_DASH * 2.0),
+    ));
+}
+
 /// Brush/eraser cursor: circle at the brush diameter + central
 /// dot (`epaint` rendering via the egui `Painter` — no extra
 /// dependency required). `radius_image` in image pixels, converted

@@ -498,6 +498,54 @@ impl PhotoApp {
                     doc.ui.tool = tool;
                 }
             }
+            PhotoAction::SetSelection(selection) => {
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    doc.ui.selection = selection;
+                    doc.ui.selection_preview = None;
+                    doc.ui.needs_repaint = true;
+                }
+                self.send_active(PhotoEngineCommand::SetSelection(selection));
+            }
+            PhotoAction::SelectAll => {
+                let size = self
+                    .active_doc_opt()
+                    .and_then(|doc| doc.ui.preview_geom)
+                    .map(|geom| {
+                        (
+                            geom.doc_size.x.max(1.0) as u32,
+                            geom.doc_size.y.max(1.0) as u32,
+                        )
+                    });
+                if let Some((width, height)) = size {
+                    self.handle_action(
+                        ctx,
+                        PhotoAction::SetSelection(Some(photo_engine::Selection::all(
+                            width, height,
+                        ))),
+                    );
+                }
+            }
+            PhotoAction::Deselect => {
+                self.handle_action(ctx, PhotoAction::SetSelection(None));
+            }
+            PhotoAction::InvertSelection => {
+                let inverted = self
+                    .active_doc_opt()
+                    .and_then(|doc| doc.ui.selection)
+                    .map(photo_engine::Selection::inverse);
+                if inverted.is_some() {
+                    self.handle_action(ctx, PhotoAction::SetSelection(inverted));
+                }
+            }
+            PhotoAction::MaskFromSelection => {
+                let target = self
+                    .active_doc_opt()
+                    .filter(|doc| doc.ui.selection.is_some())
+                    .and_then(|doc| doc.ui.selected);
+                if let Some(layer) = target {
+                    self.send_active(PhotoEngineCommand::AddMaskFromSelection { layer });
+                }
+            }
             PhotoAction::ToggleGrid => {
                 if let Some(doc) = self.active_doc_mut_opt() {
                     doc.ui.show_grid = !doc.ui.show_grid;
@@ -1234,6 +1282,38 @@ mod tests {
         assert_eq!(app.docs.len(), 1);
         assert_eq!(app.active, 0);
         assert_eq!(app.active_doc_opt().expect("doc actif").id, middle);
+    }
+
+    #[test]
+    fn selection_actions_update_the_document_selection() {
+        let ctx = egui::Context::default();
+        let mut app = PhotoApp::new();
+        // Without a document: no-op, no panic.
+        app.handle_action(&ctx, PhotoAction::SelectAll);
+        app.open_sized_tab(800, 600);
+        app.active_doc_mut_opt().expect("doc actif").ui.preview_geom =
+            Some(crate::state::PreviewGeom {
+                thumb_size: egui::vec2(800.0, 600.0),
+                full_size: egui::vec2(800.0, 600.0),
+                origin: egui::Vec2::ZERO,
+                doc_size: egui::vec2(800.0, 600.0),
+            });
+        let selection = |app: &PhotoApp| app.active_doc_opt().expect("doc actif").ui.selection;
+        app.handle_action(&ctx, PhotoAction::SelectAll);
+        assert_eq!(
+            selection(&app),
+            Some(photo_engine::Selection::all(800, 600))
+        );
+        app.handle_action(&ctx, PhotoAction::InvertSelection);
+        assert_eq!(
+            selection(&app),
+            Some(photo_engine::Selection::all(800, 600).inverse())
+        );
+        app.handle_action(&ctx, PhotoAction::Deselect);
+        assert_eq!(selection(&app), None);
+        // Nothing to invert: stays deselected.
+        app.handle_action(&ctx, PhotoAction::InvertSelection);
+        assert_eq!(selection(&app), None);
     }
 
     #[test]

@@ -23,9 +23,11 @@
 
 use super::viewport::{PhotoBrushSettings, PhotoCanvasTool};
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
-use cygnus_ui::components::ValueField;
+use cygnus_ui::components::{IconButton, ValueField};
+use cygnus_ui::icons::Icon;
 use cygnus_ui::theme::CygnusTheme;
 use cygnus_ui::theme::typography::caption_text;
+use photo_engine::SelectionKind;
 
 /// Largest brush diameter offered by the size field (image pixels).
 const MAX_BRUSH_SIZE: f32 = 500.0;
@@ -36,10 +38,36 @@ pub fn draw_tool_options(
     ui: &mut egui::Ui,
     tool: PhotoCanvasTool,
     brush: &mut PhotoBrushSettings,
+    selection_kind: &mut SelectionKind,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
 ) {
     match tool {
+        PhotoCanvasTool::Select => {
+            for (kind, icon, label) in [
+                (
+                    SelectionKind::Rect,
+                    Icon::Marquee,
+                    texts.get(PhotoTextKey::SelectionRect),
+                ),
+                (
+                    SelectionKind::Ellipse,
+                    Icon::EllipseOutline,
+                    texts.get(PhotoTextKey::SelectionEllipse),
+                ),
+            ] {
+                if IconButton::new(icon)
+                    .tooltip(label)
+                    .selected(*selection_kind == kind)
+                    .show(ui, theme)
+                    .clicked()
+                {
+                    *selection_kind = kind;
+                }
+            }
+            ui.add_space(theme.spacing.sm);
+            ui.label(caption_text(theme, tool.hint(texts)));
+        }
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser => {
             ui.spacing_mut().item_spacing.x = theme.spacing.sm;
             let mut size = brush.radius * 2.0;
@@ -70,6 +98,7 @@ mod tests {
         cygnus_ui::theme::setup_fonts(&ctx);
         for tool in [
             PhotoCanvasTool::Move,
+            PhotoCanvasTool::Select,
             PhotoCanvasTool::Node,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
@@ -78,12 +107,15 @@ mod tests {
             PhotoCanvasTool::Eyedropper,
         ] {
             let mut brush = PhotoBrushSettings::default();
+            let mut kind = SelectionKind::default();
             let before = brush;
             let theme = cygnus_ui::theme::CygnusTheme::dark();
             let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    ui.horizontal(|ui| draw_tool_options(ui, tool, &mut brush, &theme, texts));
+                    ui.horizontal(|ui| {
+                        draw_tool_options(ui, tool, &mut brush, &mut kind, &theme, texts)
+                    });
                 });
             })
             .drop_without_applying_deltas();

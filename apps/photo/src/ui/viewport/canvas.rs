@@ -38,6 +38,9 @@ pub enum PhotoCanvasTool {
     Move,
     /// Node editor (vector paths: anchors + handles).
     Node,
+    /// Marquee selection (rectangle / ellipse): drag selects, click
+    /// deselects.
+    Select,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -57,7 +60,7 @@ impl PhotoCanvasTool {
             Self::Move | Self::Node => ViewportTool::Move,
             Self::Pan => ViewportTool::Pan,
             Self::Zoom => ViewportTool::Zoom,
-            Self::Brush | Self::Eraser | Self::Eyedropper => ViewportTool::Brush,
+            Self::Brush | Self::Eraser | Self::Eyedropper | Self::Select => ViewportTool::Brush,
         }
     }
 
@@ -72,6 +75,7 @@ impl PhotoCanvasTool {
         match self {
             Self::Move => texts.get(PhotoTextKey::MoveHintText),
             Self::Node => texts.get(PhotoTextKey::NodeHintText),
+            Self::Select => texts.get(PhotoTextKey::SelectHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),
@@ -325,6 +329,23 @@ impl<'a> PhotoCanvas<'a> {
             }
             return outcome;
         }
+        // Selection tool: reports the marquee corners (document pixels)
+        // every frame of the gesture; the app builds the shape.
+        if self.tool == PhotoCanvasTool::Select {
+            self.stroke.extend(outcome.pointer_world.iter().copied());
+            if let (Some(start), Some(end)) = (self.stroke.first(), self.stroke.last()) {
+                let finished = response.response.drag_stopped() || response.response.clicked();
+                outcome.selection_drag = Some(SelectionDrag {
+                    start: *start,
+                    end: *end,
+                    finished,
+                });
+                if finished {
+                    self.stroke.clear();
+                }
+            }
+            return outcome;
+        }
         if !self.tool.is_painting() {
             // Mid-gesture tool switch: clean abort.
             // (The eyedropper just reports the position.)
@@ -370,9 +391,22 @@ impl<'a> PhotoCanvas<'a> {
     }
 }
 
+/// In-progress marquee of the selection tool (document pixels).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectionDrag {
+    /// Press position.
+    pub start: egui::Vec2,
+    /// Current (or release) position.
+    pub end: egui::Vec2,
+    /// True on release: the marquee becomes the selection.
+    pub finished: bool,
+}
+
 /// Result of [`PhotoCanvas::show`].
 #[derive(Debug, Clone, Default)]
 pub struct PhotoCanvasOutcome {
+    /// Selection tool gesture (`None` = no marquee this frame).
+    pub selection_drag: Option<SelectionDrag>,
     /// Stroke to commit (`None` = nothing this frame; the app sends it).
     pub paint: Option<PaintRequest>,
     /// Move to commit (`None` = nothing this frame; the app sends it).
@@ -402,6 +436,63 @@ pub struct PhotoCanvasOutcome {
 mod tests {
     use super::*;
     use crate::ui::PhotoEngineCommand;
+
+    #[test]
+    fn select_tool_reports_the_marquee_then_finishes_on_release() {
+        use std::cell::RefCell;
+
+        let ctx = egui::Context::default();
+        cygnus_ui::theme::setup_fonts(&ctx);
+        let mut state = ViewportState::default();
+        let mut stroke: Vec<egui::Vec2> = Vec::new();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let last = RefCell::new(PhotoCanvasOutcome::default());
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let outcome = PhotoCanvas::new(&mut stroke)
+                        .texture(Some((egui::TextureId::User(7), egui::vec2(800.0, 600.0))))
+                        .tool(PhotoCanvasTool::Select)
+                        .show(ui, &mut state);
+                    *last.borrow_mut() = outcome;
+                });
+            })
+            .drop_without_applying_deltas();
+            last.borrow().clone()
+        };
+        let out = frame(vec![]);
+        assert!(out.selection_drag.is_none(), "no gesture, no marquee");
+        let center = out.dest_rect.expect("dest").center();
+        let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let a = center;
+        let b = center + egui::vec2(60.0, 40.0);
+        frame(vec![egui::Event::PointerMoved(a), button(a, true)]);
+        let mut dragging = None;
+        for step in 1..=4 {
+            let p = a + (b - a) * (step as f32 / 4.0);
+            if let Some(drag) = frame(vec![egui::Event::PointerMoved(p)]).selection_drag {
+                dragging = Some(drag);
+            }
+        }
+        let dragging = dragging.expect("marquee while dragging");
+        assert!(!dragging.finished);
+        let released = frame(vec![egui::Event::PointerMoved(b), button(b, false)])
+            .selection_drag
+            .expect("marquee on release");
+        assert!(released.finished);
+        assert!(released.end.x > released.start.x && released.end.y > released.start.y);
+        assert!(stroke.is_empty(), "gesture drained on release");
+    }
 
     #[test]
     fn pointer_maps_through_capped_thumbnail() {

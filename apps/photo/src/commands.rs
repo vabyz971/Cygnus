@@ -238,6 +238,17 @@ pub enum PhotoAction {
     SetTool(PhotoCanvasTool),
     /// Toggle the grid (local UI state).
     ToggleGrid,
+    /// Replace the active selection (`None` = deselect; mirrored to
+    /// the worker, no history).
+    SetSelection(Option<photo_engine::Selection>),
+    /// Select the whole document.
+    SelectAll,
+    /// Drop the selection.
+    Deselect,
+    /// Invert the selection.
+    InvertSelection,
+    /// Add a mask built from the selection to the selected layer.
+    MaskFromSelection,
     /// Clip the preview to the document (worker, no history).
     TogglePreviewClip,
     /// Zoom in / out, anchored at center.

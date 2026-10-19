@@ -77,5 +77,5 @@ pub use transform_overlay::{
 };
 pub use viewport::{
     CanvasMapping, PaintRequest, PhotoBrushSettings, PhotoCanvas, PhotoCanvasOutcome,
-    PhotoCanvasTool, draw_brush_cursor, draw_document_bounds,
+    PhotoCanvasTool, draw_brush_cursor, draw_document_bounds, draw_selection_outline,
 };
