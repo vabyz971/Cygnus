@@ -20,7 +20,7 @@
 
 ## v0.9 "Photo Persona"
 
-- [ ] Selections: rectangle/ellipse/lasso + wand + pen.
+- [ ] Selections: rectangle/ellipse (done, O007) / lasso + wand + pen.
 - [ ] Paintable masks: density/feather/invert (`paint.rs`, `LayerMask`).
 - [ ] Live Filters + 1st Layer Style (drop shadow/glow).
 - [ ] Brush v2: hardness/spacing/stabilization, stamp/clone, bucket/gradient.

@@ -14,6 +14,7 @@
 | O004 | Crop + flip + 90° rotation | v0.8.2 | done | `push_coalesced` PRE-mutation, golden tests OK | `apps/photo/src/ui/engine_bridge/worker.rs`, `engines/photo-engine/src/document/tree.rs` | 2026-10-05 |
 | O005 | Editable Levels + Curves + HSL | v0.8.3 | done | presets + re-editing after reload | `engines/photo-engine/src/nodes/{levels,curves,hsl}.rs`, `engines/photo-engine/src/presets.rs`, `apps/photo/src/ui/features/inspector/` | 2026-10-17 |
 | O006 | WebP/TIFF export + histogram | v0.8.4 | done | no PNG/JPEG regression | `engines/photo-engine/src/{export,histogram}.rs`, `apps/photo/src/ui/dialogs.rs`, `apps/photo/src/ui/features/histogram/` | 2026-10-17 |
+| O007 | Rectangle / ellipse selection | v0.9 | done | strokes and mask paint clipped by the selection (live preview included), mask from selection undoable, select all / deselect / invert | `engines/photo-engine/src/selection.rs`, `engines/photo-engine/src/session/worker.rs`, `apps/photo/src/layout/central_view.rs`, `apps/photo/src/ui/menubar.rs` | 2026-10-18 |
 
 ## Log (never erase, append a line)
 
@@ -33,3 +34,5 @@
 | 2026-10-17 | — | Perf: GPU drag proxy (stack split once per gesture, layer drawn as a textured quad, no worker traffic until release; 4K: 117 ms/frame → 0, split 11 ms) + display-scale compositing (appearances and composite at preview scale; 4K: opacity 146 → 13 ms/tick, visibility 103 → 10 ms, add filter 1350 → 725 ms). Exports stay full resolution. |
 | 2026-10-17 | — | Fix: workers wake the UI after answering (renders used to appear only on the next input event). Fix: new canvas tab could land in the Layers tab group once the empty canvas slot was simplified away. |
 | 2026-10-17 | — | UI: Rerun-style tokens and full egui style, DockStyle for tiles, visible Button variants, framed inputs, modal footer, personas in the context bar (2 top rows instead of 3), fit margin, true zoom % in the canvas tab, French accents. |
+| 2026-10-18 | — | UI: workspace redesign after the atelier mockup (client-side title bar, persona tabs + quick actions, context bar scrub fields, headerless side column, status bar facts). |
+| 2026-10-18 | O007 | Done: engine `Selection` (doc-space rect/ellipse, inversion, 1 px anti-aliased coverage, `clip_for_layer` through the layer transform), worker `SetSelection` (session state: no history, no render, not saved in `.cygp`) clipping `PaintStroke` / `PaintMask` and the live ink overlay, `AddMaskFromSelection` (one history step), Select tool (M) with rect/ellipse marquee and marching ants, Selection menu + Ctrl+A / Ctrl+D / Ctrl+Shift+I. Lasso, wand, pen and undoable selection changes = future objectives. |
