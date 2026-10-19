@@ -489,6 +489,14 @@ pub enum PhotoTextKey {
     SelectionEllipse,
     /// History: mask from selection.
     HistoryOpMaskFromSelection,
+    /// Brush hardness field.
+    HardnessLabel,
+    /// Brush flow field.
+    FlowLabel,
+    /// Brush dab spacing field.
+    SpacingLabel,
+    /// Stroke stabilizer strength field.
+    StabilizerLabel,
 }
 
 /// Photo catalog bound to a language.
@@ -732,6 +740,10 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::SelectionRect,
     PhotoTextKey::SelectionEllipse,
     PhotoTextKey::HistoryOpMaskFromSelection,
+    PhotoTextKey::HardnessLabel,
+    PhotoTextKey::FlowLabel,
+    PhotoTextKey::SpacingLabel,
+    PhotoTextKey::StabilizerLabel,
 ];
 
 impl PhotoCatalog {
@@ -993,6 +1005,10 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SelectionRect => "Rectangle",
         PhotoTextKey::SelectionEllipse => "Ellipse",
         PhotoTextKey::HistoryOpMaskFromSelection => "Masque depuis la sélection",
+        PhotoTextKey::HardnessLabel => "Dureté",
+        PhotoTextKey::FlowLabel => "Flux",
+        PhotoTextKey::SpacingLabel => "Espacement",
+        PhotoTextKey::StabilizerLabel => "Stabilisateur",
     }
 }
 
@@ -1234,6 +1250,10 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SelectionRect => "Rectangle",
         PhotoTextKey::SelectionEllipse => "Ellipse",
         PhotoTextKey::HistoryOpMaskFromSelection => "Mask from selection",
+        PhotoTextKey::HardnessLabel => "Hardness",
+        PhotoTextKey::FlowLabel => "Flow",
+        PhotoTextKey::SpacingLabel => "Spacing",
+        PhotoTextKey::StabilizerLabel => "Stabilizer",
     }
 }
 
