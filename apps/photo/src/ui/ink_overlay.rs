@@ -341,10 +341,16 @@ pub fn draw_cached_ink(
 /// engine overlay + texture + geometry + in-flight points. Idempotent,
 /// never to the worker (the commit is routed separately, unchanged).
 pub fn clear_ink(ui: &mut PhotoUiState) {
+    clear_ink_overlay(ui);
+    ui.stroke.clear();
+}
+
+/// Drops the transient overlay only, keeping `stroke`: the selection
+/// tool stores its marquee anchor there across frames.
+pub fn clear_ink_overlay(ui: &mut PhotoUiState) {
     ui.ink_overlay.clear();
     ui.ink_texture = None;
     ui.ink_frame = None;
-    ui.stroke.clear();
 }
 
 #[cfg(test)]

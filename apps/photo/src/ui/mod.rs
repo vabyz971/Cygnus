@@ -65,7 +65,8 @@ pub use features::{
     },
 };
 pub use ink_overlay::{
-    InkFrameGeom, InkFrameInput, clear_ink, draw_cached_ink, feed_ink_frame, ink_tool_active,
+    InkFrameGeom, InkFrameInput, clear_ink, clear_ink_overlay, draw_cached_ink, feed_ink_frame,
+    ink_tool_active,
 };
 pub use menubar::{MenuAvailability, PhotoMenuAction, draw_menu_bar};
 pub use modebar::{PhotoEditMode, draw_photo_modebar};

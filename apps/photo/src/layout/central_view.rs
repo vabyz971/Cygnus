@@ -32,8 +32,8 @@ use crate::ui::features::layers::find_layer_in;
 use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
     CanvasMapping, InkFrameInput, NodeDrag, NodePoint, NodeRef, PhotoCanvas, PhotoCanvasOutcome,
-    PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, doc_to_screen,
-    draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_node_overlay,
+    PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, clear_ink_overlay,
+    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_node_overlay,
     draw_selection_outline, draw_transform_overlay, feed_ink_frame, frame_corners,
     hit_test_topmost, ink_tool_active, path_nodes, point_in_quad, screen_to_doc, stability_action,
 };
@@ -770,7 +770,12 @@ pub fn draw_canvas_content(
     // Phase 6G.3P: interactive feedback during the drag (NO worker
     // action here — the worker only sees the commit above, unchanged;
     // thumbnails are therefore deferred to commit, §11).
-    if !ink_tool_active(doc.ui.tool) {
+    if doc.ui.tool == PhotoCanvasTool::Select {
+        // The marquee anchor lives in `stroke` across frames: only the
+        // paint overlay goes (clearing `stroke` here collapsed every
+        // marquee to the current frame's points).
+        clear_ink_overlay(&mut doc.ui);
+    } else if !ink_tool_active(doc.ui.tool) {
         // Tool switch mid-gesture: clean abort (the
         // canvas already drained `stroke`).
         clear_ink(&mut doc.ui);

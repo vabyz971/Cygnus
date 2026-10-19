@@ -332,6 +332,11 @@ impl<'a> PhotoCanvas<'a> {
         // Selection tool: reports the marquee corners (document pixels)
         // every frame of the gesture; the app builds the shape.
         if self.tool == PhotoCanvasTool::Select {
+            // A new press starts a fresh marquee (never leftovers of
+            // another tool's gesture).
+            if ui.input(|input| input.pointer.primary_pressed()) {
+                self.stroke.clear();
+            }
             self.stroke.extend(outcome.pointer_world.iter().copied());
             if let (Some(start), Some(end)) = (self.stroke.first(), self.stroke.last()) {
                 let finished = response.response.drag_stopped() || response.response.clicked();

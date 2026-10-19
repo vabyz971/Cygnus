@@ -1285,6 +1285,86 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_drag_through_the_workspace_creates_a_selection() {
+        // End to end: real frames of `PhotoApp::draw` (dock, central
+        // view, canvas) with a mouse drag — the marquee must survive
+        // across frames and become the document selection on release.
+        let mut app = PhotoApp::new();
+        app.shell.new_doc_dialog.open = false;
+        app.open_sized_tab(400, 300);
+        let ctx = egui::Context::default();
+        cygnus_ui::theme::setup_fonts(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+        let frame = |app: &mut PhotoApp, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let ctx_clone = ctx.clone();
+            ctx.run_ui(input, |ui| app.draw(&ctx_clone, ui))
+                .drop_without_applying_deltas();
+        };
+        // Wait for the first composite (worker thread) to place the canvas.
+        for _ in 0..500 {
+            frame(&mut app, Vec::new());
+            let doc = app.active_doc_opt().expect("doc actif");
+            if doc.ui.preview_geom.is_some() && doc.ui.last_dest.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let dest = app
+            .active_doc_opt()
+            .and_then(|doc| doc.ui.last_dest)
+            .expect("canvas placé");
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Select),
+        );
+        let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let a = dest.min + dest.size() * 0.25;
+        let b = dest.min + dest.size() * 0.75;
+        frame(
+            &mut app,
+            vec![egui::Event::PointerMoved(a), button(a, true)],
+        );
+        for step in 1..=6 {
+            let p = a + (b - a) * (step as f32 / 6.0);
+            frame(&mut app, vec![egui::Event::PointerMoved(p)]);
+        }
+        assert!(
+            app.active_doc_opt()
+                .expect("doc")
+                .ui
+                .selection_preview
+                .is_some(),
+            "marquee visible while dragging"
+        );
+        frame(
+            &mut app,
+            vec![egui::Event::PointerMoved(b), button(b, false)],
+        );
+        let selection = app
+            .active_doc_opt()
+            .expect("doc")
+            .ui
+            .selection
+            .expect("selection created on release");
+        let (x0, y0, x1, y1) = selection.bounds();
+        assert!(
+            x1 - x0 > 100.0 && y1 - y0 > 75.0,
+            "half the document selected: {:?}",
+            selection.bounds()
+        );
+    }
+
+    #[test]
     fn selection_actions_update_the_document_selection() {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();
