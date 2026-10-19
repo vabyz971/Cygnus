@@ -356,6 +356,20 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Set a mask's non-destructive properties (absolute values; slider
+    /// gestures coalesce into one history entry per mask).
+    SetMaskParams {
+        /// Mask owner (layer, group, adjustment or filter).
+        owner: Uuid,
+        /// Targeted mask.
+        mask: Uuid,
+        /// Density 0..=1.
+        density: f32,
+        /// Feather radius in mask pixels.
+        feather: f32,
+        /// Inverted coverage.
+        inverted: bool,
+    },
     /// Magic wand at document pixel `(x, y)`: selects the composite's
     /// pixels within `tolerance` (largest channel difference) of the
     /// clicked one, connected to it when `contiguous`. Replaces the
@@ -442,6 +456,7 @@ impl PhotoEngineCommand {
             Self::SetSelection(_) => "set_selection",
             Self::SetBrushDynamics(_) => "set_brush_dynamics",
             Self::MagicWand { .. } => "magic_wand",
+            Self::SetMaskParams { .. } => "set_mask_params",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
     }
@@ -529,6 +544,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::RemoveFilter { .. }
         | PhotoEngineCommand::AddMask { .. }
         | PhotoEngineCommand::AddMaskFromSelection { .. }
+        | PhotoEngineCommand::SetMaskParams { .. }
         | PhotoEngineCommand::RemoveMask { .. }
         | PhotoEngineCommand::MoveMask { .. }
         | PhotoEngineCommand::MoveMaskTo { .. }
@@ -688,6 +704,27 @@ impl engine_runtime::Coalesce for PhotoEngineCommand {
                 },
             ) if prev_layer == layer && prev_filter == filter && prev_key == key => {
                 *prev_value = *value;
+                true
+            }
+            (
+                PhotoEngineCommand::SetMaskParams {
+                    owner: prev_owner,
+                    mask: prev_mask,
+                    density: prev_density,
+                    feather: prev_feather,
+                    inverted: prev_inverted,
+                },
+                PhotoEngineCommand::SetMaskParams {
+                    owner,
+                    mask,
+                    density,
+                    feather,
+                    inverted,
+                },
+            ) if prev_owner == owner && prev_mask == mask => {
+                *prev_density = *density;
+                *prev_feather = *feather;
+                *prev_inverted = *inverted;
                 true
             }
             (

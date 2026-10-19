@@ -193,7 +193,10 @@ pub fn next_appearance_version() -> u64 {
 /// transform) — like the default "linked" Affinity/Photoshop mask. Stored
 /// as RGBA8 (R=G=B=coverage, A=255) to reuse `paint::paint_stroke_rgba`
 /// without duplicating rasterization.
-/// TODO v2: pure Luma8 (÷4 memory), dedicated feather/blur, unlink transform.
+/// `density` and `feather` are non-destructive: the painted buffer stays
+/// as is and readers sample [`LayerMask::effective`] (blurred, density
+/// applied, cached), still applying `inverted` themselves.
+/// TODO v2: pure Luma8 (÷4 memory), unlink transform.
 #[derive(Clone, Debug)]
 pub struct LayerMask {
     /// Stable id, used by the app to select / edit / delete
@@ -206,6 +209,65 @@ pub struct LayerMask {
     pub enabled: bool,
     pub inverted: bool,
     pub version: u64,
+    /// Mask strength 0..=1: hidden areas show through at `1 - density`.
+    pub density: f32,
+    /// Edge softness (blur radius) in mask pixels, 0 = sharp.
+    pub feather: f32,
+    /// Derived buffer cache (see [`LayerMask::effective`]).
+    pub effective_cache: EffectiveCache,
+}
+
+/// Largest feather radius (mask pixels).
+pub const MAX_MASK_FEATHER: f32 = 250.0;
+
+/// Cached effective buffer of a mask, keyed by its source buffer and
+/// parameters. Shared by clones (history snapshots reuse it as long as
+/// the source buffer is the same).
+#[derive(Clone, Debug, Default)]
+pub struct EffectiveCache(Arc<std::sync::Mutex<Option<CachedEffective>>>);
+
+#[derive(Debug)]
+struct CachedEffective {
+    /// Painted buffer it was derived from (identity via `Arc::ptr_eq`).
+    source: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
+    key: (u32, u32, bool),
+    image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
+}
+
+/// Three box-blur passes of `radius` over the R coverage of an RGBA8
+/// mask (≈ gaussian), clamped at the edges.
+fn feather_coverage(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, radius: usize) -> Vec<u8> {
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let mut values: Vec<f32> = image.pixels().map(|p| f32::from(p[0])).collect();
+    let mut scratch = vec![0f32; values.len()];
+    let pass = |src: &[f32], dst: &mut [f32], horizontal: bool| {
+        let (lines, len) = if horizontal { (h, w) } else { (w, h) };
+        let at = |line: usize, i: usize| {
+            if horizontal {
+                line * w + i
+            } else {
+                i * w + line
+            }
+        };
+        let norm = (2 * radius + 1) as f32;
+        for line in 0..lines {
+            let sample = |i: isize| src[at(line, i.clamp(0, len as isize - 1) as usize)];
+            let mut sum: f32 = (-(radius as isize)..=radius as isize).map(sample).sum();
+            for i in 0..len {
+                dst[at(line, i)] = sum / norm;
+                sum +=
+                    sample(i as isize + radius as isize + 1) - sample(i as isize - radius as isize);
+            }
+        }
+    };
+    for _ in 0..3 {
+        pass(&values, &mut scratch, true);
+        pass(&scratch, &mut values, false);
+    }
+    values
+        .iter()
+        .map(|v| v.round().clamp(0.0, 255.0) as u8)
+        .collect()
 }
 
 impl LayerMask {
@@ -220,7 +282,68 @@ impl LayerMask {
             enabled: true,
             inverted: false,
             version: next_appearance_version(),
+            density: 1.0,
+            feather: 0.0,
+            effective_cache: EffectiveCache::default(),
         }
+    }
+
+    /// True when density and feather leave the painted buffer as is.
+    #[must_use]
+    pub fn is_plain(&self) -> bool {
+        self.density >= 1.0 && self.feather <= 0.0
+    }
+
+    /// Buffer readers sample: the painted coverage, feathered and with
+    /// `density` applied (RAW space: `inverted` is still the reader's
+    /// job — hidden areas keep `1 - density` of visibility either way).
+    /// The painted buffer itself when the mask is plain; otherwise cached
+    /// per (buffer, density, feather, inversion).
+    #[must_use]
+    pub fn effective(&self) -> Arc<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+        if self.is_plain() {
+            return Arc::clone(&self.image);
+        }
+        let key = (
+            self.density.to_bits(),
+            self.feather.to_bits(),
+            self.inverted,
+        );
+        if let Ok(guard) = self.effective_cache.0.lock()
+            && let Some(cached) = guard.as_ref()
+            && Arc::ptr_eq(&cached.source, &self.image)
+            && cached.key == key
+        {
+            return Arc::clone(&cached.image);
+        }
+        let radius = (self.feather.clamp(0.0, MAX_MASK_FEATHER) / 2.0).round() as usize;
+        let values: Vec<u8> = if radius > 0 {
+            feather_coverage(&self.image, radius)
+        } else {
+            self.image.pixels().map(|p| p[0]).collect()
+        };
+        let density = self.density.clamp(0.0, 1.0);
+        let inverted = self.inverted;
+        let (w, h) = (self.image.width(), self.image.height());
+        let image = Arc::new(ImageBuffer::from_fn(w, h, |x, y| {
+            let p = f32::from(values[(y * w + x) as usize]);
+            // Density in raw space: shown coverage c' = 1 - d (1 - c).
+            let v = if inverted {
+                p * density
+            } else {
+                255.0 - density * (255.0 - p)
+            };
+            let v = v.round().clamp(0.0, 255.0) as u8;
+            Rgba([v, v, v, 255])
+        }));
+        if let Ok(mut guard) = self.effective_cache.0.lock() {
+            *guard = Some(CachedEffective {
+                source: Arc::clone(&self.image),
+                key,
+                image: Arc::clone(&image),
+            });
+        }
+        image
     }
 
     pub fn touch(&mut self) {
@@ -265,7 +388,7 @@ impl LayerMask {
     #[inline]
     #[must_use]
     pub fn coverage_at(&self, x: u32, y: u32) -> f32 {
-        let c = self.image.get_pixel(x, y)[0] as f32 / 255.0;
+        let c = self.effective().get_pixel(x, y)[0] as f32 / 255.0;
         if self.inverted { 1.0 - c } else { c }
     }
 }

@@ -73,9 +73,10 @@ pub struct PhotoSubLayerInfo {
     /// `"brightness_contrast"`; empty for masks): the inspector
     /// derives the setting sliders from it.
     pub filter_type: String,
-    /// Current float parameters of the filter (sliders); empty for
-    /// masks. Only `Float`s travel (the registry's `Enum`/`Text`
-    /// are not slider-editable).
+    /// Current float parameters of the filter (sliders). Masks carry
+    /// [`MASK_DENSITY_KEY`], [`MASK_FEATHER_KEY`] and
+    /// [`MASK_INVERTED_KEY`] (0 or 1). Only `Float`s travel (the
+    /// registry's `Enum`/`Text` are not slider-editable).
     pub params: HashMap<String, f32>,
     /// Current text parameters of the filter (curve points, O005);
     /// empty for masks and for slider-only filters.
@@ -88,6 +89,13 @@ pub struct PhotoSubLayerInfo {
     /// `None` for filters (FX badge instead).
     pub thumb: Option<PhotoLayerThumb>,
 }
+
+/// Mask parameter key: density 0..=1.
+pub const MASK_DENSITY_KEY: &str = "density";
+/// Mask parameter key: feather radius in mask pixels.
+pub const MASK_FEATHER_KEY: &str = "feather";
+/// Mask parameter key: inversion (0 or 1).
+pub const MASK_INVERTED_KEY: &str = "inverted";
 
 /// Displayed filter with its own masks, from an engine filter layer.
 fn sub_filter(f: &crate::FilterLayer) -> PhotoSubLayerInfo {
@@ -124,7 +132,14 @@ fn sub_mask(m: &crate::LayerMask) -> PhotoSubLayerInfo {
         is_filter: false,
         enabled: m.enabled,
         filter_type: String::new(),
-        params: HashMap::new(),
+        params: HashMap::from([
+            (MASK_DENSITY_KEY.to_owned(), m.density),
+            (MASK_FEATHER_KEY.to_owned(), m.feather),
+            (
+                MASK_INVERTED_KEY.to_owned(),
+                f32::from(u8::from(m.inverted)),
+            ),
+        ]),
         text_params: HashMap::new(),
         masks: Vec::new(),
         thumb: mask_thumb(m),

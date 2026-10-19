@@ -528,6 +528,8 @@ pub(crate) fn mask_signature(masks: &[LayerMask]) -> u64 {
         h.write_u8(u8::from(m.enabled));
         h.write_u8(u8::from(m.inverted));
         h.write_u64(m.version);
+        h.write_u32(m.density.to_bits());
+        h.write_u32(m.feather.to_bits());
     }
     h.finish()
 }
@@ -578,6 +580,8 @@ pub fn filters_signature(filters: &[FilterLayer]) -> u64 {
             h.write_u8(u8::from(m.enabled));
             h.write_u8(u8::from(m.inverted));
             h.write_u64(m.version);
+            h.write_u32(m.density.to_bits());
+            h.write_u32(m.feather.to_bits());
         }
         // Params sorted by key: same content => same signature
         let mut keys: Vec<&str> = Vec::with_capacity(f.params.len());

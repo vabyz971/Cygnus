@@ -155,6 +155,10 @@ fn shrink_mask(mask: &LayerMask, scale: f32) -> LayerMask {
     let nh = ((mask.image.height() as f32 * scale).round() as u32).max(1);
     LayerMask {
         image: Arc::new(fast_thumbnail_rgba8(&mask.image, nw, nh)),
+        // Feather is in mask pixels: it shrinks with the buffer. Own
+        // cache: sharing the full-size one would thrash it.
+        feather: mask.feather * scale,
+        effective_cache: crate::document::EffectiveCache::default(),
         ..mask.clone()
     }
 }

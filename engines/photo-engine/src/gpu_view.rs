@@ -238,10 +238,11 @@ fn group_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
     });
     let mut cover = vec![255u8; w as usize * h as usize];
     for m in masks {
-        let (mw, mh) = (m.image.width(), m.image.height());
+        let img = m.effective();
+        let (mw, mh) = (img.width(), img.height());
         for y in 0..mh {
             for x in 0..mw {
-                let p = m.image.get_pixel(x, y)[0];
+                let p = img.get_pixel(x, y)[0];
                 let v = if m.inverted { 255 - p } else { p };
                 let c = &mut cover[(y * w + x) as usize];
                 *c = ((u32::from(*c) * u32::from(v)) / 255) as u8;
@@ -260,11 +261,12 @@ fn adjustment_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
     });
     let mut cover = vec![255u8; w as usize * h as usize];
     for m in masks {
-        let (mw, mh) = (m.image.width(), m.image.height());
+        let img = m.effective();
+        let (mw, mh) = (img.width(), img.height());
         for y in 0..h {
             for x in 0..w {
                 let v = if x < mw && y < mh {
-                    let p = m.image.get_pixel(x, y)[0];
+                    let p = img.get_pixel(x, y)[0];
                     if m.inverted { 255 - p } else { p }
                 } else {
                     0

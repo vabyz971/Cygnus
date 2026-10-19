@@ -17,11 +17,10 @@
 //! Native `.cygp` project format — UI-independent, reusable by the
 //! suite's other apps (layer video compositing…).
 //!
-//! FORMAT_VERSION 6: vector layers (`Vector` nodes with paths +
-//! flat fill, filter chain, masks). Versioned JSON container,
-//! PNG-then-base64 encoded images.
+//! FORMAT_VERSION 7: mask density and feather. Versioned JSON
+//! container, PNG-then-base64 encoded images.
 //!
-//! Compatibility policy: v6 read natively, v5/v4 read natively
+//! Compatibility policy: v7 read natively, v6/v5/v4 read natively
 //! (newer fields absent = empty defaults), v3 MIGRATED (filters
 //! converted to neutral sub-layers); any other version is refused
 //! with a clear message.
@@ -42,11 +41,12 @@ use crate::document::{
 };
 use crate::scene::{PathSegment, VectorPath};
 
-/// Format version — bump on any incompatible change. v6: vector
+/// Format version — bump on any incompatible change. v7: mask density
+/// and feather (an older reader would silently drop them). v6: vector
 /// layers. v5: nesting (pixel children, group filters, adjustment
 /// masks). v4: pixel filters = sub-layers (`filter_layers`) instead
 /// of `live_filters` (v3, migrated on read).
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 /// Canonical Cygnus photo project extension.
 pub const PROJECT_EXTENSION: &str = "cygp";
@@ -94,6 +94,16 @@ struct MaskDto {
     png_base64: String,
     enabled: bool,
     inverted: bool,
+    /// Format 7: mask density (absent = 1, full strength).
+    #[serde(default = "default_density")]
+    density: f32,
+    /// Format 7: feather radius in mask pixels (absent = 0, sharp).
+    #[serde(default)]
+    feather: f32,
+}
+
+fn default_density() -> f32 {
+    1.0
 }
 
 fn default_mask_name() -> String {
@@ -349,6 +359,8 @@ fn mask_to_dto(mask: &crate::document::LayerMask, name: &str) -> Result<MaskDto,
         png_base64: base64::engine::general_purpose::STANDARD.encode(png_encode(&dyn_img, name)?),
         enabled: mask.enabled,
         inverted: mask.inverted,
+        density: mask.density,
+        feather: mask.feather,
     })
 }
 
@@ -368,6 +380,17 @@ fn mask_from_dto(dto: MaskDto, name: &str) -> Result<crate::document::LayerMask,
         enabled: dto.enabled,
         inverted: dto.inverted,
         version: crate::document::next_appearance_version(),
+        density: if dto.density.is_finite() {
+            dto.density.clamp(0.0, 1.0)
+        } else {
+            1.0
+        },
+        feather: if dto.feather.is_finite() {
+            dto.feather.clamp(0.0, crate::document::MAX_MASK_FEATHER)
+        } else {
+            0.0
+        },
+        effective_cache: crate::document::EffectiveCache::default(),
     })
 }
 
@@ -636,7 +659,7 @@ pub fn load(path: &Path) -> Result<LoadedProject, ProjectError> {
     let probe: VersionProbe = serde_json::from_slice(&json)
         .map_err(|e| ProjectError::Other(format!("invalid project: {e}")))?;
     let legacy_v3 = match probe.version {
-        FORMAT_VERSION | 5 | 4 => false,
+        FORMAT_VERSION | 6 | 5 | 4 => false,
         3 => true,
         v => return Err(ProjectError::UnsupportedVersion(v)),
     };
@@ -1027,11 +1050,11 @@ mod tests {
     fn roundtrip_v5_nesting_complet() {
         let doc = nested_doc();
         let path = temp_path("v5nest");
-        save(&path, &doc).expect("sauvegarde v6");
-        // Written version = 6 (v5 content still reads natively).
+        save(&path, &doc).expect("sauvegarde");
+        // Written version = current (v5 content still reads natively).
         let raw = std::fs::read(&path).expect("relecture");
         let probe: serde_json::Value = serde_json::from_slice(&raw).expect("json");
-        assert_eq!(probe["version"], 6);
+        assert_eq!(probe["version"], FORMAT_VERSION);
         let loaded = load(&path).expect("chargement v5");
         std::fs::remove_file(&path).ok();
         // Nested structure preserved (stable ids).
@@ -1137,10 +1160,10 @@ mod tests {
         let id = vector.id;
         doc.push_layer(LayerNode::Vector(vector));
         let path = temp_path("v6vec");
-        save(&path, &doc).expect("sauvegarde v6");
+        save(&path, &doc).expect("sauvegarde");
         let raw = std::fs::read(&path).expect("relecture");
         let probe: serde_json::Value = serde_json::from_slice(&raw).expect("json");
-        assert_eq!(probe["version"], 6);
+        assert_eq!(probe["version"], FORMAT_VERSION);
         let loaded = load(&path).expect("chargement v6");
         std::fs::remove_file(&path).ok();
         let LayerNode::Vector(v) = loaded.document.find(id).expect("vecteur retrouvé") else {
@@ -1162,5 +1185,26 @@ mod tests {
     /// Non-transparent pixels of a composite (vector smoke check).
     fn alpha_pixels(img: &DynamicImage) -> u32 {
         img.to_rgba8().pixels().filter(|p| p[3] > 0).count() as u32
+    }
+
+    #[test]
+    fn mask_density_and_feather_survive_a_roundtrip() {
+        let mut doc = Document::new(4, 4);
+        let mut layer = PixelLayer::new("fond", Arc::new(DynamicImage::new_rgba8(4, 4)));
+        let mut mask = crate::document::LayerMask::full(4, 4);
+        mask.density = 0.4;
+        mask.feather = 12.0;
+        layer.masks.push(mask);
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        let dir = std::env::temp_dir().join(format!("cygnus_mask_params_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("dossier temporaire");
+        let path = dir.join("masque.cygp");
+        save(&path, &doc).expect("sauvegarde");
+        let loaded = load(&path).expect("chargement");
+        let m = &loaded.document.masks_of(id).expect("masques")[0];
+        assert!((m.density - 0.4).abs() < 1e-6);
+        assert!((m.feather - 12.0).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

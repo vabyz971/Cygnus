@@ -2052,6 +2052,9 @@ fn masked_layer() -> LayerNode {
         enabled: true,
         inverted: false,
         version: next_appearance_version(),
+        density: 1.0,
+        feather: 0.0,
+        effective_cache: Default::default(),
     });
     LayerNode::Pixel(l)
 }
@@ -4663,4 +4666,29 @@ fn isolate_montre_seul_la_cible_et_ses_ancetres() {
     assert!(!doc.find(cid).expect("c").visible());
     // Inconnu : refusé.
     assert!(!doc.isolate(Uuid::new_v4()));
+}
+
+#[test]
+fn mask_effective_applies_feather_density_and_caches() {
+    let mut mask = LayerMask::full(20, 1);
+    let mut buf = (*mask.image).clone();
+    for x in 0..10 {
+        buf.put_pixel(x, 0, Rgba([0, 0, 0, 255]));
+    }
+    mask.image = Arc::new(buf);
+    assert!(
+        Arc::ptr_eq(&mask.effective(), &mask.image),
+        "plain: no copy"
+    );
+    mask.density = 0.5;
+    let half = mask.effective();
+    assert_eq!(half.get_pixel(0, 0)[0], 128, "hidden shows half");
+    assert_eq!(half.get_pixel(15, 0)[0], 255, "shown stays shown");
+    assert!(Arc::ptr_eq(&half, &mask.effective()), "cached");
+    mask.density = 1.0;
+    mask.feather = 6.0;
+    let soft = mask.effective();
+    let edge = soft.get_pixel(9, 0)[0];
+    assert!(edge > 0 && edge < 255, "feathered edge: {edge}");
+    assert_eq!(soft.get_pixel(0, 0)[0], 0, "far inside stays hidden");
 }

@@ -693,12 +693,13 @@ fn prepare_group_mask(
     sub: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let mut buf = ImageBuffer::from_pixel(sub.width(), sub.height(), Rgba([255, 255, 255, 255]));
-    let (mw, mh) = (m.image.width(), m.image.height());
+    let img = m.effective();
+    let (mw, mh) = (img.width(), img.height());
     let copy_w = mw.min(sub.width());
     let copy_h = mh.min(sub.height());
     for y in 0..copy_h {
         for x in 0..copy_w {
-            let p = m.image.get_pixel(x, y);
+            let p = img.get_pixel(x, y);
             let v = if m.inverted { 255 - p[0] } else { p[0] };
             buf.put_pixel(x, y, Rgba([v, v, v, 255]));
         }
@@ -1136,10 +1137,11 @@ pub fn attenuate_by_coverage(
 /// A mask's coverage in its own buffer (`inverted` applied — same rule
 /// as `prepare_mask`).
 fn mask_coverage(mask: &LayerMask) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    let effective = mask.effective();
     if !mask.inverted {
-        return (*mask.image).clone();
+        return (*effective).clone();
     }
-    let mut buf = (*mask.image).clone();
+    let mut buf = (*effective).clone();
     for px in buf.pixels_mut() {
         let v = 255 - px[0];
         *px = Rgba([v, v, v, 255]);
@@ -1477,9 +1479,10 @@ fn combined_adjustment_coverage(
 /// sweep (one pixel = one entry, like `blend_into`).
 fn sample_mask_into(cov: &mut [u8], m: &LayerMask, w: u32, h: u32, ox: i32, oy: i32) {
     debug_assert_eq!(cov.len(), w as usize * h as usize);
-    let (mw, mh) = (m.image.width() as i32, m.image.height() as i32);
+    let effective = m.effective();
+    let (mw, mh) = (effective.width() as i32, effective.height() as i32);
     let inverted = m.inverted;
-    let img = &m.image;
+    let img = &effective;
     cov.par_chunks_exact_mut(1).enumerate().for_each(|(i, px)| {
         let x = (i as u32 % w) as i32;
         let y = (i as u32 / w) as i32;
@@ -1497,9 +1500,10 @@ fn sample_mask_into(cov: &mut [u8], m: &LayerMask, w: u32, h: u32, ox: i32, oy: 
 /// Multiplies `cov` by the mask sample (same mapping).
 fn sample_mask_multiply(cov: &mut [u8], m: &LayerMask, w: u32, h: u32, ox: i32, oy: i32) {
     debug_assert_eq!(cov.len(), w as usize * h as usize);
-    let (mw, mh) = (m.image.width() as i32, m.image.height() as i32);
+    let effective = m.effective();
+    let (mw, mh) = (effective.width() as i32, effective.height() as i32);
     let inverted = m.inverted;
-    let img = &m.image;
+    let img = &effective;
     cov.par_chunks_exact_mut(1).enumerate().for_each(|(i, px)| {
         let x = (i as u32 % w) as i32;
         let y = (i as u32 / w) as i32;

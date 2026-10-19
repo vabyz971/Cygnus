@@ -1870,6 +1870,44 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::SetMaskParams {
+                owner,
+                mask,
+                density,
+                feather,
+                inverted,
+            } => {
+                if !density.is_finite() || !feather.is_finite() {
+                    return Mutation::unchanged();
+                }
+                let density = density.clamp(0.0, 1.0);
+                let feather = feather.clamp(0.0, crate::document::MAX_MASK_FEATHER);
+                let current = self
+                    .document
+                    .masks_of(owner)
+                    .and_then(|masks| masks.iter().find(|m| m.id == mask))
+                    .map(|m| (m.density, m.feather, m.inverted));
+                let Some(current) = current else {
+                    return Mutation::unchanged();
+                };
+                if current == (density, feather, inverted) {
+                    return Mutation::unchanged();
+                }
+                // Slider gesture: one history entry per mask.
+                self.push_history(Some(mask));
+                if let Some(target) = self
+                    .document
+                    .masks_of_mut(owner)
+                    .and_then(|masks| masks.iter_mut().find(|m| m.id == mask))
+                {
+                    target.density = density;
+                    target.feather = feather;
+                    target.inverted = inverted;
+                    target.touch();
+                }
+                touch_mask_owner(&mut self.document, owner);
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+            }
             PhotoEngineCommand::MagicWand {
                 x,
                 y,
@@ -2190,6 +2228,60 @@ mod tests {
         assert_eq!(selection.coverage(30.5, 10.5), 0.0, "light half");
         assert_eq!(worker.selection, Some(selection), "worker keeps it");
         assert!(!worker.history.can_undo());
+    }
+
+    #[test]
+    fn mask_params_soften_the_composite_in_one_undo_step() {
+        use image::GenericImageView;
+        let mut doc = Document::new(40, 20);
+        let layer = PixelLayer::new(
+            "fond",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(40, 20, image::Rgba([200, 30, 30, 255])),
+            )),
+        );
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        let mut worker = EngineWorker::new(doc);
+        // Left half hidden by the mask.
+        let selection =
+            crate::Selection::from_drag(crate::SelectionKind::Rect, (20.0, 0.0), (40.0, 20.0));
+        worker.apply(PhotoEngineCommand::SetSelection(selection));
+        worker.apply(PhotoEngineCommand::AddMaskFromSelection { layer: id });
+        let mask = worker.document.masks_of(id).expect("masques")[0].id;
+        let alpha_at = |worker: &EngineWorker, x: u32| {
+            worker
+                .document
+                .composite()
+                .expect("composite")
+                .get_pixel(x, 10)[3]
+        };
+        assert_eq!(alpha_at(&worker, 5), 0, "hidden at full density");
+        let steps = worker.history.undo_steps().len();
+        for density in [0.8, 0.6, 0.5] {
+            worker.apply(PhotoEngineCommand::SetMaskParams {
+                owner: id,
+                mask,
+                density,
+                feather: 0.0,
+                inverted: false,
+            });
+        }
+        assert_eq!(worker.history.undo_steps().len(), steps + 1, "one gesture");
+        let half = alpha_at(&worker, 5);
+        assert!(
+            (120..=135).contains(&half),
+            "half density shows through: {half}"
+        );
+        worker.apply(PhotoEngineCommand::SetMaskParams {
+            owner: id,
+            mask,
+            density: 1.0,
+            feather: 0.0,
+            inverted: true,
+        });
+        assert_eq!(alpha_at(&worker, 5), 255, "inverted: left shown");
+        assert_eq!(alpha_at(&worker, 30), 0, "inverted: right hidden");
     }
 
     #[test]
