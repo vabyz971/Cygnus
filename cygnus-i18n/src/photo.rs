@@ -469,6 +469,26 @@ pub enum PhotoTextKey {
     PrimaryColor,
     /// Secondary color swatch.
     SecondaryColor,
+    /// Selection menu title.
+    SelectionMenu,
+    /// Select the whole document.
+    SelectAll,
+    /// Drop the selection.
+    Deselect,
+    /// Invert the selection.
+    InvertSelection,
+    /// Mask built from the selection.
+    MaskFromSelection,
+    /// Selection tool name.
+    SelectHint,
+    /// Selection tool usage.
+    SelectHintText,
+    /// Rectangle marquee.
+    SelectionRect,
+    /// Ellipse marquee.
+    SelectionEllipse,
+    /// History: mask from selection.
+    HistoryOpMaskFromSelection,
 }
 
 /// Photo catalog bound to a language.
@@ -702,6 +722,16 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::SwapColors,
     PhotoTextKey::PrimaryColor,
     PhotoTextKey::SecondaryColor,
+    PhotoTextKey::SelectionMenu,
+    PhotoTextKey::SelectAll,
+    PhotoTextKey::Deselect,
+    PhotoTextKey::InvertSelection,
+    PhotoTextKey::MaskFromSelection,
+    PhotoTextKey::SelectHint,
+    PhotoTextKey::SelectHintText,
+    PhotoTextKey::SelectionRect,
+    PhotoTextKey::SelectionEllipse,
+    PhotoTextKey::HistoryOpMaskFromSelection,
 ];
 
 impl PhotoCatalog {
@@ -953,6 +983,16 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SwapColors => "Permuter les couleurs",
         PhotoTextKey::PrimaryColor => "Couleur principale",
         PhotoTextKey::SecondaryColor => "Couleur secondaire",
+        PhotoTextKey::SelectionMenu => "Sélection",
+        PhotoTextKey::SelectAll => "Tout sélectionner",
+        PhotoTextKey::Deselect => "Désélectionner",
+        PhotoTextKey::InvertSelection => "Intervertir la sélection",
+        PhotoTextKey::MaskFromSelection => "Masque depuis la sélection",
+        PhotoTextKey::SelectHint => "Sélection",
+        PhotoTextKey::SelectHintText => "Glisser : sélectionner — clic : désélectionner",
+        PhotoTextKey::SelectionRect => "Rectangle",
+        PhotoTextKey::SelectionEllipse => "Ellipse",
+        PhotoTextKey::HistoryOpMaskFromSelection => "Masque depuis la sélection",
     }
 }
 
@@ -1184,6 +1224,16 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SwapColors => "Swap colors",
         PhotoTextKey::PrimaryColor => "Primary color",
         PhotoTextKey::SecondaryColor => "Secondary color",
+        PhotoTextKey::SelectionMenu => "Select",
+        PhotoTextKey::SelectAll => "Select all",
+        PhotoTextKey::Deselect => "Deselect",
+        PhotoTextKey::InvertSelection => "Invert selection",
+        PhotoTextKey::MaskFromSelection => "Mask from selection",
+        PhotoTextKey::SelectHint => "Selection",
+        PhotoTextKey::SelectHintText => "Drag: select — click: deselect",
+        PhotoTextKey::SelectionRect => "Rectangle",
+        PhotoTextKey::SelectionEllipse => "Ellipse",
+        PhotoTextKey::HistoryOpMaskFromSelection => "Mask from selection",
     }
 }
 

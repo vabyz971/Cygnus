@@ -154,4 +154,8 @@ pub enum Icon {
     Contrast,
     /// Grid overlay.
     Grid,
+    /// Rectangle selection (marquee).
+    Marquee,
+    /// Ellipse outline (elliptical marquee).
+    EllipseOutline,
 }

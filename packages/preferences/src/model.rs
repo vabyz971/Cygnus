@@ -198,6 +198,7 @@ impl KeybindingPreferences {
         bindings.insert("tool_node".to_string(), "A".to_string());
         bindings.insert("tool_hand".to_string(), "H".to_string());
         bindings.insert("tool_zoom".to_string(), "Z".to_string());
+        bindings.insert("tool_select".to_string(), "M".to_string());
         // Editing
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("redo".to_string(), "Ctrl+Y".to_string());
@@ -218,6 +219,10 @@ impl KeybindingPreferences {
         // Layers
         bindings.insert("new_layer".to_string(), "Ctrl+Shift+N".to_string());
         bindings.insert("duplicate_layer".to_string(), "Ctrl+J".to_string());
+        // Selection
+        bindings.insert("select_all".to_string(), "Ctrl+A".to_string());
+        bindings.insert("deselect".to_string(), "Ctrl+D".to_string());
+        bindings.insert("invert_selection".to_string(), "Ctrl+Shift+I".to_string());
         // Application
         bindings.insert("open_preferences".to_string(), "Ctrl+,".to_string());
 
