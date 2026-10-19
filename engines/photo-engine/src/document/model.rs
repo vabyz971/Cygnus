@@ -14,138 +14,66 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modèle document « LayerTree » (arbre hiérarchique, style Affinity) +
-//! compositing rapide.
+//! "LayerTree" document model (hierarchical tree, Affinity-style) +
+//! fast compositing.
 //!
-//! TODO chantier 4: fichier god-file (~2300 lignes) à découper en
-//! `document/model.rs` + `document/tree.rs` + `document/compositing.rs` + tests
-//! locaux. À faire juste avant la prochaine feature majeure (masques déjà livrés,
-//! donc découpage à planifier en PR dédiée — aucune API externe ne doit changer).
+//! TODO workstream 4: god-file (~2300 lines) to split into
+//! `document/model.rs` + `document/tree.rs` + `document/compositing.rs` + local
+//! tests. To do just before the next major feature (masks already shipped,
+//! so plan the split in a dedicated PR — no external API must change).
 //!
-//! Architecture hybride :
-//! - [`Document`] possède un arbre de [`LayerNode`] : calques pixels,
-//!   groupes et calques d'ajustement, imbriqués à volonté.
-//! - Chaque [`PixelLayer`] garde son image SOURCE intacte ; les retouches
-//!   vivent dans des sous-calques [`FilterLayer`] (façon Affinity)
-//!   évalués séquentiellement (voir [`crate::filters`]).
-//! - L'apparence dérivée (source × filtres) est calculée paresseusement et
-//!   mise en cache par version d'apparence : un réglage ne recalcule que la
-//!   chaîne du calque concerné, l'undo/redo ne recalcule que si nécessaire.
+//! Hybrid architecture:
+//! - [`Document`] owns a [`LayerNode`] tree: pixel, vector, group
+//!   and adjustment layers, nestable at will.
+//! - Each [`PixelLayer`] keeps its SOURCE image intact; edits live
+//!   in [`FilterLayer`] sub-layers (Affinity-style),
+//!   evaluated sequentially (see [`crate::filters`]).
+//! - The derived appearance (source × filters) is computed lazily and
+//!   cached by appearance version: a setting only recomputes the
+//!   affected layer's chain; undo/redo recomputes only if needed.
 //!
-//! Conçu pour l'interaction temps réel, comme les éditeurs pro :
-//! - fusion DIRECTE dans un buffer accumulateur (aucune copie intermédiaire)
-//! - chemin CPU rayon RGBA8 : la fusion est memory-bound, le round-trip GPU
-//!   coûtait plus cher que le calcul lui-même — le GPU reste réservé aux
-//!   filtres lourds (blur…)
+//! Designed for real-time interaction, like pro editors:
+//! - DIRECT blending into an accumulator buffer (no intermediate copy)
+//! - rayon RGBA8 CPU path: blending is memory-bound, the GPU round-trip
+//!   cost more than the computation itself — the GPU stays reserved for
+//!   heavy filters (blur…)
 //!
-//! Ce module est PUR : aucun framework UI. Les aperçus/miniatures sont des
-//! [`RgbaBuf`] partageables sans copie ; l'app les convertit en textures.
+//! This module is PURE: no UI framework. Previews/thumbnails are
+//! [`RgbaBuf`] shareable without copying; the app converts them to textures.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Tampon RGBA8 partageable avec l'UI SANS copie (l'app en dérive ses
-/// textures via `Bytes::from_owner` sur l'Arc).
-#[derive(Clone)]
-pub struct RgbaBuf {
-    pub width: u32,
-    pub height: u32,
-    pub data: Arc<[u8]>,
-}
-
-impl RgbaBuf {
-    /// Create a shareable RGBA buffer from raw bytes.
-    #[must_use]
-    pub fn from_vec(width: u32, height: u32, data: Vec<u8>) -> Self {
-        Self {
-            width,
-            height,
-            data: data.into(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Types de base du modèle
-// ---------------------------------------------------------------------------
-
-/// Mode de fusion d'un calque ou d'un groupe.
+/// RGBA8 buffer shareable with the UI WITHOUT copying: canonical definition
+/// in `datatypes` (raster vocabulary shared with video), re-exported
+/// here for compatibility (`use crate::document::RgbaBuf` unchanged).
 ///
-/// La représentation sérialisée est le nom de la variante (« Normal »,
-/// « Multiply »…) — identique aux libellés historiques de l'app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlendMode {
-    Normal,
-    Multiply,
-    Screen,
-    Overlay,
-    Darken,
-    Lighten,
-}
+/// Blend mode: canonical definition in `datatypes` (same labels,
+/// same numeric ids — `.cygp` projects unchanged),
+/// re-exported here for compatibility.
+pub use datatypes::{BlendMode, RgbaBuf};
 
-impl std::fmt::Display for BlendMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
-    }
-}
+// ---------------------------------------------------------------------------
+// Core model types
+// ---------------------------------------------------------------------------
 
-impl BlendMode {
-    /// Ordre d'affichage dans l'UI (listes déroulantes).
-    pub const ALL: [BlendMode; 6] = [
-        BlendMode::Normal,
-        BlendMode::Multiply,
-        BlendMode::Screen,
-        BlendMode::Overlay,
-        BlendMode::Darken,
-        BlendMode::Lighten,
-    ];
-
-    /// Human-readable label for UI.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            BlendMode::Normal => "Normal",
-            BlendMode::Multiply => "Multiply",
-            BlendMode::Screen => "Screen",
-            BlendMode::Overlay => "Overlay",
-            BlendMode::Darken => "Darken",
-            BlendMode::Lighten => "Lighten",
-        }
-    }
-
-    /// Identifiant numérique (shader GPU + CPU). Doit rester aligné sur
-    /// `SHADER_BLEND` (gpu.rs) et les tests golden.
-    #[must_use]
-    pub fn id(self) -> u32 {
-        match self {
-            BlendMode::Normal => 0,
-            BlendMode::Multiply => 1,
-            BlendMode::Screen => 2,
-            BlendMode::Overlay => 3,
-            BlendMode::Darken => 4,
-            BlendMode::Lighten => 5,
-        }
-    }
-}
-
-/// Transformation affine 2D : définition canonique dans `math-utils`
-/// (partagée avec `ui-kit` qui ne peut pas dépendre des engines).
-/// Ré-exportée ici pour ne pas casser les `use crate::document::Transform2D`.
+/// 2D affine transform: canonical definition in `math-utils`
+/// (shared with `cygnus-ui`, which cannot depend on engines).
+/// Re-exported here to keep `use crate::document::Transform2D` working.
 pub use math_utils::Transform2D;
 
-/// Un filtre dynamique (live filter) : référence nommée vers un effet du
-/// registre + ses paramètres. Utilisé TEL QUEL par les calques
-/// d'ajustement ; les calques pixels portent des [`FilterLayer`]
-/// (sous-calques à part entière, façon Affinity).
+/// A dynamic filter (live filter): named reference to a registry effect
+/// plus its parameters. Used AS IS by adjustment layers; pixel layers
+/// carry [`FilterLayer`] sub-layers (full-fledged sub-layers,
+/// Affinity-style).
 #[derive(Debug, Clone)]
 pub struct FilterNode {
     pub id: Uuid,
-    /// type_id du registre d'effets (ex. « brightness_contrast », « blur »)
+    /// Effect registry type_id (e.g. « brightness_contrast », « blur »)
     pub type_id: String,
     pub params: HashMap<String, datatypes::ParamValue>,
     pub enabled: bool,
@@ -163,39 +91,39 @@ impl FilterNode {
     }
 }
 
-/// Un filtre vivant comme SOUS-CALQUE d'un calque pixels (façon Affinity :
-/// live filters imbriqués, réordonnables, chacun avec opacité, fusion,
-/// transformation et masques propres). L'effet (`type_id` + `params`)
-/// s'applique au résultat accumulé en dessous de lui dans la chaîne du
-/// parent, puis est composité avec ses attributs de calque.
+/// A live filter as a SUB-LAYER of a pixel layer (Affinity-style:
+/// nested live filters, reorderable, each with its own opacity, blend,
+/// transform and masks). The effect (`type_id` + `params`) applies
+/// to the accumulated result below it in the parent chain,
+/// then is composited with its layer attributes.
 ///
-/// L'ordre du `Vec` parent = ordre d'application (index 0 = premier).
+/// Parent `Vec` order = application order (index 0 = first).
 #[derive(Debug, Clone)]
 pub struct FilterLayer {
-    /// Identifiant stable (sélection, historique, projet).
+    /// Stable id (selection, history, project).
     pub id: Uuid,
-    /// Nom d'affichage (défaut = nom de la définition, renommable).
+    /// Display name (default = definition name, renamable).
     pub name: String,
-    /// type_id du registre d'effets (ex. « brightness_contrast », « blur »)
+    /// Effect registry type_id (e.g. « brightness_contrast », « blur »)
     pub type_id: String,
     pub params: HashMap<String, datatypes::ParamValue>,
-    /// Interrupteur d'effet (œil du panneau Calques) — désactivé =
-    /// transparent, réglages conservés.
+    /// Effect switch (Layers panel eye) — disabled =
+    /// transparent, settings kept.
     pub enabled: bool,
-    /// 0..=100 — pondération du résultat filtré sur l'accumulé.
+    /// 0..=100 — weight of the filtered result over the accumulated image.
     pub opacity: f32,
     pub blend_mode: BlendMode,
-    /// Espace du parent (identité par défaut — comme un filtre imbriqué
-    /// Affinity qui suit son calque).
+    /// Parent space (identity by default — like a nested Affinity
+    /// filter following its layer).
     pub transform: Transform2D,
-    /// Masques de couverture — fusionnés multiplicativement dans l'espace
-    /// du parent, AVANT la transform du sous-calque (même espace que la
-    /// peinture, qui utilise la transform du porteur).
+    /// Coverage masks — merged multiplicatively in the parent space,
+    /// BEFORE the sub-layer transform (same space as paint,
+    /// which uses the carrier transform).
     pub masks: Vec<LayerMask>,
 }
 
 impl FilterLayer {
-    /// Nouveau sous-calque avec les paramètres PAR DÉFAUT de sa définition.
+    /// New sub-layer with its definition's DEFAULT parameters.
     pub fn new(
         type_id: impl Into<String>,
         name: impl Into<String>,
@@ -214,8 +142,8 @@ impl FilterLayer {
         }
     }
 
-    /// Sous-calque « neutre » : opacité pleine, fusion normale, sans
-    /// transform ni masque — rendu strictement identique à l'ancien pli.
+    /// "neutral" sub-layer: full opacity, normal blend, no transform
+    /// or mask — renders strictly identical to the old fold.
     pub fn neutral(
         type_id: impl Into<String>,
         params: HashMap<String, datatypes::ParamValue>,
@@ -224,8 +152,8 @@ impl FilterLayer {
         Self::new(type_id.clone(), type_id, params)
     }
 
-    /// Sous-calque reconstitué depuis un filtre simple (ajustements) —
-    /// attributs de calque neutres, identité (id, état) préservée.
+    /// Sub-layer rebuilt from a plain filter (adjustments) — neutral
+    /// layer attributes, identity (id, state) preserved.
     pub fn from_node(node: FilterNode) -> Self {
         Self {
             id: node.id,
@@ -240,8 +168,8 @@ impl FilterLayer {
         }
     }
 
-    /// Chemin rapide : aucun attribut de calque actif — le résultat de
-    /// l'effet remplace l'accumulé tel quel (zéro blend, zéro allocation).
+    /// Fast path: no active layer attribute — the effect result
+    /// replaces the accumulated image as is (zero blend, zero allocation).
     #[must_use]
     pub fn is_passthrough(&self) -> bool {
         (self.opacity - 100.0).abs() < 0.01
@@ -251,29 +179,29 @@ impl FilterLayer {
     }
 }
 
-/// Compteur global monotone des versions d'apparence : garantit qu'un numéro
-/// ne désigne jamais deux contenus différents (undo/redo inclus).
+/// Global monotonic appearance-version counter: guarantees a number
+/// never denotes two different contents (undo/redo included).
 static APPEARANCE_VERSION: AtomicU64 = AtomicU64::new(1);
 
 pub fn next_appearance_version() -> u64 {
     APPEARANCE_VERSION.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Masque raster non destructif attaché à un PixelLayer, un GroupLayer ou
-/// un sous-calque de filtre (dans ce dernier cas : espace du calque parent).
-/// Vit dans le MÊME espace que son porteur (dimensions du porteur, suit sa
-/// transform) — comme le masque « lié » par défaut d'Affinity/Photoshop.
-/// Stocké en RGBA8 (R=G=B=couverture, A=255) pour réutiliser
-/// `paint::paint_stroke_rgba` sans dupliquer la rastérisation.
-/// TODO v2: Luma8 pur (÷4 mémoire), feather/flou dédié, unlink transform.
+/// Non-destructive raster mask attached to a PixelLayer, GroupLayer or
+/// filter sub-layer (in that case: parent layer space). Lives in the
+/// SAME space as its carrier (carrier dimensions, follows its
+/// transform) — like the default "linked" Affinity/Photoshop mask. Stored
+/// as RGBA8 (R=G=B=coverage, A=255) to reuse `paint::paint_stroke_rgba`
+/// without duplicating rasterization.
+/// TODO v2: pure Luma8 (÷4 memory), dedicated feather/blur, unlink transform.
 #[derive(Clone, Debug)]
 pub struct LayerMask {
-    /// Identifiant stable, utilisé par l'app pour sélectionner / éditer /
-    /// supprimer CE masque parmi les N masques d'un calque.
+    /// Stable id, used by the app to select / edit / delete
+    /// THIS mask among a layer's N masks.
     pub id: Uuid,
-    /// Nom d'affichage (défaut « Masque N », renommable façon calque).
+    /// Display name (default « Masque N », renamable like a layer).
     pub name: String,
-    /// Buffer de couverture RGBA8 (R = couverture, A = 255 constant).
+    /// RGBA8 coverage buffer (R = coverage, A = constant 255).
     pub image: Arc<ImageBuffer<Rgba<u8>, Vec<u8>>>,
     pub enabled: bool,
     pub inverted: bool,
@@ -281,13 +209,13 @@ pub struct LayerMask {
 }
 
 impl LayerMask {
-    /// Masque plein blanc (tout visible) aux dimensions données.
+    /// Full-white mask (all visible) at the given dimensions.
     #[must_use]
     pub fn full(width: u32, height: u32) -> Self {
         let buf = ImageBuffer::from_pixel(width, height, Rgba([255, 255, 255, 255]));
         Self {
             id: Uuid::new_v4(),
-            name: String::from("Masque"),
+            name: String::from("Mask"),
             image: Arc::new(buf),
             enabled: true,
             inverted: false,
@@ -299,8 +227,41 @@ impl LayerMask {
         self.version = next_appearance_version();
     }
 
-    /// Couverture 0.0..=1.0 au pixel (x,y), en tenant compte de `inverted`.
-    /// L'appelant doit vérifier `enabled` avant (retourne 1.0 si désactivé).
+    /// Shifts the coverage buffer by rounded `(dx, dy)` (group moves:
+    /// canvas-space masks follow their carrier; revealed pixels stay
+    /// revealed-white like [`Self::full`]).
+    pub fn shift_by(&mut self, dx: f32, dy: f32) {
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let (w, h) = (self.image.width() as i32, self.image.height() as i32);
+        let (ox, oy) = (dx.round() as i32, dy.round() as i32);
+        let mut shifted =
+            ImageBuffer::from_pixel(w.max(1) as u32, h.max(1) as u32, Rgba([255, 255, 255, 255]));
+        let src = self.image.as_raw();
+        let dst = shifted.as_flat_samples_mut().samples;
+        let stride = w as usize * 4;
+        for y in 0..h {
+            let sy = y - oy;
+            if sy < 0 || sy >= h {
+                continue;
+            }
+            for x in 0..w {
+                let sx = x - ox;
+                if sx < 0 || sx >= w {
+                    continue;
+                }
+                let s = (sy as usize * stride) + (sx as usize * 4);
+                let d = (y as usize * stride) + (x as usize * 4);
+                dst[d..d + 4].copy_from_slice(&src[s..s + 4]);
+            }
+        }
+        self.image = Arc::new(shifted);
+        self.touch();
+    }
+
+    /// 0.0..=1.0 coverage at pixel (x,y), accounting for `inverted`.
+    /// Callers must check `enabled` first (returns 1.0 when disabled).
     #[inline]
     #[must_use]
     pub fn coverage_at(&self, x: u32, y: u32) -> f32 {
@@ -309,28 +270,36 @@ impl LayerMask {
     }
 }
 
-/// Calque pixels : image SOURCE non destructive + sous-calques de filtres.
+/// Pixel layer: non-destructive SOURCE image + filter sub-layers.
 ///
-/// L'image source ne change que lors d'événements explicites (peinture,
-/// import, édition destructive volontaire) ; tout le reste vit dans les
-/// filtres ou la transformation.
+/// The source image only changes on explicit events (paint, import,
+/// voluntary destructive edits); everything else lives in filters
+/// or the transform.
+///
+/// `children` are Affinity-style nested layers: composited ABOVE
+/// the parent then restricted to its alpha (clipping-mask
+/// `Alpha_enfant × Alpha_parent`). Same space as the carrier
+/// (no inherited transform, like masks).
 #[derive(Clone, Debug)]
 pub struct PixelLayer {
     pub id: Uuid,
     pub name: String,
     pub source_image: Arc<DynamicImage>,
-    /// Sous-calques de filtres non destructifs (façon Affinity — ordre =
-    /// ordre d'application, index 0 = premier).
+    /// Non-destructive filter sub-layers (Affinity-style — order =
+    /// application order, index 0 = first).
     pub filter_layers: Vec<FilterLayer>,
+    /// Clipped children (nesting): same space, bottom → top order like
+    /// the root (index 0 = below).
+    pub children: Vec<LayerNode>,
     pub transform: Transform2D,
     /// 0..=100
     pub opacity: f32,
     pub blend_mode: BlendMode,
     pub visible: bool,
-    /// Masques de couverture — fusionnés multiplicativement dans le compositing.
+    /// Coverage masks — merged multiplicatively in compositing.
     pub masks: Vec<LayerMask>,
-    /// Incrémenté à TOUTE mutation affectant l'apparence (source ou filtres).
-    /// Clé d'invalidation du cache d'apparence du document.
+    /// Incremented on EVERY mutation affecting appearance (source or filters).
+    /// Document appearance-cache invalidation key.
     pub appearance_version: u64,
 }
 
@@ -342,6 +311,7 @@ impl PixelLayer {
             name: name.into(),
             source_image: image,
             filter_layers: Vec::new(),
+            children: Vec::new(),
             transform: Transform2D::default(),
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
@@ -357,33 +327,39 @@ impl PixelLayer {
         self.source_image.dimensions()
     }
 
-    /// Bump la version d'apparence (à appeler après toute mutation pixels/filtres)
+    /// Bumps the appearance version (call after any pixel/filter mutation)
     pub fn touch(&mut self) {
         self.appearance_version = next_appearance_version();
     }
 
-    /// Remplace le contenu pixels (peinture, édition destructive…)
+    /// Replaces the pixel content (paint, destructive edits…)
     pub fn set_source_image(&mut self, image: DynamicImage) {
         self.source_image = Arc::new(image);
         self.touch();
     }
 }
 
-/// Groupe de calques : ses enfants composent entre eux d'abord, puis le
-/// résultat est fondu dans le parent avec l'opacité/mode DU GROUPE.
-/// Les transforms des enfants restent en coordonnées canvas (pas de
-/// transform héritée — comme Affinity).
+/// Layer group: its children composite together first, then the result
+/// is blended into the parent with the GROUP's opacity/mode. Child
+/// transforms stay in canvas coordinates (no inherited
+/// transform — like Affinity).
+///
+/// `filter_layers` are the group's nested filters: applied to the
+/// children composite AFTER composition, BEFORE the group masks
+/// (same order as a pixel layer's sub-layers).
 #[derive(Clone, Debug)]
 pub struct GroupLayer {
     pub id: Uuid,
     pub name: String,
     pub children: Vec<LayerNode>,
-    /// État d'affichage du panneau Calques (replié/déplié)
+    /// Group nested filters (application order, index 0 = first).
+    pub filter_layers: Vec<FilterLayer>,
+    /// Layers panel display state (collapsed/expanded)
     pub collapsed: bool,
     pub opacity: f32,
     pub blend_mode: BlendMode,
     pub visible: bool,
-    /// Masques de couverture du groupe — fusionnés multiplicativement.
+    /// Group coverage masks — merged multiplicatively.
     pub masks: Vec<LayerMask>,
 }
 
@@ -393,6 +369,7 @@ impl GroupLayer {
             id: Uuid::new_v4(),
             name: name.into(),
             children,
+            filter_layers: Vec::new(),
             collapsed: false,
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
@@ -402,16 +379,21 @@ impl GroupLayer {
     }
 }
 
-/// Calque d'ajustement : sa chaîne de filtres s'applique à la COMPOSITE
-/// accumulée en dessous de lui, dans la limite de son groupe.
+/// Adjustment layer: its filter chain applies to the COMPOSITE
+/// accumulated below it, within its group's bounds.
+///
+/// `masks` restrict the effect zone (coverage weighting, like layer
+/// masks) — Affinity-style.
 #[derive(Clone, Debug)]
 pub struct AdjustmentLayer {
     pub id: Uuid,
     pub name: String,
     pub filters: Vec<FilterNode>,
-    /// Pondération de l'ajustement (0 = invisible, 100 = plein)
+    /// Adjustment weight (0 = invisible, 100 = full)
     pub opacity: f32,
     pub visible: bool,
+    /// Coverage masks — restrict the effect zone.
+    pub masks: Vec<LayerMask>,
 }
 
 impl AdjustmentLayer {
@@ -422,14 +404,88 @@ impl AdjustmentLayer {
             filters,
             opacity: 100.0,
             visible: true,
+            masks: Vec::new(),
         }
     }
 }
 
-/// Nœud de l'arbre : calque pixels, groupe ou ajustement.
+/// Vector layer: resolution-independent paths (scene model),
+/// rasterized on demand for the CPU preview.
+///
+/// Like a pixel layer (own transform, blend, live-filter chain,
+/// masks, appearance version) but the source is curves, never
+/// pixels: zoom stays crisp, `to_legacy` round-trips through the
+/// unified [`crate::scene::Layer`]. No children in v1 (nesting
+/// arrives with groups-over-vectors).
+#[derive(Clone, Debug)]
+pub struct VectorLayer {
+    pub id: Uuid,
+    pub name: String,
+    /// Curve source (paths + flat fill).
+    pub vector: crate::scene::VectorLayer,
+    pub transform: Transform2D,
+    /// 0..=100
+    pub opacity: f32,
+    pub blend_mode: BlendMode,
+    pub visible: bool,
+    /// Live-filter sub-layers applied to the rasterized appearance
+    /// (same order as pixel/group chains).
+    pub filter_layers: Vec<FilterLayer>,
+    /// Canvas-space coverage masks (like groups, NOT source-space:
+    /// the raster is bounds-shifted per appearance).
+    pub masks: Vec<LayerMask>,
+    /// Bumped on every vector/filter mutation (appearance invalidation).
+    pub appearance_version: u64,
+}
+
+impl VectorLayer {
+    /// Create a vector layer from a scene payload.
+    pub fn new(name: impl Into<String>, vector: crate::scene::VectorLayer) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            vector,
+            transform: Transform2D::default(),
+            opacity: 100.0,
+            blend_mode: BlendMode::Normal,
+            visible: true,
+            filter_layers: Vec::new(),
+            masks: Vec::new(),
+            appearance_version: next_appearance_version(),
+        }
+    }
+
+    /// Raster bounds origin folded into a placement transform
+    /// (appearance image is bounds-shifted; user transform applies
+    /// on top, like pixels).
+    pub fn placement(&self) -> Option<Transform2D> {
+        let bounds = crate::vector_bounds(&self.vector)?;
+        let mut t = self.transform;
+        t.offset_x += bounds.x0.floor();
+        t.offset_y += bounds.y0.floor();
+        Some(t)
+    }
+
+    /// Appearance raster dimensions (bounds size, ≥1×1): overlay
+    /// geometry and hit-testing (`None` = empty vector).
+    pub fn raster_dims(&self) -> Option<(u32, u32)> {
+        let bounds = crate::vector_bounds(&self.vector)?;
+        let w = (bounds.x1.ceil() - bounds.x0.floor()).max(1.0) as u32;
+        let h = (bounds.y1.ceil() - bounds.y0.floor()).max(1.0) as u32;
+        Some((w, h))
+    }
+
+    /// Bumps the appearance version (call after any vector/filter mutation).
+    pub fn touch(&mut self) {
+        self.appearance_version = next_appearance_version();
+    }
+}
+
+/// Tree node: pixel, vector, group or adjustment layer.
 #[derive(Clone, Debug)]
 pub enum LayerNode {
     Pixel(PixelLayer),
+    Vector(VectorLayer),
     Group(GroupLayer),
     Adjustment(AdjustmentLayer),
 }
@@ -438,6 +494,7 @@ impl LayerNode {
     pub fn id(&self) -> Uuid {
         match self {
             LayerNode::Pixel(l) => l.id,
+            LayerNode::Vector(v) => v.id,
             LayerNode::Group(g) => g.id,
             LayerNode::Adjustment(a) => a.id,
         }
@@ -446,6 +503,7 @@ impl LayerNode {
     pub fn name(&self) -> &str {
         match self {
             LayerNode::Pixel(l) => &l.name,
+            LayerNode::Vector(v) => &v.name,
             LayerNode::Group(g) => &g.name,
             LayerNode::Adjustment(a) => &a.name,
         }
@@ -454,6 +512,7 @@ impl LayerNode {
     pub fn set_name(&mut self, name: String) {
         match self {
             LayerNode::Pixel(l) => l.name = name,
+            LayerNode::Vector(v) => v.name = name,
             LayerNode::Group(g) => g.name = name,
             LayerNode::Adjustment(a) => a.name = name,
         }
@@ -462,6 +521,7 @@ impl LayerNode {
     pub fn visible(&self) -> bool {
         match self {
             LayerNode::Pixel(l) => l.visible,
+            LayerNode::Vector(v) => v.visible,
             LayerNode::Group(g) => g.visible,
             LayerNode::Adjustment(a) => a.visible,
         }
@@ -470,6 +530,7 @@ impl LayerNode {
     pub fn set_visible(&mut self, visible: bool) {
         match self {
             LayerNode::Pixel(l) => l.visible = visible,
+            LayerNode::Vector(v) => v.visible = visible,
             LayerNode::Group(g) => g.visible = visible,
             LayerNode::Adjustment(a) => a.visible = visible,
         }
@@ -478,6 +539,7 @@ impl LayerNode {
     pub fn opacity(&self) -> f32 {
         match self {
             LayerNode::Pixel(l) => l.opacity,
+            LayerNode::Vector(v) => v.opacity,
             LayerNode::Group(g) => g.opacity,
             LayerNode::Adjustment(a) => a.opacity,
         }
@@ -487,15 +549,17 @@ impl LayerNode {
         let clamped = opacity.clamp(0.0, 100.0);
         match self {
             LayerNode::Pixel(l) => l.opacity = clamped,
+            LayerNode::Vector(v) => v.opacity = clamped,
             LayerNode::Group(g) => g.opacity = clamped,
             LayerNode::Adjustment(a) => a.opacity = clamped,
         }
     }
 
-    /// Mode de fusion — absent des calques d'ajustement.
+    /// Blend mode — absent from adjustment layers.
     pub fn blend_mode(&self) -> Option<BlendMode> {
         match self {
             LayerNode::Pixel(l) => Some(l.blend_mode),
+            LayerNode::Vector(v) => Some(v.blend_mode),
             LayerNode::Group(g) => Some(g.blend_mode),
             LayerNode::Adjustment(_) => None,
         }
@@ -504,16 +568,18 @@ impl LayerNode {
     pub fn set_blend_mode(&mut self, mode: BlendMode) {
         match self {
             LayerNode::Pixel(l) => l.blend_mode = mode,
+            LayerNode::Vector(v) => v.blend_mode = mode,
             LayerNode::Group(g) => g.blend_mode = mode,
             LayerNode::Adjustment(_) => {}
         }
     }
 
-    /// Chaîne de filtres d'un calque D'AJUSTEMENT (les pixels portent des
-    /// sous-calques [`FilterLayer`] — voir `PixelLayer::filter_layers`).
+    /// Filter chain of an ADJUSTMENT layer (pixels, vectors and groups
+    /// carry [`FilterLayer`] sub-layers — see `PixelLayer::filter_layers`).
     pub fn filters(&self) -> Option<&Vec<FilterNode>> {
         match self {
             LayerNode::Pixel(_) => None,
+            LayerNode::Vector(_) => None,
             LayerNode::Adjustment(a) => Some(&a.filters),
             LayerNode::Group(_) => None,
         }
@@ -522,29 +588,74 @@ impl LayerNode {
     pub fn filters_mut(&mut self) -> Option<&mut Vec<FilterNode>> {
         match self {
             LayerNode::Pixel(_) => None,
+            LayerNode::Vector(_) => None,
             LayerNode::Adjustment(a) => Some(&mut a.filters),
             LayerNode::Group(_) => None,
         }
     }
 
-    /// Tous les masques de couverture d'un calque pixels ou groupe.
+    /// All coverage masks of a pixel, vector, group or adjustment layer.
     pub fn masks(&self) -> &[LayerMask] {
         match self {
             LayerNode::Pixel(l) => &l.masks,
+            LayerNode::Vector(v) => &v.masks,
             LayerNode::Group(g) => &g.masks,
-            LayerNode::Adjustment(_) => &[],
+            LayerNode::Adjustment(a) => &a.masks,
         }
     }
 
     pub fn masks_mut(&mut self) -> Option<&mut Vec<LayerMask>> {
         match self {
             LayerNode::Pixel(l) => Some(&mut l.masks),
+            LayerNode::Vector(v) => Some(&mut v.masks),
             LayerNode::Group(g) => Some(&mut g.masks),
+            LayerNode::Adjustment(a) => Some(&mut a.masks),
+        }
+    }
+
+    /// Content children (nesting): pixel layers (clipped by the parent
+    /// alpha) and groups. Adjustments and vectors have no children
+    /// (`&[]` / `None`).
+    pub fn children(&self) -> &[LayerNode] {
+        match self {
+            LayerNode::Pixel(l) => &l.children,
+            LayerNode::Vector(_) => &[],
+            LayerNode::Group(g) => &g.children,
+            LayerNode::Adjustment(_) => &[],
+        }
+    }
+
+    pub fn children_mut(&mut self) -> Option<&mut Vec<LayerNode>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&mut l.children),
+            LayerNode::Vector(_) => None,
+            LayerNode::Group(g) => Some(&mut g.children),
             LayerNode::Adjustment(_) => None,
         }
     }
 
-    /// Masque identifié par son id, s'il existe.
+    /// Filter sub-layers ([`FilterLayer`]): pixel, vector and group
+    /// layers. Adjustments carry plain [`FilterNode`]s (see
+    /// [`Self::filters`]).
+    pub fn filter_layers(&self) -> Option<&Vec<FilterLayer>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&l.filter_layers),
+            LayerNode::Vector(v) => Some(&v.filter_layers),
+            LayerNode::Group(g) => Some(&g.filter_layers),
+            LayerNode::Adjustment(_) => None,
+        }
+    }
+
+    pub fn filter_layers_mut(&mut self) -> Option<&mut Vec<FilterLayer>> {
+        match self {
+            LayerNode::Pixel(l) => Some(&mut l.filter_layers),
+            LayerNode::Vector(v) => Some(&mut v.filter_layers),
+            LayerNode::Group(g) => Some(&mut g.filter_layers),
+            LayerNode::Adjustment(_) => None,
+        }
+    }
+
+    /// Mask identified by its id, if any.
     pub fn mask(&self, id: Uuid) -> Option<&LayerMask> {
         self.masks().iter().find(|m| m.id == id)
     }
@@ -553,8 +664,42 @@ impl LayerNode {
         self.masks_mut()?.iter_mut().find(|m| m.id == id)
     }
 
-    /// Réassigne des identifiants frais (duplication) et invalide l'apparence.
-    /// Les masques sont inclus : ils sont adressés par id (miniatures UI).
+    /// Shifts the layer transform by `(dx, dy)` document pixels (move tool).
+    /// Pixel and vector layers carry a transform; groups move
+    /// as a unit (children translated recursively, canvas-space
+    /// masks shifted); adjustments return `false` (no-op). Returns
+    /// `true` if the layer was moved.
+    pub fn translate_by(&mut self, dx: f32, dy: f32) -> bool {
+        match self {
+            LayerNode::Pixel(l) => {
+                l.transform.offset_x += dx;
+                l.transform.offset_y += dy;
+                l.touch();
+                true
+            }
+            LayerNode::Vector(v) => {
+                v.transform.offset_x += dx;
+                v.transform.offset_y += dy;
+                v.touch();
+                true
+            }
+            LayerNode::Group(g) => {
+                let mut moved = false;
+                for child in &mut g.children {
+                    moved |= child.translate_by(dx, dy);
+                }
+                for mask in &mut g.masks {
+                    mask.shift_by(dx, dy);
+                }
+                moved || !g.masks.is_empty()
+            }
+            LayerNode::Adjustment(_) => false,
+        }
+    }
+
+    /// Reassigns fresh ids (duplication) and invalidates appearance. Masks
+    /// are included: they are addressed by id (UI thumbnails). Recursive
+    /// over the whole nested hierarchy (children + filters).
     pub(crate) fn regenerate_ids(&mut self) {
         match self {
             LayerNode::Pixel(l) => {
@@ -568,10 +713,19 @@ impl LayerNode {
                 for m in &mut l.masks {
                     m.id = Uuid::new_v4();
                 }
+                for c in &mut l.children {
+                    c.regenerate_ids();
+                }
                 l.touch();
             }
             LayerNode::Group(g) => {
                 g.id = Uuid::new_v4();
+                for f in &mut g.filter_layers {
+                    f.id = Uuid::new_v4();
+                    for m in &mut f.masks {
+                        m.id = Uuid::new_v4();
+                    }
+                }
                 for m in &mut g.masks {
                     m.id = Uuid::new_v4();
                 }
@@ -579,10 +733,26 @@ impl LayerNode {
                     c.regenerate_ids();
                 }
             }
+            LayerNode::Vector(v) => {
+                v.id = Uuid::new_v4();
+                for f in &mut v.filter_layers {
+                    f.id = Uuid::new_v4();
+                    for m in &mut f.masks {
+                        m.id = Uuid::new_v4();
+                    }
+                }
+                for m in &mut v.masks {
+                    m.id = Uuid::new_v4();
+                }
+                v.touch();
+            }
             LayerNode::Adjustment(a) => {
                 a.id = Uuid::new_v4();
                 for f in &mut a.filters {
                     f.id = Uuid::new_v4();
+                }
+                for m in &mut a.masks {
+                    m.id = Uuid::new_v4();
                 }
             }
         }
@@ -590,16 +760,16 @@ impl LayerNode {
 }
 
 // ---------------------------------------------------------------------------
-// Document : racine de l'arbre + cache d'apparence
+// Document: tree root + appearance cache
 // ---------------------------------------------------------------------------
 
-/// Apparence dérivée d'un calque pixels (source × filtres actifs).
+/// Derived appearance of a pixel layer (source × active filters).
 #[derive(Clone)]
 pub struct Appearance {
-    /// Image pleine résolution (export, transforms)
+    /// Full-resolution image (export, transforms)
     pub image: Arc<DynamicImage>,
-    /// Buffer d'affichage interactif (downscalé au-delà de 2048 px)
+    /// Interactive display buffer (downscaled beyond 2048 px)
     pub preview: RgbaBuf,
-    /// Miniature 48×32 pour le panneau Calques
+    /// 48×32 thumbnail for the Layers panel
     pub thumb: RgbaBuf,
 }

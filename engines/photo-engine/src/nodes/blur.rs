@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Effet Flou gaussien (GPU compute + fallback CPU `image::blur`)
+//! Gaussian Blur effect (GPU compute + CPU `image::blur` fallback)
 
 use super::{Effect, NodeCtx};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("blur", "Flou", NodeCategory::Filter)
+    NodeDefinition::new("blur", "Blur", NodeCategory::Filter)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .output(SocketDef::new("image", "Image", SocketType::Image))
         .param("radius", ParamValue::Float(5.0))
         .param("type", ParamValue::Enum("Gaussian".into()))
         .header_color([0.20, 0.55, 0.75])
-        .description("Flou gaussien")
+        .description("Gaussian blur")
 }
 
 pub fn apply_effect(img: &DynamicImage, radius: f32) -> DynamicImage {

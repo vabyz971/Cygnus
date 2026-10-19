@@ -14,32 +14,46 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Export d'image vers les formats d'échange (PNG / JPEG).
+//! Image export to exchange formats (PNG / JPEG / WebP / TIFF).
 //!
-//! - PNG : transparence préservée (plan de travail infini inclus).
-//! - JPEG : ne gère pas l'alpha → aplatement automatique sur fond BLANC
-//!   (comportement des éditeurs pro), qualité réglable.
+//! - PNG: transparency preserved (infinite canvas included).
+//! - JPEG: no alpha support → automatic flattening on a WHITE background
+//!   (pro-editor behavior), adjustable quality.
+//! - WebP: lossless (the bundled encoder has no lossy mode), alpha kept.
+//! - TIFF: uncompressed RGBA, alpha kept.
+//!
+//! Encoding happens in memory then lands on disk in one write, so the
+//! same path serves [`estimate_export_size`].
 
+use std::io::Cursor;
 use std::path::Path;
 
 use image::{DynamicImage, ImageBuffer, Rgba};
 
-/// Qualité JPEG par défaut (échelle libturbo-jpeg 1..=100).
+/// Default JPEG quality (libturbo-jpeg scale 1..=100).
 pub const DEFAULT_JPEG_QUALITY: u8 = 90;
 
-/// Format d'export demandé.
+/// Pixel budget of the size-estimate sample: beyond it the image is
+/// downscaled before encoding and the byte count scaled back up.
+pub const ESTIMATE_MAX_PIXELS: u64 = 1_000_000;
+
+/// Requested export format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
-    /// Transparence préservée
+    /// Transparency preserved
     Png,
-    /// Alpha aplati sur fond blanc ; `quality` dans 1..=100
+    /// Alpha flattened on white; `quality` in 1..=100
     Jpeg { quality: u8 },
+    /// Lossless WebP, transparency preserved
+    WebP,
+    /// Uncompressed TIFF, transparency preserved
+    Tiff,
 }
 
 impl ExportFormat {
-    /// Déduit le format de l'extension du chemin (`.png`, `.jpg`, `.jpeg`),
-    /// insensible à la casse. Toute autre extension → PNG (valeur sûre :
-    /// sans perte, transparence conservée).
+    /// Deduces the format from the path extension (`.png`, `.jpg`,
+    /// `.jpeg`, `.webp`, `.tif`, `.tiff`), case-insensitive. Any other
+    /// extension → PNG (safe value: lossless, transparency kept).
     #[must_use]
     pub fn from_path(path: &Path) -> Self {
         let ext = path
@@ -50,19 +64,32 @@ impl ExportFormat {
             Some("jpg") | Some("jpeg") => Self::Jpeg {
                 quality: DEFAULT_JPEG_QUALITY,
             },
+            Some("webp") => Self::WebP,
+            Some("tif") | Some("tiff") => Self::Tiff,
             _ => Self::Png,
+        }
+    }
+
+    /// Same as [`Self::from_path`] with an explicit JPEG quality.
+    #[must_use]
+    pub fn from_path_with_quality(path: &Path, quality: u8) -> Self {
+        match Self::from_path(path) {
+            Self::Jpeg { .. } => Self::Jpeg {
+                quality: quality.clamp(1, 100),
+            },
+            other => other,
         }
     }
 }
 
-/// Le JPEG ignore l'alpha : on composite l'image sur un fond opaque BLANC
-/// (et non un simple décapage du canal alpha qui rendrait les zones
-/// transparentes noires ou arbitraires).
+/// JPEG ignores alpha: the image is composited over an opaque WHITE
+/// background (not a mere stripping of the alpha channel, which would
+/// render transparent zones black or arbitrary).
 #[must_use]
 pub fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
     let rgba = img.to_rgba8();
     if rgba.pixels().all(|p| p.0[3] == 255) {
-        return DynamicImage::ImageRgba8(rgba); // déjà opaque : zéro copie utile
+        return DynamicImage::ImageRgba8(rgba); // already opaque: no useful copy
     }
     let (w, h) = rgba.dimensions();
     let mut canvas: ImageBuffer<Rgba<u8>, Vec<u8>> =
@@ -71,28 +98,71 @@ pub fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgba8(canvas)
 }
 
-/// Écrit l'image sur disque au format demandé.
+/// Encodes the image in memory.
 ///
 /// # Errors
-/// Erreur d'encodage ou d'écriture disque — message descriptif en français.
-pub fn export_image(img: &DynamicImage, path: &Path, format: ExportFormat) -> Result<(), String> {
-    let mut file =
-        std::fs::File::create(path).map_err(|e| format!("Création de {}: {e}", path.display()))?;
+/// Encoder failure — technical message (English).
+pub fn encode_image(img: &DynamicImage, format: ExportFormat) -> Result<Vec<u8>, String> {
+    let mut out = Cursor::new(Vec::new());
     match format {
         ExportFormat::Png => img
-            .write_to(&mut file, image::ImageFormat::Png)
-            .map_err(|e| format!("Encodage PNG : {e}")),
+            .write_to(&mut out, image::ImageFormat::Png)
+            .map_err(|e| format!("PNG encoding: {e}"))?,
         ExportFormat::Jpeg { quality } => {
             let flattened = flatten_on_white(img);
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                &mut file,
-                quality.clamp(1, 100),
-            );
+            let encoder =
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
             flattened
                 .write_with_encoder(encoder)
-                .map_err(|e| format!("Encodage JPEG : {e}"))
+                .map_err(|e| format!("JPEG encoding: {e}"))?;
+        }
+        ExportFormat::WebP => {
+            let rgba = DynamicImage::ImageRgba8(img.to_rgba8());
+            let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut out);
+            rgba.write_with_encoder(encoder)
+                .map_err(|e| format!("WebP encoding: {e}"))?;
+        }
+        ExportFormat::Tiff => {
+            let rgba = DynamicImage::ImageRgba8(img.to_rgba8());
+            let encoder = image::codecs::tiff::TiffEncoder::new(&mut out);
+            rgba.write_with_encoder(encoder)
+                .map_err(|e| format!("TIFF encoding: {e}"))?;
         }
     }
+    Ok(out.into_inner())
+}
+
+/// Writes the image to disk in the requested format.
+///
+/// # Errors
+/// Encoding or disk-write error — technical message (English).
+pub fn export_image(img: &DynamicImage, path: &Path, format: ExportFormat) -> Result<(), String> {
+    let bytes = encode_image(img, format)?;
+    std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))
+}
+
+/// Estimated file size in bytes for `format`.
+///
+/// Images above [`ESTIMATE_MAX_PIXELS`] are downscaled first and the
+/// encoded size scaled by the area ratio: an order of magnitude for the
+/// export dialog, not an exact count (compression ratios shift a little
+/// with resolution).
+///
+/// # Errors
+/// Encoder failure (same messages as [`encode_image`]).
+pub fn estimate_export_size(img: &DynamicImage, format: ExportFormat) -> Result<u64, String> {
+    let (w, h) = (u64::from(img.width()), u64::from(img.height()));
+    let pixels = w * h;
+    if pixels <= ESTIMATE_MAX_PIXELS {
+        return encode_image(img, format).map(|b| b.len() as u64);
+    }
+    let scale = (ESTIMATE_MAX_PIXELS as f64 / pixels as f64).sqrt();
+    let sw = ((w as f64 * scale).round() as u32).max(1);
+    let sh = ((h as f64 * scale).round() as u32).max(1);
+    let sample = img.resize_exact(sw, sh, image::imageops::FilterType::Triangle);
+    let bytes = encode_image(&sample, format)?.len() as f64;
+    let ratio = pixels as f64 / (f64::from(sw) * f64::from(sh));
+    Ok((bytes * ratio).round() as u64)
 }
 
 #[cfg(test)]
@@ -100,7 +170,7 @@ mod tests {
     use super::*;
 
     fn sample_transparent() -> DynamicImage {
-        // Moitié gauche rouge opaque, moitié droite TRANSPARENTE
+        // Opaque red left half, TRANSPARENT right half
         let mut b = ImageBuffer::from_pixel(4, 2, Rgba([0, 0, 0, 0]));
         for y in 0..2 {
             for x in 0..2 {
@@ -140,9 +210,21 @@ mod tests {
                 quality: DEFAULT_JPEG_QUALITY
             }
         );
-        // Extension inconnue : PNG par défaut (sûr, sans perte)
         assert_eq!(
-            ExportFormat::from_path(Path::new("d.webp")),
+            ExportFormat::from_path(Path::new("d.WebP")),
+            ExportFormat::WebP
+        );
+        assert_eq!(
+            ExportFormat::from_path(Path::new("e.tif")),
+            ExportFormat::Tiff
+        );
+        assert_eq!(
+            ExportFormat::from_path(Path::new("e.TIFF")),
+            ExportFormat::Tiff
+        );
+        // Unknown extension: default PNG (safe, lossless)
+        assert_eq!(
+            ExportFormat::from_path(Path::new("d.bmp")),
             ExportFormat::Png
         );
         assert_eq!(
@@ -173,14 +255,14 @@ mod tests {
         let reloaded = image::open(&path).expect("relecture");
         std::fs::remove_file(&path).ok();
 
-        // Zone transparente → blanc pur (tolérance compression)
+        // Transparent zone → pure white (compression tolerance)
         let rgb = reloaded.to_rgb8();
         let bg = rgb.get_pixel(3, 0);
         assert!(
             i16::from(bg[0]) >= 252 && i16::from(bg[1]) >= 252 && i16::from(bg[2]) >= 252,
             "fond attendu blanc, obtenu {bg:?}"
         );
-        // Zone opaque rouge → reste dominée par le rouge
+        // Opaque red zone → stays red-dominated
         let fg = rgb.get_pixel(0, 0);
         assert!(
             fg[0] > 200 && fg[1] < 80 && fg[2] < 80,
@@ -192,8 +274,75 @@ mod tests {
     fn image_deja_opaque_n_est_pas_recopiee_par_flatten() {
         let opaque =
             DynamicImage::ImageRgba8(ImageBuffer::from_pixel(2, 2, Rgba([10, 20, 30, 255])));
-        // Même contenu pixel : le fast-path évite l'overlay inutile
+        // Same pixel content: the fast path skips the useless overlay
         let out = flatten_on_white(&opaque);
         assert_eq!(*out.to_rgba8(), *opaque.to_rgba8());
+    }
+
+    #[test]
+    fn quality_only_applies_to_jpeg() {
+        assert_eq!(
+            ExportFormat::from_path_with_quality(Path::new("a.jpg"), 0),
+            ExportFormat::Jpeg { quality: 1 }
+        );
+        assert_eq!(
+            ExportFormat::from_path_with_quality(Path::new("a.webp"), 50),
+            ExportFormat::WebP
+        );
+    }
+
+    #[test]
+    fn webp_and_tiff_keep_pixels_and_alpha() {
+        let img = sample_transparent();
+        for (format, ext) in [(ExportFormat::WebP, "webp"), (ExportFormat::Tiff, "tiff")] {
+            let path = temp_path(ext, ext);
+            export_image(&img, &path, format).expect("export");
+            let reloaded = image::open(&path).expect("relecture");
+            std::fs::remove_file(&path).ok();
+            // Lossless: exact round-trip, transparency included
+            assert_eq!(*reloaded.to_rgba8(), *img.to_rgba8(), "{ext}");
+        }
+    }
+
+    #[test]
+    fn estimate_matches_small_encodes_exactly() {
+        let img = sample_transparent();
+        for format in [
+            ExportFormat::Png,
+            ExportFormat::Jpeg { quality: 80 },
+            ExportFormat::WebP,
+            ExportFormat::Tiff,
+        ] {
+            let exact = encode_image(&img, format).expect("encode").len() as u64;
+            assert_eq!(estimate_export_size(&img, format), Ok(exact), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn estimate_of_large_tiff_is_close() {
+        // Uncompressed: size grows linearly with area, so the scaled
+        // estimate must land within a few percent of the real file.
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1500, 1000, Rgba([1, 2, 3, 255])));
+        let exact = encode_image(&img, ExportFormat::Tiff)
+            .expect("encode")
+            .len() as f64;
+        let estimate = estimate_export_size(&img, ExportFormat::Tiff).expect("estimate") as f64;
+        assert!(
+            (estimate - exact).abs() / exact < 0.05,
+            "{estimate} vs {exact}"
+        );
+    }
+
+    #[test]
+    fn jpeg_quality_shrinks_estimate() {
+        let mut b = ImageBuffer::new(64, 64);
+        for (x, y, p) in b.enumerate_pixels_mut() {
+            *p = Rgba([(x * 4) as u8, (y * 4) as u8, ((x ^ y) * 4) as u8, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(b);
+        let high = estimate_export_size(&img, ExportFormat::Jpeg { quality: 95 }).expect("hq");
+        let low = estimate_export_size(&img, ExportFormat::Jpeg { quality: 20 }).expect("lq");
+        assert!(low < high);
     }
 }

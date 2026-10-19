@@ -14,5 +14,4 @@ graph, not in these files: `graft callers <symbol>` is the only way to read them
 - [AGENTS](AGENTS.md) — AGENTS
 - [ARCHITECTURE](ARCHITECTURE.md) — ARCHITECTURE
 - [CONTRIBUTING](CONTRIBUTING.md) — CONTRIBUTING
-- [DESIGN](DESIGN.md) — CreativeSuiteOpen (Rust/Iced Edition)
 - [README](README.md) — README

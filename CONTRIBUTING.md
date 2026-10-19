@@ -17,7 +17,7 @@ Thank you for your interest in improving Cygnus! This document covers everything
 
 ## Development setup
 
-**Toolchain**: Rust **1.85+** (the project uses edition 2024).
+**Toolchain**: Rust **1.89+** (the project uses edition 2024).
 
 ### Linux — NixOS / Nix (official environment)
 
@@ -48,7 +48,8 @@ cargo run -p photo
 ## Project layout
 
 ```
-packages/     ui-kit, math-utils, file-utils, preferences # reusable libraries
+cygnus-ui/     cygnus-ui # design system (theme, components, viewport, dialogs)
+packages/     app-shell, math-utils, file-utils, preferences # reusable libraries
 core/         datatypes                         # shared foundation
 engines/      photo-engine, video-engine, audio-engine
 apps/         photo, video, audio                 # final applications
@@ -62,7 +63,7 @@ engines → core and non-UI packages
 packages ↛ engines or apps
 ```
 
-Crate names sometimes differ from folder names — use `-p` with the crate name (`photo-engine`, `datatypes`, `ui-kit`…).
+Crate names sometimes differ from folder names — use `-p` with the crate name (`photo-engine`, `datatypes`, `cygnus-ui`…).
 
 ---
 
@@ -71,11 +72,11 @@ Crate names sometimes differ from folder names — use `-p` with the crate name 
 These rules exist because they are what keeps the suite fast and maintainable. A review will ask you to change anything that violates them.
 
 1. **Business logic lives in `engines/*` and `core/*`.** An app = interface + orchestration only. No rendering logic in apps.
-2. **Engines are PURE.** No UI framework dependencies. `photo-engine` knows nothing about Iced; its buffers are plain data (`RgbaBuf`, `Arc<[u8]>`). Converting engine buffers into UI textures happens exclusively app-side.
+2. **Engines are PURE.** No UI framework dependencies. `photo-engine` knows nothing about egui/eframe; its buffers are plain data (`RgbaBuf`, `Arc<[u8]>`). Converting engine buffers into UI textures happens exclusively app-side.
 3. **State-only rendering model.** A setting change (opacity, transform, blend mode) must NEVER regenerate pixels or textures — it applies at draw time on the GPU. This invariant is what makes sliders feel instant. Preserve it at all costs.
-4. **Single UI-texture frontier.** Iced image handles derive from engine buffers in one place and are synchronized once per message. Do not create texture handles elsewhere.
-5. **The theme is the only source of colors/sizes.** Never hardcode a color outside `packages/ui-kit/src/theme.rs` — including inside canvas shaders. Use the tokens implemented there.
-6. **Canonical styles only.** Components reference `ui_kit::style::*`; a component never writes its own style closures.
+4. **Single UI-texture frontier.** Engine buffers are converted into `egui::TextureHandle`s in one place (app-side `ViewportTextureCache`) and synchronized once per frame. Do not create texture handles elsewhere.
+5. **The theme is the only source of colors/sizes.** Never hardcode a color outside `cygnus-ui/src/theme.rs` — including inside canvas shaders. Use the tokens implemented there.
+6. **Canonical styles only.** Components reference `cygnus_ui::style::*`; a component never writes its own style closures.
 7. **History contract.**
    - Snapshots for destructive/structural operations (paint, crop, add/remove/reorder).
    - Lightweight commands for micro-editions (opacity, transforms, filter params), coalesced over an 800 ms window.

@@ -14,13 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Moteur interne des live filters : la chaîne de sous-calques d'un calque
-//! pixels est évaluée séquentiellement — chaque effet reçoit l'image
-//! accumulée en dessous de lui, puis son résultat est composité avec ses
-//! attributs de calque (opacité, fusion, transform, masques), façon Affinity.
+//! Internal live-filter engine: a layer's sub-layer chain is evaluated
+//! sequentially — each effect receives the image accumulated below it,
+//! then its result is composited with its layer attributes (opacity,
+//! blend, transform, masks), Affinity-style.
 //!
-//! Un type d'effet inconnu (projet d'une version plus récente, effet retiré)
-//! est transparent : l'image traverse telle quelle.
+//! An unknown effect type (newer-version project, removed effect) is
+//! transparent: the image passes through as is.
 
 use std::sync::Arc;
 
@@ -29,9 +29,9 @@ use image::DynamicImage;
 
 use crate::document::{FilterLayer, FilterNode};
 
-/// Crée un SOUS-CALQUE de filtre (attributs de calque neutres : opacité
-/// pleine, fusion normale, sans transform ni masque) avec les paramètres
-/// PAR DÉFAUT de sa définition. Retourne None si type_id inconnu.
+/// Creates a filter SUB-LAYER (neutral layer attributes: full opacity,
+/// normal blend, no transform or mask) with the definition's DEFAULT
+/// parameters. Returns None if type_id is unknown.
 #[must_use]
 pub fn new_filter_layer(type_id: &str) -> Option<FilterLayer> {
     let def = crate::registry::definition_for(type_id)?;
@@ -42,8 +42,8 @@ pub fn new_filter_layer(type_id: &str) -> Option<FilterLayer> {
     ))
 }
 
-/// Types d'effets éligibles en live filter / calque d'ajustement :
-/// uniquement les effets image → image mono-entrée (pas input/output/mix/layer).
+/// Effect types eligible as live filter / adjustment layer: only
+/// single-input image → image effects (no input/output/mix/layer).
 pub fn filterable_types() -> Vec<datatypes::NodeDefinition> {
     crate::registry::all_definitions()
         .into_iter()
@@ -61,9 +61,9 @@ pub fn filterable_types() -> Vec<datatypes::NodeDefinition> {
         .collect()
 }
 
-/// Pli SIMPLE sur des [`FilterNode`] bruts (sans attributs de calque) —
-/// réservé aux calques d'ajustement, dont l'opacité/fusion vivent au niveau
-/// du calque. Les pixels utilisent [`render_chain`] (sous-calques).
+/// PLAIN fold over raw [`FilterNode`]s (no layer attributes) — reserved
+/// for adjustment layers, whose opacity/blend live at the layer level.
+/// Pixels use [`render_chain`] (sub-layers).
 pub(crate) fn render_nodes(
     source: &Arc<DynamicImage>,
     filters: &[FilterNode],
@@ -89,13 +89,13 @@ pub(crate) fn render_nodes(
     Arc::new(current)
 }
 
-/// Applique la chaîne de sous-calques de filtres ACTIFS à `source`.
+/// Applies the ACTIVE filter sub-layer chain to `source`. Empty chain
 ///
-/// - Chaîne vide ou tout désactivé → retourne `source` tel quel (zéro coût).
-/// - Sinon : pli séquentiel — chaque effet reçoit l'accumulé, son résultat
-///   est composité avec ses attributs de calque
-///   ([`crate::document::compositing::composite_filter_layer`]).
-/// - Effet inconnu → dégradation gracieuse : l'entrée traverse telle quelle.
+/// or all disabled → returns `source` as is (zero cost). Sequential
+/// fold — each effect receives the accumulation, its result is
+/// composited with its layer attributes
+/// ([`crate::document::compositing::composite_filter_layer`]).
+/// Unknown effect → graceful degradation: input passes through as is.
 pub fn render_chain(source: &Arc<DynamicImage>, layers: &[FilterLayer]) -> Arc<DynamicImage> {
     if !layers.iter().any(|f| f.enabled) {
         return Arc::clone(source);
@@ -104,7 +104,7 @@ pub fn render_chain(source: &Arc<DynamicImage>, layers: &[FilterLayer]) -> Arc<D
     let mut current: DynamicImage = (**source).clone();
     for f in layers.iter().filter(|f| f.enabled) {
         let Some(effect) = crate::nodes::find(&f.type_id) else {
-            continue; // effet inconnu : propage tel quel (comportement conservé)
+            continue; // unknown effect: forward as is (kept behavior)
         };
         let ctx = crate::nodes::NodeCtx {
             params: &f.params,
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn chaine_vide_renvoie_la_source_partagee() {
         let src = grey(10);
-        // Arc identique : zéro recopie
+        // Identical Arc: zero copy
         let out = render_chain(&src, &[]);
         assert!(Arc::ptr_eq(&src, &out));
     }
@@ -171,9 +171,9 @@ mod tests {
         let out = render_chain(&src, &[f]);
         let rgba = out.to_rgba8();
         let p = rgba.get_pixel(0, 0);
-        // 100 + 50*2.55 = 227 (CPU path : image trop petite pour le GPU)
+        // 100 + 50*2.55 = 227 (CPU path: image too small for the GPU)
         assert!((p[0] as i16 - 227).abs() <= 2);
-        // Les paramètres par défaut de la définition sont bien repartis
+        // The definition's default parameters are properly propagated
         assert_eq!(
             contrast_default,
             Some(ParamValue::Float(0.0)),
@@ -189,7 +189,7 @@ mod tests {
         f2.params
             .insert("saturation".into(), ParamValue::Float(1.5));
         let out = render_chain(&src, &[f1, f2]);
-        // Gris saturé reste gris ; la luminosité a bien été appliquée avant
+        // Saturated gray stays gray; brightness was applied before
         let rgba = out.to_rgba8();
         let p = rgba.get_pixel(0, 0);
         let expected = 100.0 + 40.0 * 2.55;
@@ -208,21 +208,21 @@ mod tests {
 
     #[test]
     fn opacite_sous_calque_mixe_lineairement() {
-        // Façon Affinity : le résultat filtré est pondéré sur l'accumulé.
+        // Affinity-style: the filtered result is weighted over the accumulation.
         let src = grey(100);
-        let mut f = lum(40.0); // plein = 202
+        let mut f = lum(40.0); // full = 202
         f.opacity = 50.0;
         let out = render_chain(&src, &[f]);
         let rgba = out.to_rgba8();
         let p = rgba.get_pixel(0, 0);
-        // mix 100 ↔ 202 à 50 % ≈ 151
+        // mix 100 ↔ 202 at 50% ≈ 151
         assert!((p[0] as f32 - 151.0).abs() <= 3.0);
     }
 
     #[test]
     fn fusion_sous_calque_multiply() {
         let src = grey(100);
-        let mut f = lum(40.0); // filtré = 202
+        let mut f = lum(40.0); // filtered = 202
         f.blend_mode = crate::document::BlendMode::Multiply;
         let out = render_chain(&src, &[f]);
         let rgba = out.to_rgba8();

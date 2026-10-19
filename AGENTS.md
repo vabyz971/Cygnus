@@ -3,60 +3,73 @@ covers: []
 ---
 # AGENTS.md
 
-Suite créative Rust : workspace Cargo, apps **Iced 0.14 + wgpu**, licence GPL-3.0. Docs : `README.md` (architecture, roadmap), `ARCHITECTURE.md` (règles de dépendances), `DESIGN.md` (tokens thème).
+Rust creative suite: Cargo workspace, **egui 0.36 (eframe) + wgpu 30** apps, GPL-3.0 license. Docs: `README.md` (architecture, roadmap), `ARCHITECTURE.md` (dependency rules).
 
-## Environnement
-- Édition Rust 2024 → toolchain **1.85+** obligatoire.
-- Linux : entrer dans `nix develop` (ou direnv via `.envrc`) — fournit cargo/clippy/rustfmt + Vulkan/Wayland avec `LD_LIBRARY_PATH` déjà réglé.
-- Sans Nix : installer `pkg-config vulkan-loader libxkbcommon wayland`.
+## Environment
+- Rust 2024 edition → toolchain **1.89+** required.
+- Linux: enter `nix develop` (or direnv via `.envrc`) — provides cargo/clippy/rustfmt + Vulkan/Wayland with `LD_LIBRARY_PATH` already set.
+- Without Nix: install `pkg-config vulkan-loader libxkbcommon wayland`.
 
-## Commandes
-- App principale : `cargo run --release -p photo`. Autres apps (fondations) : `-p video`, `-p audio`.
-- Vérification avant commit : `cargo fmt --all` puis `cargo clippy --workspace`. La CI GitHub (`.github/workflows/ci.yml`) rejoue fmt+clippy+tests sur chaque PR.
-- Tests : `cargo test -p photo-engine` (compositing, historique, projet). Les tests « golden » de `document.rs` vérifient les modes de fusion pixel par pixel — ne pas les affaiblir pour faire passer un refactor.
+## Commands
+- Main app: `cargo run --release -p photo`. Other apps (foundations): `-p video`, `-p audio`.
+- Pre-commit check: `cargo fmt --all -- --check`, then `cargo clippy --workspace --all-targets -- -D warnings`, then `cargo test --workspace`. The GitHub CI (`.github/workflows/ci.yml`) replays fmt+clippy+tests on every PR.
+- Targeted tests: `cargo test -p photo-engine` (compositing, history, project). The "golden" tests in `engines/photo-engine/src/document/tests.rs` verify blend modes pixel by pixel — do not weaken them to make a refactor pass.
 
-## Packages du workspace
-Le nom de crate diffère parfois du dossier — utiliser `-p` avec le nom de crate :
-| Dossier | Crate |
+## Workspace packages
+The crate name sometimes differs from the folder — use `-p` with the crate name:
+| Folder | Crate |
 |---|---|
 | `apps/photo` / `apps/video` / `apps/audio` | `photo` / `video` / `audio` (entrypoint `src/main.rs`) |
-| `core/core` | `suite-core` (graphe nodal générique) |
-| `core/datatypes` | `datatypes` (nœuds, sockets, Vec2 partagés) |
-| `engines/photo-engine` | `photo-engine` (document, compositing CPU/GPU, historique, projet) |
-| `engines/audio-engine` / `engines/video-engine` | `audio-engine` / `video-engine` (fondations, purs) |
-| `packages/ui-kit` | `ui-kit` (lib `ui_kit`, widgets iced réutilisables) |
-| `packages/math-utils` | `math-utils` (Vec3, Matrix4, Bézier ; Vec2 canonique = datatypes) |
-| `packages/file-utils` | `file-utils` (erreurs fichiers, drag & drop, dialogues) |
+| `core/datatypes` | `datatypes` (nodes, sockets, Vec2/Rect, shared BlendMode, RgbaBuf) |
+| `core/scene` | `scene` (semantic Scene Graph: hierarchy, derived world, revisions) |
+| `core/ids` | `ids` (stable `EntityId` + shared monotonic `Revision`) |
+| `core/graph` | `graph` (generic dependencies: dirty propagation, topo — pure CPU) |
+| `core/render-graph` | `render-graph` (scene-derived operations: partial build/sync, abstract backend — no wgpu or UI) |
+| `core/tiles` | `tiles` (spatial invalidation: grid, dirty bitset, CPU/GPU cache, progressive scheduler — pure CPU) |
+| `core/engine-runtime` | `engine-runtime` (generic engine worker: snapshot undo/redo with gesture coalescing, latest-value-wins batch folding, background thread loop + UI wake — no domain, UI or GPU) |
+| `engines/photo-engine` | `photo-engine` (document, CPU/GPU compositing, history, project, `snapshot` (layer-tree data for the UI), `session` (the editing worker: commands, rendering, thumbnails, on `engine-runtime`); `BlendMode`/`RgbaBuf` re-exported from `datatypes`) |
+| `engines/gpu-compositor` | `gpu-compositor` (domain-free wgpu compute compositor: layers = texture + affine + opacity + blend mode, CPU-identical blend math, premultiplied mip-mapped output for egui; runs on the caller's device) |
+| `engines/vector-engine` | `vector-engine` (paths, shapes, styles, booleans + `VectorBackend` trait — no wgpu) |
+| `engines/layout-engine` | `layout-engine` (frames, constraints, algorithm + `apply_to_scene` — no wgpu/egui) |
+| `engines/text-engine` | `text-engine` (model → layout → glyph runs; measurement for layout) |
+| `engines/video-engine` | `video-engine` (clips, timeline, transitions, decoder trait; legacy nodal registry kept) |
+| `engines/audio-engine` | `audio-engine` (timeline + DSP graph on `graph`, DSP backend; outside Scene; legacy registry kept) |
+| `cygnus-ui` | `cygnus-ui` (lib `cygnus_ui`, egui design system: theme, components, containers, viewport, dialogs) |
+| `cygnus-i18n` | `cygnus-i18n` (lib `cygnus_i18n`, shared translations: generic `TextKey` + `Catalog`/`Language`, no per-app duplicates; all catalogs (generic + photo/video/audio domains) live here, apps hold no tables) |
+| `packages/app-shell` | `app-shell` (lib `app_shell`, app skeleton: `ActionQueue`, generic dock on `DockTab`) |
+| `packages/math-utils` | `math-utils` (affine transform `Transform2D`; canonical Vec2 = datatypes) |
+| `packages/file-utils` | `file-utils` (file errors, drag & drop, dialogs) |
+| `packages/preferences` | `preferences` (persistent preferences, hardware, shortcuts) |
 
-Dépendances autorisées : `packages/*` ← `core/*` ← `engines/*` ← `apps/*`. Les packages ne dépendent jamais des engines ni des apps ; pas de dépendances entre apps.
+Allowed dependencies: `packages/*` + `cygnus-i18n` ← `cygnus-ui` + `core/*` ← `engines/*` ← `apps/*`. Packages, cygnus-ui and cygnus-i18n never depend on engines or apps; cygnus-ui may depend on cygnus-i18n (never the reverse); no dependencies between apps.
 
-## Règles d'architecture (strictes)
-- Logique métier → `engines/*` et `core/*` ; widgets → `packages/ui-kit` ; apps = interface + orchestration uniquement. Pas de logique de rendu dans les apps.
-- **Les moteurs sont PURS : aucune dépendance UI.** `photo-engine` ne connaît ni iced ni ses types ; le modèle document (`Layer`) porte des buffers purs (`RgbaBuf`, `Arc<[u8]>`). Toute conversion vers une texture UI se fait côté app via l'adaptateur `apps/photo/src/ui_handles.rs`.
-- Frontière moteur→UI : `PreviewCache` dérive les handles iced des `RgbaBuf` par identité d'Arc (zéro copie via `Bytes::from_owner`). Synchronisé à CHAQUE message au début de `update()` — point unique, ne pas créer de handles ailleurs sous peine de casser le cache de textures GPU de iced.
-- Modèle de rendu **« state-only »** : un réglage (opacité, position…) ne régénère jamais les pixels/textures ; il s'applique au draw GPU. Préserver ce modèle à tout prix.
-- Rendu hybride : chemin rapide = 1 texture GPU par calque dessinée indépendamment ; fallback CPU rayon uniquement pour les modes de fusion nécessitant un vrai blending inter-calques.
+## Architecture rules (strict)
+- Business logic → `engines/*` and `core/*`; widgets → `cygnus-ui`; apps = interface + orchestration only. No rendering logic in apps.
+- **Engines are PURE: no UI dependency.** `photo-engine` knows neither egui nor its types; the document model carries pure buffers (`RgbaBuf`, `Arc<[u8]>`). The app sends commands via `mpsc` to the worker owning the `Document` (`photo_engine::session`, generic loop/history in `core/engine-runtime`), and receives snapshots + composite preview; the texture is uploaded app-side (`ViewportTextureCache`). Non-blocking egui loop (`try_recv` per frame).
+- Engine→UI boundary: the worker replies `LayersChanged { layers, preview, can_undo, can_redo }`; the app converts the preview into an `egui::ColorImage` and feeds its `TextureHandle` (zero regeneration on zoom/pan — state-only).
+- **"state-only"** rendering model: a setting (opacity, position…) never regenerates pixels/textures; it applies at GPU draw. Preserve this model at all costs.
+- Rendering: the worker composites on eframe's wgpu device (`AttachGpu` → `photo_engine::gpu_view` → `gpu-compositor`) and the canvas shows the full-resolution, mip-mapped frame through `register_native_texture` (zero-copy, `apps/photo/src/ui/gpu_display.rs`). The capped CPU preview is still produced (histogram, eyedropper) and is the display fallback for what the GPU path does not cover yet (neighborhood effects like blur in adjustment layers, group live filters, clipped children, vector masks). Groups (masks included) and point-wise adjustment layers (levels, curves, brightness/contrast, saturation, HSL; masks included) render on the GPU. Exports always use the exact CPU composite.
 
-## Historique & persistance
-- Undo/redo : snapshots complets du document (`engines/photo-engine/src/history.rs`) quasi gratuits grâce aux `Arc<DynamicImage>` partagés. Les gestes continus (sliders, renommage, drag) passent par `push_coalesced` — toujours pousser le snapshot PRÉ-mutation, jamais après.
-- Format projet `.cygp` (`engines/photo-engine/src/project.rs`) : JSON versionné, calques en PNG+base64. Toute évolution incompatible du modèle → incrémenter `FORMAT_VERSION` et gérer le refus proprement.
+## History & persistence
+- Undo/redo: full document snapshots (`engines/photo-engine/src/history.rs`) almost free thanks to shared `Arc<DynamicImage>`. Continuous gestures (sliders, rename, drag) go through `push_coalesced` — always push the PRE-mutation snapshot, never after.
+- `.cygp` project format (`engines/photo-engine/src/project.rs`): versioned JSON, layers as PNG+base64. Any incompatible model change → bump `FORMAT_VERSION` and handle rejection cleanly.
 
-## Structure de l'app photo
-Découpée par rôle (même schéma pour les futures apps) :
-`message.rs` (enum Message + types partagés) · `state.rs` (PhotoApp + helpers) · `update.rs` (un handler par message) · `view.rs` (rendu + abonnements) · `menus.rs` · `ui_handles.rs`. Ne pas regrossir vers un main.rs monolithique.
+## Photo app structure
+Split by role (same pattern for future apps):
+`main.rs` (eframe boot) · `app.rs` (PhotoApp + channels + `impl eframe::App`) · `layout.rs` (app-specific layout) · `ui/` (domain widgets: `layers/`, `canvas.rs`, `toolbar.rs`, `properties.rs`; `engine_bridge` only re-exports `photo_engine::session`). Do not let it regrow into a monolithic main.rs.
 
-## Architecture de `packages/ui-kit` (en couches, voir lib.rs)
-1. **`theme`** = SEULE source des couleurs/tailles/rayons/ombres (tokens DESIGN.md : `colors`, `type_scale`, `metrics`, `spacing`, `shadows`).
-2. **`style`** = styles canoniques par famille visuelle (`ghost`, `ghost_selected`, `menu_item`, `primary`, `chip`, `action_chip*`, `floating_card`, `inset_card`). Un composant n'écrit JAMAIS sa closure de style : il référence `ui_kit::style::*`.
-3. **Primitives transverses** (`icon_button`, `spinner`, `dropdown`, `settings`, `shortcuts`) → 4. **Layouts** (`shell`, `menu`, `base_panel`) → 5. **Canvas domaine** (`image_canvas`, `layer_canvas`, `timeline`, `piano_roll`).
-- Les éléments spécifiques à une app restent dans `apps/<app>/src/components/`. Promotion vers `packages/ui-kit` seulement quand une 2e app en a besoin.
-- **Interdit de coder une couleur en dur hors `theme.rs`** — y compris dans les canvas (la sélection utilise `SELECTION_*`, les nœuds `NODE_*`). Tailles de texte : passer par `type_scale`.
+## `cygnus-ui` architecture (layered, see lib.rs)
+1. **`theme`** = ONLY source of colors/sizes/radii (tokens `colors`, `spacing`, `radius`, `typography`).
+2. **`components`** = generic components (`Button`, `Slider`, `Select`, `Tabs`, inputs, `Toggle`, `IconButton`, `icon_button`/`Icon` — only contact with `egui_material_icons` via `icons::glyph` — `ReorderableList`). A component NEVER hardcodes a color/size: it references the tokens.
+3. **Containers** (`containers`: `Panel`, `Split` + `SplitState`, `Collapsible`, `Toolbar`, `Section`, `Card`, `Stack`) → 4. **Generic viewport** (texture display + zoom/pan, canonical `ViewportState`) → 5. **`dialogs`** (modal, file picker, progress) → 6. **`utils`** (generic drag state).
+- App-specific elements stay in `apps/<app>/src/ui/`. Promote to `cygnus-ui` only when a 2nd app needs it (and never domain types: cygnus-ui stays domain-agnostic, verified by `scripts/check_uikit_domain_agnostic.sh`).
+- **No hardcoded colors outside `theme/`** — including canvases (selection uses `item_selected`, indicators `drop_indicator`). Text sizes: go through `typography`.
 
 ## Conventions
-- `unwrap()`/`expect()` interdits hors tests ; pas d'emoji dans le code ni les commits.
-- Commits courts et préfixés par l'app : `photo: fix blend-mode offset jump`.
-- Chaque fichier `.rs` commence par l'en-tête GPL v3 (copier celui de `apps/photo/src/main.rs`).
-- Thème : palette/tokens définis dans `DESIGN.md`, implémentés dans `packages/ui-kit/src/theme.rs` ; police Hanken Grotesk et icônes Material chargées depuis `assets/fonts/`.
+- `unwrap()`/`expect()` forbidden outside tests; no emoji in code or commits.
+- Short commits prefixed by the app: `photo: fix blend-mode offset jump`.
+- Each `.rs` file starts with the GPL v3 header (copy the one from `apps/photo/src/main.rs`).
+- Theme: palette/tokens implemented in `cygnus-ui/src/theme/`; Hanken Grotesk font and Material icons loaded from `assets/fonts/`.
 
 <!-- graft:start -->
 ## Graft — repo context graph
@@ -97,5 +110,6 @@ needed detail, and then at the exact file:line the node points to — never
 re-read whole files.
 
 After big code changes, refresh the graph with `graft build` (deterministic,
-no API key, $0).
+no API key, $0). The graph is a derived index: it may lag the source tree, so
+the code and `Cargo.toml` remain the source of truth.
 <!-- graft:end -->

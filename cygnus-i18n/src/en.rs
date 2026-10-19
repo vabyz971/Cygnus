@@ -1,0 +1,66 @@
+// Cygnus — Suite créative professionnelle open source
+// Copyright (C) 2026 vabyz971
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! English table (fallback language).
+//!
+//! One entry per [`TextKey`](super::key::TextKey), in enum order:
+//! the exhaustive `match` breaks when a key is added until it is
+//! translated here (and in French, see [`super::fr`]).
+
+use super::key::TextKey;
+
+/// Translates `key` into English.
+pub fn translate(key: TextKey) -> &'static str {
+    match key {
+        TextKey::Save => "Save",
+        TextKey::Open => "Open",
+        TextKey::Cancel => "Cancel",
+        TextKey::Close => "Close",
+        TextKey::Undo => "Undo",
+        TextKey::Redo => "Redo",
+        TextKey::Delete => "Delete",
+        TextKey::Rename => "Rename",
+        TextKey::Show => "Show",
+        TextKey::Hide => "Hide",
+        TextKey::Add => "Add",
+        TextKey::Create => "Create",
+        TextKey::Validate => "Validate",
+        TextKey::Duplicate => "Duplicate",
+        TextKey::NewDocument => "New document",
+        TextKey::Export => "Export",
+        TextKey::Layer => "Layer",
+        TextKey::Layers => "Layers",
+        TextKey::Settings => "Settings",
+        TextKey::Quit => "Quit",
+        TextKey::Copy => "Copy",
+        TextKey::Paste => "Paste",
+        TextKey::Tools => "Tools",
+        TextKey::Inspector => "Inspector",
+        TextKey::Navigator => "Navigator",
+        TextKey::History => "History",
+        TextKey::Histogram => "Histogram",
+        TextKey::Timeline => "Timeline",
+        TextKey::File => "File",
+        TextKey::Edit => "Edit",
+        TextKey::View => "View",
+        TextKey::Help => "Help",
+        TextKey::ZoomIn => "Zoom in",
+        TextKey::ZoomOut => "Zoom out",
+        TextKey::Grid => "Grid",
+        TextKey::Canvas => "Canvas",
+        TextKey::Window => "Window",
+    }
+}

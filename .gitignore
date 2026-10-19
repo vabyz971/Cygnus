@@ -23,6 +23,7 @@ Cargo.lock
 **/*.so
 **/*.a
 **/*.out
+**/.direnv/
 
 # Logs and temp files
 **/*.log
@@ -33,7 +34,8 @@ Cargo.lock
 **/.env
 **/.env.local
 **/*.env.*
-graft/
+**/graft/
+**/graft/*
 
 # Editors
 **/.vscode/
@@ -48,3 +50,6 @@ graft/
 **/.DS_Store
 **/Thumbs.db
 ```
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

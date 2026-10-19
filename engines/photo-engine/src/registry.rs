@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Registre des nodes Photo — délègue aux effets du dossier `nodes/`.
-//! Ajouter un effet : créer `nodes/mon_effet.rs` puis l'ajouter à `nodes::all()`.
+//! Photo node registry — delegates to the `nodes/` folder effects. Add an
+//! effect: create `nodes/my_effect.rs` then add it to `nodes::all()`.
 
 use crate::nodes;
 use datatypes::NodeDefinition;

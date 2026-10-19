@@ -1,0 +1,16 @@
+[package]
+name = "cygnus-i18n"
+version = "0.1.0"
+authors = ["vabyz971 <vabyz971@gmail.com>"]
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "cygnus_i18n"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true

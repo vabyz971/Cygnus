@@ -1,0 +1,20 @@
+---
+name: Feature request
+description: Proposer une fonctionnalité ou une amélioration ciblée
+title: "[FEATURE] — "
+labels: ["enhancement"]
+assignees: []
+---
+
+**Problème à résoudre** : …
+
+**Comportement proposé** : …
+
+**Application concernée** : Photo / Video / Audio
+**Moteur/paquet concerné, si applicable** : …
+
+**Alternatives envisagées** : …
+
+---
+
+Avant de soumettre : merci de vérifier qu'il ne s'agit pas d'un doublon et de respecter les règles de `CONTRIBUTING.md` (pas de refonte architecturale implicite).

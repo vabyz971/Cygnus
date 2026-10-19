@@ -14,19 +14,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœuds d'effets Photo — un fichier par effet.
-//! Chaque effet expose :
-//!  - `definition()` : sa définition (sockets + params) pour le registre UI
-//!  - `apply(ctx)` : son évaluation image -> image dans une chaîne linéaire
-//!    (voir [`crate::filters`]).
+//! Photo effect nodes — one file per effect.
+//! Each effect exposes:
+//!  - `definition()`: its definition (sockets + params) for the UI registry
+//!  - `apply(ctx)`: its image -> image evaluation in a linear chain
+//!    (see [`crate::filters`]).
 //!
-//! Ajouter un nouvel effet = créer un fichier ici + l'enregistrer dans `all()`.
+//! Adding a new effect = create a file here + register it in `all()`.
 
 pub mod blur;
 pub mod brightness_contrast;
 pub mod color_correct;
+pub mod curves;
+pub mod hsl;
 pub mod input;
 pub mod layer;
+pub mod levels;
 pub mod mix;
 pub mod output;
 
@@ -35,26 +38,26 @@ use datatypes::{NodeDefinition, ParamValue};
 use image::DynamicImage;
 use std::collections::HashMap;
 
-/// Contexte passé à chaque effet lors de l'évaluation d'une chaîne linéaire
-/// de filtres : les paramètres du nœud courant + l'image produite par
-/// l'étape précédente. Aucune structure de graphe — `filters.rs` plie la
-/// chaîne séquentiellement.
+/// Context passed to each effect when evaluating a linear filter chain
+/// : the current node parameters + the image produced by
+/// the previous step. No graph structure — `filters.rs` folds the
+/// chain sequentially.
 pub struct NodeCtx<'a> {
-    /// Paramètres du nœud courant (ex. `{"brightness": Float(50.0)}`)
+    /// Current node parameters (e.g. `{"brightness": Float(50.0)}`)
     pub params: &'a HashMap<String, ParamValue>,
-    /// Image produite par l'étape précédente de la chaîne
+    /// Image produced by the previous chain step
     pub input_image: Option<&'a DynamicImage>,
-    /// Image source d'origine (fallback si pas d'entrée)
+    /// Original source image (fallback when there is no input)
     pub original: &'a DynamicImage,
 }
 
 impl NodeCtx<'_> {
-    /// Image arrivant de l'étape précédente de la chaîne
+    /// Image arriving from the previous chain step
     pub fn input(&self) -> Option<&DynamicImage> {
         self.input_image
     }
 
-    /// Valeur float d'un paramètre avec défaut
+    /// Float value of a parameter, with default
     pub fn param(&self, key: &str, default: f32) -> f32 {
         self.params
             .get(key)
@@ -63,13 +66,13 @@ impl NodeCtx<'_> {
     }
 }
 
-/// Un effet enregistré : définition UI + fonction d'évaluation
+/// A registered effect: UI definition + evaluation function
 pub struct Effect {
     pub definition: NodeDefinition,
     pub apply: fn(&NodeCtx) -> Option<DynamicImage>,
 }
 
-/// Tous les effets du moteur — point d'entrée unique pour registre et processeur.
+/// All engine effects — single entry point for registry and processor.
 pub fn all() -> Vec<Effect> {
     vec![
         input::effect(),
@@ -79,19 +82,22 @@ pub fn all() -> Vec<Effect> {
         mix::effect(),
         layer::effect(),
         color_correct::effect(),
+        levels::effect(),
+        curves::effect(),
+        hsl::effect(),
     ]
 }
 
-/// Retrouve un effet par type_id
+/// Finds an effect by type_id
 pub fn find(type_id: &str) -> Option<Effect> {
     all().into_iter().find(|e| e.definition.type_id == type_id)
 }
 
 // ---------------------------------------------------------------------------
-// Helpers partagés par les effets CPU/GPU
+// Helpers shared by CPU/GPU effects
 // ---------------------------------------------------------------------------
 
-/// Convertit une DynamicImage en RGBA8 brut
+/// Converts a DynamicImage to raw RGBA8
 pub fn to_rgba8(img: &DynamicImage) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
     img.to_rgba8()
 }

@@ -14,65 +14,65 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Historique document HYBRIDE (undo/redo) — indépendant de l'UI.
+//! HYBRID document history (undo/redo) — UI-independent. Two entry
 //!
-//! Deux types d'entrées selon la nature de l'édition :
-//! - [`HistoryEntry::Snapshot`] — opérations destructives/structurelles
-//!   (peinture, flip, crop, ajout/suppression/réordonnancement de calques,
-//!   ouverture projet). Un snapshot est quasi gratuit pour les PIXELS
-//!   (partagés via `Arc`), mais clone la structure d'arbre.
-//! - [`HistoryEntry::Command`] — micro-éditions de paramètres (opacité,
-//!   transform, fusion, visibilité, renommage, paramètre de filtre).
-//!   Quelques octets par entrée : ZÉRO clonage d'arbre, et le retour
-//!   [`UndoAction`] permet une invalidation rendu CIBLÉE.
+//! kinds depending on the edit nature:
+//! - [`HistoryEntry::Snapshot`] — destructive/structural ops (paint,
+//!   flip, crop, layer add/remove/reorder, project open). Snapshots are
+//!   nearly free for PIXELS (shared via `Arc`) but clone the tree
+//!   structure.
+//! - [`HistoryEntry::Command`] — parameter micro-edits (opacity,
+//!   transform, blend, visibility, rename, filter parameter). A few bytes
+//!   per entry: ZERO tree cloning, and the returned [`UndoAction`]
+//!   allows TARGETED render invalidation.
 //!
-//! Coalescence temporelle (800 ms) conservée pour les gestes continus,
-//! côté commandes ET snapshots. Particularité commandes : la coalescence
-//! FUSIONNE les transitions (garde l'`old` du début du geste, met à jour
-//! le `new` final) afin que undo restaure le début du geste ET redo
-//! réapplique sa valeur FINALE.
+//! Time coalescing (800 ms) kept for continuous gestures, on both
+//! commands AND snapshots. Command twist: coalescing MERGES
+//! transitions (keeps the gesture start's `old`, updates the final
+//! `new`) so undo restores the gesture start AND redo reapplies
+//! its FINAL value.
 
 use std::time::{Duration, Instant};
 
 use crate::command::Command;
 use crate::document::{Document, LayerNode};
 
-/// État restaurable complet du document (arbre + dimensions).
+/// Fully restorable document state (tree + dimensions).
 #[derive(Clone)]
 pub struct Snapshot {
     pub doc_size: (u32, u32),
     pub root: Vec<LayerNode>,
 }
 
-/// Entrée d'historique hybride.
+/// Hybrid history entry.
 #[derive(Clone)]
 pub enum HistoryEntry {
-    /// Snapshot complet (opérations destructives / structurelles)
+    /// Full snapshot (destructive / structural ops)
     Snapshot(Snapshot),
-    /// Commande légère old→new (micro-éditions)
+    /// Lightweight old→new command (micro-edits)
     Command(Command),
 }
 
-/// Ce que l'app doit faire sur le rendu après un undo/redo :
-/// - [`UndoAction::FullRestore`] : re-rendre TOUT (structure changée)
-/// - [`UndoAction::Applied`] : la commande désormais en vigueur —
-///   `cmd.render_event()` distingue invalidation ciblée vs recomposite
+/// What the app must do to the render after an undo/redo:
+/// - [`UndoAction::FullRestore`]: re-render EVERYTHING (structure changed)
+/// - [`UndoAction::Applied`]: the now-effective command — `cmd.render_event()`
+///   tells targeted invalidation from recomposite
 #[derive(Debug)]
 pub enum UndoAction {
     FullRestore,
     Applied(Command),
 }
 
-/// Fenêtre de coalescence : deux poussées de même clé dans cette fenêtre ne
-/// créent qu'un seul point de restauration (celui du début du geste).
+/// Coalescing window: two same-key pushes within this window create a
+/// single restore point (the gesture start's).
 const COALESCE_WINDOW: Duration = Duration::from_millis(800);
 
 #[derive(Default)]
 pub struct History {
-    /// États historiques STRICTS (l'état courant n'y figure jamais),
-    /// du plus ancien au plus récent.
+    /// STRICT past states (the current state never appears there), oldest
+    /// to newest.
     undo: Vec<HistoryEntry>,
-    /// États futurs annulés (du plus récent au plus ancien).
+    /// Undone future states (newest to oldest).
     redo: Vec<HistoryEntry>,
     limit: usize,
     last_key: Option<(u64, Instant)>,
@@ -90,33 +90,33 @@ impl History {
         }
     }
 
-    /// Réinitialise l'historique (nouveau document, ouverture de projet) :
-    /// aucun retour arrière possible avant la prochaine poussée.
+    /// Resets history (new document, project open): no going back before
+    /// the next push.
     pub fn reset(&mut self) {
         self.undo.clear();
         self.redo.clear();
         self.last_key = None;
     }
 
-    // -- Poussées ------------------------------------------------------------
+    // -- Pushes ------------------------------------------------------------
 
-    /// Pousse un snapshot PRÉ-mutation (opérations destructives).
-    /// À appeler AVANT de modifier le document.
+    /// Pushes a PRE-mutation snapshot (destructive ops). Call BEFORE
+    /// modifying the document.
     pub fn push_snapshot(&mut self, pre: Snapshot) {
         self.push_inner(HistoryEntry::Snapshot(pre));
         self.last_key = None;
     }
 
-    /// Pousse une commande légère AVEC coalescence (gestes continus :
-    /// sliders, saisie de nom, réglage de filtre…).
+    /// Pushes a lightweight command WITH coalescing (continuous gestures:
+    /// sliders, name typing, filter settings…). The command must describe
     ///
-    /// La commande doit décrire la transition old→new COURANTE ; si la
-    /// même clé est repoussée dans la fenêtre, l'entrée existante est
-    /// FUSIONNÉE (`old` initial conservé, `new` rafraîchi) plutôt que
-    /// dupliquée — sinon le redo restaurerait une valeur intermédiaire.
+    /// the CURRENT old→new transition; if the same key is re-pushed within
+    /// the window, the existing entry is MERGED (initial `old` kept,
+    /// `new` refreshed) rather than duplicated — else redo would restore
+    /// an intermediate value. Applying to the document stays the caller's
     ///
-    /// L'application au document reste à la charge de l'appelant
-    /// ([`Document::apply_command`]), AVANT ou APRÈS cette poussée.
+    /// job ([`Document::apply_command`]),
+    /// BEFORE or AFTER this push.
     pub fn push_command(&mut self, key: u64, command: Command) {
         match self.last_key {
             Some((k, t)) if k == key && t.elapsed() < COALESCE_WINDOW => {
@@ -125,7 +125,7 @@ impl History {
                     _ => false,
                 };
                 if !merged {
-                    // Même clé mais édition incompatible : entrée distincte
+                    // Same key but incompatible edit: distinct entry
                     self.push_inner(HistoryEntry::Command(command));
                 }
                 self.last_key = Some((k, Instant::now()));
@@ -137,8 +137,8 @@ impl History {
         }
     }
 
-    /// Pousse une commande légère SANS coalescence (éditions discrètes :
-    /// bascule de visibilité, rotation ±90°, changement de mode…).
+    /// Pushes a lightweight command WITHOUT coalescing (discrete edits:
+    /// visibility toggle, ±90° rotation, mode change…).
     pub fn push_command_immediate(&mut self, command: Command) {
         self.push_inner(HistoryEntry::Command(command));
         self.last_key = None;
@@ -152,14 +152,14 @@ impl History {
         }
     }
 
-    // -- Annulation / rétablissement ------------------------------------------
+    // -- Undo / redo ------------------------------------------
 
-    /// Annule : applique l'INVERSE de la dernière commande au document
-    /// (ou restaure le snapshot précédent) et renvoie l'action de rendu.
+    /// Undoes: applies the last command's INVERSE to the document (or
+    /// restores the previous snapshot) and returns the render action.
     ///
-    /// Convention : les deux piles stockent des commandes FORWARD (la
-    /// transition qui mène vers le futur). Undo applique donc
-    /// [`Command::inverse`], redo réapplique telle quelle.
+    /// Convention: both stacks store FORWARD commands (the transition
+    /// toward the future). Undo therefore applies [`Command::inverse`],
+    /// redo reapplies as is.
     pub fn undo(&mut self, doc: &mut Document) -> Option<UndoAction> {
         match self.undo.pop()? {
             HistoryEntry::Snapshot(snapshot) => {
@@ -179,8 +179,8 @@ impl History {
         }
     }
 
-    /// Rétablit : réapplique la dernière commande annulée (ou restaure le
-    /// snapshot annulé) et pousse l'entrée sur la pile undo.
+    /// Redoes: reapplies the last undone command (or restores the undone
+    /// snapshot) and pushes the entry onto the undo stack.
     pub fn redo(&mut self, doc: &mut Document) -> Option<UndoAction> {
         match self.redo.pop()? {
             HistoryEntry::Snapshot(snapshot) => {
@@ -211,9 +211,9 @@ impl History {
         !self.redo.is_empty()
     }
 
-    /// Nombre d'entrées dans la pile UNDO (utile aux tests qui veulent
-    /// prouver l'ABSENCE d'entrée, là où `can_undo`/`can_redo` peuvent
-    /// déjà être `false` avant le test).
+    /// Number of entries in the UNDO stack (useful for tests proving the
+    /// ABSENCE of an entry, where `can_undo`/`can_redo` may already be
+    /// `false` before the test).
     #[must_use]
     pub fn undo_len(&self) -> usize {
         self.undo.len()
@@ -264,7 +264,7 @@ mod tests {
         h.push_snapshot(doc.snapshot());
         assert!(h.can_undo());
 
-        // L'app a entre-temps ajouté un calque ; on annule
+        // The app meanwhile added a layer; undoing
         doc.push_layer(pixel(2));
         let action = h.undo(&mut doc).expect("undo");
         assert!(matches!(action, UndoAction::FullRestore));
@@ -272,7 +272,7 @@ mod tests {
         assert!(!h.can_undo());
         assert!(h.can_redo());
 
-        // Rétablissement
+        // Redo
         let action = h.redo(&mut doc).expect("redo");
         assert!(matches!(action, UndoAction::FullRestore));
         assert_eq!(doc.root.len(), 2);
@@ -286,7 +286,7 @@ mod tests {
         let mut doc = doc_with(&[1]);
         let id = doc.root[0].id();
 
-        // Édition 50 → 80 enregistrée en commande
+        // 50 → 80 edit recorded as a command
         let cmd = opacity_cmd(id, 50.0, 80.0);
         h.push_command_immediate(cmd);
         let _inverse = doc.apply_command(opacity_cmd(id, 50.0, 80.0));
@@ -330,15 +330,15 @@ mod tests {
         let mut doc = doc_with(&[1]);
         let id = doc.root[0].id();
 
-        // Geste continu 50→60→70→80 : trois poussées même clé
+        // Continuous 50→60→70→80 gesture: three same-key pushes
         for (old, new) in [(50.0, 60.0), (60.0, 70.0), (70.0, 80.0)] {
             h.push_command(coalesce(id), opacity_cmd(id, old, new));
             let _ = doc.apply_command(opacity_cmd(id, old, new));
         }
-        // Une seule entrée empilée
+        // A single entry pushed
         assert_eq!(h.undo.len(), 1, "coalescence = une seule entrée");
 
-        // Undo → début du geste (50)
+        // Undo → gesture start (50)
         h.undo(&mut doc).expect("undo");
         assert!(
             (doc.find(id)
@@ -350,7 +350,7 @@ mod tests {
         );
         assert!(!h.can_undo());
 
-        // Redo → valeur FINALE du geste (80), pas la première (60)
+        // Redo → gesture's FINAL value (80), not the first (60)
         h.redo(&mut doc).expect("redo");
         assert!(
             (doc.find(id)
@@ -364,12 +364,12 @@ mod tests {
 
     #[test]
     fn coalescence_snapshot_conservee_aussi() {
-        // Les snapshots gardent leur propre fenêtre via last_key partagé :
-        // deux poussées snapshot ne coalescent PAS (push_snapshot reset),
-        // mais une commande suivie d'un snapshot démarre un nouveau point.
+        // Snapshots keep their own window via shared last_key: two snapshot
+        // pushes do NOT coalesce (push_snapshot resets), but a command followed
+        // by a snapshot starts a new point.
         let mut h = History::new();
         h.push_command(coalesce(Uuid::nil()), opacity_cmd(Uuid::nil(), 1.0, 2.0));
-        h.reset(); // isole le test suivant
+        h.reset(); // isolates the next test
         h.push_snapshot(snap(&[1]));
         h.push_snapshot(snap(&[2]));
         assert_eq!(h.undo.len(), 2, "snapshots jamais fusionnés");
@@ -381,15 +381,15 @@ mod tests {
         let mut doc = doc_with(&[1]);
         let id = doc.root[0].id();
 
-        // 1) snapshot pré-structurel puis ajout d'un calque
+        // 1) pre-structural snapshot then layer addition
         h.push_snapshot(doc.snapshot());
         doc.push_layer(pixel(2));
 
-        // 2) micro-édition opacité 100 → 40 en commande
+        // 2) 100 → 40 opacity micro-edit as a command
         h.push_command_immediate(opacity_cmd(id, 100.0, 40.0));
         let _ = doc.apply_command(opacity_cmd(id, 100.0, 40.0));
 
-        // Undo #1 : opacité revient à 100 (commande)
+        // Undo #1: opacity back to 100 (command)
         h.undo(&mut doc).expect("undo cmd");
         assert!(
             (doc.find(id)
@@ -400,12 +400,12 @@ mod tests {
                 < f32::EPSILON
         );
 
-        // Undo #2 : le calque ajouté disparaît (snapshot)
+        // Undo #2: the added layer disappears (snapshot)
         h.undo(&mut doc).expect("undo snap");
         assert_eq!(doc.root.len(), 1);
         assert!(!h.can_undo());
 
-        // Redo ×2 : snapshot (calque revient) puis commande (opacité 40)
+        // Redo ×2: snapshot (layer returns) then command (opacity 40)
         h.redo(&mut doc).expect("redo snap");
         assert_eq!(doc.root.len(), 2);
         h.redo(&mut doc).expect("redo cmd");
@@ -427,7 +427,7 @@ mod tests {
 
         h.push_command_immediate(opacity_cmd(fantome, 10.0, 90.0));
         h.undo(&mut doc).expect("undo s'exécute sans panic");
-        // Rien n'a bougé, ni plantage
+        // Nothing moved, no crash
         assert_eq!(doc.root.len(), 1);
     }
 
@@ -480,7 +480,7 @@ mod tests {
             new: ParamValue::Float(50.0),
         };
         let inverse = doc.apply_command(cmd);
-        // Version bumpée → le cache d'apparence se sait obsolète
+        // Bumped version → the appearance cache knows it is stale
         assert!(
             doc.pixel_layer(layer_id)
                 .expect("layer should still exist")
@@ -488,7 +488,7 @@ mod tests {
                 > version_avant,
             "apply_command doit invalider l'apparence"
         );
-        // Inverse cohérent
+        // Consistent inverse
         match inverse {
             Command::SetFilterParam { old, new, .. } => {
                 assert_eq!(old, ParamValue::Float(50.0));

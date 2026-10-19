@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! File utils partagés pour Cygnus
+//! Shared file utils for Cygnus
 
 pub mod drag_drop;
 pub mod file_dialog;

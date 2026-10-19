@@ -2,12 +2,13 @@
 name = "audio"
 version = "0.1.0"
 authors = ["vabyz971 <vabyz971@gmail.com>"]
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
-iced.workspace = true
-iced.features = ["debug"]
-ui-kit = { path = "../../packages/ui-kit" }
-datatypes = { path = "../../core/datatypes" }
-audio-engine = { path = "../../engines/audio-engine" }
+eframe.workspace = true
+egui.workspace = true
+cygnus-ui = { path = "../../cygnus-ui" }

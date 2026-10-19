@@ -1,23 +1,41 @@
-use super::compositing::{fold_scope, needs_fallback_in, scope_half_extents};
+use super::compositing::{needs_fallback_in, scope_half_extents};
 use super::model::{
     Appearance, BlendMode, FilterLayer, FilterNode, GroupLayer, LayerMask, LayerNode, PixelLayer,
-    RgbaBuf, Transform2D,
+    RgbaBuf, Transform2D, VectorLayer,
 };
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use std::cell::RefCell;
 use std::sync::Arc;
+use tiles::TileRegion;
 use uuid::Uuid;
 
 pub struct Document {
     pub width: u32,
     pub height: u32,
-    /// Pile racine — index 0 = BAS de la pile (premier dessiné)
+    /// Root stack — index 0 = BOTTOM of the stack (drawn first)
     pub root: Vec<LayerNode>,
-    /// Cache d'apparences par calque ([`crate::renderer::Renderer`]) :
-    /// validité par signature de filtres + identité de source, alimenté
-    /// par la chaîne GPU compute / CPU rayon. Interior mutability car le
-    /// cache est un détail de performance invisible depuis l'API (&self).
+    /// Per-layer appearance cache ([`crate::renderer::Renderer`]):
+    /// validity by filter signature + source identity, fed by the
+    /// GPU compute / rayon CPU chain. Interior mutability since the
+    /// cache is a performance detail invisible from the API (&self).
     cache: RefCell<crate::renderer::Renderer>,
+}
+
+/// Result of an experimental regional composite (tile vertical
+/// slice): region pixels + origin for stitching/comparing in
+/// full-frame composite space.
+///
+/// `Clone`: `TileCache` (Phase 6D) re-serves the tile by cloning
+/// (pixel copy — correctness-first foundation, later `Arc` sharing
+/// if measurements require it).
+#[derive(Debug, Clone)]
+pub struct RegionalComposite {
+    /// RGBA8 pixels of the clipped region (dimensions = useful region).
+    pub image: DynamicImage,
+    /// Buffer column (full-frame space) of the top-left corner.
+    pub origin_x: u32,
+    /// Buffer row (full-frame space) of the top-left corner.
+    pub origin_y: u32,
 }
 
 impl Document {
@@ -30,9 +48,23 @@ impl Document {
         }
     }
 
-    /// Reconstruit le document depuis un état restauré (undo/redo, projet).
-    /// Le cache d'apparence est vidé : les entrées restaurées se
-    /// revalideront par signature à la première demande.
+    /// Blank document with a first opaque WHITE layer at the
+    /// document dimensions (« Créer un document » without an image,
+    /// Affinity-style: white background, no transparent checkerboard).
+    pub fn with_blank_layer(width: u32, height: u32, name: impl Into<String>) -> Self {
+        let mut doc = Self::new(width.max(1), height.max(1));
+        let white =
+            image::RgbaImage::from_pixel(doc.width, doc.height, image::Rgba([255, 255, 255, 255]));
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+            name,
+            Arc::new(DynamicImage::ImageRgba8(white)),
+        )));
+        doc
+    }
+
+    /// Rebuilds the document from a restored state (undo/redo, project). The
+    /// appearance cache is emptied: restored entries revalidate by
+    /// signature on first request.
     pub fn restore(&mut self, width: u32, height: u32, root: Vec<LayerNode>) {
         self.width = width;
         self.height = height;
@@ -40,7 +72,7 @@ impl Document {
         self.cache.borrow_mut().invalidate_all();
     }
 
-    // -- Recherche ----------------------------------------------------------
+    // -- Lookup ----------------------------------------------------------
 
     pub fn find(&self, id: Uuid) -> Option<&LayerNode> {
         find_in(&self.root, id)
@@ -50,7 +82,7 @@ impl Document {
         find_in_mut(&mut self.root, id)
     }
 
-    /// Accès typé au calque pixels.
+    /// Typed access to the pixel layer.
     pub fn pixel_layer(&self, id: Uuid) -> Option<&PixelLayer> {
         match self.find(id) {
             Some(LayerNode::Pixel(l)) => Some(l),
@@ -65,7 +97,15 @@ impl Document {
         }
     }
 
-    /// Liste plate des calques pixels, ordre de dessin (bas → haut), DFS.
+    /// Typed access to the vector layer.
+    pub fn vector_layer(&self, id: Uuid) -> Option<&VectorLayer> {
+        match self.find(id) {
+            Some(LayerNode::Vector(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Flat list of pixel layers, draw order (bottom → top), DFS.
     #[must_use]
     pub fn iter_pixels(&self) -> Vec<&PixelLayer> {
         let mut out = Vec::with_capacity(self.root.len());
@@ -73,12 +113,33 @@ impl Document {
         out
     }
 
+    /// Ids of ALL pixel layers (visible or not, groups included), DFS
+    /// order. Used for inter-pass sharing: snapshots need thumbnails
+    /// even of hidden layers (unlike [`Self::iter_pixels`], which
+    /// only keeps contributors).
+    #[must_use]
+    pub fn all_pixel_ids(&self) -> Vec<Uuid> {
+        let mut out = Vec::new();
+        collect_all_pixel_ids(&self.root, &mut out);
+        out
+    }
+
+    /// Ids of ALL vector layers (visible or not), DFS
+    /// order. Used by the preview frame cache (vectors resolve
+    /// through `appearance_vector_image`, never the pixel cache).
+    #[must_use]
+    pub fn all_vector_ids(&self) -> Vec<Uuid> {
+        let mut out = Vec::new();
+        collect_all_vector_ids(&self.root, &mut out);
+        out
+    }
+
     pub fn pixel_count(&self) -> usize {
         self.iter_pixels().len()
     }
 
-    /// Liste plate de tous les masques de l'arbre, chacun avec l'id du calque
-    /// porteur (calques pixels ET groupes). Ordre : DFS, bas → haut.
+    /// Flat list of every mask in the tree, each with its carrier layer
+    /// id (pixel layers AND groups). Order: DFS, bottom → top.
     #[must_use]
     pub fn iter_masks(&self) -> Vec<(Uuid, &crate::document::LayerMask)> {
         let mut out = Vec::new();
@@ -86,21 +147,21 @@ impl Document {
         out
     }
 
-    /// Le rendu rapide « 1 texture par calque » est-il possible, ou faut-il
-    /// passer par la composite CPU ? Vrai dès qu'un groupe a un mode de
-    /// fusion non-Normal ou qu'un calque d'ajustement agit sur la pile.
+    /// Is the fast "1 texture per layer" render possible, or must the CPU
+    /// composite be used? True as soon as a group has a non-Normal
+    /// blend mode or an adjustment layer acts on the stack.
     pub fn needs_fallback(&self) -> bool {
         needs_fallback_in(&self.root)
     }
 
-    // -- Mutations structurelles ---------------------------------------------
+    // -- Structural mutations ---------------------------------------------
 
-    /// Ajoute un nœud au SOMMET de la pile racine.
+    /// Adds a node at the TOP of the root stack.
     pub fn push_layer(&mut self, node: LayerNode) {
         self.root.push(node);
     }
 
-    /// Insère `node` juste au-dessus de `anchor` (même parent).
+    /// Inserts `node` just above `anchor` (same parent).
     pub fn insert_above(&mut self, anchor: Uuid, node: LayerNode) -> bool {
         match find_owner_list(&mut self.root, anchor) {
             Some((list, idx)) => {
@@ -111,13 +172,13 @@ impl Document {
         }
     }
 
-    /// Détache le sous-arbre `id` de son parent.
+    /// Detaches subtree `id` from its parent.
     pub fn remove(&mut self, id: Uuid) -> Option<LayerNode> {
         let (list, idx) = find_owner_list(&mut self.root, id)?;
         Some(list.remove(idx))
     }
 
-    /// Duplique le sous-arbre (nouveaux ids partout) et l'insère au-dessus.
+    /// Duplicates the subtree (fresh ids everywhere) and inserts it above.
     pub fn duplicate(&mut self, id: Uuid) -> Option<Uuid> {
         let mut copy = self.find(id)?.clone();
         copy.regenerate_ids();
@@ -128,7 +189,7 @@ impl Document {
         Some(new_id)
     }
 
-    /// Monte d'un cran parmi les frères (vers le haut de la pile).
+    /// Moves up one slot among siblings (toward the top of the stack).
     pub fn move_up(&mut self, id: Uuid) -> bool {
         let Some((list, idx)) = find_owner_list(&mut self.root, id) else {
             return false;
@@ -140,7 +201,7 @@ impl Document {
         true
     }
 
-    /// Descend d'un cran parmi les frères.
+    /// Moves down one slot among siblings.
     pub fn move_down(&mut self, id: Uuid) -> bool {
         let Some((list, idx)) = find_owner_list(&mut self.root, id) else {
             return false;
@@ -152,7 +213,20 @@ impl Document {
         true
     }
 
-    /// Réordonne par drag & drop : déplace `dragged` avant ou après `target`.
+    /// Toggles a group's collapsed/expanded state (Layers panel display
+    /// only: no pixels touched). False if `id` is
+    /// not a group.
+    pub fn set_collapsed(&mut self, id: Uuid, collapsed: bool) -> bool {
+        match self.find_mut(id) {
+            Some(LayerNode::Group(groupe)) => {
+                groupe.collapsed = collapsed;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Reorders via drag & drop: moves `dragged` before or after `target`.
     pub fn reorder_before(&mut self, dragged: Uuid, target: Uuid, before: bool) -> bool {
         if !self.can_reorder_before(dragged, target)
             || self.is_noop_reorder(dragged, target, before)
@@ -163,7 +237,7 @@ impl Document {
             return false;
         };
         let Some((list, idx)) = find_owner_list(&mut self.root, target) else {
-            // target disparu ? restaure à la fin
+            // target gone? restore at the end
             self.push_layer(node);
             return false;
         };
@@ -173,10 +247,10 @@ impl Document {
         true
     }
 
-    /// Le déplacement avant/après est-il structurellement valide ?
+    /// Is the before/after move structurally valid?
     ///
-    /// Un déplacement adjacent sans effet reste une cible valide : il sera
-    /// simplement ignoré au commit, sans entrée d'historique.
+    /// An adjacent no-op move stays a valid target: it will simply be
+    /// ignored at commit, with no history entry.
     #[must_use]
     pub fn can_reorder_before(&self, dragged: Uuid, target: Uuid) -> bool {
         if dragged == target {
@@ -185,48 +259,184 @@ impl Document {
         if self.find(dragged).is_none() || self.find(target).is_none() {
             return false;
         }
-        // Empêche de déplacer un groupe dans son propre sous-arbre
-        if let Some(LayerNode::Group(groupe)) = self.find(dragged)
-            && Self::contains_id(&groupe.children, target)
+        // Prevents moving a node into its own subtree
+        if let Some(dragged_node) = self.find(dragged)
+            && Self::contains_id(dragged_node.children(), target)
         {
             return false;
         }
         true
     }
 
-    /// Déplace `dragged` en tête des enfants de `group`.
-    pub fn move_into(&mut self, dragged: Uuid, group: Uuid) -> bool {
-        if !self.can_move_into(dragged, group) || self.is_noop_move_into(dragged, group) {
+    /// Moves `dragged` to the head of `parent`'s children — a group
+    /// (existing behavior) or a pixel layer (clipped child, Affinity-style).
+    /// Adjustments accept no children.
+    pub fn move_into_parent(&mut self, dragged: Uuid, parent: Uuid) -> bool {
+        if !self.can_move_into_parent(dragged, parent) || self.is_noop_move_into(dragged, parent) {
             return false;
         }
         let Some(node) = self.remove(dragged) else {
             return false;
         };
-        let Some(LayerNode::Group(groupe)) = self.find_mut(group) else {
-            // groupe disparu ? restaure à la fin
+        let Some(children) = self.find_mut(parent).and_then(LayerNode::children_mut) else {
+            // parent gone? restore at the end
             self.push_layer(node);
             return false;
         };
-        groupe.children.insert(0, node);
+        children.insert(0, node);
+        self.touch_pixel(parent);
         true
     }
 
-    /// L'insertion en tête de groupe est-elle structurellement valide ?
+    /// Is head-of-children insertion structurally valid? The destination
+    /// accepts children (group or pixel layer, never an adjustment) and
+    /// must not sit inside the dragged subtree (no cycles).
     #[must_use]
-    pub fn can_move_into(&self, dragged: Uuid, group: Uuid) -> bool {
-        if dragged == group {
+    pub fn can_move_into_parent(&self, dragged: Uuid, parent: Uuid) -> bool {
+        if dragged == parent {
             return false;
         }
         if self.find(dragged).is_none() {
             return false;
         }
-        let Some(LayerNode::Group(_groupe)) = self.find(group) else {
+        let Some(dest) = self.find(parent) else {
             return false;
         };
-        if let Some(LayerNode::Group(dragged_groupe)) = self.find(dragged)
-            && Self::contains_id(&dragged_groupe.children, group)
+        if !matches!(dest, LayerNode::Pixel(_) | LayerNode::Group(_)) {
+            return false;
+        }
+        if let Some(dragged_node) = self.find(dragged)
+            && Self::contains_id(dragged_node.children(), parent)
         {
             return false;
+        }
+        true
+    }
+
+    /// Moves a live filter from one chain to another (pixel or group
+    /// chains, same owner allowed for exact reordering): detached from
+    /// `from`, inserted at clamped `index` in `to`. Identity, params,
+    /// enabled state and its own masks are preserved. One history entry
+    /// worth of mutation (single call). Pixel owners are touched
+    /// (appearance invalidation); groups carry no cached appearance.
+    pub fn move_filter_to(&mut self, filter: Uuid, from: Uuid, to: Uuid, index: usize) -> bool {
+        if !matches!(
+            self.find(to),
+            Some(LayerNode::Pixel(_) | LayerNode::Group(_))
+        ) {
+            return false;
+        }
+        // Source slot (immutable read; nothing mutates before removal).
+        let (pos, len) = match self.find(from) {
+            Some(node) => match node.filter_layers() {
+                Some(chain) => match chain.iter().position(|f| f.id == filter) {
+                    Some(pos) => (pos, chain.len()),
+                    None => return false,
+                },
+                None => return false,
+            },
+            None => return false,
+        };
+        // Post-removal coordinates: detaching shifts later slots down.
+        let index = if from == to && index > pos {
+            index - 1
+        } else {
+            index
+        };
+        if from == to && index.min(len - 1) == pos {
+            return false; // net no-change
+        }
+        let mut moved = match self.find_mut(from) {
+            Some(LayerNode::Pixel(l)) => l.filter_layers.remove(pos),
+            Some(LayerNode::Group(g)) => g.filter_layers.remove(pos),
+            _ => return false, // unreachable (validated above)
+        };
+        // Fresh coverage versions travel along (thumbnails recompute).
+        for m in &mut moved.masks {
+            m.touch();
+        }
+        let Some(dest) = self.find_mut(to) else {
+            return false; // unreachable (validated above)
+        };
+        let Some(chain) = dest.filter_layers_mut() else {
+            return false; // unreachable (validated above)
+        };
+        chain.insert(index.min(chain.len()), moved);
+        self.touch_pixel(from);
+        self.touch_pixel(to);
+        true
+    }
+
+    /// Moves a mask from one pile to another (layer, group, adjustment
+    /// or live-filter piles): detached from `from_owner`, inserted at
+    /// clamped `index` in `to_owner`. Pixels, enabled state and inversion
+    /// are preserved. Pixel owners (or the pixel parent of a filter
+    /// owner) are touched on both sides.
+    pub fn move_mask_to(
+        &mut self,
+        mask: Uuid,
+        from_owner: Uuid,
+        to_owner: Uuid,
+        index: usize,
+    ) -> bool {
+        // Piles validated before detaching (no restore path needed).
+        if self.masks_of(to_owner).is_none() {
+            return false;
+        }
+        let (pos, len) = match self.masks_of(from_owner) {
+            Some(pile) => match pile.iter().position(|m| m.id == mask) {
+                Some(pos) => (pos, pile.len()),
+                None => return false,
+            },
+            None => return false,
+        };
+        // Post-removal coordinates (same shift rule as filter chains).
+        let index = if from_owner == to_owner && index > pos {
+            index - 1
+        } else {
+            index
+        };
+        if from_owner == to_owner && index.min(len - 1) == pos {
+            return false; // net no-change
+        }
+        let Some(from_pile) = self.masks_of_mut(from_owner) else {
+            return false; // unreachable (validated above)
+        };
+        let mut moved = from_pile.remove(pos);
+        moved.touch();
+        let Some(to_pile) = self.masks_of_mut(to_owner) else {
+            return false; // unreachable (validated above)
+        };
+        to_pile.insert(index.min(to_pile.len()), moved);
+        self.touch_mask_owner_tree(from_owner);
+        self.touch_mask_owner_tree(to_owner);
+        true
+    }
+
+    /// Invalidates the rendered owner of a mask pile: the node itself
+    /// when it is a layer, else the pixel parent of a filter owner.
+    fn touch_mask_owner_tree(&mut self, owner: Uuid) {
+        if self.find(owner).is_some() {
+            self.touch_pixel(owner);
+        } else if let Some(parent) = self.find_filter_parent(owner) {
+            self.touch_pixel(parent);
+        }
+    }
+
+    /// Nests `node` at the head of `parent`'s children (group, or pixel
+    /// layer as an Affinity-style clipped child). Returns false if the
+    /// parent accepts no children (adjustment) or is unknown. The parent
+    /// is touched (appearance invalidation) if it is pixels.
+    pub fn add_child(&mut self, parent: Uuid, node: LayerNode) -> bool {
+        let Some(target) = self.find_mut(parent) else {
+            return false;
+        };
+        let Some(children) = target.children_mut() else {
+            return false;
+        };
+        children.insert(0, node);
+        if let LayerNode::Pixel(l) = target {
+            l.touch();
         }
         true
     }
@@ -263,42 +473,72 @@ impl Document {
             if n.id() == id {
                 return true;
             }
-            if let LayerNode::Group(g) = n
-                && Self::contains_id(&g.children, id)
-            {
+            if Self::contains_id(n.children(), id) {
                 return true;
             }
         }
         false
     }
 
-    /// Regroupe les nœuds donnés (mêmes frères) dans un nouveau groupe
-    /// inséré à la place du plus bas d'entre eux. L'ordre relatif de la
-    /// pile est préservé. Retourne l'id du groupe créé.
-    pub fn group(&mut self, ids: &[Uuid]) -> Option<Uuid> {
+    /// Solos a layer (Affinity-style isolate): only `id` and its
+    /// ancestor chain stay visible, everything else is hidden. The
+    /// target's own children keep their flags. Single history entry
+    /// (undo restores all visibilities at once). Returns false when
+    /// `id` is unknown.
+    pub fn isolate(&mut self, id: Uuid) -> bool {
+        if self.find(id).is_none() {
+            return false;
+        }
+        for node in &mut self.root {
+            if node.id() == id || Self::contains_id(node.children(), id) {
+                Self::reveal_path(node, id);
+            } else {
+                node.set_visible(false);
+            }
+        }
+        true
+    }
+
+    /// Makes `node` visible and reveals the child path down to `id`.
+    fn reveal_path(node: &mut LayerNode, id: Uuid) {
+        node.set_visible(true);
+        if let Some(children) = node.children_mut() {
+            for child in children.iter_mut() {
+                if child.id() == id || Self::contains_id(child.children(), id) {
+                    Self::reveal_path(child, id);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Groups the given nodes (same siblings) into a new group inserted
+    /// in place of the lowest one. The stack's relative order is
+    /// preserved. Returns the created group's id.
+    pub fn group(&mut self, ids: &[Uuid], name: impl Into<String>) -> Option<Uuid> {
         let first = *ids.first()?;
         let (list, _) = find_owner_list(&mut self.root, first)?;
-        // Positions une fois pour toutes, triées (ordre pile)
+        // Positions computed once, sorted (stack order)
         let mut idxs: Vec<usize> = Vec::with_capacity(ids.len());
         for id in ids {
             idxs.push(list.iter().position(|n| n.id() == *id)?);
         }
         idxs.sort_unstable();
-        // Extraction du plus haut vers le plus bas, puis remise en ordre
+        // Extraction highest to lowest, then back in order
         let mut children: Vec<LayerNode> = Vec::with_capacity(idxs.len());
         for &i in idxs.iter().rev() {
             children.push(list.remove(i));
         }
         children.reverse();
-        let group = LayerNode::Group(GroupLayer::new("Groupe", children));
+        let group = LayerNode::Group(GroupLayer::new(name, children));
         let gid = group.id();
         let at = (*idxs.first()?).min(list.len());
         list.insert(at, group);
         Some(gid)
     }
 
-    /// Dissout un groupe : ses enfants remontent à sa place dans le parent.
-    /// Retourne les ids des enfants libérés.
+    /// Dissolves a group: its children move up in its place in the parent.
+    /// Returns the freed children's ids.
     pub fn ungroup(&mut self, id: Uuid) -> Option<Vec<Uuid>> {
         let (list, idx) = find_owner_list(&mut self.root, id)?;
         if !matches!(list.get(idx), Some(LayerNode::Group(_))) {
@@ -315,14 +555,14 @@ impl Document {
         Some(child_ids)
     }
 
-    // -- Éditions destructives (pixels) ---------------------------------------
+    // -- Destructive (pixel) edits ---------------------------------------
 
-    /// Retourne le calque horizontalement/verticalement (destructif).
+    /// Flips the layer horizontally/vertically (destructive).
     ///
     /// # Errors
-    /// Retourne une erreur si le calque n'existe pas.
+    /// Returns an error if the layer does not exist.
     pub fn flip(&mut self, id: Uuid, horizontal: bool) -> Result<(), String> {
-        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
         let flipped = if horizontal {
             layer.source_image.fliph()
         } else {
@@ -339,7 +579,7 @@ impl Document {
             mask.image = Arc::new(flipped_mask);
             mask.touch();
         }
-        // Les masques des sous-calques vivent dans le même espace source
+        // Sub-layer masks live in the same source space
         for f in &mut layer.filter_layers {
             for mask in &mut f.masks {
                 let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
@@ -357,33 +597,141 @@ impl Document {
         Ok(())
     }
 
-    /// Rogne le calque au rect (coordonnées CALQUE, pixels). Destructif :
-    /// le contenu reste en place dans le monde (le transform compense
-    /// l'origine du crop). Erreur descriptive si le rect est invalide.
+    /// Rotates the layer 90° (destructive, clockwise if `clockwise`).
+    ///
+    /// Dimensions are swapped: the offset compensates to keep the CENTER
+    /// in place in world space. Masks (layer + sub-layers) rotated in
+    /// the same source space, like [`Self::flip`].
     ///
     /// # Errors
-    /// Retourne une erreur si le calque est introuvable ou si le rectangle dépasse les bords.
+    /// Returns an error if the layer does not exist.
+    pub fn rotate(&mut self, id: Uuid, clockwise: bool) -> Result<(), String> {
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
+        let (old_w, old_h) = layer.dimensions();
+        let rotated = if clockwise {
+            layer.source_image.rotate90()
+        } else {
+            layer.source_image.rotate270()
+        };
+        for mask in &mut layer.masks {
+            let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
+            let rotated_mask = if clockwise {
+                dyn_mask.rotate90()
+            } else {
+                dyn_mask.rotate270()
+            }
+            .to_rgba8();
+            mask.image = Arc::new(rotated_mask);
+            mask.touch();
+        }
+        // Sub-layer masks live in the same source space
+        for f in &mut layer.filter_layers {
+            for mask in &mut f.masks {
+                let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
+                let rotated_mask = if clockwise {
+                    dyn_mask.rotate90()
+                } else {
+                    dyn_mask.rotate270()
+                }
+                .to_rgba8();
+                mask.image = Arc::new(rotated_mask);
+                mask.touch();
+            }
+        }
+        layer.set_source_image(rotated);
+        // Center compensation: (w,h) → (h,w).
+        let (new_w, new_h) = layer.dimensions();
+        layer.transform.offset_x += (old_w as f32 - new_w as f32) / 2.0;
+        layer.transform.offset_y += (old_h as f32 - new_h as f32) / 2.0;
+        Ok(())
+    }
+
+    /// Paints into a mask (white = reveals if `whiten`, black = hides
+    /// otherwise), in layer source space (same space as the worker
+    /// points, like pixel paint).
+    ///
+    /// The brush reuses `paint_stroke_rgba` in `Paint` mode (never
+    /// `Erase`: eraser on mask = black, not destination-out). Coverage
+    /// = R channel (see `mask_coverage`).
+    ///
+    /// `points` live in the MASK space (carrier source pixels for pixel
+    /// layers and filters — the caller converts document pixels via the
+    /// carrier transform, like [`crate::paint::commit_stroke`]);
+    /// `rx`/`ry` are the elliptical brush radii in that same space (a
+    /// document circle under a non-uniform carrier scale).
+    ///
+    /// # Errors
+    /// Returns an error if the carrier or the mask is not found.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_mask(
+        &mut self,
+        owner_id: Uuid,
+        mask_id: Uuid,
+        points: &[(f32, f32)],
+        rx: f32,
+        ry: f32,
+        opacity: f32,
+        whiten: bool,
+    ) -> Result<(), String> {
+        if points.is_empty() || !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
+            return Err("empty stroke".into());
+        }
+        let Some(masks) = self.masks_of_mut(owner_id) else {
+            return Err("mask owner not found".into());
+        };
+        let Some(mask) = masks.iter_mut().find(|m| m.id == mask_id) else {
+            return Err("mask not found".into());
+        };
+        let (w, h) = (mask.image.width(), mask.image.height());
+        let mut buffer = mask.image.as_raw().to_vec();
+        let v = if whiten { 255 } else { 0 };
+        let brush = crate::paint::BrushParams {
+            radius: rx.max(ry),
+            color: [v, v, v],
+            opacity: opacity.clamp(0.0, 1.0),
+            mode: crate::paint::StrokeMode::Paint,
+        };
+        crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry);
+        let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
+            return Err("rasterization failed".into());
+        };
+        mask.image = Arc::new(image);
+        mask.touch();
+        if self.find(owner_id).is_some() {
+            self.touch_pixel(owner_id);
+        } else if let Some(parent) = self.find_filter_parent(owner_id) {
+            self.touch_pixel(parent);
+        }
+        Ok(())
+    }
+
+    /// Crops the layer to the rect (LAYER coordinates, pixels). Destructive:
+    /// content stays put in world space (the transform compensates the
+    /// crop origin). Descriptive error if the rect is invalid.
+    ///
+    /// # Errors
+    /// Returns an error if the layer is not found or the rectangle exceeds the edges.
     pub fn crop(&mut self, id: Uuid, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
-        let layer = self.pixel_layer_mut(id).ok_or("calque introuvable")?;
+        let layer = self.pixel_layer_mut(id).ok_or("layer not found")?;
         let (iw, ih) = layer.dimensions();
         if w == 0 || h == 0 {
-            return Err("rogner : dimensions nulles".into());
+            return Err("crop: zero-sized rectangle".into());
         }
         if x < 0 || y < 0 || x + w as i32 > iw as i32 || y + h as i32 > ih as i32 {
-            return Err("rogner : la sélection dépasse les bords du calque".into());
+            return Err("crop: rectangle exceeds the layer bounds".into());
         }
         let cropped = layer.source_image.crop_imm(x as u32, y as u32, w, h);
-        // Compense l'origine : le pixel (x,y) d'origine reste à sa place monde
+        // Compensate the origin: the original (x,y) pixel stays at its world spot
         layer.transform.offset_x += x as f32;
         layer.transform.offset_y += y as f32;
-        // Rogne les masques liés aux mêmes coordonnées
+        // Crop the linked masks at the same coordinates
         for mask in &mut layer.masks {
             let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
             let cropped_mask = dyn_mask.crop_imm(x as u32, y as u32, w, h).to_rgba8();
             mask.image = Arc::new(cropped_mask);
             mask.touch();
         }
-        // Idem pour les masques des sous-calques (même espace source)
+        // Same for sub-layer masks (same source space)
         for f in &mut layer.filter_layers {
             for mask in &mut f.masks {
                 let dyn_mask = DynamicImage::ImageRgba8((*mask.image).clone());
@@ -396,7 +744,7 @@ impl Document {
         Ok(())
     }
 
-    /// Remplace l'image source d'un calque pixels (peinture…).
+    /// Replaces a pixel layer's source image (paint…).
     pub fn set_source_image(&mut self, id: Uuid, image: DynamicImage) -> bool {
         match self.pixel_layer_mut(id) {
             Some(layer) => {
@@ -407,47 +755,59 @@ impl Document {
         }
     }
 
-    // -- Filtres dynamiques ----------------------------------------------------
+    // -- Dynamic filters ----------------------------------------------------
 
-    /// Ajoute un sous-calque de filtre en fin de chaîne d'un calque pixels.
-    /// Pour un ajustement, le sous-calque est converti en filtre simple
-    /// (les ajustements portent opacité/fusion au niveau du calque).
-    /// Retourne l'id du filtre inséré.
+    /// Appends a filter sub-layer at the end of a pixel layer or group
+    /// chain (group nested filter, applied after its children). For an
+    /// adjustment, the sub-layer is converted to a plain filter
+    /// (adjustments carry opacity/blend at the layer level). Returns
+    /// the inserted filter's id.
     pub fn add_filter(&mut self, layer_id: Uuid, filter: FilterLayer) -> Option<Uuid> {
         let fid = filter.id;
         match self.find_mut(layer_id)? {
             LayerNode::Pixel(l) => l.filter_layers.push(filter),
+            LayerNode::Vector(v) => v.filter_layers.push(filter),
+            LayerNode::Group(g) => g.filter_layers.push(filter),
             LayerNode::Adjustment(a) => a.filters.push(FilterNode {
                 id: filter.id,
                 type_id: filter.type_id,
                 params: filter.params,
                 enabled: filter.enabled,
             }),
-            LayerNode::Group(_) => return None,
         }
         self.touch_pixel(layer_id);
         Some(fid)
     }
 
-    /// Retire un sous-calque de filtre (pixels) ou un filtre d'ajustement.
+    /// Removes a filter sub-layer (pixels, group) or an adjustment
+    /// filter.
     pub fn remove_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<FilterLayer> {
         let removed = match self.find_mut(layer_id)? {
             LayerNode::Pixel(l) => {
                 let idx = l.filter_layers.iter().position(|f| f.id == filter_id)?;
                 l.filter_layers.remove(idx)
             }
+            LayerNode::Vector(v) => {
+                let idx = v.filter_layers.iter().position(|f| f.id == filter_id)?;
+                v.filter_layers.remove(idx)
+            }
+            LayerNode::Group(g) => {
+                let idx = g.filter_layers.iter().position(|f| f.id == filter_id)?;
+                g.filter_layers.remove(idx)
+            }
             LayerNode::Adjustment(a) => {
                 let idx = a.filters.iter().position(|f| f.id == filter_id)?;
                 let f = a.filters.remove(idx);
                 FilterLayer::from_node(f)
             }
-            LayerNode::Group(_) => return None,
         };
         self.touch_pixel(layer_id);
         Some(removed)
     }
 
-    /// Modifie un paramètre de filtre (geste continu : coalescence côté app).
+    /// Edits a filter parameter (continuous gesture: app-side coalescing).
+    /// Covers pixel and group sub-layers, and adjustment plain
+    /// filters.
     pub fn set_filter_param(
         &mut self,
         layer_id: Uuid,
@@ -462,12 +822,22 @@ impl Document {
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.params),
+            Some(LayerNode::Vector(v)) => v
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.params),
+            Some(LayerNode::Group(g)) => g
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.params),
             Some(LayerNode::Adjustment(a)) => a
                 .filters
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.params),
-            _ => None,
+            None => None,
         };
         let Some(params) = params else {
             return false;
@@ -477,10 +847,21 @@ impl Document {
         true
     }
 
-    /// Active/désactive un filtre sans perdre ses réglages.
+    /// Enables/disables a filter without losing its settings (pixels,
+    /// nested groups, adjustments).
     pub fn set_filter_enabled(&mut self, layer_id: Uuid, filter_id: Uuid, enabled: bool) -> bool {
         let target = match self.find_mut(layer_id) {
             Some(LayerNode::Pixel(l)) => l
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.enabled),
+            Some(LayerNode::Vector(v)) => v
+                .filter_layers
+                .iter_mut()
+                .find(|f| f.id == filter_id)
+                .map(|f| &mut f.enabled),
+            Some(LayerNode::Group(g)) => g
                 .filter_layers
                 .iter_mut()
                 .find(|f| f.id == filter_id)
@@ -490,7 +871,7 @@ impl Document {
                 .iter_mut()
                 .find(|f| f.id == filter_id)
                 .map(|f| &mut f.enabled),
-            _ => None,
+            None => None,
         };
         let Some(slot) = target else {
             return false;
@@ -502,13 +883,42 @@ impl Document {
         true
     }
 
-    /// Déplace un sous-calque de filtre dans la chaîne de son parent
-    /// (ordre = ordre d'application, façon Affinity).
-    pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool {
-        let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) else {
+    /// Enables/disables a mask without losing its pixels.
+    ///
+    /// The carrier may be a node or a filter sub-layer (like
+    /// [`Self::masks_of_mut`]): the touch follows the root pixel
+    /// layer to invalidate appearance.
+    pub fn set_mask_enabled(&mut self, owner_id: Uuid, mask_id: Uuid, enabled: bool) -> bool {
+        let Some(masks) = self.masks_of_mut(owner_id) else {
             return false;
         };
-        let Some(idx) = l.filter_layers.iter().position(|f| f.id == filter_id) else {
+        let Some(mask) = masks.iter_mut().find(|m| m.id == mask_id) else {
+            return false;
+        };
+        if mask.enabled == enabled {
+            return true;
+        }
+        mask.enabled = enabled;
+        mask.touch();
+        // Invalidate the root pixel layer's appearance.
+        if self.find(owner_id).is_some() {
+            self.touch_pixel(owner_id);
+        } else if let Some(parent) = self.find_filter_parent(owner_id) {
+            self.touch_pixel(parent);
+        }
+        true
+    }
+
+    /// Moves a filter sub-layer within its parent chain (pixels or
+    /// group — order = application order, Affinity-style).
+    pub fn move_filter(&mut self, layer_id: Uuid, filter_id: Uuid, up: bool) -> bool {
+        let Some(node) = self.find_mut(layer_id) else {
+            return false;
+        };
+        let Some(filters) = node.filter_layers_mut() else {
+            return false;
+        };
+        let Some(idx) = filters.iter().position(|f| f.id == filter_id) else {
             return false;
         };
         let other = if up {
@@ -519,42 +929,54 @@ impl Document {
         let Some(other) = other else {
             return false;
         };
-        if other >= l.filter_layers.len() {
+        if other >= filters.len() {
             return false;
         }
-        l.filter_layers.swap(idx, other);
-        l.touch();
+        filters.swap(idx, other);
+        match node {
+            LayerNode::Pixel(l) => l.touch(),
+            LayerNode::Vector(v) => v.touch(),
+            _ => {}
+        }
         true
     }
 
-    /// Duplique un sous-calque de filtre (nouvel id) juste au-dessus.
+    /// Duplicates a filter sub-layer (fresh id) just above (pixels
+    /// or group).
     pub fn duplicate_filter(&mut self, layer_id: Uuid, filter_id: Uuid) -> Option<Uuid> {
-        let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) else {
-            return None;
-        };
-        let idx = l.filter_layers.iter().position(|f| f.id == filter_id)?;
-        let mut copy = l.filter_layers[idx].clone();
+        let node = self.find_mut(layer_id)?;
+        let filters = node.filter_layers_mut()?;
+        let idx = filters.iter().position(|f| f.id == filter_id)?;
+        let mut copy = filters[idx].clone();
         copy.id = Uuid::new_v4();
-        // Les masques sont adressés par id (cache de miniatures) : ids frais.
+        // Masks are addressed by id (thumbnail cache): fresh ids.
         for m in &mut copy.masks {
             m.id = Uuid::new_v4();
         }
         let new_id = copy.id;
-        l.filter_layers.insert(idx + 1, copy);
-        l.touch();
+        filters.insert(idx + 1, copy);
+        match node {
+            LayerNode::Pixel(l) => l.touch(),
+            LayerNode::Vector(v) => v.touch(),
+            _ => {}
+        }
         Some(new_id)
     }
 
+    /// Touches an appearance carrier (pixel or vector layer) for
+    /// cache invalidation. Name kept for call-site stability.
     fn touch_pixel(&mut self, layer_id: Uuid) {
-        if let Some(LayerNode::Pixel(l)) = self.find_mut(layer_id) {
-            l.touch();
+        match self.find_mut(layer_id) {
+            Some(LayerNode::Pixel(l)) => l.touch(),
+            Some(LayerNode::Vector(v)) => v.touch(),
+            _ => {}
         }
     }
 
-    // -- Recherche de sous-calques -------------------------------------------
+    // -- Sub-layer lookup -------------------------------------------
 
-    /// Sous-calque de filtre par son id (n'importe quel calque pixels,
-    /// racine ou groupe imbriqué).
+    /// Filter sub-layer by its id (any pixel layer, root or nested
+    /// group).
     pub fn find_filter_layer(&self, filter_id: Uuid) -> Option<&FilterLayer> {
         find_filter_in(&self.root, filter_id)
     }
@@ -563,27 +985,51 @@ impl Document {
         find_filter_in_mut(&mut self.root, filter_id)
     }
 
-    /// Calque pixels porteur d'un sous-calque de filtre.
+    /// Pixel layer carrying a filter sub-layer.
     pub fn find_filter_parent(&self, filter_id: Uuid) -> Option<Uuid> {
         find_filter_parent_in(&self.root, filter_id)
     }
 
-    // -- Attributs polymorphes (nœud OU sous-calque de filtre) ---------------
+    // -- Polymorphic attributes (node OR filter sub-layer) ---------------
 
-    /// Transform du nœud (pixels) ou du sous-calque de filtre.
+    /// Node (pixels, vectors) or filter sub-layer transform.
     pub fn transform_of(&self, id: Uuid) -> Option<Transform2D> {
         match self.find(id) {
             Some(LayerNode::Pixel(l)) => Some(l.transform),
+            Some(LayerNode::Vector(v)) => Some(v.transform),
             _ => self.find_filter_layer(id).map(|f| f.transform),
         }
     }
 
-    /// Remplace la transform (touche le calque porteur pour l'invalidation).
+    /// Replaces a vector layer's paths wholesale (node editor:
+    /// absolute values, not deltas — consecutive drag frames keep
+    /// only the latest, like `set_transform_any`). Touches the
+    /// carrier for invalidation. Returns `false` for non-vector
+    /// layers.
+    pub fn set_vector_paths(&mut self, id: Uuid, paths: Vec<crate::scene::VectorPath>) -> bool {
+        match self.find_mut(id) {
+            Some(LayerNode::Vector(v)) => {
+                v.vector.paths = paths;
+                v.touch();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Replaces the transform (touches the carrier layer for invalidation).
     pub fn set_transform_any(&mut self, id: Uuid, transform: Transform2D) -> bool {
         if let Some(node) = self.find_mut(id) {
-            if let LayerNode::Pixel(l) = node {
-                l.transform = transform;
-                return true;
+            match node {
+                LayerNode::Pixel(l) => {
+                    l.transform = transform;
+                    return true;
+                }
+                LayerNode::Vector(v) => {
+                    v.transform = transform;
+                    return true;
+                }
+                _ => {}
             }
             return false;
         }
@@ -596,7 +1042,7 @@ impl Document {
         false
     }
 
-    /// Opacité 0..=100 du nœud ou du sous-calque de filtre.
+    /// 0..=100 opacity of the node or filter sub-layer.
     pub fn opacity_of(&self, id: Uuid) -> Option<f32> {
         match self.find(id) {
             Some(n) => Some(n.opacity()),
@@ -618,7 +1064,7 @@ impl Document {
         false
     }
 
-    /// Mode de fusion du nœud ou du sous-calque de filtre.
+    /// Blend mode of the node or filter sub-layer.
     pub fn blend_of(&self, id: Uuid) -> Option<BlendMode> {
         match self.find(id) {
             Some(n) => n.blend_mode(),
@@ -640,7 +1086,7 @@ impl Document {
         false
     }
 
-    /// Renomme un nœud, un sous-calque de filtre ou un masque.
+    /// Renames a node, filter sub-layer or mask.
     pub fn set_name_any(&mut self, id: Uuid, name: String) -> bool {
         if let Some(node) = self.find_mut(id) {
             node.set_name(name);
@@ -666,12 +1112,12 @@ impl Document {
         false
     }
 
-    /// Porteur d'un masque (nœud ou sous-calque de filtre) — `None` sinon.
+    /// Carrier of a mask (node or filter sub-layer) — `None` otherwise.
     pub fn mask_owner_of(&self, mask_id: Uuid) -> Option<Uuid> {
         mask_owner_in(&self.root, mask_id)
     }
 
-    /// Nom d'affichage d'un masque par son id.
+    /// Display name of a mask by its id.
     pub fn mask_name(&self, mask_id: Uuid) -> Option<String> {
         let owner = self.mask_owner_of(mask_id)?;
         self.masks_of(owner)?
@@ -680,9 +1126,9 @@ impl Document {
             .map(|m| m.name.clone())
     }
 
-    /// Déplace un masque dans la liste de son porteur. `up = true` → vers
-    /// le HALT de pile affiché (index décroissant, liste des masques = ordre
-    /// d'affichage). Retourne `false` si aux limites ou introuvable.
+    /// Moves a mask within its carrier's list. `up = true` → toward the
+    /// displayed stack TOP (decreasing index, mask list = display
+    /// order). Returns `false` at the limits or when not found.
     pub fn move_mask(&mut self, owner_id: Uuid, mask_id: Uuid, up: bool) -> bool {
         let Some(masks) = self.masks_of_mut(owner_id) else {
             return false;
@@ -705,9 +1151,9 @@ impl Document {
         true
     }
 
-    // -- Masques (nœuds ET sous-calques de filtre) ----------------------------
+    // -- Masks (nodes AND filter sub-layers) ----------------------------
 
-    /// Masque par (porteur, id) — le porteur est un nœud ou un sous-calque.
+    /// Mask by (carrier, id) — the carrier is a node or a sub-layer.
     pub fn mask_of(&self, owner_id: Uuid, mask_id: Uuid) -> Option<&LayerMask> {
         self.masks_of(owner_id)?.iter().find(|m| m.id == mask_id)
     }
@@ -718,7 +1164,7 @@ impl Document {
             .find(|m| m.id == mask_id)
     }
 
-    /// Tous les masques d'un porteur (nœud ou sous-calque de filtre).
+    /// All masks of a carrier (node or filter sub-layer).
     pub fn masks_of(&self, owner_id: Uuid) -> Option<&[LayerMask]> {
         match self.find(owner_id) {
             Some(n) => Some(n.masks()),
@@ -733,17 +1179,92 @@ impl Document {
         self.find_filter_layer_mut(owner_id).map(|f| &mut f.masks)
     }
 
-    // -- Commandes d'historique ------------------------------------------------
+    /// Carrier dimensions for a NEW mask on `owner` (`None` = document
+    /// space: groups and adjustments sample their masks in canvas space).
+    /// Pixel layers and live filters own SOURCE-space masks (same
+    /// dimensions as the carrier image — the compositing guard rail
+    /// ignores anything else, so a document-sized mask on a smaller
+    /// layer would silently never apply).
+    pub fn mask_owner_dims(&self, owner_id: Uuid) -> Option<(u32, u32)> {
+        if let Some(pixels) = self.pixel_layer(owner_id) {
+            return Some(pixels.dimensions());
+        }
+        if self.find_filter_layer(owner_id).is_some() {
+            let parent = self.find_filter_parent(owner_id)?;
+            return Some(self.pixel_layer(parent)?.dimensions());
+        }
+        None
+    }
 
-    /// Applique `command.new` au document et retourne l'INVERSE
-    /// (old/new échangés) prêt à empiler pour le redo.
+    /// Paint space of `owner`'s masks: carrier transform + carrier
+    /// dimensions for pixel layers and pixel-parented filters (their
+    /// masks live in source space and follow the carrier transform);
+    /// `None` = document space (groups, adjustments — legacy direct
+    /// mapping, untouched).
+    pub fn mask_paint_space(&self, owner_id: Uuid) -> Option<(Transform2D, u32, u32)> {
+        if let Some(pixels) = self.pixel_layer(owner_id) {
+            let (w, h) = pixels.dimensions();
+            return Some((pixels.transform, w, h));
+        }
+        if self.find_filter_layer(owner_id).is_some() {
+            let parent = self.find_filter_parent(owner_id)?;
+            let carrier = self.pixel_layer(parent)?;
+            let (w, h) = carrier.dimensions();
+            return Some((carrier.transform, w, h));
+        }
+        None
+    }
+
+    /// Re-homes legacy document-sized masks into their carrier source
+    /// space (project load): pixel layers and their filters get
+    /// carrier-sized masks, content copied top-left (exact for the
+    /// common zero-offset case — old paints were stored in document
+    /// coords sharing the layer origin; strictly better than the
+    /// compositing guard rail's silent no-op otherwise). Groups and
+    /// adjustments keep document-space masks by design.
+    pub fn normalize_mask_spaces(&mut self) {
+        Self::normalize_node_masks(&mut self.root);
+    }
+
+    fn normalize_node_masks(nodes: &mut [LayerNode]) {
+        for node in nodes.iter_mut() {
+            match node {
+                LayerNode::Pixel(pixels) => {
+                    let (w, h) = pixels.dimensions();
+                    for mask in pixels.masks.iter_mut() {
+                        rehome_mask(mask, w, h);
+                    }
+                    for filter in pixels.filter_layers.iter_mut() {
+                        for mask in filter.masks.iter_mut() {
+                            rehome_mask(mask, w, h);
+                        }
+                    }
+                    Self::normalize_node_masks(&mut pixels.children);
+                }
+                LayerNode::Group(group) => {
+                    // Group (and group-filter) masks are canvas-space by
+                    // design: left as stored.
+                    Self::normalize_node_masks(&mut group.children);
+                }
+                // Vector (and vector-filter) masks are canvas-space, like
+                // groups: the raster is bounds-shifted per appearance.
+                LayerNode::Vector(_) => {}
+                LayerNode::Adjustment(_) => {}
+            }
+        }
+    }
+
+    // -- History commands ------------------------------------------------
+
+    /// Applies `command.new` to the document and returns the INVERSE
+    /// (old/new swapped) ready to push for redo.
     ///
-    /// Routage systématique par les setters existants : les invariants du
-    /// modèle sont préservés (clamp d'opacité, bump de version d'apparence
-    /// pour l'invalidation ciblée du cache, clamp de scale).
+    /// Systematic routing through existing setters: model invariants are
+    /// preserved (opacity clamp, appearance-version bump for targeted
+    /// cache invalidation, scale clamp).
     ///
-    /// Si le nœud cible a disparu, la commande est retournée telle quelle :
-    /// l'empiler reste sûr (réapplication = no-op).
+    /// If the target node is gone, the command is returned as is: pushing
+    /// it stays safe (reapplication = no-op).
     pub fn apply_command(&mut self, command: crate::command::Command) -> crate::command::Command {
         use crate::command::Command;
         match command {
@@ -842,41 +1363,96 @@ impl Document {
         }
     }
 
-    // -- Apparence ------------------------------------------------------------
+    // -- Appearance ------------------------------------------------------------
 
-    /// Apparence dérivée du calque (source × filtres actifs), servie par
-    /// le [`crate::renderer::Renderer`] : HIT = zéro recalcul, MISS =
-    /// exécution de la chaîne (compute shaders si GPU disponible).
-    /// Retourne des clones bon marché (Arc/RgbaBuf).
+    /// Layer derived appearance (source × active filters), served by the
+    /// [`crate::renderer::Renderer`]: HIT = zero recompute, MISS = chain
+    /// execution (compute shaders when a GPU is available). Returns cheap
+    /// clones (Arc/RgbaBuf).
     pub fn appearance(&self, id: Uuid) -> Option<Appearance> {
         let layer = self.pixel_layer(id)?;
         Some(self.cache.borrow_mut().appearance(layer))
     }
 
-    /// Variante [`Self::appearance`] sans AUCUNE exécution : retourne
-    /// l'apparence si le cache la détient encore valide, `None` sinon.
-    /// Utilisée par la synchronisation UI à chaque message — à chaud, elle
-    /// ne touche ni au pool de rendu ni à la chaîne de filtres.
+    /// [`Self::appearance`] variant with NO execution: returns the
+    /// appearance if the cache still holds it valid, `None` otherwise.
+    /// Used by UI sync on every message — when warm, it touches
+    /// neither the render pool nor the filter chain.
     pub fn appearance_hit(&self, id: Uuid) -> Option<Appearance> {
         let layer = self.pixel_layer(id)?;
         self.cache.borrow_mut().appearance_hit(layer)
     }
 
-    /// Image seule (chemin compositing — évite de régénérer preview/thumb).
+    /// Image alone (compositing path — avoids regenerating preview/thumb).
     pub fn appearance_image(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
         self.appearance(id).map(|a| a.image)
     }
 
-    /// Miniature pour le panneau Calques (apparence dérivée).
+    /// Vector appearance: GPU render (Vello) with CPU fallback,
+    /// then the live-filter chain. No cache in v1 (recomputed per
+    /// composite — fine for a few vector layers; cache follow-up
+    /// with `appearance_version`).
+    pub fn appearance_vector_image(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        let layer = self.vector_layer(id)?;
+        let (img, _) = crate::scene::vello_render::render_vector_gpu(&layer.vector)
+            .or_else(|| crate::scene::rasterize_bounds(&layer.vector))?;
+        Some(crate::filters::render_chain(
+            &Arc::new(img),
+            &layer.filter_layers,
+        ))
+    }
+
+    /// Pixel appearance, else vector appearance (compositing
+    /// resolver — one entry point for both carriers).
+    pub fn appearance_image_any(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        self.appearance_image(id)
+            .or_else(|| self.appearance_vector_image(id))
+    }
+
+    /// Image alone WITHOUT thumbnail or preview (Phase 6G.3): composes the
+    /// already-cacheable pieces (`unmasked_image` + `mask_coverage`, same
+    /// guards as the full path) and bakes. Pixels bit-identical to
+    /// [`Self::appearance`]; shared `hits`/`misses` counters; no
+    /// `thumb`/`preview_rebuild` counted here (thumbnails go to a
+    /// background task — see the app worker).
+    pub fn appearance_image_only(&self, id: Uuid) -> Option<Arc<DynamicImage>> {
+        let layer = self.pixel_layer(id)?;
+        self.cache.borrow_mut().baked_image_only(layer)
+    }
+
+    /// Image + thumbnail for the response frame (Phase 6G.2 §2): never
+    /// derives the `preview` buffer (unread in production). Pixels
+    /// bit-identical to [`Self::appearance`]; shared `hits` / `misses` /
+    /// `thumb_rebuilds` counters (`preview_rebuilds` untouched: no
+    /// preview rebuilt here).
+    pub fn appearance_frame(&self, id: Uuid) -> Option<(Arc<DynamicImage>, RgbaBuf)> {
+        let layer = self.pixel_layer(id)?;
+        self.cache.borrow_mut().appearance_frame(layer)
+    }
+
+    /// Exports a pixel layer's warm appearance entry (transfer to the live
+    /// document after `spawn_blocking` computation — see
+    /// [`crate::renderer::WarmedAppearance`]).
+    pub fn export_warmed(&self, id: Uuid) -> Option<crate::renderer::WarmedAppearance> {
+        self.cache.borrow().export_warmed(id)
+    }
+
+    /// Inserts an entry pre-computed off the UI thread: the next
+    /// `appearance_hit` HITs without running the chain on the UI.
+    pub fn insert_warmed(&mut self, id: Uuid, warmed: crate::renderer::WarmedAppearance) {
+        self.cache.borrow_mut().insert_warmed(id, warmed);
+    }
+
+    /// Thumbnail for the Layers panel (derived appearance).
     pub fn thumb(&self, id: Uuid) -> Option<RgbaBuf> {
         self.appearance(id).map(|a| a.thumb)
     }
 
-    /// Réchauffe le cache d'apparences de CE document à partir des entrées
-    /// actuellement chaudes d'un autre document (typiquement le document
-    /// VIVANT, pour un clone envoyé en tâche de fond). Évite de re-exécuter
-    /// les chaînes de rendu (filtres preview/thumb) à chaque composite de
-    /// fond : les calques inchangés HIT au lieu de MISS.
+    /// Warms THIS document's appearance cache from the entries currently
+    /// warm in another document (typically the LIVE document, for a clone
+    /// sent to a background task). Avoids re-running the render chains
+    /// (preview/thumb filters) on every background composite: unchanged
+    /// layers HIT instead of MISS.
     pub fn warm_cache_from(&mut self, other: &Document) {
         if std::ptr::eq(self, other) {
             return;
@@ -886,9 +1462,9 @@ impl Document {
         dst.import_from(&src);
     }
 
-    // -- Historique -------------------------------------------------------------
+    // -- History -------------------------------------------------------------
 
-    /// Instantané complet (pixels partagés par Arc — quasi gratuit).
+    /// Full snapshot (Arc-shared pixels — nearly free).
     pub fn snapshot(&self) -> crate::history::Snapshot {
         crate::history::Snapshot {
             doc_size: (self.width, self.height),
@@ -896,28 +1472,28 @@ impl Document {
         }
     }
 
-    /// Restaure un instantané.
+    /// Restores a snapshot.
     pub fn restore_snapshot(&mut self, snap: crate::history::Snapshot) {
         self.restore(snap.doc_size.0, snap.doc_size.1, snap.root);
     }
 
     // -- Compositing ---------------------------------------------------------------
 
-    /// Composite pour le plan de travail infini : aucun crop au document.
-    /// Le document reste centré (comme Affinity/Photoshop) et les calques
-    /// hors document restent visibles. Retourne None si rien n'est visible.
+    /// Composite for the infinite canvas: no cropping to the document. The
+    /// document stays centered (like Affinity/Photoshop) and outside layers
+    /// stay visible. Returns None if nothing is visible.
     pub fn composite_preview(&self) -> Option<DynamicImage> {
         self.composite_scope(&self.root)
     }
 
-    /// Composite du plan infini SANS le sous-arbre donné — utilisé pour le
-    /// fond pré-calculé pendant un drag. Réutilise le CACHE D'APPARENCES de
-    /// CE document : tous les calques restants produisent des HIT, le coût
-    /// se limite au blend lui-même (contrairement à un clonage dans un
-    /// document neuf dont le cache est froid).
+    /// Infinite-plane composite WITHOUT the given subtree — used for the
+    /// pre-computed background during a drag. Reuses THIS document's
+    /// APPEARANCE CACHE: all remaining layers HIT, cost is limited to
+    /// the blend itself (unlike cloning into a fresh document whose
+    /// cache is cold).
     pub fn composite_preview_without(&self, exclude_id: Uuid) -> Option<DynamicImage> {
-        // Clone structurel bon marché (Arcs partagés), sous-arbre masqué,
-        // puis composite via LE MÊME cache que le document vivant.
+        // Cheap structural clone (shared Arcs), subtree masked out, then
+        // composite via THE SAME cache as the live document.
         let mut hidden = self.root.clone();
         hide_subtree(find_in_mut(&mut hidden, exclude_id));
         if hidden.is_empty() {
@@ -926,24 +1502,24 @@ impl Document {
         self.composite_scope(&hidden)
     }
 
-    /// Échantillonne la couleur compositée à un point donné en coordonnées
-    /// document locales (0,0 = coin haut-gauche du DOCUMENT). Retourne
-    /// `[R,G,B,A]` ou `None` si hors du plan composite ou document vide.
-    /// Conçu pour être appelé UNIQUEMENT dans `spawn_blocking` — effectue
-    /// un composite complet si nécessaire.
+    /// Samples the composited color at a point in local document
+    /// coordinates (0,0 = DOCUMENT top-left corner). Returns [R,G,B,A]
+    /// or `None` if outside the composite plane or the document is empty.
+    /// Designed to be called ONLY in `spawn_blocking` — performs a full
+    /// composite if needed.
     pub fn sample_color(&self, dx: f32, dy: f32) -> Option<[u8; 4]> {
-        // Mêmes géométrie et origine que `composite_scope` : si on les
-        // redérivait des dimensions ARRONDIES du buffer, la correspondance
-        // serait fausse dès que les extents sont fractionnaires.
-        let resolver = |id: Uuid| self.appearance_image(id);
+        // Same geometry and origin as `composite_scope`: re-deriving them
+        // from the buffer's ROUNDED dimensions would break the mapping as
+        // soon as extents are fractional.
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, &resolver);
         let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
         let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
         let origin_x = half_w - self.width as f32 / 2.0;
         let origin_y = half_h - self.height as f32 / 2.0;
-        // La composite place les pixels à l'index « plancher » du document
-        // (blend_into arrondit et pose à `offset` exactement) : le pixel qui
-        // occupe la case doc [p, p+1) vit à l'index p — floor(), pas round().
+        // The composite places pixels at the document's "floor" index (blend_into
+        // rounds and stamps at exactly `offset`): the pixel occupying doc
+        // cell [p, p+1) lives at index p — floor(), not round().
         let px = (origin_x + dx).floor() as i64;
         let py = (origin_y + dy).floor() as i64;
         if px < 0 || py < 0 || px >= i64::from(w) || py >= i64::from(h) {
@@ -954,13 +1530,13 @@ impl Document {
         Some([p[0], p[1], p[2], p[3]])
     }
 
-    /// Échantillonne un PATCH carré `side`×`side` (RGBA8, lignes majeures)
-    /// centré sur le point document `(dx, dy)` — pixels hors plan composite
-    /// transparents. Alimente la LOUPE de la pipette (grossissement façon
-    /// Photoshop). Même composite complète que [`Self::sample_color`] →
-    /// à appeler UNIQUEMENT dans `spawn_blocking`.
+    /// Samples a square `side`×`side` PATCH (RGBA8, row-major) centered
+    /// on document point `(dx, dy)` — outside-composite-plane pixels
+    /// transparent. Feeds the eyedropper MAGNIFIER (Photoshop-style
+    /// zoom). Same full composite as [`Self::sample_color`] → call ONLY
+    /// in `spawn_blocking`.
     pub fn sample_region(&self, dx: f32, dy: f32, side: u32) -> Option<Vec<u8>> {
-        let resolver = |id: Uuid| self.appearance_image(id);
+        let resolver = |id: Uuid| self.appearance_image_any(id);
         let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, &resolver);
         let origin_x = half_w - self.width as f32 / 2.0;
         let origin_y = half_h - self.height as f32 / 2.0;
@@ -990,23 +1566,208 @@ impl Document {
         Some(out)
     }
 
-    fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage> {
-        let resolver = |id: Uuid| self.appearance_image(id);
-        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, &resolver);
-        // Clamp pour éviter OOM (16384 ≈ 1 Go RGBA)
+    /// Infinite-plane composite geometry: full-resolution dimensions
+    /// `(w, h)` and DOCUMENT top-left corner `(ox, oy)` within those
+    /// pixels. `None` if nothing is visible. Half-extents are symmetric
+    /// by construction (`scope_half_extents`): the document is therefore
+    /// always centered in the buffer.
+    /// Shared with the UI (thumbnail preview) to convert
+    /// screen→document pixels without drift.
+    pub fn preview_geometry(&self) -> Option<(u32, u32, f32, f32)> {
+        self.preview_geometry_of(&self.root)
+    }
+
+    /// [`Self::preview_geometry`] variant with an external resolver:
+    /// shares appearances already resolved during the response
+    /// (zero new resolution). Behavior identical for an equal
+    /// resolver.
+    pub fn preview_geometry_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<(u32, u32, f32, f32)> {
+        self.preview_geometry_of_with(&self.root, resolve)
+    }
+
+    /// [`Self::preview_geometry`] variant over a given scope.
+    fn preview_geometry_of(&self, nodes: &[LayerNode]) -> Option<(u32, u32, f32, f32)> {
+        let resolver = |id: Uuid| self.appearance_image_any(id);
+        self.preview_geometry_of_with(nodes, &resolver)
+    }
+
+    /// [`Self::preview_geometry_of`] body with injected resolver.
+    fn preview_geometry_of_with(
+        &self,
+        nodes: &[LayerNode],
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<(u32, u32, f32, f32)> {
+        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, resolve);
         let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
         let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
-        let mut acc = ImageBuffer::from_pixel(w.max(1), h.max(1), Rgba([0, 0, 0, 0]));
-        // Origine monde (0,0) = coin du buffer moins demi-tailles
+        // Zero cost if nothing contributes (avoids a ghost composite).
+        if !contributes(nodes, resolve) {
+            return None;
+        }
         let origin_x = half_w - self.width as f32 / 2.0;
         let origin_y = half_h - self.height as f32 / 2.0;
-        if !fold_scope(nodes, &mut acc, origin_x, origin_y, &resolver) {
-            return None; // aucun calque visible/contribuant
+        Some((w.max(1), h.max(1), origin_x, origin_y))
+    }
+
+    fn composite_scope(&self, nodes: &[LayerNode]) -> Option<DynamicImage> {
+        let resolver = |id: Uuid| self.appearance_image_any(id);
+        let mut stats = super::compositing::CompositeStats::default();
+        self.composite_scope_with(nodes, &resolver, &mut stats)
+    }
+
+    /// Infinite-plane composite with external resolver: shares
+    /// appearances already resolved during the response (zero new
+    /// resolution). Identical behavior for an equal resolver.
+    pub fn composite_preview_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+    ) -> Option<DynamicImage> {
+        let mut stats = super::compositing::CompositeStats::default();
+        self.composite_scope_with(&self.root, resolve, &mut stats)
+    }
+
+    /// Instrumented [`Self::composite_preview_with`] variant: fills
+    /// `stats` (scope, accumulator alloc, blends, traversed pixels).
+    /// Identical render behavior.
+    pub fn composite_preview_with_stats(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+    ) -> Option<DynamicImage> {
+        self.composite_scope_with(&self.root, resolve, stats)
+    }
+
+    /// [`Self::composite_scope`] body with injected resolver.
+    pub(super) fn composite_scope_with(
+        &self,
+        nodes: &[LayerNode],
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+    ) -> Option<DynamicImage> {
+        let (half_w, half_h) = scope_half_extents(nodes, self.width, self.height, resolve);
+        // Clamp to avoid OOM (16384 ≈ 1 GB RGBA)
+        let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
+        let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
+        let t_alloc = std::time::Instant::now();
+        let mut acc = ImageBuffer::from_pixel(w.max(1), h.max(1), Rgba([0, 0, 0, 0]));
+        stats.acc_alloc_us += t_alloc.elapsed().as_micros();
+        stats.scope_px = u64::from(acc.width()) * u64::from(acc.height());
+        // World origin (0,0) = buffer corner minus half-sizes
+        let origin_x = half_w - self.width as f32 / 2.0;
+        let origin_y = half_h - self.height as f32 / 2.0;
+        if !super::compositing::fold_scope_stats(
+            nodes, &mut acc, origin_x, origin_y, resolve, stats,
+        ) {
+            return None; // no visible/contributing layer
         }
         Some(DynamicImage::ImageRgba8(acc))
     }
 
-    /// Composite CROPÉ aux dimensions du document — utilisé pour l'export.
+    /// REGIONAL (windowed) composite: only computes `region` (DOCUMENT
+    /// coordinates, clamped here to the buffer) with EXACTLY the same
+    /// pass as [`Self::composite_scope_with`] — same `prepare_top`,
+    /// same `blend_into`, same full-size appearances — on a reduced
+    /// accumulator with a shifted origin.
+    ///
+    /// Correctness: the shift is integer (buffer pixels), and integer
+    /// translation commutes with `blend_into` rounding (`round(a − K)`
+    /// == round(a) − K`) — so sampling is bit-identical to
+    /// full-frame over the covered zone.
+    ///
+    /// Dependency window (Phase 6C): the stack is analyzed by
+    /// [`super::compositing::scope_adjustment_window`] —
+    /// - local/neighborhood ops: fall back to dependency `D = R + halo`
+    ///   (halo = sum of exact supports, see
+    ///   [`super::compositing::blur_support_px`]), then crop `R`;
+    /// - global op (unknown effect, active group mask…): documented
+    ///   fallback — full-frame evaluation then crop of `R` (correctness
+    ///   first; `stats.scope_px` then reflects the full-frame
+    ///   cost).
+    ///
+    /// Appearances stay computed full-size (no added GPU readback, no
+    /// shader realloc). `stats.scope_px` = dependency pixels actually
+    /// processed (window, not request). `None` if the region is
+    /// empty/out of frame or nothing contributes.
+    pub fn composite_region_with(
+        &self,
+        resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>,
+        stats: &mut super::compositing::CompositeStats,
+        region: &TileRegion,
+    ) -> Option<RegionalComposite> {
+        if region.is_empty() {
+            return None;
+        }
+        // Same geometry as full-frame (no re-derivation from rounded
+        // values — see `sample_color`).
+        let (half_w, half_h) = scope_half_extents(&self.root, self.width, self.height, resolve);
+        let w = ((half_w * 2.0).clamp(1.0, 16384.0)) as u32;
+        let h = ((half_h * 2.0).clamp(1.0, 16384.0)) as u32;
+        let origin_x = half_w - self.width as f32 / 2.0;
+        let origin_y = half_h - self.height as f32 / 2.0;
+        // Document → buffer, clamped integer bounds (floor at min, ceil at
+        // max: conservative coverage like tiles).
+        let bx0 = (origin_x + region.x as f32).floor().clamp(0.0, w as f32) as u32;
+        let by0 = (origin_y + region.y as f32).floor().clamp(0.0, h as f32) as u32;
+        let bx1 = (origin_x + region.x as f32 + region.width as f32)
+            .ceil()
+            .clamp(0.0, w as f32) as u32;
+        let by1 = (origin_y + region.y as f32 + region.height as f32)
+            .ceil()
+            .clamp(0.0, h as f32) as u32;
+        let (rw, rh) = (bx1.saturating_sub(bx0), by1.saturating_sub(by0));
+        if rw == 0 || rh == 0 {
+            return None;
+        }
+        let window = super::compositing::scope_adjustment_window(&self.root);
+        if window.global {
+            // Documented fallback: full-frame then crop — bit-identical by
+            // construction, at full-frame cost.
+            let full = self.composite_scope_with(&self.root, resolve, stats)?;
+            let rgba = full.to_rgba8();
+            let cropped = image::imageops::crop_imm(&rgba, bx0, by0, rw, rh).to_image();
+            return Some(RegionalComposite {
+                image: DynamicImage::ImageRgba8(cropped),
+                origin_x: bx0,
+                origin_y: by0,
+            });
+        }
+        // D = R + halo (buffer coords, same step as the region), clamped. R
+        // ⊆ D guaranteed (R already in the buffer): the final crop is safe.
+        let halo = u64::from(window.halo_px);
+        let dx0 = u64::from(bx0).saturating_sub(halo).min(u64::from(w)) as u32;
+        let dy0 = u64::from(by0).saturating_sub(halo).min(u64::from(h)) as u32;
+        let dx1 = (u64::from(bx1) + halo).min(u64::from(w)) as u32;
+        let dy1 = (u64::from(by1) + halo).min(u64::from(h)) as u32;
+        let (dw, dh) = (dx1.saturating_sub(dx0), dy1.saturating_sub(dy0));
+        if dw == 0 || dh == 0 {
+            return None;
+        }
+        let t_alloc = std::time::Instant::now();
+        let mut acc = ImageBuffer::from_pixel(dw.max(1), dh.max(1), Rgba([0, 0, 0, 0]));
+        stats.acc_alloc_us += t_alloc.elapsed().as_micros();
+        stats.scope_px = u64::from(acc.width()) * u64::from(acc.height());
+        if !super::compositing::fold_scope_stats(
+            &self.root,
+            &mut acc,
+            origin_x - dx0 as f32,
+            origin_y - dy0 as f32,
+            resolve,
+            stats,
+        ) {
+            return None;
+        }
+        let cropped = image::imageops::crop_imm(&acc, bx0 - dx0, by0 - dy0, rw, rh).to_image();
+        Some(RegionalComposite {
+            image: DynamicImage::ImageRgba8(cropped),
+            origin_x: bx0,
+            origin_y: by0,
+        })
+    }
+
+    /// Composite CROPPED to document dimensions — used for export.
     pub fn composite(&self) -> Option<DynamicImage> {
         let img = self.composite_preview()?;
         let (w, h) = img.dimensions();
@@ -1018,11 +1779,17 @@ impl Document {
         Some(img.crop_imm(x, y, self.width.max(1), self.height.max(1)))
     }
 
-    /// Statistiques du renderer — instrumentation des tests (cache chaud).
+    /// Renderer statistics — test instrumentation (warm cache).
     #[cfg(test)]
     pub fn renderer_stats(&self) -> (u64, u64) {
         let r = self.cache.borrow();
         (r.hits(), r.misses())
+    }
+
+    /// Appearance counters (hits, misses, preview/thumb rebuilds) —
+    /// inter-pass sharing observability, no render effect.
+    pub fn appearance_stats(&self) -> crate::renderer::AppearanceStats {
+        self.cache.borrow().stats()
     }
 }
 
@@ -1031,9 +1798,7 @@ fn find_in(nodes: &[LayerNode], id: Uuid) -> Option<&LayerNode> {
         if n.id() == id {
             return Some(n);
         }
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_in(&g.children, id)
-        {
+        if let Some(found) = find_in(n.children(), id) {
             return Some(found);
         }
     }
@@ -1045,8 +1810,8 @@ fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode> {
         if n.id() == id {
             return Some(n);
         }
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_in_mut(&mut g.children, id)
+        if let Some(children) = n.children_mut()
+            && let Some(found) = find_in_mut(children, id)
         {
             return Some(found);
         }
@@ -1054,7 +1819,39 @@ fn find_in_mut(nodes: &mut [LayerNode], id: Uuid) -> Option<&mut LayerNode> {
     None
 }
 
-/// Parent (`None` = racine) et index d'un nœud, pour détecter les no-ops.
+/// True if at least one node would contribute to the composite (same
+/// guards as [`fold_scope`](super::compositing::fold_scope), no render).
+/// A lone adjustment does not count: on an empty accumulator it
+/// produces nothing, like the composite which then returns `None`.
+/// A pixel layer also contributes via its clipped children.
+fn contributes(nodes: &[LayerNode], resolve: &dyn Fn(Uuid) -> Option<Arc<DynamicImage>>) -> bool {
+    for node in nodes {
+        match node {
+            LayerNode::Pixel(l) => {
+                if l.visible && l.opacity > 0.01 && resolve(l.id).is_some() {
+                    return true;
+                }
+                if l.visible && l.opacity > 0.01 && contributes(&l.children, resolve) {
+                    return true;
+                }
+            }
+            LayerNode::Vector(v) => {
+                if v.visible && v.opacity > 0.01 && resolve(v.id).is_some() {
+                    return true;
+                }
+            }
+            LayerNode::Group(g) => {
+                if g.visible && g.opacity > 0.01 && contributes(&g.children, resolve) {
+                    return true;
+                }
+            }
+            LayerNode::Adjustment(_) => {}
+        }
+    }
+    false
+}
+
+/// Parent (`None` = root) and index of a node, for no-op detection.
 fn owner_position(
     nodes: &[LayerNode],
     id: Uuid,
@@ -1073,14 +1870,14 @@ fn owner_position(
     None
 }
 
-/// Trouve la liste possédant `id` (racine ou enfants d'un groupe) + index.
+/// Finds the list owning `id` (root or a group's children) + index.
 fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<LayerNode>, usize)> {
     if let Some(idx) = nodes.iter().position(|n| n.id() == id) {
         return Some((nodes, idx));
     }
     for n in nodes.iter_mut() {
-        if let LayerNode::Group(g) = n
-            && let Some(found) = find_owner_list(&mut g.children, id)
+        if let Some(children) = n.children_mut()
+            && let Some(found) = find_owner_list(children, id)
         {
             return Some(found);
         }
@@ -1088,12 +1885,12 @@ fn find_owner_list(nodes: &mut Vec<LayerNode>, id: Uuid) -> Option<(&mut Vec<Lay
     None
 }
 
-/// Masque récursivement un sous-arbre (drag d'un groupe = tout le groupe).
+/// Recursively masks a subtree (dragging a group = the whole group).
 fn hide_subtree(node: Option<&mut LayerNode>) {
     let Some(node) = node else { return };
     node.set_visible(false);
-    if let LayerNode::Group(g) = node {
-        for child in &mut g.children {
+    if let Some(children) = node.children_mut() {
+        for child in children.iter_mut() {
             hide_subtree(Some(child));
         }
     }
@@ -1103,9 +1900,11 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
     for n in nodes {
         match n {
             LayerNode::Pixel(l) => {
-                if l.visible && l.opacity > 0.01 {
-                    out.push(l);
+                if !l.visible || l.opacity <= 0.01 {
+                    continue;
                 }
+                out.push(l);
+                collect_pixels(&l.children, out);
             }
             LayerNode::Group(g) => {
                 if !g.visible || g.opacity <= 0.01 {
@@ -1113,8 +1912,34 @@ fn collect_pixels<'a>(nodes: &'a [LayerNode], out: &mut Vec<&'a PixelLayer>) {
                 }
                 collect_pixels(&g.children, out)
             }
-            LayerNode::Adjustment(_) => {}
+            // Pixels only by design (appearance warming, snapshots):
+            // vectors resolve through `appearance_vector_image`.
+            LayerNode::Vector(_) | LayerNode::Adjustment(_) => {}
         }
+    }
+}
+
+/// Ids of all pixel layers, no visibility filter (snapshots need
+/// thumbnails even of hidden layers). Descends the whole nested
+/// hierarchy (groups AND pixel
+/// children).
+fn collect_all_pixel_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
+    for n in nodes {
+        if let LayerNode::Pixel(l) = n {
+            out.push(l.id);
+        }
+        collect_all_pixel_ids(n.children(), out);
+    }
+}
+
+/// Ids of ALL vector layers (visible or not), DFS order. Vectors
+/// are childless in v1: no recursion beyond the accessor.
+fn collect_all_vector_ids(nodes: &[LayerNode], out: &mut Vec<Uuid>) {
+    for n in nodes {
+        if let LayerNode::Vector(v) = n {
+            out.push(v.id);
+        }
+        collect_all_vector_ids(n.children(), out);
     }
 }
 
@@ -1123,44 +1948,33 @@ fn collect_masks<'a>(
     out: &mut Vec<(Uuid, &'a crate::document::LayerMask)>,
 ) {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                for m in &l.masks {
-                    out.push((l.id, m));
-                }
-                // Masques des sous-calques de filtres (porteur = id du filtre)
-                for f in &l.filter_layers {
-                    for m in &f.masks {
-                        out.push((f.id, m));
-                    }
-                }
-            }
-            LayerNode::Group(g) => {
-                for m in &g.masks {
-                    out.push((g.id, m));
-                }
-                collect_masks(&g.children, out)
-            }
-            LayerNode::Adjustment(_) => {}
+        // The node's own masks (pixels, groups AND adjustments).
+        for m in n.masks() {
+            out.push((n.id(), m));
         }
+        // Filter sub-layer masks (carrier = filter id).
+        if let Some(filters) = n.filter_layers() {
+            for f in filters {
+                for m in &f.masks {
+                    out.push((f.id, m));
+                }
+            }
+        }
+        collect_masks(n.children(), out)
     }
 }
 
-/// Sous-calque de filtre par son id (pixels racine ou groupes imbriqués).
+/// Filter sub-layer by its id (pixels, nested groups, root or
+/// pixel children).
 fn find_filter_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<&FilterLayer> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if let Some(f) = l.filter_layers.iter().find(|f| f.id == filter_id) {
-                    return Some(f);
-                }
-            }
-            LayerNode::Group(g) => {
-                if let Some(found) = find_filter_in(&g.children, filter_id) {
-                    return Some(found);
-                }
-            }
-            LayerNode::Adjustment(_) => {}
+        if let Some(filters) = n.filter_layers()
+            && let Some(f) = filters.iter().find(|f| f.id == filter_id)
+        {
+            return Some(f);
+        }
+        if let Some(found) = find_filter_in(n.children(), filter_id) {
+            return Some(found);
         }
     }
     None
@@ -1173,63 +1987,83 @@ fn find_filter_in_mut(nodes: &mut [LayerNode], filter_id: Uuid) -> Option<&mut F
                 if let Some(f) = l.filter_layers.iter_mut().find(|f| f.id == filter_id) {
                     return Some(f);
                 }
+                if let Some(found) = find_filter_in_mut(&mut l.children, filter_id) {
+                    return Some(found);
+                }
             }
             LayerNode::Group(g) => {
+                if let Some(filters) = g.filter_layers.iter_mut().find(|f| f.id == filter_id) {
+                    return Some(filters);
+                }
                 if let Some(found) = find_filter_in_mut(&mut g.children, filter_id) {
                     return Some(found);
                 }
             }
+            // Vectors carry a filter chain but no children.
+            LayerNode::Vector(v) => {
+                if let Some(f) = v.filter_layers.iter_mut().find(|f| f.id == filter_id) {
+                    return Some(f);
+                }
+            }
             LayerNode::Adjustment(_) => {}
         }
     }
     None
 }
 
-/// Calque pixels porteur d'un sous-calque de filtre.
+/// Carrier (pixels or group) of a filter sub-layer.
 fn find_filter_parent_in(nodes: &[LayerNode], filter_id: Uuid) -> Option<Uuid> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if l.filter_layers.iter().any(|f| f.id == filter_id) {
-                    return Some(l.id);
-                }
-            }
-            LayerNode::Group(g) => {
-                if let Some(found) = find_filter_parent_in(&g.children, filter_id) {
-                    return Some(found);
-                }
-            }
-            LayerNode::Adjustment(_) => {}
+        if n.filter_layers()
+            .is_some_and(|filters| filters.iter().any(|f| f.id == filter_id))
+        {
+            return Some(n.id());
+        }
+        if let Some(found) = find_filter_parent_in(n.children(), filter_id) {
+            return Some(found);
         }
     }
     None
 }
 
-/// Porteur d'un masque par son id — un nœud (pixel/groupe) dont la liste
-/// `masks` le contient, OU le sous-calque de filtre qui le porte.
+/// Carrier of a mask by its id — a node (pixel/group/adjustment)
+/// whose `masks` list holds it, OR the filter sub-layer carrying
+/// it.
 fn mask_owner_in(nodes: &[LayerNode], mask_id: Uuid) -> Option<Uuid> {
     for n in nodes {
-        match n {
-            LayerNode::Pixel(l) => {
-                if l.masks.iter().any(|m| m.id == mask_id) {
-                    return Some(l.id);
-                }
-                for f in &l.filter_layers {
-                    if f.masks.iter().any(|m| m.id == mask_id) {
-                        return Some(f.id);
-                    }
-                }
-            }
-            LayerNode::Adjustment(_) => {}
-            LayerNode::Group(g) => {
-                if g.masks.iter().any(|m| m.id == mask_id) {
-                    return Some(g.id);
-                }
-                if let Some(found) = mask_owner_in(&g.children, mask_id) {
-                    return Some(found);
+        if n.masks().iter().any(|m| m.id == mask_id) {
+            return Some(n.id());
+        }
+        if let Some(filters) = n.filter_layers() {
+            for f in filters {
+                if f.masks.iter().any(|m| m.id == mask_id) {
+                    return Some(f.id);
                 }
             }
         }
+        if let Some(found) = mask_owner_in(n.children(), mask_id) {
+            return Some(found);
+        }
     }
     None
+}
+
+/// Re-homes one mask buffer into carrier dimensions (see
+/// [`Document::normalize_mask_spaces`]): already matching sizes are
+/// untouched; otherwise a fresh revealed (`full`) buffer receives the
+/// top-left overlap of the old content.
+fn rehome_mask(mask: &mut LayerMask, w: u32, h: u32) {
+    let (mw, mh) = (mask.image.width(), mask.image.height());
+    if (mw, mh) == (w.max(1), h.max(1)) || w == 0 || h == 0 {
+        return;
+    }
+    let mut fresh = ImageBuffer::from_pixel(w, h, Rgba([255, 255, 255, 255]));
+    let (cw, ch) = (mw.min(w), mh.min(h));
+    for y in 0..ch {
+        for x in 0..cw {
+            fresh.put_pixel(x, y, *mask.image.get_pixel(x, y));
+        }
+    }
+    mask.image = Arc::new(fresh);
+    mask.touch();
 }

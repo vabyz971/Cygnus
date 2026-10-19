@@ -2,23 +2,26 @@
 name = "photo"
 version = "0.7.0"
 authors = ["vabyz971 <vabyz971@gmail.com>"]
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
-iced.workspace = true
-iced.features = ["debug", "image", "tokio"]
-iced_core = "0.14"
-tokio = { version = "1", features = ["rt-multi-thread"] }
-iced_aw.workspace = true
-ui-kit = { path = "../../packages/ui-kit" }
-datatypes = { path = "../../core/datatypes" }
+eframe.workspace = true
+wgpu.workspace = true
+egui.workspace = true
+egui_animation.workspace = true
+egui_tiles.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+cygnus-ui = { path = "../../cygnus-ui" }
+cygnus-i18n = { path = "../../cygnus-i18n" }
+app-shell = { path = "../../packages/app-shell" }
 photo-engine = { path = "../../engines/photo-engine" }
+datatypes = { path = "../../core/datatypes" }
+engine-runtime = { path = "../../core/engine-runtime" }
 preferences = { path = "../../packages/preferences" }
 uuid.workspace = true
-rfd = "0.15"
 image.workspace = true
-rayon.workspace = true
-wgpu.workspace = true
-pollster.workspace = true
-bytemuck.workspace = true

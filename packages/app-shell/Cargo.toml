@@ -1,0 +1,15 @@
+[package]
+name = "app-shell"
+version = "0.1.0"
+authors = ["vabyz971 <vabyz971@gmail.com>"]
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+egui.workspace = true
+egui_tiles.workspace = true
+serde.workspace = true
+uuid.workspace = true

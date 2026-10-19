@@ -1,12 +1,21 @@
 [package]
 name = "photo-engine"
 version = "0.7.0"
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
+engine-runtime = { path = "../../core/engine-runtime" }
+gpu-compositor = { path = "../gpu-compositor" }
 math-utils = { path = "../../packages/math-utils" }
+render-graph = { path = "../../core/render-graph" }
+tiles = { path = "../../core/tiles" }
+kurbo.workspace = true
+vello.workspace = true
 image = { workspace = true }
 rayon = { workspace = true }
 wgpu = { workspace = true }
@@ -14,5 +23,5 @@ bytemuck = { workspace = true }
 pollster = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-base64 = "0.22"
+base64.workspace = true
 uuid = { workspace = true }

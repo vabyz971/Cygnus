@@ -1,8 +1,14 @@
 [package]
 name = "datatypes"
 version = "0.2.0"
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

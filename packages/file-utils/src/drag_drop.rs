@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Types partagés pour le drag & drop de fichiers
+//! Shared types for file drag & drop
 
 use std::path::PathBuf;
 

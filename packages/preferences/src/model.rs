@@ -14,15 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Modèle de données des préférences — sérialisable, tolérant aux
-//! évolutions (tous les champs portent `#[serde(default)]` : un fichier
-//! d'une version antérieure ou postérieure se charge sans erreur).
+//! Preferences data model — serializable, tolerant to
+//! changes (every field carries `#[serde(default)]`: a file
+//! from an earlier or later version loads without error).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// API de rendu demandée à wgpu.
+/// Render API requested from wgpu.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderApi {
     #[default]
@@ -40,7 +40,7 @@ impl std::fmt::Display for RenderApi {
 }
 
 impl RenderApi {
-    /// Cette API est-elle disponible sur la plateforme actuelle ?
+    /// Is this API available on the current platform?
     #[must_use]
     pub fn is_available_on_current_platform(self) -> bool {
         match self {
@@ -48,12 +48,12 @@ impl RenderApi {
             RenderApi::Vulkan => cfg!(target_os = "linux") || cfg!(target_os = "windows"),
             RenderApi::Metal => cfg!(target_os = "macos"),
             RenderApi::Dx12 => cfg!(target_os = "windows"),
-            // GL : backend logiciel possible partout
+            // GL: software backend possible everywhere
             RenderApi::Gl => true,
         }
     }
 
-    /// API recommandée selon la plateforme.
+    /// Recommended API for the platform.
     #[must_use]
     pub fn recommended_for_current_platform() -> Self {
         if cfg!(target_os = "macos") {
@@ -84,8 +84,8 @@ impl RenderApi {
     }
 }
 
-/// Thème d'interface (le thème sombre est le seul rendu aujourd'hui ;
-/// Light/System sont stockés pour l'avenir).
+/// Interface theme (the dark theme is the only one rendered today;
+/// Light/System are stored for the future).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     #[default]
@@ -112,7 +112,7 @@ impl Theme {
     }
 }
 
-/// Profil de qualité du rendu (réservé pour l'anti-aliasing/échelle).
+/// Render quality profile (reserved for anti-aliasing/scale).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderQuality {
     Performance,
@@ -143,14 +143,14 @@ impl RenderQuality {
     }
 }
 
-/// Section Général.
+/// General section.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GeneralPreferences {
     pub language: String,
     pub theme: Theme,
     pub auto_save: bool,
     pub auto_save_interval_secs: u32,
-    /// Rayon des éléments du panneau Calques (en pixels).
+    /// Radius of Layers-panel items (in pixels).
     #[serde(default = "default_layer_item_radius")]
     pub layer_item_radius: f32,
 }
@@ -159,7 +159,7 @@ fn default_layer_item_radius() -> f32 {
     6.0
 }
 
-/// Section Rendu.
+/// Render section.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderPreferences {
     pub api: RenderApi,
@@ -179,42 +179,43 @@ impl Default for RenderPreferences {
     }
 }
 
-/// Table de raccourcis : id d'action → combinaison (« Ctrl+Shift+S »).
+/// Shortcut table: action id → combo ("Ctrl+Shift+S").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeybindingPreferences {
     pub bindings: HashMap<String, String>,
 }
 
 impl KeybindingPreferences {
-    /// Combinaisons par défaut — la référence aussi pour « réinitialiser ».
+    /// Default combos — also the reference for "reset".
     #[must_use]
     pub fn with_defaults() -> Self {
         let mut bindings = HashMap::new();
-        // Outils
+        // Tools
         bindings.insert("tool_brush".to_string(), "B".to_string());
         bindings.insert("tool_eraser".to_string(), "E".to_string());
         bindings.insert("tool_eyedropper".to_string(), "I".to_string());
         bindings.insert("tool_move".to_string(), "V".to_string());
+        bindings.insert("tool_node".to_string(), "A".to_string());
         bindings.insert("tool_hand".to_string(), "H".to_string());
         bindings.insert("tool_zoom".to_string(), "Z".to_string());
-        // Édition
+        // Editing
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("redo".to_string(), "Ctrl+Y".to_string());
         bindings.insert("delete_layer".to_string(), "Delete".to_string());
-        // Fichier
+        // File
         bindings.insert("save".to_string(), "Ctrl+S".to_string());
         bindings.insert("save_as".to_string(), "Ctrl+Shift+S".to_string());
         bindings.insert("open".to_string(), "Ctrl+O".to_string());
         bindings.insert("new_project".to_string(), "Ctrl+N".to_string());
         bindings.insert("export".to_string(), "Ctrl+Shift+E".to_string());
-        // Affichage
+        // Display
         bindings.insert("zoom_in".to_string(), "Ctrl+Plus".to_string());
         bindings.insert("zoom_out".to_string(), "Ctrl+Minus".to_string());
         bindings.insert("zoom_fit".to_string(), "Ctrl+0".to_string());
         bindings.insert("zoom_100".to_string(), "Ctrl+1".to_string());
         bindings.insert("toggle_layers_panel".to_string(), "F7".to_string());
         bindings.insert("toggle_tools_panel".to_string(), "Tab".to_string());
-        // Calques
+        // Layers
         bindings.insert("new_layer".to_string(), "Ctrl+Shift+N".to_string());
         bindings.insert("duplicate_layer".to_string(), "Ctrl+J".to_string());
         // Application
@@ -230,7 +231,7 @@ impl Default for KeybindingPreferences {
     }
 }
 
-/// Racine des préférences persistantes d'une app.
+/// Root of an app's persistent preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preferences {
     pub version: u32,
@@ -258,22 +259,22 @@ fn config_file(base: &std::path::Path, vendor: &str, app: &str) -> PathBuf {
 }
 
 impl Preferences {
-    /// Chemin du fichier de configuration (`<config>/Cygnus/<app>/preferences.json`).
-    /// None si la plateforme n'expose pas de dossier de configuration.
+    /// Configuration file path (`<config>/Cygnus/<app>/preferences.json`).
+    /// None when the platform exposes no configuration folder.
     #[must_use]
     pub fn config_path(app: &str) -> Option<PathBuf> {
         dirs::config_dir().map(|p| config_file(&p, "Cygnus", app))
     }
 
-    /// Ancien emplacement conservé en lecture seule pour la migration depuis
-    /// CreativeSuiteOpen : si aucun fichier Cygnus n'existe, on relit
-    /// l'ancien sans l'écraser ; la prochaine sauvegarde écrit côté Cygnus.
+    /// Legacy location kept read-only for migration from
+    /// CreativeSuiteOpen: when no Cygnus file exists, the
+    /// old one is re-read without overwriting it; the next save writes on the Cygnus side.
     fn legacy_config_path(app: &str) -> Option<PathBuf> {
         dirs::config_dir().map(|p| config_file(&p, "CreativeSuiteOpen", app))
     }
 
-    /// Charge les préférences ; toute anomalie retombe sur les défauts
-    /// (jamais de panic : un fichier corrompu ne doit pas empêcher le boot).
+    /// Loads the preferences; any anomaly falls back to the defaults
+    /// (never panics: a corrupt file must not prevent boot).
     #[must_use]
     pub fn load(app: &str) -> Self {
         if let Some(path) = Self::config_path(app)
@@ -308,11 +309,11 @@ impl Preferences {
         }
     }
 
-    /// Écrit les préférences sur disque (crée les dossiers parents).
+    /// Writes the preferences to disk (creates parent folders).
     ///
     /// # Errors
-    /// [`PreferencesError`] si le dossier config est introuvable, ou en
-    /// cas d'erreur I/O / sérialisation.
+    /// [`PreferencesError`] when the config folder cannot be found, or on
+    /// I/O / serialization error.
     pub fn save(&self, app: &str) -> Result<(), PreferencesError> {
         let path = Self::config_path(app).ok_or(PreferencesError::NoConfigDir)?;
         if let Some(parent) = path.parent() {
@@ -326,7 +327,7 @@ impl Preferences {
     }
 }
 
-/// Erreurs de persistance des préférences.
+/// Preference persistence errors.
 #[derive(Debug, thiserror::Error)]
 pub enum PreferencesError {
     #[error("impossible de trouver le dossier de configuration")]
@@ -371,7 +372,7 @@ mod tests {
 
     #[test]
     fn champs_manquants_tomber_sur_defauts() {
-        // Un vieux fichier sans `render` ni `keybindings` doit se charger
+        // An old file without `render` or `keybindings` must still load
         let json = r#"{"version":1,"general":{"language":"fr","theme":"Dark","auto_save":true,"auto_save_interval_secs":300}}"#;
         let prefs: Preferences = serde_json::from_str(json).expect("tolérant");
         assert_eq!(prefs.render, RenderPreferences::default());
@@ -383,7 +384,7 @@ mod tests {
 
     #[test]
     fn api_filtrees_par_plateforme() {
-        // Invariants vrais sur TOUTE plateforme de test
+        // Invariants true on EVERY test platform
         assert!(RenderApi::Auto.is_available_on_current_platform());
         assert!(RenderApi::Gl.is_available_on_current_platform());
         assert_eq!(

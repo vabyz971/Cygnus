@@ -1,8 +1,16 @@
 [package]
 name = "video-engine"
 version = "0.1.0"
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 datatypes = { path = "../../core/datatypes" }
+ids = { path = "../../core/ids" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

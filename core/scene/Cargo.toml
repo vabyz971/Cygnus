@@ -1,0 +1,17 @@
+[package]
+name = "scene"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ids = { path = "../ids" }
+math-utils = { path = "../../packages/math-utils" }
+serde = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

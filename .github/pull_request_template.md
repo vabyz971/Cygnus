@@ -4,7 +4,7 @@ What does this PR change, and why? Reference the issue it closes if any (e.g. `F
 
 ## Scope
 
-Affected application/engine/package and relevant subsystem (for example: `photo`, `photo-engine`, `ui-kit/image_canvas`).
+Affected application/engine/package and relevant subsystem (for example: `photo`, `photo-engine`, `cygnus-ui/image_canvas`).
 
 Do not include unrelated refactors: one logical change per PR.
 

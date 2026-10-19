@@ -1,0 +1,31 @@
+// Cygnus — Suite créative professionnelle open source
+// Copyright (C) 2026 vabyz971
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! Standard dialogs shared by the 3 apps.
+//!
+//! Generic modals ([`modal`]), non-blocking file pickers
+//! ([`file_picker`], via `rfd` on a background thread) and
+//! progress dialog for exports ([`progress_dialog`]).
+
+pub mod file_picker;
+pub mod modal;
+pub mod progress_dialog;
+
+pub use file_picker::{
+    pick_image_to_open, pick_image_to_save, pick_project_to_open, pick_project_to_save,
+};
+pub use modal::{CygnusModal, ModalAction};
+pub use progress_dialog::CygnusProgressDialog;

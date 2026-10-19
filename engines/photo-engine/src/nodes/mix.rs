@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœud Mélange : superpose de 2 à 6 images (entrées dynamiques) dans l'ordre
-//! des slots — image 1 en dessous, la dernière au-dessus. Chaque entrée
-//! non connectée est ignorée. C'est l'outil pour empiler plus de deux calques.
+//! Mix node: stacks 2 to 6 images (dynamic inputs) in slot order
+//! — image 1 at the bottom, the last on top. Each unconnected
+//! input is ignored. It is the tool for stacking more than two layers.
 //!
-//! Réutilise la fusion du Calque (modes + alpha compositing).
+//! Reuses the Layer blend (modes + alpha compositing).
 
 use super::layer::{MIX_MAX_INPUTS, mix_socket};
 use super::{Effect, NodeCtx};
@@ -26,11 +26,11 @@ use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType}
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    let mut def = NodeDefinition::new("mix", "Mélange", NodeCategory::Compositing)
+    let mut def = NodeDefinition::new("mix", "Mix", NodeCategory::Compositing)
         .param("count", ParamValue::Int(2))
         .param("blend_mode", ParamValue::Enum("Normal".into()))
         .header_color([0.45, 0.35, 0.65])
-        .description("Superpose 2 à 6 images (ajouter/retirer des entrées)");
+        .description("Stacks 2 to 6 images (add/remove inputs)");
     for i in 1..=MIX_MAX_INPUTS {
         def = def.input(SocketDef::new(
             mix_socket(i),
@@ -42,8 +42,8 @@ pub fn definition() -> NodeDefinition {
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
-    // Chaîne linéaire = une seule image : rien à superposer, on transmet
-    // telle quelle (la superposition multi-entrées n'existe qu'en graphe).
+    // Linear chain = single image: nothing to stack, forward it
+    // as is (multi-input stacking only exists in graph mode).
     ctx.input().cloned()
 }
 

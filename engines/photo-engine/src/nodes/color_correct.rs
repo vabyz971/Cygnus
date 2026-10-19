@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Effet Correction Couleur (saturation HSL simplifiée)
+//! Color Correction effect (simplified HSL saturation)
 
 use super::{Effect, NodeCtx, to_rgba8};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
@@ -22,13 +22,13 @@ use image::DynamicImage;
 use rayon::prelude::*;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("color_correct", "Correction Couleur", NodeCategory::Color)
+    NodeDefinition::new("color_correct", "Color correction", NodeCategory::Color)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .output(SocketDef::new("image", "Image", SocketType::Image))
         .param("saturation", ParamValue::Float(1.0))
         .param("hue", ParamValue::Float(0.0))
         .header_color([0.85, 0.55, 0.10])
-        .description("Correction HSL")
+        .description("HSL correction")
 }
 
 pub fn apply_effect(img: &DynamicImage, saturation: f32) -> DynamicImage {

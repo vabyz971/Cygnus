@@ -1,31 +1,30 @@
-# Politique de sécurité — Cygnus
+# Cygnus security policy
 
-Cygnus prend la sécurité au sérieux, y compris pour une suite
-créative open source. Ce document décrit comment signaler une vulnérabilité.
+Cygnus takes security seriously, including as an open-source
+creative suite. This document describes how to report a vulnerability.
 
-## Signaler une vulnérabilité
+## Reporting a vulnerability
 
-**Ne pas ouvrir d'issue publique pour signaler une vulnérabilité** — utilisez de préférence GitHub :
+**Do not open a public issue to report a vulnerability** — prefer GitHub:
 
-- Ouvrez un *security advisory* privé :
+- Open a private *security advisory*:
   https://github.com/vabyz971/Cygnus/security/advisories
-- Ou écrivez à l'adresse du responsable via GitHub (l'issue discussion est
-  acceptée pour les cas non sensibles).
+- Or write to the maintainer via GitHub (discussion issues are
+  accepted for non-sensitive cases).
 
-Nous accusons réception sous 72 h et traitons les rapports vérifiés avec
-priorité. Merci de ne pas publier de détails exploitables avant qu'un fix ne
-soit disponible.
+We acknowledge receipt within 72 h and prioritize verified reports.
+Please do not publish exploitable details before a fix is available.
 
-## Surfaces considérées sensibles
+## Surfaces considered sensitive
 
-- Décodage d'images (PNG/JPEG) à l'ouverture et à l'export — dépend de
-  `image` et de ses décodeurs.
-- Parsing du format projet `.cygp` (JSON versionné + base64) dans
+- Image decoding (PNG/JPEG) at open and export — depends on
+  `image` and its decoders.
+- Parsing of the `.cygp` project format (versioned JSON + base64) in
   `photo-engine` (`project.rs`).
-- Rendu GPU (shaders wgpu) — tout usage de mémoire GPU non maîtrisée y est
-  rapporté comme une vulnérabilité.
+- GPU rendering (wgpu shaders) — any uncontrolled GPU memory usage
+  there is reported as a vulnerability.
 
-## Versions supportées
+## Supported versions
 
-Il n'existe pas encore de cycle de release formel : les correctifs de sécurité
-sont publiés sur la branche `main` dès leur validation.
+There is no formal release cycle yet: security fixes are published
+on the `main` branch as soon as they are validated.

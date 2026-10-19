@@ -14,25 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Nœud de sortie : transmet l'image finale au canvas
+//! Output node: forwards the final image to the canvas
 
 use super::{Effect, NodeCtx};
 use datatypes::{NodeCategory, NodeDefinition, ParamValue, SocketDef, SocketType};
 use image::DynamicImage;
 
 pub fn definition() -> NodeDefinition {
-    NodeDefinition::new("output", "Sortie", NodeCategory::Output)
+    NodeDefinition::new("output", "Output", NodeCategory::Output)
         .input(SocketDef::new("image", "Image", SocketType::Image))
         .param("width", ParamValue::Int(1920))
         .param("height", ParamValue::Int(1080))
         .header_color([0.65, 0.20, 0.20])
-        .description("Sortie finale — rognée au gizmo (dimensions choisies)")
+        .description("Final output, cropped to the gizmo (chosen size)")
 }
 
 fn apply(ctx: &NodeCtx) -> Option<DynamicImage> {
-    // Pour l'affichage, la sortie transmet l'image telle quelle ;
-    // les dimensions (gizmo) ne servent qu'à l'export et à l'overlay visuel.
-    // Le rognage à l'export se fera au moment de l'export, pas ici.
+    // For display, the output forwards the image as is;
+    // the dimensions (gizmo) are only used for export and the visual overlay.
+    // Export cropping happens at export time, not here.
     ctx.input().cloned()
 }
 

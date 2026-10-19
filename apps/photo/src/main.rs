@@ -1,4 +1,4 @@
-// Cygnus — Suite créative professionnelle open source
+// Cygnus — Professional open-source creative suite
 // Copyright (C) 2026 vabyz971
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,76 +14,46 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//! Point d'entrée de l'app Photo : câblage iced (daemon multi-fenêtres).
+//! Photo app entry point: eframe boot + Cygnus theme.
 //!
-//! Découpage :
-//! - `message`  : enum Message + types partagés (outils, panneaux)
-//! - `state`    : PhotoApp (état) + helpers document/canvas
-//! - `update`   : boucle de mise à jour (un handler par message)
-//! - `view`     : rendu + abonnements
-//! - `menus`    : menus applicatifs du shell
-//! - `ui_handles`: frontière moteur pur → handles iced (cache)
+//! Breakdown:
+//! - `app`        : PhotoApp (orchestrator: state + commands + engine)
+//! - `state`      : state layers (document, shell, runtime)
+//! - `commands`   : PhotoAction + queue + UI context
+//! - `layout`     : workspace (top/left/center/right/bottom regions)
+//! - `ui/`        : domain features, viewport, flat widgets
+//! - `persistence`: workspace save (independent of the document)
 
-mod menus;
-mod message;
-mod preferences_window;
+mod app;
+mod commands;
+mod layout;
+mod persistence;
+mod shortcuts;
 mod state;
-mod ui_handles;
-mod update;
-mod view;
+mod ui;
 
-pub mod components;
-pub mod layers;
-
-pub use message::{DecodedLayer, Message, OffsetAxis, PanelType, PendingPaint, Tool};
-pub use state::PhotoApp;
-
-use update::update;
-use view::{subscription, view};
-
-pub fn main() -> iced::Result {
-    // Force rayon à utiliser tous les cœurs
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(cores)
-        .thread_name(|i| format!("rayon-photo-{}", i))
-        .build_global();
-    // Warmup GPU en arrière-plan pour que le canvas principal intègre wgpu dès le démarrage
-    std::thread::spawn(|| {
-        let _ = crate::components::gpu::GpuContext::get();
-    });
-    // Daemon : multi-fenêtres (principale + Préférences), cf. examples/multi_window
-    iced::daemon(PhotoApp::new, update, view)
-        .title(|app: &PhotoApp, window: iced::window::Id| {
-            if app.is_preferences_window(window) {
-                return "Préférences — Cygnus Photo".to_string();
-            }
-            match &app.document.project_path {
-                Some(path) => {
-                    let name = path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("projet");
-                    format!("Cygnus Photo — {name}")
-                }
-                None => "Cygnus Photo".to_string(),
-            }
-        })
-        .subscription(subscription)
-        .font(include_bytes!(
-            "../../../assets/fonts/MaterialIcons-Regular.ttf"
-        ))
-        .font(include_bytes!(
-            "../../../assets/fonts/HankenGrotesk-Regular.ttf"
-        ))
-        .font(include_bytes!(
-            "../../../assets/fonts/HankenGrotesk-SemiBold.ttf"
-        ))
-        .font(include_bytes!(
-            "../../../assets/fonts/HankenGrotesk-Bold.ttf"
-        ))
-        .default_font(ui_kit::theme::fonts::SANS)
-        .run()
+fn main() {
+    eframe::run_native(
+        "Cygnus Photo",
+        eframe::NativeOptions {
+            // Client-side chrome (`ui::window_chrome`): the brand,
+            // menus and window buttons share the first row.
+            viewport: egui::ViewportBuilder::default()
+                .with_title("Cygnus Photo")
+                .with_inner_size([1566.0, 979.0])
+                .with_min_inner_size([960.0, 600.0])
+                .with_decorations(false),
+            ..Default::default()
+        },
+        Box::new(|cc| {
+            cygnus_ui::theme::setup_fonts(&cc.egui_ctx);
+            cygnus_ui::theme::apply_cygnus_theme(&cc.egui_ctx);
+            Ok(Box::new(
+                app::PhotoApp::new()
+                    .with_repaint_context(cc.egui_ctx.clone())
+                    .with_render_state(cc.wgpu_render_state.clone()),
+            ))
+        }),
+    )
+    .expect("Failed to start eframe");
 }
