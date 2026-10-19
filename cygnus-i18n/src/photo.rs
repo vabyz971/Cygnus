@@ -509,6 +509,14 @@ pub enum PhotoTextKey {
     ToleranceLabel,
     /// Magic wand contiguous option.
     ContiguousLabel,
+    /// Mask density slider.
+    MaskDensityLabel,
+    /// Mask feather slider.
+    MaskFeatherLabel,
+    /// Mask inversion switch.
+    MaskInvertLabel,
+    /// History: mask density / feather / inversion.
+    HistoryOpMaskSettings,
 }
 
 /// Photo catalog bound to a language.
@@ -762,6 +770,10 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::WandHintText,
     PhotoTextKey::ToleranceLabel,
     PhotoTextKey::ContiguousLabel,
+    PhotoTextKey::MaskDensityLabel,
+    PhotoTextKey::MaskFeatherLabel,
+    PhotoTextKey::MaskInvertLabel,
+    PhotoTextKey::HistoryOpMaskSettings,
 ];
 
 impl PhotoCatalog {
@@ -1033,6 +1045,10 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::WandHintText => "Clic : sélectionner les couleurs proches",
         PhotoTextKey::ToleranceLabel => "Tolérance",
         PhotoTextKey::ContiguousLabel => "Contiguë",
+        PhotoTextKey::MaskDensityLabel => "Densité",
+        PhotoTextKey::MaskFeatherLabel => "Contour progressif",
+        PhotoTextKey::MaskInvertLabel => "Inverser",
+        PhotoTextKey::HistoryOpMaskSettings => "Réglages du masque",
     }
 }
 
@@ -1284,6 +1300,10 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::WandHintText => "Click: select similar colors",
         PhotoTextKey::ToleranceLabel => "Tolerance",
         PhotoTextKey::ContiguousLabel => "Contiguous",
+        PhotoTextKey::MaskDensityLabel => "Density",
+        PhotoTextKey::MaskFeatherLabel => "Feather",
+        PhotoTextKey::MaskInvertLabel => "Invert",
+        PhotoTextKey::HistoryOpMaskSettings => "Mask settings",
     }
 }
 
