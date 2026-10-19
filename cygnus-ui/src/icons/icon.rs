@@ -158,4 +158,8 @@ pub enum Icon {
     Marquee,
     /// Ellipse outline (elliptical marquee).
     EllipseOutline,
+    /// Freehand (lasso) selection.
+    Lasso,
+    /// Magic wand selection.
+    Wand,
 }

@@ -497,6 +497,18 @@ pub enum PhotoTextKey {
     SpacingLabel,
     /// Stroke stabilizer strength field.
     StabilizerLabel,
+    /// Lasso tool name.
+    LassoHint,
+    /// Lasso tool usage.
+    LassoHintText,
+    /// Magic wand tool name.
+    WandHint,
+    /// Magic wand usage.
+    WandHintText,
+    /// Magic wand tolerance field.
+    ToleranceLabel,
+    /// Magic wand contiguous option.
+    ContiguousLabel,
 }
 
 /// Photo catalog bound to a language.
@@ -744,6 +756,12 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::FlowLabel,
     PhotoTextKey::SpacingLabel,
     PhotoTextKey::StabilizerLabel,
+    PhotoTextKey::LassoHint,
+    PhotoTextKey::LassoHintText,
+    PhotoTextKey::WandHint,
+    PhotoTextKey::WandHintText,
+    PhotoTextKey::ToleranceLabel,
+    PhotoTextKey::ContiguousLabel,
 ];
 
 impl PhotoCatalog {
@@ -1009,6 +1027,12 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::FlowLabel => "Flux",
         PhotoTextKey::SpacingLabel => "Espacement",
         PhotoTextKey::StabilizerLabel => "Stabilisateur",
+        PhotoTextKey::LassoHint => "Lasso",
+        PhotoTextKey::LassoHintText => "Glisser : tracer la sélection — relâcher : fermer",
+        PhotoTextKey::WandHint => "Baguette magique",
+        PhotoTextKey::WandHintText => "Clic : sélectionner les couleurs proches",
+        PhotoTextKey::ToleranceLabel => "Tolérance",
+        PhotoTextKey::ContiguousLabel => "Contiguë",
     }
 }
 
@@ -1254,6 +1278,12 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::FlowLabel => "Flow",
         PhotoTextKey::SpacingLabel => "Spacing",
         PhotoTextKey::StabilizerLabel => "Stabilizer",
+        PhotoTextKey::LassoHint => "Lasso",
+        PhotoTextKey::LassoHintText => "Drag: draw the selection — release: close it",
+        PhotoTextKey::WandHint => "Magic wand",
+        PhotoTextKey::WandHintText => "Click: select similar colors",
+        PhotoTextKey::ToleranceLabel => "Tolerance",
+        PhotoTextKey::ContiguousLabel => "Contiguous",
     }
 }
 

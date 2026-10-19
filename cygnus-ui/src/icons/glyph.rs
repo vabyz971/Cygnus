@@ -146,6 +146,8 @@ pub(crate) enum CygnusIcon {
     Grid,
     Marquee,
     EllipseOutline,
+    Lasso,
+    Wand,
 }
 
 impl CygnusIcon {
@@ -217,6 +219,8 @@ impl CygnusIcon {
             Self::Grid => ICON_GRID_4X4,
             Self::Marquee => ICON_SELECT,
             Self::EllipseOutline => ICON_RADIO_BUTTON_UNCHECKED,
+            Self::Lasso => ICON_LASSO_SELECT,
+            Self::Wand => ICON_AUTO_FIX_HIGH,
         }
     }
 

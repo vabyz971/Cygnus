@@ -199,6 +199,8 @@ impl KeybindingPreferences {
         bindings.insert("tool_hand".to_string(), "H".to_string());
         bindings.insert("tool_zoom".to_string(), "Z".to_string());
         bindings.insert("tool_select".to_string(), "M".to_string());
+        bindings.insert("tool_lasso".to_string(), "L".to_string());
+        bindings.insert("tool_wand".to_string(), "W".to_string());
         // Editing
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("redo".to_string(), "Ctrl+Y".to_string());
