@@ -348,6 +348,16 @@ pub enum PhotoEngineCommand {
         /// Project path to load.
         path: PathBuf,
     },
+    /// Replace the active pixel selection (`None` = deselect). Session
+    /// state: clips the following brush / eraser / mask strokes, no
+    /// history step, no render.
+    SetSelection(Option<crate::Selection>),
+    /// Add a mask to `layer` filled from the active selection
+    /// (selected = white). No-op without a selection.
+    AddMaskFromSelection {
+        /// Mask owner (layer, group, adjustment or filter).
+        layer: Uuid,
+    },
     /// Clip the preview to the document dimensions (View menu).
     /// `false` (default) = infinite plane: off-document content stays
     /// visible around the frame.
@@ -411,6 +421,8 @@ impl PhotoEngineCommand {
             Self::LoadProject { .. } => "load_project",
             Self::Refresh => "refresh",
             Self::SetPreviewClip { .. } => "set_preview_clip",
+            Self::SetSelection(_) => "set_selection",
+            Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
     }
 }
@@ -496,6 +508,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::MoveFilterTo { .. }
         | PhotoEngineCommand::RemoveFilter { .. }
         | PhotoEngineCommand::AddMask { .. }
+        | PhotoEngineCommand::AddMaskFromSelection { .. }
         | PhotoEngineCommand::RemoveMask { .. }
         | PhotoEngineCommand::MoveMask { .. }
         | PhotoEngineCommand::MoveMaskTo { .. }
@@ -517,7 +530,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::EstimateExportSize { .. }
         | PhotoEngineCommand::SetDefaultNames(_)
         | PhotoEngineCommand::PrepareDragProxy { .. }
-        | PhotoEngineCommand::SaveProject { .. } => {
+        | PhotoEngineCommand::SaveProject { .. }
+        | PhotoEngineCommand::SetSelection(_) => {
             (RenderEvent::FullInvalidation, RenderInvalidation::Unchanged)
         }
     }

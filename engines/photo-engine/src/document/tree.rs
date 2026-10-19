@@ -673,6 +673,27 @@ impl Document {
         opacity: f32,
         whiten: bool,
     ) -> Result<(), String> {
+        self.paint_mask_clipped(owner_id, mask_id, points, rx, ry, opacity, whiten, None)
+    }
+
+    /// [`Self::paint_mask`] limited by a selection: `clip(px, py)` is
+    /// the selected fraction of mask pixel `(px, py)` (see
+    /// [`crate::selection::Selection::clip_for_layer`]).
+    ///
+    /// # Errors
+    /// Returns an error if the carrier or the mask is not found.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_mask_clipped(
+        &mut self,
+        owner_id: Uuid,
+        mask_id: Uuid,
+        points: &[(f32, f32)],
+        rx: f32,
+        ry: f32,
+        opacity: f32,
+        whiten: bool,
+        clip: Option<&dyn Fn(f32, f32) -> f32>,
+    ) -> Result<(), String> {
         if points.is_empty() || !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
             return Err("empty stroke".into());
         }
@@ -691,7 +712,19 @@ impl Document {
             opacity: opacity.clamp(0.0, 1.0),
             mode: crate::paint::StrokeMode::Paint,
         };
-        crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry);
+        match clip {
+            Some(clip) => crate::paint::paint_stroke_ellipse_clipped(
+                &mut buffer,
+                w,
+                h,
+                points,
+                &brush,
+                rx,
+                ry,
+                clip,
+            ),
+            None => crate::paint::paint_stroke_ellipse(&mut buffer, w, h, points, &brush, rx, ry),
+        }
         let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
             return Err("rasterization failed".into());
         };

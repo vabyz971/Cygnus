@@ -106,6 +106,8 @@ pub struct InteractionOverlay {
     generation: u64,
     dirty: bool,
     metrics: InteractionMetrics,
+    /// Selection limiting the feedback like the commit (document px).
+    clip: Option<crate::Selection>,
 }
 
 impl InteractionOverlay {
@@ -133,6 +135,7 @@ impl InteractionOverlay {
             generation: 0,
             dirty: false,
             metrics: InteractionMetrics::default(),
+            clip: None,
         }
     }
 
@@ -153,6 +156,12 @@ impl InteractionOverlay {
         self.generation = self.generation.wrapping_add(1);
         self.dirty = false;
         self.generation
+    }
+
+    /// Selection applied to the following renders (the commit clips the
+    /// same way worker-side). Set before `begin_stroke`.
+    pub fn set_clip(&mut self, clip: Option<crate::Selection>) {
+        self.clip = clip;
     }
 
     /// Current generation.
@@ -437,6 +446,22 @@ impl InteractionOverlay {
             let src = (y * stride) * 4;
             let dst = (y * w) * 4;
             rgba[dst..dst + w * 4].copy_from_slice(&self.image[src..src + w * 4]);
+        }
+        // Selection: alpha scaled by the selected fraction (doc pixels).
+        if let Some(clip) = self.clip {
+            for y in 0..h {
+                for x in 0..w {
+                    let alpha = &mut rgba[(y * w + x) * 4 + 3];
+                    if *alpha == 0 {
+                        continue;
+                    }
+                    let selected = clip.coverage(
+                        self.ox as f32 + x as f32 + 0.5,
+                        self.oy as f32 + y as f32 + 0.5,
+                    );
+                    *alpha = (f32::from(*alpha) * selected).round() as u8;
+                }
+            }
         }
         let frame = OverlayFrame {
             generation: self.generation,
@@ -949,5 +974,29 @@ mod tests {
                 assert_eq!(&px[0..3], &[255, 255, 255], "que du blanc + alpha");
             }
         }
+    }
+
+    #[test]
+    fn overlay_feedback_follows_the_selection() {
+        let mut overlay = InteractionOverlay::new();
+        overlay.set_clip(crate::Selection::from_drag(
+            crate::SelectionKind::Rect,
+            (0.0, 0.0),
+            (20.0, 40.0),
+        ));
+        overlay.begin_stroke(BrushParams {
+            radius: 3.0,
+            color: [255, 0, 0],
+            opacity: 1.0,
+            mode: StrokeMode::Paint,
+        });
+        overlay.add_points(&[(10.0, 10.0), (30.0, 10.0)]);
+        let frame = overlay.render().expect("frame");
+        let alpha = |x: i32, y: i32| {
+            let (lx, ly) = ((x - frame.x) as usize, (y - frame.y) as usize);
+            frame.rgba[(ly * frame.width as usize + lx) * 4 + 3]
+        };
+        assert!(alpha(12, 10) > 0, "inside: visible");
+        assert_eq!(alpha(28, 10), 0, "outside: clipped");
     }
 }

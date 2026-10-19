@@ -36,6 +36,7 @@ pub mod render_overlay;
 pub mod render_pool;
 pub mod renderer;
 pub mod scene;
+pub mod selection;
 pub mod session;
 pub mod snapshot;
 pub mod thumb_cache;
@@ -70,6 +71,7 @@ pub use scene::{
     LayerEffect, PathSegment, RasterLayer as SceneRasterLayer, TextLayer,
     VectorLayer as SceneVectorLayer, VectorPath,
 };
+pub use selection::{Selection, SelectionKind, SelectionShape};
 pub use thumb_cache::ThumbnailKey;
 pub use tile_key::{
     BackendTag, CPU_KERNEL_VERSION, GPU_KERNEL_VERSION, GPU_PIXEL_THRESHOLD, TILE_FLAGS_NONE,

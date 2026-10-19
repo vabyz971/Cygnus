@@ -51,7 +51,7 @@ pub struct BrushParams {
 ///
 /// * `points`: polyline in layer coordinates (pixel (0,0) center = 0.0)
 pub fn paint_stroke_rgba(rgba: &mut [u8], w: u32, h: u32, points: &[(f32, f32)], b: &BrushParams) {
-    paint_stroke_impl(rgba, w, h, points, b, b.radius, b.radius);
+    paint_stroke_impl(rgba, w, h, points, b, b.radius, b.radius, None);
 }
 
 /// Elliptical variant (independent X/Y radii) — lets the stroke follow a
@@ -66,7 +66,26 @@ pub fn paint_stroke_ellipse(
     rx: f32,
     ry: f32,
 ) {
-    paint_stroke_impl(rgba, w, h, points, b, rx, ry);
+    paint_stroke_impl(rgba, w, h, points, b, rx, ry, None);
+}
+
+/// [`paint_stroke_ellipse`] limited by a selection: `clip(px, py)`
+/// returns the selected fraction (0..=1) of layer pixel `(px, py)`
+/// (see [`crate::selection::Selection::clip_for_layer`]); the stroke
+/// coverage is scaled by it before compositing.
+// Deliberate positional signature: see `stamp_disc`.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_stroke_ellipse_clipped(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    b: &BrushParams,
+    rx: f32,
+    ry: f32,
+    clip: &dyn Fn(f32, f32) -> f32,
+) {
+    paint_stroke_impl(rgba, w, h, points, b, rx, ry, Some(clip));
 }
 
 /// A stroke's bounding box grown by the radius (`pad`), in floats (the
@@ -296,6 +315,8 @@ pub(crate) fn composite_coverage(
     }
 }
 
+// Deliberate positional signature: see `stamp_disc`.
+#[allow(clippy::too_many_arguments)]
 fn paint_stroke_impl(
     rgba: &mut [u8],
     w: u32,
@@ -304,6 +325,7 @@ fn paint_stroke_impl(
     b: &BrushParams,
     rx: f32,
     ry: f32,
+    clip: Option<&dyn Fn(f32, f32) -> f32>,
 ) {
     if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 || b.opacity <= 0.0 {
         return;
@@ -331,6 +353,19 @@ fn paint_stroke_impl(
         &mut mask, bw, bx0 as i64, by0 as i64, bx0 as i64, by0 as i64, bx1 as i64, by1 as i64,
         points, rx, ry,
     );
+    // Selection clip: coverage scaled by the selected fraction.
+    if let Some(clip) = clip {
+        for my in 0..bh {
+            for mx in 0..bw {
+                let cell = &mut mask[my * bw + mx];
+                if *cell == 0 {
+                    continue;
+                }
+                let selected = clip((bx0 as usize + mx) as f32, (by0 as usize + my) as f32);
+                *cell = (f32::from(*cell) * selected.clamp(0.0, 1.0)).round() as u8;
+            }
+        }
+    }
 
     composite_coverage(
         rgba, w as usize, bx0, by0, bw as u32, bh as u32, &mask, bw, b,
@@ -676,5 +711,37 @@ mod tests {
         let painted = (max_x - min_x + 1).max(0);
         assert!(painted >= 36, "disque ~40 px calque, mesuré {painted}");
         assert!(painted <= 44, "disque ~40 px calque, mesuré {painted}");
+    }
+
+    #[test]
+    fn clipped_stroke_stops_at_the_selection() {
+        let (w, h) = (20u32, 4u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        let brush = BrushParams {
+            radius: 1.5,
+            color: [255, 0, 0],
+            opacity: 1.0,
+            mode: StrokeMode::Paint,
+        };
+        let selection = crate::selection::Selection::from_drag(
+            crate::selection::SelectionKind::Rect,
+            (0.0, 0.0),
+            (10.0, 4.0),
+        )
+        .expect("selection");
+        let clip = selection.clip_for_layer(crate::Transform2D::default(), w, h);
+        paint_stroke_ellipse_clipped(
+            &mut rgba,
+            w,
+            h,
+            &[(1.0, 2.0), (18.0, 2.0)],
+            &brush,
+            1.5,
+            1.5,
+            &clip,
+        );
+        let alpha = |x: u32| rgba[((2 * w + x) * 4 + 3) as usize];
+        assert_eq!(alpha(5), 255, "inside the selection: painted");
+        assert_eq!(alpha(15), 0, "outside the selection: untouched");
     }
 }

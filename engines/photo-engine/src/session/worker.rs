@@ -53,6 +53,8 @@ pub struct EngineWorker {
     pub(crate) pending_label: Option<&'static str>,
     /// Preview clipped to the document (View menu, default: infinite plane).
     pub(crate) clip_to_doc: bool,
+    /// Active pixel selection (mirrors the UI; clips strokes).
+    pub(crate) selection: Option<crate::Selection>,
     /// Revision of the last produced composite (stale renders
     /// ignored UI-side).
     pub(crate) revision: RenderRevision,
@@ -184,6 +186,7 @@ impl EngineWorker {
             history: History::new(HISTORY_LIMIT),
             pending_label: None,
             clip_to_doc: false,
+            selection: None,
             revision: RenderRevision::default(),
             pending_tile_plan: None,
             render_worker: crate::document::RenderWorker::new(
@@ -1166,15 +1169,30 @@ impl EngineWorker {
                         crate::paint::StrokeMode::Paint
                     },
                 };
-                crate::paint::paint_stroke_ellipse(
-                    &mut buffer,
-                    width,
-                    height,
-                    &points,
-                    &brush,
-                    rx,
-                    ry,
-                );
+                match self.selection {
+                    Some(selection) => {
+                        let clip = selection.clip_for_layer(layer_transform, layer_w, layer_h);
+                        crate::paint::paint_stroke_ellipse_clipped(
+                            &mut buffer,
+                            width,
+                            height,
+                            &points,
+                            &brush,
+                            rx,
+                            ry,
+                            &clip,
+                        );
+                    }
+                    None => crate::paint::paint_stroke_ellipse(
+                        &mut buffer,
+                        width,
+                        height,
+                        &points,
+                        &brush,
+                        rx,
+                        ry,
+                    ),
+                }
                 if let Some(image) = image::RgbaImage::from_raw(width, height, buffer) {
                     // Defensive re-read after the history push.
                     if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
@@ -1288,9 +1306,24 @@ impl EngineWorker {
                 }
                 self.push_history(None);
                 let points = crate::paint::resample_stroke(&local, rx.max(ry).max(2.0));
+                // Selection clip in the mask's own space (carrier source
+                // pixels, or document pixels for canvas-space owners).
+                let clip = self.selection.map(|selection| match space {
+                    Some((t, w, h)) => selection.clip_for_layer(t, w, h),
+                    None => selection.clip_for_layer(crate::Transform2D::default(), 1, 1),
+                });
                 if self
                     .document
-                    .paint_mask(owner, mask, &points, rx, ry, opacity, !eraser)
+                    .paint_mask_clipped(
+                        owner,
+                        mask,
+                        &points,
+                        rx,
+                        ry,
+                        opacity,
+                        !eraser,
+                        clip.as_ref().map(|clip| clip as &dyn Fn(f32, f32) -> f32),
+                    )
                     .is_err()
                 {
                     self.history.cancel_last();
@@ -1843,6 +1876,44 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::SetSelection(selection) => {
+                // Session state: no history step, no pixels changed.
+                self.selection = selection;
+                Mutation::unchanged()
+            }
+            PhotoEngineCommand::AddMaskFromSelection { layer } => {
+                let Some(selection) = self.selection else {
+                    return Mutation::unchanged();
+                };
+                if self.document.masks_of_mut(layer).is_none() {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                // Same space as `AddMask`: carrier source pixels for
+                // pixel layers and filters, document pixels otherwise.
+                let (width, height) = self
+                    .document
+                    .mask_owner_dims(layer)
+                    .unwrap_or((self.document.width.max(1), self.document.height.max(1)));
+                let transform = self
+                    .document
+                    .mask_paint_space(layer)
+                    .map_or(crate::Transform2D::default(), |(t, _, _)| t);
+                let clip = selection.clip_for_layer(transform, width, height);
+                let image = image::RgbaImage::from_fn(width, height, |x, y| {
+                    let v = (clip(x as f32, y as f32) * 255.0).round() as u8;
+                    image::Rgba([v, v, v, 255])
+                });
+                if let Some(masks) = self.document.masks_of_mut(layer) {
+                    let mut mask = crate::LayerMask::full(width, height);
+                    mask.image = Arc::new(image);
+                    mask.name =
+                        super::naming::DefaultNames::numbered(&self.names.mask, masks.len() + 1);
+                    masks.push(mask);
+                }
+                touch_mask_owner(&mut self.document, layer);
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+            }
             PhotoEngineCommand::SetPreviewClip { clip } => {
                 // Display preference: no history snapshot. The scope
                 // changes (plane ↔ document), so the composite MUST
@@ -1994,6 +2065,98 @@ mod tests {
             0,
             "no paint at the raw document coords"
         );
+    }
+
+    /// Worker on a 40x20 document holding one transparent 40x20 layer.
+    fn selection_worker() -> (EngineWorker, Uuid) {
+        let mut doc = Document::new(40, 20);
+        let layer = PixelLayer::new("fond", Arc::new(image::DynamicImage::new_rgba8(40, 20)));
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        (EngineWorker::new(doc), id)
+    }
+
+    fn layer_pixels(worker: &EngineWorker, id: Uuid) -> image::RgbaImage {
+        match worker.document.find(id).expect("layer") {
+            LayerNode::Pixel(p) => p.source_image.to_rgba8(),
+            _ => panic!("pixels attendus"),
+        }
+    }
+
+    #[test]
+    fn selection_clips_brush_strokes_without_history() {
+        let (mut worker, id) = selection_worker();
+        let selection =
+            crate::Selection::from_drag(crate::SelectionKind::Rect, (0.0, 0.0), (20.0, 20.0));
+        worker.apply(PhotoEngineCommand::SetSelection(selection));
+        assert!(!worker.history.can_undo(), "selecting is not an edit");
+        worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: id,
+            points: vec![(5.0, 10.0), (35.0, 10.0)],
+            eraser: false,
+            radius: 3.0,
+            color: [255, 0, 0],
+            opacity: 1.0,
+        });
+        let pixels = layer_pixels(&worker, id);
+        assert_eq!(pixels.get_pixel(10, 10)[3], 255, "inside: painted");
+        assert_eq!(pixels.get_pixel(30, 10)[3], 0, "outside: untouched");
+        // Deselect: the next stroke paints everywhere again.
+        worker.apply(PhotoEngineCommand::SetSelection(None));
+        worker.apply(PhotoEngineCommand::PaintStroke {
+            layer: id,
+            points: vec![(30.0, 10.0)],
+            eraser: false,
+            radius: 3.0,
+            color: [255, 0, 0],
+            opacity: 1.0,
+        });
+        assert_eq!(layer_pixels(&worker, id).get_pixel(30, 10)[3], 255);
+    }
+
+    #[test]
+    fn mask_from_selection_is_white_inside_and_undoable() {
+        let (mut worker, id) = selection_worker();
+        worker.apply(PhotoEngineCommand::AddMaskFromSelection { layer: id });
+        assert!(
+            worker.document.masks_of(id).expect("masks").is_empty(),
+            "no selection: no mask"
+        );
+        let selection =
+            crate::Selection::from_drag(crate::SelectionKind::Rect, (10.0, 0.0), (30.0, 20.0))
+                .map(crate::Selection::inverse);
+        worker.apply(PhotoEngineCommand::SetSelection(selection));
+        worker.apply(PhotoEngineCommand::AddMaskFromSelection { layer: id });
+        let mask = &worker.document.masks_of(id).expect("masks")[0];
+        assert_eq!(
+            mask.image.get_pixel(5, 5)[0],
+            255,
+            "inverted: outside selected"
+        );
+        assert_eq!(mask.image.get_pixel(20, 5)[0], 0, "inverted: inside hidden");
+        worker.apply(PhotoEngineCommand::Undo);
+        assert!(worker.document.masks_of(id).expect("masks").is_empty());
+    }
+
+    #[test]
+    fn selection_clips_mask_painting() {
+        let (mut worker, id) = selection_worker();
+        worker.apply(PhotoEngineCommand::AddMask { layer: id });
+        let mask = worker.document.masks_of(id).expect("masks")[0].id;
+        let selection =
+            crate::Selection::from_drag(crate::SelectionKind::Rect, (0.0, 0.0), (20.0, 20.0));
+        worker.apply(PhotoEngineCommand::SetSelection(selection));
+        worker.apply(PhotoEngineCommand::PaintMask {
+            owner: id,
+            mask,
+            points: vec![(5.0, 10.0), (35.0, 10.0)],
+            eraser: true,
+            radius: 3.0,
+            opacity: 1.0,
+        });
+        let image = &worker.document.masks_of(id).expect("masks")[0].image;
+        assert_eq!(image.get_pixel(10, 10)[0], 0, "inside: hidden");
+        assert_eq!(image.get_pixel(30, 10)[0], 255, "outside: untouched");
     }
 
     #[test]
