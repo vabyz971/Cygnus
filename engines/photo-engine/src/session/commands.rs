@@ -356,6 +356,21 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Clone stamp stroke on a pixel layer: each painted pixel copies
+    /// the layer's own pixel `offset` document pixels away (as it was
+    /// before the stroke). Same tip as the brush (dynamics, selection).
+    CloneStroke {
+        /// Target pixel layer.
+        layer: Uuid,
+        /// Stroke polyline (document pixels).
+        points: Vec<(f32, f32)>,
+        /// Radius in document pixels.
+        radius: f32,
+        /// Stroke opacity 0..=1.
+        opacity: f32,
+        /// Source minus destination, document pixels.
+        offset: (f32, f32),
+    },
     /// Paint bucket at document pixel `(x, y)`: fills the target pixels
     /// within `tolerance` of the clicked one (connected when
     /// `contiguous`), limited by the active selection. One history step.
@@ -510,6 +525,7 @@ impl PhotoEngineCommand {
             Self::MagicWand { .. } => "magic_wand",
             Self::SetMaskParams { .. } => "set_mask_params",
             Self::FillAt { .. } => "fill",
+            Self::CloneStroke { .. } => "clone_stroke",
             Self::FillGradient { .. } => "gradient",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
@@ -568,6 +584,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderInvalidation::Composite,
         ),
         PhotoEngineCommand::PaintStroke { layer, .. } => (
+            RenderEvent::NodeInvalidated(*layer),
+            RenderInvalidation::Composite,
+        ),
+        PhotoEngineCommand::CloneStroke { layer, .. } => (
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::Composite,
         ),

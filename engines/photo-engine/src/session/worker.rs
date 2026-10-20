@@ -1937,6 +1937,89 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::CloneStroke {
+                layer,
+                points,
+                radius,
+                opacity,
+                offset,
+            } => {
+                let finite = offset.0.is_finite() && offset.1.is_finite();
+                if points.is_empty() || !radius.is_finite() || radius <= 0.0 || !finite {
+                    return Mutation::unchanged();
+                }
+                let Some(crate::LayerNode::Pixel(pixels)) = self.document.find(layer) else {
+                    return Mutation::unchanged();
+                };
+                let transform = pixels.transform;
+                let raster = pixels.source_image.to_rgba8();
+                let (w, h) = (raster.width(), raster.height());
+                let identity = transform == crate::Transform2D::default();
+                let to_local = |(x, y): (f32, f32)| {
+                    if identity {
+                        Some((x, y))
+                    } else {
+                        transform.doc_to_local(w as f32, h as f32, x, y)
+                    }
+                };
+                let local: Vec<(f32, f32)> = points.iter().filter_map(|&p| to_local(p)).collect();
+                if local.is_empty() {
+                    return Mutation::unchanged();
+                }
+                let (rx, ry) = if identity {
+                    (radius, radius)
+                } else {
+                    (
+                        radius / transform.scale_x.abs(),
+                        radius / transform.scale_y.abs(),
+                    )
+                };
+                if !rx.is_finite() || !ry.is_finite() || rx <= 0.0 || ry <= 0.0 {
+                    return Mutation::unchanged();
+                }
+                let points = crate::paint::resample_stroke(&local, rx.max(ry).max(2.0));
+                // Source = the layer as it was before this stroke.
+                let original = raster.clone();
+                let source = |px: u32, py: u32| -> Option<[u8; 4]> {
+                    let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
+                    let doc = if identity {
+                        (cx, cy)
+                    } else {
+                        transform.local_to_doc(w as f32, h as f32, cx, cy)
+                    };
+                    let (sx, sy) = to_local((doc.0 + offset.0, doc.1 + offset.1))?;
+                    if sx < 0.0 || sy < 0.0 || sx >= w as f32 || sy >= h as f32 {
+                        return None;
+                    }
+                    Some(original.get_pixel(sx as u32, sy as u32).0)
+                };
+                let clip = self
+                    .selection
+                    .as_ref()
+                    .map(|selection| selection.clip_for_layer(transform, w, h));
+                let mut buffer = raster.into_raw();
+                crate::paint::clone_stroke(
+                    &mut buffer,
+                    w,
+                    h,
+                    &points,
+                    rx,
+                    ry,
+                    opacity,
+                    self.brush_dynamics,
+                    clip.as_ref().map(|clip| clip as &dyn Fn(f32, f32) -> f32),
+                    &source,
+                );
+                let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
+                    return Mutation::unchanged();
+                };
+                self.push_history(None);
+                if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
+                    pixels.set_source_image(image::DynamicImage::ImageRgba8(image));
+                    pixels.touch();
+                }
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+            }
             PhotoEngineCommand::FillAt {
                 target,
                 x,
@@ -2501,6 +2584,33 @@ mod tests {
         let image = &worker.document.masks_of(id).expect("masques")[0].image;
         assert!(image.get_pixel(1, 5)[0] < 20, "hidden at the start");
         assert!(image.get_pixel(38, 5)[0] > 235, "shown at the end");
+    }
+
+    #[test]
+    fn clone_stroke_copies_the_offset_area_in_one_step() {
+        let mut doc = Document::new(40, 20);
+        let mut image = image::RgbaImage::new(40, 20);
+        for y in 0..20 {
+            for x in 0..20 {
+                image.put_pixel(x, y, image::Rgba([0, 0, 255, 255]));
+            }
+        }
+        let layer = PixelLayer::new("fond", Arc::new(image::DynamicImage::ImageRgba8(image)));
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        let mut worker = EngineWorker::new(doc);
+        // Paint at x = 30 copying from x = 10 (offset -20).
+        worker.apply(PhotoEngineCommand::CloneStroke {
+            layer: id,
+            points: vec![(30.0, 10.0)],
+            radius: 4.0,
+            opacity: 1.0,
+            offset: (-20.0, 0.0),
+        });
+        let pixels = layer_pixels(&worker, id);
+        assert_eq!(pixels.get_pixel(30, 10).0, [0, 0, 255, 255], "blue cloned");
+        assert_eq!(pixels.get_pixel(38, 10)[3], 0, "outside the tip");
+        assert_eq!(worker.history.undo_steps().len(), 1);
     }
 
     #[test]

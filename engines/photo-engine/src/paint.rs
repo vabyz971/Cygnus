@@ -541,40 +541,47 @@ pub(crate) fn composite_coverage(
     }
 }
 
-// Deliberate positional signature: see `stamp_disc`.
+/// Coverage of a stroke over its bounding box (layer space).
+struct StrokeMask {
+    x0: u32,
+    y0: u32,
+    w: usize,
+    h: usize,
+    data: Vec<u8>,
+}
+
+/// Stamps `points` into a coverage mask clamped to the `w` x `h` layer
+/// (legacy hard path or Brush v2 dabs), scaled by the selection `clip`.
+/// `None` when nothing lands on the layer.
 #[allow(clippy::too_many_arguments)]
-fn paint_stroke_impl(
-    rgba: &mut [u8],
+fn build_stroke_mask(
     w: u32,
     h: u32,
     points: &[(f32, f32)],
-    b: &BrushParams,
     rx: f32,
     ry: f32,
     clip: Option<&dyn Fn(f32, f32) -> f32>,
     dynamics: Option<BrushDynamics>,
-) {
-    if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 || b.opacity <= 0.0 {
-        return;
+) -> Option<StrokeMask> {
+    if points.is_empty() || w == 0 || h == 0 || rx <= 0.0 || ry <= 0.0 {
+        return None;
     }
     let rx = rx.max(0.5);
     let ry = ry.max(0.5);
 
     // --- Stroke bounding box (limited to the layer) ---
-    let Some((min_x, min_y, max_x, max_y)) = stroke_bbox(points, rx, ry) else {
-        return;
-    };
+    let (min_x, min_y, max_x, max_y) = stroke_bbox(points, rx, ry)?;
     let bx0 = min_x.floor().max(0.0) as u32;
     let by0 = min_y.floor().max(0.0) as u32;
     let bx1 = (max_x.ceil() as u32).min(w);
     let by1 = (max_y.ceil() as u32).min(h);
     if bx0 >= bx1 || by0 >= by1 {
-        return;
+        return None;
     }
     let bw = (bx1 - bx0) as usize;
     let bh = (by1 - by0) as usize;
 
-    // --- 0/255 coverage mask ---
+    // --- Coverage mask ---
     let mut mask = vec![0u8; bw * bh];
     match dynamics.map(BrushDynamics::sanitized) {
         Some(dynamics) if !dynamics.is_legacy() => {
@@ -604,10 +611,102 @@ fn paint_stroke_impl(
             }
         }
     }
+    Some(StrokeMask {
+        x0: bx0,
+        y0: by0,
+        w: bw,
+        h: bh,
+        data: mask,
+    })
+}
 
+// Deliberate positional signature: see `stamp_disc`.
+#[allow(clippy::too_many_arguments)]
+fn paint_stroke_impl(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    b: &BrushParams,
+    rx: f32,
+    ry: f32,
+    clip: Option<&dyn Fn(f32, f32) -> f32>,
+    dynamics: Option<BrushDynamics>,
+) {
+    if b.opacity <= 0.0 {
+        return;
+    }
+    let Some(mask) = build_stroke_mask(w, h, points, rx, ry, clip, dynamics) else {
+        return;
+    };
     composite_coverage(
-        rgba, w as usize, bx0, by0, bw as u32, bh as u32, &mask, bw, b,
+        rgba,
+        w as usize,
+        mask.x0,
+        mask.y0,
+        mask.w as u32,
+        mask.h as u32,
+        &mask.data,
+        mask.w,
+        b,
     );
+}
+
+/// Clone stamp: under the stroke coverage (same tip as the brush:
+/// `dynamics`, selection `clip`), each layer pixel receives
+/// `source(x, y)` (RGBA sampled elsewhere, `None` = nothing to copy)
+/// source-over at `opacity * coverage * source alpha`.
+#[allow(clippy::too_many_arguments)]
+pub fn clone_stroke(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    points: &[(f32, f32)],
+    rx: f32,
+    ry: f32,
+    opacity: f32,
+    dynamics: BrushDynamics,
+    clip: Option<&dyn Fn(f32, f32) -> f32>,
+    source: &dyn Fn(u32, u32) -> Option<[u8; 4]>,
+) {
+    let opacity = if opacity.is_finite() {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    if opacity <= 0.0 {
+        return;
+    }
+    let Some(mask) = build_stroke_mask(w, h, points, rx, ry, clip, Some(dynamics)) else {
+        return;
+    };
+    for my in 0..mask.h {
+        for mx in 0..mask.w {
+            let cov = f32::from(mask.data[my * mask.w + mx]) / 255.0;
+            if cov <= 0.0 {
+                continue;
+            }
+            let (x, y) = (mask.x0 + mx as u32, mask.y0 + my as u32);
+            let Some(src) = source(x, y) else {
+                continue;
+            };
+            let a = opacity * cov * f32::from(src[3]) / 255.0;
+            if a <= 0.0 {
+                continue;
+            }
+            let i = (y as usize * w as usize + x as usize) * 4;
+            let da = f32::from(rgba[i + 3]) / 255.0;
+            let out_a = a + da * (1.0 - a);
+            if out_a <= 0.0 {
+                continue;
+            }
+            for k in 0..3 {
+                let v = (f32::from(src[k]) * a + f32::from(rgba[i + k]) * da * (1.0 - a)) / out_a;
+                rgba[i + k] = v.round().clamp(0.0, 255.0) as u8;
+            }
+            rgba[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
 }
 
 /// A stroke commit's result: buffers ready for the UI layer (no heavy
@@ -1131,5 +1230,40 @@ mod tests {
         assert_eq!(gradient_t((30.0, 0.0), (0.0, 0.0), (10.0, 0.0)), 1.0);
         assert_eq!(gradient_t((1.0, 1.0), (2.0, 2.0), (2.0, 2.0)), 0.0);
         assert_eq!(lerp_rgb([0, 0, 0], [255, 100, 10], 0.5), [128, 50, 5]);
+    }
+
+    #[test]
+    fn clone_stroke_copies_pixels_from_the_offset() {
+        // 20 x 4: left half red, right half transparent.
+        let (w, h) = (20u32, 4u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..10 {
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let original = rgba.clone();
+        let source = |x: u32, y: u32| {
+            // Copy from 10 px to the left.
+            let sx = x.checked_sub(10)?;
+            let i = ((y * w + sx) * 4) as usize;
+            original.get(i..i + 4).and_then(|p| p.try_into().ok())
+        };
+        clone_stroke(
+            &mut rgba,
+            w,
+            h,
+            &[(15.0, 2.0)],
+            2.0,
+            2.0,
+            1.0,
+            BrushDynamics::default(),
+            None,
+            &source,
+        );
+        let at = |x: u32| &rgba[((2 * w + x) * 4) as usize..((2 * w + x) * 4 + 4) as usize];
+        assert_eq!(at(15), &[255, 0, 0, 255], "red copied from the left");
+        assert_eq!(at(19)[3], 0, "outside the tip untouched");
     }
 }
