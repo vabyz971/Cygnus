@@ -17,10 +17,10 @@
 //! Native `.cygp` project format — UI-independent, reusable by the
 //! suite's other apps (layer video compositing…).
 //!
-//! FORMAT_VERSION 7: mask density and feather. Versioned JSON
-//! container, PNG-then-base64 encoded images.
+//! FORMAT_VERSION 8: eight more blend modes. Versioned JSON container,
+//! PNG-then-base64 encoded images.
 //!
-//! Compatibility policy: v7 read natively, v6/v5/v4 read natively
+//! Compatibility policy: v8 read natively, v7/v6/v5/v4 read natively
 //! (newer fields absent = empty defaults), v3 MIGRATED (filters
 //! converted to neutral sub-layers); any other version is refused
 //! with a clear message.
@@ -41,12 +41,13 @@ use crate::document::{
 };
 use crate::scene::{PathSegment, VectorPath};
 
-/// Format version — bump on any incompatible change. v7: mask density
+/// Format version — bump on any incompatible change. v8: blend modes
+/// 6..=13 (an older reader would fail on the unknown names). v7: mask density
 /// and feather (an older reader would silently drop them). v6: vector
 /// layers. v5: nesting (pixel children, group filters, adjustment
 /// masks). v4: pixel filters = sub-layers (`filter_layers`) instead
 /// of `live_filters` (v3, migrated on read).
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 /// Canonical Cygnus photo project extension.
 pub const PROJECT_EXTENSION: &str = "cygp";
@@ -659,7 +660,7 @@ pub fn load(path: &Path) -> Result<LoadedProject, ProjectError> {
     let probe: VersionProbe = serde_json::from_slice(&json)
         .map_err(|e| ProjectError::Other(format!("invalid project: {e}")))?;
     let legacy_v3 = match probe.version {
-        FORMAT_VERSION | 6 | 5 | 4 => false,
+        FORMAT_VERSION | 7 | 6 | 5 | 4 => false,
         3 => true,
         v => return Err(ProjectError::UnsupportedVersion(v)),
     };
@@ -1205,6 +1206,22 @@ mod tests {
         let m = &loaded.document.masks_of(id).expect("masques")[0];
         assert!((m.density - 0.4).abs() < 1e-6);
         assert!((m.feather - 12.0).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_blend_modes_survive_a_roundtrip() {
+        let mut doc = Document::new(2, 2);
+        let mut layer = PixelLayer::new("fond", Arc::new(DynamicImage::new_rgba8(2, 2)));
+        layer.blend_mode = BlendMode::SoftLight;
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        let dir = std::env::temp_dir().join(format!("cygnus_blend_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("dossier temporaire");
+        let path = dir.join("fusion.cygp");
+        save(&path, &doc).expect("sauvegarde");
+        let loaded = load(&path).expect("chargement");
+        assert_eq!(loaded.document.blend_of(id), Some(BlendMode::SoftLight));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

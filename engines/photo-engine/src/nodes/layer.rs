@@ -47,60 +47,14 @@ pub fn mix_socket(i: usize) -> String {
 pub const MIX_MAX_INPUTS: usize = 6;
 
 fn mode_id(mode: &str) -> u32 {
-    match mode {
-        "Multiply" => 1,
-        "Screen" => 2,
-        "Overlay" => 3,
-        "Darken" => 4,
-        "Lighten" => 5,
-        _ => 0, // Normal
-    }
+    datatypes::BlendMode::from_name(mode).map_or(0, datatypes::BlendMode::id)
 }
 
-/// Single-pixel blend: returns the composited color (top over base)
+/// Single-pixel blend: the compositor's reference math (one source of
+/// truth for every mode).
 #[inline]
 fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4] {
-    let blended = match mode {
-        1 => [b[0] * t[0], b[1] * t[1], b[2] * t[2]], // Multiply
-        2 => [
-            // Screen
-            1.0 - (1.0 - b[0]) * (1.0 - t[0]),
-            1.0 - (1.0 - b[1]) * (1.0 - t[1]),
-            1.0 - (1.0 - b[2]) * (1.0 - t[2]),
-        ],
-        3 => [
-            // Overlay
-            if b[0] < 0.5 {
-                2.0 * b[0] * t[0]
-            } else {
-                1.0 - 2.0 * (1.0 - b[0]) * (1.0 - t[0])
-            },
-            if b[1] < 0.5 {
-                2.0 * b[1] * t[1]
-            } else {
-                1.0 - 2.0 * (1.0 - b[1]) * (1.0 - t[1])
-            },
-            if b[2] < 0.5 {
-                2.0 * b[2] * t[2]
-            } else {
-                1.0 - 2.0 * (1.0 - b[2]) * (1.0 - t[2])
-            },
-        ],
-        4 => [b[0].min(t[0]), b[1].min(t[1]), b[2].min(t[2])], // Darken
-        5 => [b[0].max(t[0]), b[1].max(t[1]), b[2].max(t[2])], // Lighten
-        _ => [t[0], t[1], t[2]],                               // Normal
-    };
-    // Alpha compositing: top over base, weighted by the top alpha
-    let ta = t[3];
-    let a = ta + b[3] * (1.0 - ta);
-    let mut out = [b[0], b[1], b[2], a];
-    if a > 0.0001 {
-        for c in 0..3 {
-            out[c] = blended[c] * ta + b[c] * b[3] * (1.0 - ta);
-            out[c] /= a;
-        }
-    }
-    out
+    crate::document::compositing::blend_pixel(b, t, mode)
 }
 
 pub fn apply_effect(

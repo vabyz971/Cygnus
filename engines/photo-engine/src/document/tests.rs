@@ -4692,3 +4692,37 @@ fn mask_effective_applies_feather_density_and_caches() {
     assert!(edge > 0 && edge < 255, "feathered edge: {edge}");
     assert_eq!(soft.get_pixel(0, 0)[0], 0, "far inside stays hidden");
 }
+
+#[test]
+fn separable_blend_modes_follow_the_reference_formulas() {
+    use crate::document::compositing::blend_separable;
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+    // (mode id, base, top, expected)
+    let cases = [
+        (6, 0.5, 0.5, 1.0),  // Color Dodge: 0.5 / 0.5
+        (6, 0.0, 0.9, 0.0),  // Color Dodge: black base stays black
+        (7, 0.5, 0.5, 0.0),  // Color Burn: 1 - 0.5 / 0.5
+        (7, 1.0, 0.1, 1.0),  // Color Burn: white base stays white
+        (8, 0.4, 0.25, 0.2), // Hard Light: 2 b t
+        (8, 0.4, 0.75, 0.7), // Hard Light: screen half
+        (9, 0.5, 0.5, 0.5),  // Soft Light: neutral top
+        (10, 0.2, 0.7, 0.5), // Difference
+        (11, 0.5, 0.5, 0.5), // Exclusion
+        (12, 0.6, 0.6, 1.0), // Linear Dodge clamps
+        (13, 0.3, 0.4, 0.0), // Linear Burn clamps
+    ];
+    for (mode, b, t, expected) in cases {
+        assert!(
+            close(blend_separable(b, t, mode), expected),
+            "mode {mode}: {b} {t} -> {} (attendu {expected})",
+            blend_separable(b, t, mode)
+        );
+    }
+    // Opaque top over opaque base: the blended color comes out as is.
+    let out = crate::document::compositing::blend_pixel(
+        [0.2, 0.2, 0.2, 1.0],
+        [0.7, 0.7, 0.7, 1.0],
+        BlendMode::Difference.id(),
+    );
+    assert!(close(out[0], 0.5) && close(out[3], 1.0));
+}

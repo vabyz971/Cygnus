@@ -435,6 +435,14 @@ pub enum BlendMode {
     Overlay,
     Darken,
     Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    LinearDodge,
+    LinearBurn,
 }
 
 impl std::fmt::Display for BlendMode {
@@ -444,17 +452,27 @@ impl std::fmt::Display for BlendMode {
 }
 
 impl BlendMode {
-    /// Display order in UIs (drop-down lists).
-    pub const ALL: [BlendMode; 6] = [
+    /// Display order in UIs (drop-down lists), grouped like the usual
+    /// editors: normal, darken group, lighten group, contrast group,
+    /// inversion group.
+    pub const ALL: [BlendMode; 14] = [
         BlendMode::Normal,
-        BlendMode::Multiply,
-        BlendMode::Screen,
-        BlendMode::Overlay,
         BlendMode::Darken,
+        BlendMode::Multiply,
+        BlendMode::ColorBurn,
+        BlendMode::LinearBurn,
         BlendMode::Lighten,
+        BlendMode::Screen,
+        BlendMode::ColorDodge,
+        BlendMode::LinearDodge,
+        BlendMode::Overlay,
+        BlendMode::SoftLight,
+        BlendMode::HardLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
     ];
 
-    /// Human-readable label.
+    /// Human-readable (English) label.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -464,7 +482,42 @@ impl BlendMode {
             BlendMode::Overlay => "Overlay",
             BlendMode::Darken => "Darken",
             BlendMode::Lighten => "Lighten",
+            BlendMode::ColorDodge => "Color Dodge",
+            BlendMode::ColorBurn => "Color Burn",
+            BlendMode::HardLight => "Hard Light",
+            BlendMode::SoftLight => "Soft Light",
+            BlendMode::Difference => "Difference",
+            BlendMode::Exclusion => "Exclusion",
+            BlendMode::LinearDodge => "Linear Dodge (Add)",
+            BlendMode::LinearBurn => "Linear Burn",
         }
+    }
+
+    /// Serialized name (the variant name, see the type docs).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "Normal",
+            BlendMode::Multiply => "Multiply",
+            BlendMode::Screen => "Screen",
+            BlendMode::Overlay => "Overlay",
+            BlendMode::Darken => "Darken",
+            BlendMode::Lighten => "Lighten",
+            BlendMode::ColorDodge => "ColorDodge",
+            BlendMode::ColorBurn => "ColorBurn",
+            BlendMode::HardLight => "HardLight",
+            BlendMode::SoftLight => "SoftLight",
+            BlendMode::Difference => "Difference",
+            BlendMode::Exclusion => "Exclusion",
+            BlendMode::LinearDodge => "LinearDodge",
+            BlendMode::LinearBurn => "LinearBurn",
+        }
+    }
+
+    /// Mode from its serialized name (`None` when unknown).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.name() == name)
     }
 
     /// Numeric identifier (shaders + CPU). Do not renumber.
@@ -477,6 +530,14 @@ impl BlendMode {
             BlendMode::Overlay => 3,
             BlendMode::Darken => 4,
             BlendMode::Lighten => 5,
+            BlendMode::ColorDodge => 6,
+            BlendMode::ColorBurn => 7,
+            BlendMode::HardLight => 8,
+            BlendMode::SoftLight => 9,
+            BlendMode::Difference => 10,
+            BlendMode::Exclusion => 11,
+            BlendMode::LinearDodge => 12,
+            BlendMode::LinearBurn => 13,
         }
     }
 }
@@ -550,8 +611,20 @@ mod tests {
 
     #[test]
     fn blend_mode_labels_et_ids_stables() {
-        assert_eq!(BlendMode::ALL.len(), 6);
+        assert_eq!(BlendMode::ALL.len(), 14);
         assert_eq!(BlendMode::Multiply.id(), 1);
+        assert_eq!(BlendMode::LinearBurn.id(), 13);
+        let mut ids: Vec<u32> = BlendMode::ALL.iter().map(|m| m.id()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            (0..14).collect::<Vec<u32>>(),
+            "ids distincts et contigus"
+        );
+        for mode in BlendMode::ALL {
+            assert_eq!(BlendMode::from_name(mode.name()), Some(mode));
+        }
+        assert_eq!(BlendMode::from_name("Unknown"), None);
         assert_eq!(format!("{}", BlendMode::Screen), "Screen");
         let json = serde_json::to_string(&BlendMode::Overlay).expect("serializable");
         assert_eq!(json, "\"Overlay\"");

@@ -345,6 +345,65 @@ fn sample_fraction_both(
 // CPU blend primitives (unchanged, proven by the golden tests)
 // ---------------------------------------------------------------------------
 
+/// Per-channel math of the separable modes added after the first six
+/// (W3C compositing formulas; `b` = base, `t` = top, both 0..=1). The
+/// GPU shader (`gpu-compositor` `composite.wgsl`) mirrors it.
+#[inline]
+pub fn blend_separable(b: f32, t: f32, mode: u32) -> f32 {
+    match mode {
+        // Color Dodge
+        6 => {
+            if b <= 0.0 {
+                0.0
+            } else if t >= 1.0 {
+                1.0
+            } else {
+                (b / (1.0 - t)).min(1.0)
+            }
+        }
+        // Color Burn
+        7 => {
+            if b >= 1.0 {
+                1.0
+            } else if t <= 0.0 {
+                0.0
+            } else {
+                1.0 - ((1.0 - b) / t).min(1.0)
+            }
+        }
+        // Hard Light (overlay with the layers swapped)
+        8 => {
+            if t < 0.5 {
+                2.0 * b * t
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - t)
+            }
+        }
+        // Soft Light
+        9 => {
+            if t <= 0.5 {
+                b - (1.0 - 2.0 * t) * b * (1.0 - b)
+            } else {
+                let d = if b <= 0.25 {
+                    ((16.0 * b - 12.0) * b + 4.0) * b
+                } else {
+                    b.sqrt()
+                };
+                b + (2.0 * t - 1.0) * (d - b)
+            }
+        }
+        // Difference
+        10 => (b - t).abs(),
+        // Exclusion
+        11 => b + t - 2.0 * b * t,
+        // Linear Dodge (Add)
+        12 => (b + t).min(1.0),
+        // Linear Burn
+        13 => (b + t - 1.0).max(0.0),
+        _ => t,
+    }
+}
+
 /// Single-pixel blend: returns the composited color (top over base)
 #[inline]
 pub fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4] {
@@ -376,7 +435,8 @@ pub fn blend_pixel(b: [f32; 4], t: [f32; 4], mode: u32) -> [f32; 4] {
         ],
         4 => [b[0].min(t[0]), b[1].min(t[1]), b[2].min(t[2])], // Darken
         5 => [b[0].max(t[0]), b[1].max(t[1]), b[2].max(t[2])], // Lighten
-        _ => [t[0], t[1], t[2]],                               // Normal
+        6..=13 => std::array::from_fn(|c| blend_separable(b[c], t[c], mode)),
+        _ => [t[0], t[1], t[2]], // Normal
     };
     // Alpha compositing: top over base, weighted by the top alpha
     let ta = t[3];

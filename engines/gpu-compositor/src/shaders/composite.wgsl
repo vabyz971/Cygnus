@@ -40,6 +40,31 @@ fn blend_channel(b: f32, t: f32, mode: u32) -> f32 {
     }
     if (mode == 4u) { return min(b, t); }
     if (mode == 5u) { return max(b, t); }
+    // Separable modes 6..13: mirror `photo_engine` `blend_separable`.
+    if (mode == 6u) {
+        if (b <= 0.0) { return 0.0; }
+        if (t >= 1.0) { return 1.0; }
+        return min(b / (1.0 - t), 1.0);
+    }
+    if (mode == 7u) {
+        if (b >= 1.0) { return 1.0; }
+        if (t <= 0.0) { return 0.0; }
+        return 1.0 - min((1.0 - b) / t, 1.0);
+    }
+    if (mode == 8u) {
+        if (t < 0.5) { return 2.0 * b * t; }
+        return 1.0 - 2.0 * (1.0 - b) * (1.0 - t);
+    }
+    if (mode == 9u) {
+        if (t <= 0.5) { return b - (1.0 - 2.0 * t) * b * (1.0 - b); }
+        var d = sqrt(b);
+        if (b <= 0.25) { d = ((16.0 * b - 12.0) * b + 4.0) * b; }
+        return b + (2.0 * t - 1.0) * (d - b);
+    }
+    if (mode == 10u) { return abs(b - t); }
+    if (mode == 11u) { return b + t - 2.0 * b * t; }
+    if (mode == 12u) { return min(b + t, 1.0); }
+    if (mode == 13u) { return max(b + t - 1.0, 0.0); }
     return t;
 }
 
