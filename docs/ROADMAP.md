@@ -20,8 +20,8 @@
 
 ## v0.9 "Photo Persona"
 
-Status: in progress (Photo 0.8.0 ships O007–O012; O013 since). Remaining work, shortest first:
-O014 clone stamp → O015 first layer styles → O016 layer multi-select + align/distribute.
+Status: in progress (Photo 0.8.0 ships O007–O012; O013–O014 since). Remaining work, shortest first:
+O015 first layer styles → O016 layer multi-select + align/distribute → pen selection, undoable selections.
 
 - [ ] **Selections**
   - [x] Rectangle / ellipse marquee, select all / deselect / invert, mask from selection (O007).
@@ -32,10 +32,10 @@ O014 clone stamp → O015 first layer styles → O016 layer multi-select + align
 - [ ] **Live Filters + 1st Layer Style**
   - [x] Live filters as sub-layers with masks and presets (v0.8.3).
   - [ ] Drop shadow + outer glow layer styles (O015, `.cygp` bump).
-- [ ] **Brush v2**
+- [x] **Brush v2**
   - [x] Hardness / flow / spacing / stabilizer (O008).
   - [x] Paint bucket + linear gradient (O011).
-  - [ ] Clone stamp (O014).
+  - [x] Clone stamp (O014).
 - [ ] **Layers**
   - [x] 14 blend modes, CPU and GPU, `.cygp` v8 (O012).
   - [ ] Multi-select + align / distribute (O016).
