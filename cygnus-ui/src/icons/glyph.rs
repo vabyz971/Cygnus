@@ -150,6 +150,7 @@ pub(crate) enum CygnusIcon {
     Wand,
     PaintBucket,
     Gradient,
+    Stamp,
 }
 
 impl CygnusIcon {
@@ -225,6 +226,7 @@ impl CygnusIcon {
             Self::Wand => ICON_AUTO_FIX_HIGH,
             Self::PaintBucket => ICON_FORMAT_COLOR_FILL,
             Self::Gradient => ICON_GRADIENT,
+            Self::Stamp => ICON_APPROVAL,
         }
     }
 

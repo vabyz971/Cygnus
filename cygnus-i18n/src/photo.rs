@@ -557,6 +557,12 @@ pub enum PhotoTextKey {
     BlendLinearDodge,
     /// Blend mode name.
     BlendLinearBurn,
+    /// Clone stamp tool name.
+    CloneHint,
+    /// Clone stamp usage.
+    CloneHintText,
+    /// History: clone stamp stroke.
+    HistoryOpClone,
 }
 
 /// Photo catalog bound to a language.
@@ -834,6 +840,9 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::BlendExclusion,
     PhotoTextKey::BlendLinearDodge,
     PhotoTextKey::BlendLinearBurn,
+    PhotoTextKey::CloneHint,
+    PhotoTextKey::CloneHintText,
+    PhotoTextKey::HistoryOpClone,
 ];
 
 impl PhotoCatalog {
@@ -1137,6 +1146,9 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::BlendExclusion => "Exclusion",
         PhotoTextKey::BlendLinearDodge => "Densité linéaire − (Addition)",
         PhotoTextKey::BlendLinearBurn => "Densité linéaire +",
+        PhotoTextKey::CloneHint => "Tampon de duplication",
+        PhotoTextKey::CloneHintText => "Alt+clic : définir la source — glisser : recopier",
+        PhotoTextKey::HistoryOpClone => "Tampon de duplication",
     }
 }
 
@@ -1414,6 +1426,9 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::BlendExclusion => "Exclusion",
         PhotoTextKey::BlendLinearDodge => "Linear Dodge (Add)",
         PhotoTextKey::BlendLinearBurn => "Linear Burn",
+        PhotoTextKey::CloneHint => "Clone stamp",
+        PhotoTextKey::CloneHintText => "Alt+click: set the source — drag: clone",
+        PhotoTextKey::HistoryOpClone => "Clone stamp",
     }
 }
 

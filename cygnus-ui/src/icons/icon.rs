@@ -166,4 +166,6 @@ pub enum Icon {
     PaintBucket,
     /// Gradient fill.
     Gradient,
+    /// Clone stamp.
+    Stamp,
 }

@@ -203,6 +203,7 @@ impl KeybindingPreferences {
         bindings.insert("tool_wand".to_string(), "W".to_string());
         bindings.insert("tool_bucket".to_string(), "K".to_string());
         bindings.insert("tool_gradient".to_string(), "G".to_string());
+        bindings.insert("tool_clone".to_string(), "S".to_string());
         // Editing
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("redo".to_string(), "Ctrl+Y".to_string());
