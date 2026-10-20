@@ -20,24 +20,25 @@
 
 ## v0.9 "Photo Persona"
 
-Status: in progress (Photo 0.8.0 ships O007–O012). Remaining work, shortest first:
-O013 clone stamp → O014 first layer styles → O015 layer multi-select + align/distribute.
+Status: in progress (Photo 0.8.0 ships O007–O012; O013 since). Remaining work, shortest first:
+O014 clone stamp → O015 first layer styles → O016 layer multi-select + align/distribute.
 
 - [ ] **Selections**
   - [x] Rectangle / ellipse marquee, select all / deselect / invert, mask from selection (O007).
   - [x] Lasso + magic wand (tolerance, contiguous) (O009).
-  - [ ] Pen selection; add / subtract modifiers; undoable selection changes.
+  - [x] Add / subtract / intersect with Shift / Alt (O013).
+  - [ ] Pen selection; undoable selection changes.
 - [x] **Paintable masks**: density / feather / invert, non-destructive, `.cygp` v7 (O010).
 - [ ] **Live Filters + 1st Layer Style**
   - [x] Live filters as sub-layers with masks and presets (v0.8.3).
-  - [ ] Drop shadow + outer glow layer styles (O014, `.cygp` bump).
+  - [ ] Drop shadow + outer glow layer styles (O015, `.cygp` bump).
 - [ ] **Brush v2**
   - [x] Hardness / flow / spacing / stabilizer (O008).
   - [x] Paint bucket + linear gradient (O011).
-  - [ ] Clone stamp (O013).
+  - [ ] Clone stamp (O014).
 - [ ] **Layers**
   - [x] 14 blend modes, CPU and GPU, `.cygp` v8 (O012).
-  - [ ] Multi-select + align / distribute (O015).
+  - [ ] Multi-select + align / distribute (O016).
   DoD: masked portrait composite + local retouch, re-editable after reload.
 
 ## v0.10 "Vector + Text" (makes the modes useful)
