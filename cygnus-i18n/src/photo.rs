@@ -529,6 +529,34 @@ pub enum PhotoTextKey {
     HistoryOpFill,
     /// History: gradient fill.
     HistoryOpGradient,
+    /// Blend mode name.
+    BlendNormal,
+    /// Blend mode name.
+    BlendMultiply,
+    /// Blend mode name.
+    BlendScreen,
+    /// Blend mode name.
+    BlendOverlay,
+    /// Blend mode name.
+    BlendDarken,
+    /// Blend mode name.
+    BlendLighten,
+    /// Blend mode name.
+    BlendColorDodge,
+    /// Blend mode name.
+    BlendColorBurn,
+    /// Blend mode name.
+    BlendHardLight,
+    /// Blend mode name.
+    BlendSoftLight,
+    /// Blend mode name.
+    BlendDifference,
+    /// Blend mode name.
+    BlendExclusion,
+    /// Blend mode name.
+    BlendLinearDodge,
+    /// Blend mode name.
+    BlendLinearBurn,
 }
 
 /// Photo catalog bound to a language.
@@ -792,6 +820,20 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::GradientHintText,
     PhotoTextKey::HistoryOpFill,
     PhotoTextKey::HistoryOpGradient,
+    PhotoTextKey::BlendNormal,
+    PhotoTextKey::BlendMultiply,
+    PhotoTextKey::BlendScreen,
+    PhotoTextKey::BlendOverlay,
+    PhotoTextKey::BlendDarken,
+    PhotoTextKey::BlendLighten,
+    PhotoTextKey::BlendColorDodge,
+    PhotoTextKey::BlendColorBurn,
+    PhotoTextKey::BlendHardLight,
+    PhotoTextKey::BlendSoftLight,
+    PhotoTextKey::BlendDifference,
+    PhotoTextKey::BlendExclusion,
+    PhotoTextKey::BlendLinearDodge,
+    PhotoTextKey::BlendLinearBurn,
 ];
 
 impl PhotoCatalog {
@@ -1075,6 +1117,20 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         }
         PhotoTextKey::HistoryOpFill => "Remplissage",
         PhotoTextKey::HistoryOpGradient => "Dégradé",
+        PhotoTextKey::BlendNormal => "Normal",
+        PhotoTextKey::BlendMultiply => "Produit",
+        PhotoTextKey::BlendScreen => "Superposition",
+        PhotoTextKey::BlendOverlay => "Incrustation",
+        PhotoTextKey::BlendDarken => "Obscurcir",
+        PhotoTextKey::BlendLighten => "Éclaircir",
+        PhotoTextKey::BlendColorDodge => "Densité couleur −",
+        PhotoTextKey::BlendColorBurn => "Densité couleur +",
+        PhotoTextKey::BlendHardLight => "Lumière crue",
+        PhotoTextKey::BlendSoftLight => "Lumière tamisée",
+        PhotoTextKey::BlendDifference => "Différence",
+        PhotoTextKey::BlendExclusion => "Exclusion",
+        PhotoTextKey::BlendLinearDodge => "Densité linéaire − (Addition)",
+        PhotoTextKey::BlendLinearBurn => "Densité linéaire +",
     }
 }
 
@@ -1336,6 +1392,20 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::GradientHintText => "Drag: gradient from primary to secondary color",
         PhotoTextKey::HistoryOpFill => "Fill",
         PhotoTextKey::HistoryOpGradient => "Gradient",
+        PhotoTextKey::BlendNormal => "Normal",
+        PhotoTextKey::BlendMultiply => "Multiply",
+        PhotoTextKey::BlendScreen => "Screen",
+        PhotoTextKey::BlendOverlay => "Overlay",
+        PhotoTextKey::BlendDarken => "Darken",
+        PhotoTextKey::BlendLighten => "Lighten",
+        PhotoTextKey::BlendColorDodge => "Color Dodge",
+        PhotoTextKey::BlendColorBurn => "Color Burn",
+        PhotoTextKey::BlendHardLight => "Hard Light",
+        PhotoTextKey::BlendSoftLight => "Soft Light",
+        PhotoTextKey::BlendDifference => "Difference",
+        PhotoTextKey::BlendExclusion => "Exclusion",
+        PhotoTextKey::BlendLinearDodge => "Linear Dodge (Add)",
+        PhotoTextKey::BlendLinearBurn => "Linear Burn",
     }
 }
 
