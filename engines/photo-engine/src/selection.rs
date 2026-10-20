@@ -75,6 +75,69 @@ pub enum SelectionShape {
     },
 }
 
+/// How a new selection combines with the active one (Shift = add,
+/// Alt = subtract, Shift+Alt = intersect, nothing = replace).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionOp {
+    /// The new selection replaces the active one.
+    #[default]
+    Replace,
+    /// Union.
+    Add,
+    /// Active minus new.
+    Subtract,
+    /// Common part only.
+    Intersect,
+}
+
+impl SelectionOp {
+    /// Operation from the held modifiers.
+    #[must_use]
+    pub fn from_modifiers(shift: bool, alt: bool) -> Self {
+        match (shift, alt) {
+            (true, true) => Self::Intersect,
+            (true, false) => Self::Add,
+            (false, true) => Self::Subtract,
+            (false, false) => Self::Replace,
+        }
+    }
+
+    /// Combines `active` with `new` over a `width` x `height` document.
+    /// `None` = nothing selected (subtracting everything, empty
+    /// intersection, or no input at all).
+    #[must_use]
+    pub fn apply(
+        self,
+        active: Option<&Selection>,
+        new: Option<Selection>,
+        width: u32,
+        height: u32,
+    ) -> Option<Selection> {
+        let combine = |f: &dyn Fn(f32, f32) -> f32, a: &Selection, b: &Selection| {
+            let mut data = Vec::with_capacity(width as usize * height as usize);
+            for y in 0..height {
+                for x in 0..width {
+                    let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let v = f(a.coverage(cx, cy), b.coverage(cx, cy));
+                    data.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
+                }
+            }
+            Selection::from_bitmap(width, height, data)
+        };
+        match (self, active, new) {
+            (Self::Replace, _, new) => new,
+            (Self::Add, None, new) => new,
+            (Self::Add, Some(a), None) => Some(a.clone()),
+            (Self::Add, Some(a), Some(b)) => combine(&|x, y| x.max(y), a, &b),
+            (Self::Subtract, None, _) => None,
+            (Self::Subtract, Some(a), None) => Some(a.clone()),
+            (Self::Subtract, Some(a), Some(b)) => combine(&|x, y| x * (1.0 - y), a, &b),
+            (Self::Intersect, Some(a), Some(b)) => combine(&|x, y| x * y, a, &b),
+            (Self::Intersect, _, _) => None,
+        }
+    }
+}
+
 /// Marquee kind picked by the selection tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionKind {
@@ -582,5 +645,41 @@ mod tests {
             .map(|run| (run[1].0 - run[0].0).abs() + (run[1].1 - run[0].1).abs())
             .sum();
         assert!((total - 16.0).abs() < 1e-4, "perimeter {total}");
+    }
+
+    #[test]
+    fn selection_ops_combine_coverage() {
+        let left = Selection::from_drag(SelectionKind::Rect, (0.0, 0.0), (6.0, 4.0));
+        let right = Selection::from_drag(SelectionKind::Rect, (4.0, 0.0), (10.0, 4.0));
+        let at = |sel: &Option<Selection>, x: f32| sel.as_ref().map_or(0.0, |s| s.coverage(x, 1.5));
+        let add = SelectionOp::Add.apply(left.as_ref(), right.clone(), 10, 4);
+        assert_eq!((at(&add, 1.5), at(&add, 8.5)), (1.0, 1.0));
+        let sub = SelectionOp::Subtract.apply(left.as_ref(), right.clone(), 10, 4);
+        assert_eq!((at(&sub, 1.5), at(&sub, 5.5)), (1.0, 0.0));
+        let inter = SelectionOp::Intersect.apply(left.as_ref(), right.clone(), 10, 4);
+        assert_eq!((at(&inter, 1.5), at(&inter, 5.5)), (0.0, 1.0));
+        assert_eq!(
+            SelectionOp::Replace.apply(left.as_ref(), right.clone(), 10, 4),
+            right
+        );
+        // Nothing active: add = new, subtract / intersect = nothing.
+        assert_eq!(SelectionOp::Add.apply(None, right.clone(), 10, 4), right);
+        assert_eq!(
+            SelectionOp::Subtract.apply(None, right.clone(), 10, 4),
+            None
+        );
+        // Subtracting everything leaves no selection.
+        assert_eq!(
+            SelectionOp::Subtract.apply(left.as_ref(), Some(Selection::all(10, 4)), 10, 4),
+            None
+        );
+        assert_eq!(
+            SelectionOp::from_modifiers(true, true),
+            SelectionOp::Intersect
+        );
+        assert_eq!(
+            SelectionOp::from_modifiers(false, true),
+            SelectionOp::Subtract
+        );
     }
 }

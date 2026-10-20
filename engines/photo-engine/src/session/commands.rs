@@ -419,6 +419,8 @@ pub enum PhotoEngineCommand {
         tolerance: u8,
         /// Flood only from the clicked pixel.
         contiguous: bool,
+        /// How the result combines with the active selection.
+        op: crate::SelectionOp,
     },
     /// Add a mask to `layer` filled from the active selection
     /// (selected = white). No-op without a selection.

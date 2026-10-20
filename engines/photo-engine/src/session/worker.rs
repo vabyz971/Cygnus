@@ -2065,6 +2065,7 @@ impl EngineWorker {
                 y,
                 tolerance,
                 contiguous,
+                op,
             } => {
                 // Exact document composite (what the user sees).
                 let selection = (x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0)
@@ -2081,6 +2082,8 @@ impl EngineWorker {
                             contiguous,
                         )
                     });
+                let (width, height) = (self.document.width.max(1), self.document.height.max(1));
+                let selection = op.apply(self.selection.as_ref(), selection, width, height);
                 self.selection = selection.clone();
                 Mutation::immediate(PhotoEngineResponse::SelectionChanged { selection })
             }
@@ -2369,6 +2372,7 @@ mod tests {
             y: 5.0,
             tolerance: 16,
             contiguous: true,
+            op: crate::SelectionOp::Replace,
         });
         let PhotoEngineResponse::SelectionChanged {
             selection: Some(selection),
