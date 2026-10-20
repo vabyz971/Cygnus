@@ -24,7 +24,7 @@
 - [x] Paintable masks: density/feather/invert (done, O010).
 - [ ] Live Filters + 1st Layer Style (drop shadow/glow).
 - [ ] Brush v2: hardness/flow/spacing/stabilization (done, O008), bucket/gradient (done, O011), stamp/clone.
-- [ ] Layer multi-select + align/distribute; 12–15 blend modes.
+- [ ] Layer multi-select + align/distribute; 12–15 blend modes (done: 14, O012).
   DoD: masked portrait composite + local retouch, re-editable after reload.
 
 ## v0.10 "Vector + Text" (makes the modes useful)
