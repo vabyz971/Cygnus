@@ -23,7 +23,7 @@
 - [x] Selections: rectangle/ellipse (done, O007), lasso + wand (done, O009) / pen.
 - [x] Paintable masks: density/feather/invert (done, O010).
 - [ ] Live Filters + 1st Layer Style (drop shadow/glow).
-- [ ] Brush v2: hardness/flow/spacing/stabilization (done, O008), stamp/clone, bucket/gradient.
+- [ ] Brush v2: hardness/flow/spacing/stabilization (done, O008), bucket/gradient (done, O011), stamp/clone.
 - [ ] Layer multi-select + align/distribute; 12–15 blend modes.
   DoD: masked portrait composite + local retouch, re-editable after reload.
 
