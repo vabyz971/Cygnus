@@ -237,6 +237,11 @@ pub struct PhotoUiState {
     pub bucket: WandSettings,
     /// Gradient line being dragged (document pixels).
     pub gradient_preview: Option<((f32, f32), (f32, f32))>,
+    /// Clone stamp source (Alt+click, document pixels).
+    pub clone_source: Option<(f32, f32)>,
+    /// Clone stamp source minus destination, fixed by the first stroke
+    /// after picking a source ("aligned" mode).
+    pub clone_offset: Option<(f32, f32)>,
     /// Explicit repaint requested.
     pub needs_repaint: bool,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics): applied worker

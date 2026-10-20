@@ -33,10 +33,10 @@ use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
     CanvasMapping, InkFrameInput, NodeDrag, NodePoint, NodeRef, PhotoCanvas, PhotoCanvasOutcome,
     PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, clear_ink_overlay,
-    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_gradient_line,
-    draw_node_overlay, draw_selection_outline, draw_transform_overlay, feed_ink_frame,
-    frame_corners, hit_test_topmost, ink_tool_active, path_nodes, point_in_quad, screen_to_doc,
-    stability_action,
+    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_clone_source, draw_document_bounds,
+    draw_gradient_line, draw_node_overlay, draw_selection_outline, draw_transform_overlay,
+    feed_ink_frame, frame_corners, hit_test_topmost, ink_tool_active, path_nodes, point_in_quad,
+    screen_to_doc, stability_action,
 };
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 use cygnus_ui::components::{menu_row, menu_style};
@@ -798,6 +798,10 @@ pub fn draw_canvas_content(
         // paint overlay goes (clearing `stroke` here collapsed every
         // marquee to the current frame's points).
         clear_ink_overlay(&mut doc.ui);
+    } else if doc.ui.tool == PhotoCanvasTool::Clone {
+        // The clone stroke lives in `stroke` until release (no live
+        // overlay: the copy shows once the worker answers).
+        clear_ink_overlay(&mut doc.ui);
     } else if !ink_tool_active(doc.ui.tool) {
         // Tool switch mid-gesture: clean abort (the
         // canvas already drained `stroke`).
@@ -1049,6 +1053,12 @@ pub fn draw_canvas_content(
     } else if doc.ui.tool != PhotoCanvasTool::Lasso {
         doc.ui.lasso_preview.clear();
     }
+    // Clone stamp: a new source resets the aligned offset.
+    if let Some(source) = outcome.clone_source {
+        doc.ui.clone_source = Some((source.x, source.y));
+        doc.ui.clone_offset = None;
+        doc.ui.needs_repaint = true;
+    }
     // Paint bucket: worker fill of the target buffer.
     if let Some(click) = outcome.fill_click {
         actions.push(PhotoAction::FillAt {
@@ -1090,7 +1100,7 @@ pub fn draw_canvas_content(
     draw_selection(ui, doc, ctx, doc_rect, geom, op);
     if matches!(
         doc.ui.tool,
-        PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser
+        PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser | PhotoCanvasTool::Clone
     ) {
         // OS cursor kept (viewport crosshair) + circle at the
         // brush/eraser diameter on top.
@@ -1108,6 +1118,21 @@ pub fn draw_canvas_content(
                 doc.ui.brush.radius,
                 to_screen,
             );
+            // Clone source marker: follows the cursor once aligned,
+            // sits on the picked point before the first stroke.
+            if doc.ui.tool == PhotoCanvasTool::Clone {
+                let marker = match (doc.ui.clone_offset, outcome.hover_pos) {
+                    (Some((dx, dy)), Some(hover)) => Some(hover + egui::vec2(dx, dy) * to_screen),
+                    _ => doc
+                        .ui
+                        .clone_source
+                        .zip(doc_rect)
+                        .map(|((x, y), rect)| rect.min + egui::vec2(x, y) * to_screen),
+                };
+                if let Some(marker) = marker {
+                    draw_clone_source(ui.painter(), ctx, marker);
+                }
+            }
         }
     }
     actions

@@ -660,6 +660,32 @@ impl PhotoApp {
                     let dynamics = doc.ui.brush.dynamics();
                     self.send_active(PhotoEngineCommand::SetBrushDynamics(dynamics));
                 }
+                // Clone stamp: copy from the source ("aligned": the first
+                // stroke after picking a source fixes the offset).
+                if self
+                    .active_doc_opt()
+                    .is_some_and(|doc| doc.ui.tool == crate::ui::PhotoCanvasTool::Clone)
+                {
+                    let offset = self.active_doc_mut_opt().and_then(|doc| {
+                        if doc.ui.clone_offset.is_none()
+                            && let (Some(source), Some(first)) =
+                                (doc.ui.clone_source, paint.points.first())
+                        {
+                            doc.ui.clone_offset = Some((source.0 - first.0, source.1 - first.1));
+                        }
+                        doc.ui.clone_offset
+                    });
+                    if let Some(offset) = offset {
+                        self.send_active(PhotoEngineCommand::CloneStroke {
+                            layer: paint.layer,
+                            points: paint.points,
+                            radius: paint.radius,
+                            opacity: paint.opacity,
+                            offset,
+                        });
+                    }
+                    return;
+                }
                 // Focused mask of the selected layer: the stroke
                 // goes into the mask (white/black), otherwise into
                 // the layer source (historical behavior). The focused
@@ -1757,6 +1783,57 @@ mod tests {
             "second marquee added"
         );
         assert_eq!(selection.coverage(200.5, 150.5), 0.0, "gap between them");
+    }
+
+    #[test]
+    fn clone_stamp_alt_click_then_drag_clones_in_the_worker() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        select_first_layer(&mut app, &ctx);
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Clone),
+        );
+        let alt = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let source = dest.min + dest.size() * 0.25;
+        draw_frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(source), primary(source, true)],
+            alt,
+        );
+        draw_frame_with(&mut app, &ctx, vec![primary(source, false)], alt);
+        assert!(
+            app.active_doc_opt().expect("doc").ui.clone_source.is_some(),
+            "Alt+click picks the source"
+        );
+        assert!(
+            !app.active_doc_opt().expect("doc").ui.can_undo,
+            "no paint yet"
+        );
+        let a = dest.min + dest.size() * 0.6;
+        let b = dest.min + dest.size() * 0.8;
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(a), primary(a, true)],
+        );
+        for step in 1..=4 {
+            let q = a + (b - a) * (step as f32 / 4.0);
+            draw_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(q)]);
+        }
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(b), primary(b, false)],
+        );
+        assert!(
+            app.active_doc_opt().expect("doc").ui.clone_offset.is_some(),
+            "first stroke fixes the aligned offset"
+        );
+        assert!(wait_for_undo(&mut app, &ctx), "clone stroke recorded");
     }
 
     #[test]

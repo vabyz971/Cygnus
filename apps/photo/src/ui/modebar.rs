@@ -81,6 +81,7 @@ impl PhotoEditMode {
                 PhotoCanvasTool::Wand,
                 PhotoCanvasTool::Brush,
                 PhotoCanvasTool::Eraser,
+                PhotoCanvasTool::Clone,
                 PhotoCanvasTool::Bucket,
                 PhotoCanvasTool::Gradient,
                 PhotoCanvasTool::Eyedropper,

@@ -34,5 +34,6 @@ pub use canvas::{
     PhotoCanvasTool,
 };
 pub use overlays::{
-    draw_brush_cursor, draw_document_bounds, draw_gradient_line, draw_selection_outline,
+    draw_brush_cursor, draw_clone_source, draw_document_bounds, draw_gradient_line,
+    draw_selection_outline,
 };

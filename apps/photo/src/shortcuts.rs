@@ -52,6 +52,7 @@ pub enum PhotoShortcut {
     ToolWand,
     ToolBucket,
     ToolGradient,
+    ToolClone,
     // Edit
     Undo,
     Redo,
@@ -82,7 +83,7 @@ pub enum PhotoShortcut {
 
 impl PhotoShortcut {
     /// Every action, stable display order in the window.
-    pub const ALL: [PhotoShortcut; 32] = [
+    pub const ALL: [PhotoShortcut; 33] = [
         PhotoShortcut::ToolBrush,
         PhotoShortcut::ToolEraser,
         PhotoShortcut::ToolEyedropper,
@@ -95,6 +96,7 @@ impl PhotoShortcut {
         PhotoShortcut::ToolWand,
         PhotoShortcut::ToolBucket,
         PhotoShortcut::ToolGradient,
+        PhotoShortcut::ToolClone,
         PhotoShortcut::Undo,
         PhotoShortcut::Redo,
         PhotoShortcut::DeleteLayer,
@@ -133,6 +135,7 @@ impl PhotoShortcut {
             Self::ToolWand => "tool_wand",
             Self::ToolBucket => "tool_bucket",
             Self::ToolGradient => "tool_gradient",
+            Self::ToolClone => "tool_clone",
             Self::SelectAll => "select_all",
             Self::Deselect => "deselect",
             Self::InvertSelection => "invert_selection",
@@ -172,6 +175,7 @@ impl PhotoShortcut {
             Self::ToolWand => "Baguette magique",
             Self::ToolBucket => "Pot de peinture",
             Self::ToolGradient => "Dégradé",
+            Self::ToolClone => "Tampon de duplication",
             Self::SelectAll => "Tout sélectionner",
             Self::Deselect => "Désélectionner",
             Self::InvertSelection => "Intervertir la sélection",
@@ -210,7 +214,8 @@ impl PhotoShortcut {
             | Self::ToolLasso
             | Self::ToolWand
             | Self::ToolBucket
-            | Self::ToolGradient => "Outils",
+            | Self::ToolGradient
+            | Self::ToolClone => "Outils",
             Self::SelectAll | Self::Deselect | Self::InvertSelection => "Sélection",
             Self::Undo | Self::Redo | Self::DeleteLayer => "Édition",
             Self::NewProject | Self::Open | Self::Save | Self::SaveAs | Self::Export => "Fichier",
@@ -265,6 +270,7 @@ impl PhotoShortcut {
             Self::ToolWand => PhotoAction::SetTool(PhotoCanvasTool::Wand),
             Self::ToolBucket => PhotoAction::SetTool(PhotoCanvasTool::Bucket),
             Self::ToolGradient => PhotoAction::SetTool(PhotoCanvasTool::Gradient),
+            Self::ToolClone => PhotoAction::SetTool(PhotoCanvasTool::Clone),
             Self::SelectAll => PhotoAction::SelectAll,
             Self::Deselect => PhotoAction::Deselect,
             Self::InvertSelection => PhotoAction::InvertSelection,
@@ -474,7 +480,7 @@ mod tests {
         );
     }
 
-    /// All 32 shortcuts map to an action, except the 2 documented
+    /// All 33 shortcuts map to an action, except the 2 documented
     /// gaps (`ZoomFit`, `OpenPreferences`).
     #[test]
     fn every_shortcut_maps_or_is_documented_gap() {
@@ -491,7 +497,7 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(mapped, 30);
+        assert_eq!(mapped, 31);
     }
 
     /// Targeted conversions: tools, file (O001), layers, panels.

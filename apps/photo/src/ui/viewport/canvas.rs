@@ -49,6 +49,8 @@ pub enum PhotoCanvasTool {
     Bucket,
     /// Gradient: drag from the primary to the secondary color.
     Gradient,
+    /// Clone stamp: Alt+click sets the source, dragging copies from it.
+    Clone,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -75,13 +77,14 @@ impl PhotoCanvasTool {
             | Self::Lasso
             | Self::Wand
             | Self::Bucket
-            | Self::Gradient => ViewportTool::Brush,
+            | Self::Gradient
+            | Self::Clone => ViewportTool::Brush,
         }
     }
 
     /// True for stroke-accumulating tools (brush, eraser).
     pub fn is_painting(self) -> bool {
-        matches!(self, Self::Brush | Self::Eraser)
+        matches!(self, Self::Brush | Self::Eraser | Self::Clone)
     }
 
     /// Contextual help shown in the status bar (Affinity-style).
@@ -95,6 +98,7 @@ impl PhotoCanvasTool {
             Self::Wand => texts.get(PhotoTextKey::WandHintText),
             Self::Bucket => texts.get(PhotoTextKey::BucketHintText),
             Self::Gradient => texts.get(PhotoTextKey::GradientHintText),
+            Self::Clone => texts.get(PhotoTextKey::CloneHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),
@@ -464,6 +468,14 @@ impl<'a> PhotoCanvas<'a> {
             }
             return outcome;
         }
+        // Clone stamp: Alt+click picks the source instead of painting.
+        if self.tool == PhotoCanvasTool::Clone && ui.input(|input| input.modifiers.alt) {
+            self.stroke.clear();
+            if response.response.clicked() {
+                outcome.clone_source = outcome.pointer_world.last().copied();
+            }
+            return outcome;
+        }
         if !self.tool.is_painting() {
             // Mid-gesture tool switch: clean abort.
             // (The eyedropper just reports the position.)
@@ -547,6 +559,8 @@ pub struct PhotoCanvasOutcome {
     pub fill_click: Option<egui::Vec2>,
     /// Gradient line of the current gesture (document pixels).
     pub gradient_drag: Option<SelectionDrag>,
+    /// Clone stamp source picked this frame (Alt+click, document pixels).
+    pub clone_source: Option<egui::Vec2>,
     /// Selection tool gesture (`None` = no marquee this frame).
     pub selection_drag: Option<SelectionDrag>,
     /// Stroke to commit (`None` = nothing this frame; the app sends it).

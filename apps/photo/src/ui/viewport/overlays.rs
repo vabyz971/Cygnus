@@ -71,6 +71,33 @@ pub fn draw_gradient_line(
     }
 }
 
+/// Clone stamp source marker: a small crosshair ring at `at`.
+pub fn draw_clone_source(painter: &egui::Painter, ctx: &PhotoUiContext, at: egui::Pos2) {
+    let theme = ctx.shared.theme();
+    let r = theme.spacing.sm;
+    let dark = egui::Stroke::new(theme.borders.medium, theme.colors.bg_canvas);
+    let light = egui::Stroke::new(theme.borders.thin, theme.colors.fg_strong);
+    for stroke in [dark, light] {
+        painter.circle_stroke(at, r, stroke);
+        painter.line_segment(
+            [at - egui::vec2(r * 1.6, 0.0), at - egui::vec2(r * 0.6, 0.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [at + egui::vec2(r * 0.6, 0.0), at + egui::vec2(r * 1.6, 0.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [at - egui::vec2(0.0, r * 1.6), at - egui::vec2(0.0, r * 0.6)],
+            stroke,
+        );
+        painter.line_segment(
+            [at + egui::vec2(0.0, r * 0.6), at + egui::vec2(0.0, r * 1.6)],
+            stroke,
+        );
+    }
+}
+
 /// Dash and gap length of the marching ants, in screen points.
 const ANTS_DASH: f32 = 4.0;
 

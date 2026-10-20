@@ -127,7 +127,7 @@ pub fn draw_tool_options(
             ui.add_space(theme.spacing.sm);
             ui.label(caption_text(theme, tool.hint(texts)));
         }
-        PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser => {
+        PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser | PhotoCanvasTool::Clone => {
             ui.spacing_mut().item_spacing.x = theme.spacing.sm;
             let mut size = brush.radius * 2.0;
             ValueField::new(texts.get(PhotoTextKey::SizeLabel), 1.0..=MAX_BRUSH_SIZE)
@@ -181,6 +181,7 @@ mod tests {
             PhotoCanvasTool::Wand,
             PhotoCanvasTool::Bucket,
             PhotoCanvasTool::Gradient,
+            PhotoCanvasTool::Clone,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
             PhotoCanvasTool::Brush,
