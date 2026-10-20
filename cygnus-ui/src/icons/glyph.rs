@@ -148,6 +148,8 @@ pub(crate) enum CygnusIcon {
     EllipseOutline,
     Lasso,
     Wand,
+    PaintBucket,
+    Gradient,
 }
 
 impl CygnusIcon {
@@ -221,6 +223,8 @@ impl CygnusIcon {
             Self::EllipseOutline => ICON_RADIO_BUTTON_UNCHECKED,
             Self::Lasso => ICON_LASSO_SELECT,
             Self::Wand => ICON_AUTO_FIX_HIGH,
+            Self::PaintBucket => ICON_FORMAT_COLOR_FILL,
+            Self::Gradient => ICON_GRADIENT,
         }
     }
 

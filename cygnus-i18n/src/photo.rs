@@ -517,6 +517,18 @@ pub enum PhotoTextKey {
     MaskInvertLabel,
     /// History: mask density / feather / inversion.
     HistoryOpMaskSettings,
+    /// Paint bucket tool name.
+    BucketHint,
+    /// Paint bucket usage.
+    BucketHintText,
+    /// Gradient tool name.
+    GradientHint,
+    /// Gradient usage.
+    GradientHintText,
+    /// History: paint bucket fill.
+    HistoryOpFill,
+    /// History: gradient fill.
+    HistoryOpGradient,
 }
 
 /// Photo catalog bound to a language.
@@ -774,6 +786,12 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::MaskFeatherLabel,
     PhotoTextKey::MaskInvertLabel,
     PhotoTextKey::HistoryOpMaskSettings,
+    PhotoTextKey::BucketHint,
+    PhotoTextKey::BucketHintText,
+    PhotoTextKey::GradientHint,
+    PhotoTextKey::GradientHintText,
+    PhotoTextKey::HistoryOpFill,
+    PhotoTextKey::HistoryOpGradient,
 ];
 
 impl PhotoCatalog {
@@ -1049,6 +1067,14 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::MaskFeatherLabel => "Contour progressif",
         PhotoTextKey::MaskInvertLabel => "Inverser",
         PhotoTextKey::HistoryOpMaskSettings => "Réglages du masque",
+        PhotoTextKey::BucketHint => "Pot de peinture",
+        PhotoTextKey::BucketHintText => "Clic : remplir la zone de couleur proche",
+        PhotoTextKey::GradientHint => "Dégradé",
+        PhotoTextKey::GradientHintText => {
+            "Glisser : dégradé de la couleur principale à la secondaire"
+        }
+        PhotoTextKey::HistoryOpFill => "Remplissage",
+        PhotoTextKey::HistoryOpGradient => "Dégradé",
     }
 }
 
@@ -1304,6 +1330,12 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::MaskFeatherLabel => "Feather",
         PhotoTextKey::MaskInvertLabel => "Invert",
         PhotoTextKey::HistoryOpMaskSettings => "Mask settings",
+        PhotoTextKey::BucketHint => "Paint bucket",
+        PhotoTextKey::BucketHintText => "Click: fill the similar-color area",
+        PhotoTextKey::GradientHint => "Gradient",
+        PhotoTextKey::GradientHintText => "Drag: gradient from primary to secondary color",
+        PhotoTextKey::HistoryOpFill => "Fill",
+        PhotoTextKey::HistoryOpGradient => "Gradient",
     }
 }
 

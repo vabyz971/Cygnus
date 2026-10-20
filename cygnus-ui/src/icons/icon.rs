@@ -162,4 +162,8 @@ pub enum Icon {
     Lasso,
     /// Magic wand selection.
     Wand,
+    /// Paint bucket fill.
+    PaintBucket,
+    /// Gradient fill.
+    Gradient,
 }

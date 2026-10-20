@@ -201,6 +201,8 @@ impl KeybindingPreferences {
         bindings.insert("tool_select".to_string(), "M".to_string());
         bindings.insert("tool_lasso".to_string(), "L".to_string());
         bindings.insert("tool_wand".to_string(), "W".to_string());
+        bindings.insert("tool_bucket".to_string(), "K".to_string());
+        bindings.insert("tool_gradient".to_string(), "G".to_string());
         // Editing
         bindings.insert("undo".to_string(), "Ctrl+Z".to_string());
         bindings.insert("redo".to_string(), "Ctrl+Y".to_string());
