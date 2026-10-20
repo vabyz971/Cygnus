@@ -356,6 +356,42 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Paint bucket at document pixel `(x, y)`: fills the target pixels
+    /// within `tolerance` of the clicked one (connected when
+    /// `contiguous`), limited by the active selection. One history step.
+    FillAt {
+        /// Layer pixels or a mask buffer.
+        target: PaintTarget,
+        /// Click position, document pixels.
+        x: f32,
+        /// Click position, document pixels.
+        y: f32,
+        /// Fill color (gray for masks, chosen by the UI).
+        color: [u8; 3],
+        /// Largest channel difference flooded (0..=255).
+        tolerance: u8,
+        /// Flood only from the clicked pixel.
+        contiguous: bool,
+        /// Fill opacity 0..=1.
+        opacity: f32,
+    },
+    /// Linear gradient from `start` (color `from`) to `end` (color `to`),
+    /// document pixels, over the target limited by the active selection.
+    /// One history step.
+    FillGradient {
+        /// Layer pixels or a mask buffer.
+        target: PaintTarget,
+        /// Gradient start, document pixels.
+        start: (f32, f32),
+        /// Gradient end, document pixels.
+        end: (f32, f32),
+        /// Color at `start`.
+        from: [u8; 3],
+        /// Color at `end`.
+        to: [u8; 3],
+        /// Fill opacity 0..=1.
+        opacity: f32,
+    },
     /// Set a mask's non-destructive properties (absolute values; slider
     /// gestures coalesce into one history entry per mask).
     SetMaskParams {
@@ -396,6 +432,20 @@ pub enum PhotoEngineCommand {
     SetPreviewClip {
         /// True = preview clipped to the document.
         clip: bool,
+    },
+}
+
+/// Pixel buffer a fill writes into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaintTarget {
+    /// Source pixels of a pixel layer.
+    Layer(Uuid),
+    /// A mask of `owner` (layer, group, adjustment or filter).
+    Mask {
+        /// Mask owner.
+        owner: Uuid,
+        /// Targeted mask.
+        mask: Uuid,
     },
 }
 
@@ -457,6 +507,8 @@ impl PhotoEngineCommand {
             Self::SetBrushDynamics(_) => "set_brush_dynamics",
             Self::MagicWand { .. } => "magic_wand",
             Self::SetMaskParams { .. } => "set_mask_params",
+            Self::FillAt { .. } => "fill",
+            Self::FillGradient { .. } => "gradient",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
     }
@@ -545,6 +597,8 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::AddMask { .. }
         | PhotoEngineCommand::AddMaskFromSelection { .. }
         | PhotoEngineCommand::SetMaskParams { .. }
+        | PhotoEngineCommand::FillAt { .. }
+        | PhotoEngineCommand::FillGradient { .. }
         | PhotoEngineCommand::RemoveMask { .. }
         | PhotoEngineCommand::MoveMask { .. }
         | PhotoEngineCommand::MoveMaskTo { .. }

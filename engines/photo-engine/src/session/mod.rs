@@ -45,7 +45,9 @@ pub mod thumb_worker;
 pub mod thumbs;
 pub mod worker;
 
-pub use commands::{NewVectorShape, PhotoEngineCommand, RenderInvalidation, render_routing};
+pub use commands::{
+    NewVectorShape, PaintTarget, PhotoEngineCommand, RenderInvalidation, render_routing,
+};
 pub use errors::EngineError;
 pub use metrics::{OpMetrics, PreviewTimings, WorkerMetrics};
 pub use naming::DefaultNames;

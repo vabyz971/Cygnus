@@ -189,6 +189,71 @@ pub(crate) fn stamp_soft_disc(
     }
 }
 
+/// Fills an RGBA8 buffer (`w` x `h`, straight alpha) source-over:
+/// pixel `(x, y)` receives `color(x, y)` at `opacity * coverage(x, y)`
+/// (paint bucket, gradient). Returns true when any pixel was touched.
+pub fn fill_region(
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    coverage: &dyn Fn(u32, u32) -> f32,
+    color: &dyn Fn(u32, u32) -> [u8; 3],
+    opacity: f32,
+) -> bool {
+    let opacity = if opacity.is_finite() {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    if opacity <= 0.0 || rgba.len() < w as usize * h as usize * 4 {
+        return false;
+    }
+    let mut touched = false;
+    for y in 0..h {
+        for x in 0..w {
+            let a = opacity * coverage(x, y).clamp(0.0, 1.0);
+            if a <= 0.0 {
+                continue;
+            }
+            touched = true;
+            let i = (y as usize * w as usize + x as usize) * 4;
+            let c = color(x, y);
+            let sa = f32::from(rgba[i + 3]) / 255.0;
+            let out_a = a + sa * (1.0 - a);
+            if out_a <= 0.0 {
+                continue;
+            }
+            for k in 0..3 {
+                let v = (f32::from(c[k]) * a + f32::from(rgba[i + k]) * sa * (1.0 - a)) / out_a;
+                rgba[i + k] = v.round().clamp(0.0, 255.0) as u8;
+            }
+            rgba[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    touched
+}
+
+/// Linear gradient parameter of point `p` along `start` → `end`
+/// (0 before start, 1 past end; a degenerate line gives 0).
+#[must_use]
+pub fn gradient_t(p: (f32, f32), start: (f32, f32), end: (f32, f32)) -> f32 {
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    let len2 = dx * dx + dy * dy;
+    if !len2.is_finite() || len2 <= f32::EPSILON {
+        return 0.0;
+    }
+    (((p.0 - start.0) * dx + (p.1 - start.1) * dy) / len2).clamp(0.0, 1.0)
+}
+
+/// Color between `from` and `to` at `t` (0..=1).
+#[must_use]
+pub fn lerp_rgb(from: [u8; 3], to: [u8; 3], t: f32) -> [u8; 3] {
+    let t = t.clamp(0.0, 1.0);
+    std::array::from_fn(|k| {
+        (f32::from(from[k]) + (f32::from(to[k]) - f32::from(from[k])) * t).round() as u8
+    })
+}
+
 /// Rasterizes a circular stroke into an RGBA8 buffer (w×h, LAYER space).
 ///
 /// * `points`: polyline in layer coordinates (pixel (0,0) center = 0.0)
@@ -1031,5 +1096,40 @@ mod tests {
         for (a, b) in once.iter().zip(&pieces) {
             assert!((a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn fill_region_blends_source_over_by_coverage() {
+        let mut rgba = vec![0u8; 3 * 4];
+        rgba[3] = 255; // pixel 0 opaque black
+        let touched = fill_region(
+            &mut rgba,
+            3,
+            1,
+            &|x, _| if x < 2 { 1.0 } else { 0.0 },
+            &|_, _| [255, 0, 0],
+            0.5,
+        );
+        assert!(touched);
+        assert_eq!(&rgba[0..4], &[128, 0, 0, 255], "half red over black");
+        assert_eq!(&rgba[4..8], &[255, 0, 0, 128], "half red over transparent");
+        assert_eq!(&rgba[8..12], &[0, 0, 0, 0], "outside coverage");
+        assert!(!fill_region(
+            &mut rgba,
+            3,
+            1,
+            &|_, _| 1.0,
+            &|_, _| [0, 0, 0],
+            0.0
+        ));
+    }
+
+    #[test]
+    fn gradient_parameter_and_lerp() {
+        assert_eq!(gradient_t((5.0, 9.0), (0.0, 0.0), (10.0, 0.0)), 0.5);
+        assert_eq!(gradient_t((-3.0, 0.0), (0.0, 0.0), (10.0, 0.0)), 0.0);
+        assert_eq!(gradient_t((30.0, 0.0), (0.0, 0.0), (10.0, 0.0)), 1.0);
+        assert_eq!(gradient_t((1.0, 1.0), (2.0, 2.0), (2.0, 2.0)), 0.0);
+        assert_eq!(lerp_rgb([0, 0, 0], [255, 100, 10], 0.5), [128, 50, 5]);
     }
 }

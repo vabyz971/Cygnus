@@ -266,6 +266,73 @@ impl EngineWorker {
         Mutation::changed(invalidation).with_dirty(dirty)
     }
 
+    /// Runs `fill` on the target buffer (layer source pixels or mask
+    /// coverage) as ONE history step: `fill(rgba, w, h, transform)` gets
+    /// the buffer in its own space with the space's doc transform and
+    /// returns whether it touched anything (no-op fills leave no step).
+    fn fill_target(
+        &mut self,
+        target: super::PaintTarget,
+        invalidation: RenderInvalidation,
+        fill: impl FnOnce(&mut [u8], u32, u32, crate::Transform2D) -> bool,
+    ) -> Mutation {
+        match target {
+            super::PaintTarget::Layer(layer) => {
+                let Some(crate::LayerNode::Pixel(pixels)) = self.document.find(layer) else {
+                    return Mutation::unchanged();
+                };
+                let transform = pixels.transform;
+                let raster = pixels.source_image.to_rgba8();
+                let (w, h) = (raster.width(), raster.height());
+                let mut buffer = raster.into_raw();
+                if !fill(&mut buffer, w, h, transform) {
+                    return Mutation::unchanged();
+                }
+                let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
+                    return Mutation::unchanged();
+                };
+                self.push_history(None);
+                if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
+                    pixels.set_source_image(image::DynamicImage::ImageRgba8(image));
+                    pixels.touch();
+                }
+            }
+            super::PaintTarget::Mask { owner, mask } => {
+                let Some(source) = self
+                    .document
+                    .masks_of(owner)
+                    .and_then(|masks| masks.iter().find(|m| m.id == mask))
+                    .map(|m| Arc::clone(&m.image))
+                else {
+                    return Mutation::unchanged();
+                };
+                let transform = self
+                    .document
+                    .mask_paint_space(owner)
+                    .map_or(crate::Transform2D::default(), |(t, _, _)| t);
+                let (w, h) = (source.width(), source.height());
+                let mut buffer = source.as_raw().clone();
+                if !fill(&mut buffer, w, h, transform) {
+                    return Mutation::unchanged();
+                }
+                let Some(image) = image::RgbaImage::from_raw(w, h, buffer) else {
+                    return Mutation::unchanged();
+                };
+                self.push_history(None);
+                if let Some(target) = self
+                    .document
+                    .masks_of_mut(owner)
+                    .and_then(|masks| masks.iter_mut().find(|m| m.id == mask))
+                {
+                    target.image = Arc::new(image);
+                    target.touch();
+                }
+                touch_mask_owner(&mut self.document, owner);
+            }
+        }
+        Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+    }
+
     /// Full-resolution GPU frame (renderer cache: unchanged layers keep
     /// their textures, a move only re-blends on the GPU). `None` without
     /// an attached device or for content the GPU path does not cover.
@@ -1870,6 +1937,91 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::FillAt {
+                target,
+                x,
+                y,
+                color,
+                tolerance,
+                contiguous,
+                opacity,
+            } => {
+                if !x.is_finite() || !y.is_finite() {
+                    return Mutation::unchanged();
+                }
+                let selection = self.selection.clone();
+                self.fill_target(target, invalidation, |rgba, w, h, transform| {
+                    let local = if transform == crate::Transform2D::default() {
+                        Some((x, y))
+                    } else {
+                        transform.doc_to_local(w as f32, h as f32, x, y)
+                    };
+                    let Some((lx, ly)) = local.filter(|(lx, ly)| *lx >= 0.0 && *ly >= 0.0) else {
+                        return false;
+                    };
+                    // Flood on the target's own pixels (layer space).
+                    let Some(region) = crate::Selection::from_color(
+                        rgba,
+                        w,
+                        h,
+                        (lx as u32, ly as u32),
+                        tolerance,
+                        contiguous,
+                    ) else {
+                        return false;
+                    };
+                    let clip = selection
+                        .as_ref()
+                        .map(|selection| selection.clip_for_layer(transform, w, h));
+                    let coverage = |px: u32, py: u32| {
+                        let inside = region.coverage(px as f32 + 0.5, py as f32 + 0.5);
+                        match &clip {
+                            Some(clip) => inside * clip(px as f32, py as f32),
+                            None => inside,
+                        }
+                    };
+                    crate::paint::fill_region(rgba, w, h, &coverage, &|_, _| color, opacity)
+                })
+            }
+            PhotoEngineCommand::FillGradient {
+                target,
+                start,
+                end,
+                from,
+                to,
+                opacity,
+            } => {
+                let finite = [start.0, start.1, end.0, end.1]
+                    .iter()
+                    .all(|v| v.is_finite());
+                if !finite {
+                    return Mutation::unchanged();
+                }
+                let selection = self.selection.clone();
+                self.fill_target(target, invalidation, |rgba, w, h, transform| {
+                    let identity = transform == crate::Transform2D::default();
+                    let to_doc = |px: u32, py: u32| {
+                        let (x, y) = (px as f32 + 0.5, py as f32 + 0.5);
+                        if identity {
+                            (x, y)
+                        } else {
+                            transform.local_to_doc(w as f32, h as f32, x, y)
+                        }
+                    };
+                    let clip = selection
+                        .as_ref()
+                        .map(|selection| selection.clip_for_layer(transform, w, h));
+                    let coverage = |px: u32, py: u32| match &clip {
+                        Some(clip) => clip(px as f32, py as f32),
+                        None => 1.0,
+                    };
+                    let color = |px: u32, py: u32| {
+                        let t = crate::paint::gradient_t(to_doc(px, py), start, end);
+                        crate::paint::lerp_rgb(from, to, t)
+                    };
+                    crate::paint::fill_region(rgba, w, h, &coverage, &color, opacity)
+                })
+            }
             PhotoEngineCommand::SetMaskParams {
                 owner,
                 mask,
@@ -2282,6 +2434,69 @@ mod tests {
         });
         assert_eq!(alpha_at(&worker, 5), 255, "inverted: left shown");
         assert_eq!(alpha_at(&worker, 30), 0, "inverted: right hidden");
+    }
+
+    #[test]
+    fn bucket_fills_the_clicked_area_within_the_selection() {
+        let (mut worker, id) = selection_worker();
+        let fill = |worker: &mut EngineWorker| {
+            worker.apply(PhotoEngineCommand::FillAt {
+                target: super::super::PaintTarget::Layer(id),
+                x: 5.0,
+                y: 5.0,
+                color: [0, 200, 0],
+                tolerance: 0,
+                contiguous: true,
+                opacity: 1.0,
+            })
+        };
+        let selection =
+            crate::Selection::from_drag(crate::SelectionKind::Rect, (0.0, 0.0), (20.0, 20.0));
+        worker.apply(PhotoEngineCommand::SetSelection(selection));
+        fill(&mut worker);
+        let pixels = layer_pixels(&worker, id);
+        assert_eq!(pixels.get_pixel(10, 10).0, [0, 200, 0, 255], "filled");
+        assert_eq!(pixels.get_pixel(30, 10)[3], 0, "outside the selection");
+        assert_eq!(worker.history.undo_steps().len(), 1, "one step");
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(layer_pixels(&worker, id).get_pixel(10, 10)[3], 0);
+    }
+
+    #[test]
+    fn gradient_runs_from_start_to_end_color() {
+        let (mut worker, id) = selection_worker();
+        worker.apply(PhotoEngineCommand::FillGradient {
+            target: super::super::PaintTarget::Layer(id),
+            start: (0.0, 0.0),
+            end: (40.0, 0.0),
+            from: [0, 0, 0],
+            to: [255, 255, 255],
+            opacity: 1.0,
+        });
+        let pixels = layer_pixels(&worker, id);
+        assert!(pixels.get_pixel(0, 5)[0] < 10, "black at the start");
+        assert!(pixels.get_pixel(39, 5)[0] > 245, "white at the end");
+        let middle = pixels.get_pixel(20, 5)[0];
+        assert!((120..=135).contains(&middle), "mid gray: {middle}");
+        assert_eq!(pixels.get_pixel(20, 5)[3], 255);
+    }
+
+    #[test]
+    fn gradient_on_a_mask_paints_its_coverage() {
+        let (mut worker, id) = selection_worker();
+        worker.apply(PhotoEngineCommand::AddMask { layer: id });
+        let mask = worker.document.masks_of(id).expect("masques")[0].id;
+        worker.apply(PhotoEngineCommand::FillGradient {
+            target: super::super::PaintTarget::Mask { owner: id, mask },
+            start: (0.0, 0.0),
+            end: (40.0, 0.0),
+            from: [0, 0, 0],
+            to: [255, 255, 255],
+            opacity: 1.0,
+        });
+        let image = &worker.document.masks_of(id).expect("masques")[0].image;
+        assert!(image.get_pixel(1, 5)[0] < 20, "hidden at the start");
+        assert!(image.get_pixel(38, 5)[0] > 235, "shown at the end");
     }
 
     #[test]
