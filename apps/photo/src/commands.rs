@@ -275,6 +275,8 @@ pub enum PhotoAction {
         x: f32,
         /// Document y.
         y: f32,
+        /// How the result combines with the active selection.
+        op: photo_engine::SelectionOp,
     },
     /// Select the whole document.
     SelectAll,

@@ -653,7 +653,8 @@ fn paint_drag_proxy(ui: &egui::Ui, doc: &OpenDocument, ctx: &PhotoUiContext, slo
 }
 
 /// Marching ants of the gesture in progress (marquee, lasso path),
-/// else of the active selection (cached outline), mapped document →
+/// plus the active selection (cached outline) when idle or combining
+/// (`op` not Replace), mapped document →
 /// screen through the exact document rect. Keeps a slow repaint going
 /// for the animation.
 fn draw_selection(
@@ -662,6 +663,7 @@ fn draw_selection(
     ctx: &PhotoUiContext,
     doc_rect: Option<egui::Rect>,
     geom: Option<crate::state::PreviewGeom>,
+    op: photo_engine::SelectionOp,
 ) {
     let (Some(rect), Some(geom)) = (doc_rect, geom) else {
         return;
@@ -669,15 +671,19 @@ fn draw_selection(
     if geom.doc_size.x <= 0.0 {
         return;
     }
-    let polylines: Vec<Vec<(f32, f32)>> = if doc.ui.lasso_preview.len() >= 2 {
+    let mut polylines: Vec<Vec<(f32, f32)>> = if doc.ui.lasso_preview.len() >= 2 {
         let mut path = doc.ui.lasso_preview.clone();
         path.push(path[0]);
         vec![path]
     } else if let Some(marquee) = &doc.ui.selection_preview {
         marquee.outline(MARQUEE_SEGMENTS)
     } else {
-        doc.ui.selection_outline.clone()
+        Vec::new()
     };
+    // No gesture, or a combining one: the active selection shows too.
+    if polylines.is_empty() || op != photo_engine::SelectionOp::Replace {
+        polylines.extend(doc.ui.selection_outline.iter().cloned());
+    }
     if polylines.is_empty() {
         return;
     }
@@ -991,6 +997,15 @@ pub fn draw_canvas_content(
         _ => outcome.dest_rect,
     };
     draw_document_bounds(ui.painter(), ctx, doc_rect, None);
+    // Shift adds, Alt subtracts, both intersect (read at release).
+    let op = ui.input(|input| {
+        photo_engine::SelectionOp::from_modifiers(input.modifiers.shift, input.modifiers.alt)
+    });
+    let doc_size = geom.map(|g| (g.doc_size.x.max(1.0) as u32, g.doc_size.y.max(1.0) as u32));
+    let combine = |active: Option<&photo_engine::Selection>, new| match doc_size {
+        Some((width, height)) => op.apply(active, new, width, height),
+        None => new,
+    };
     // Selection tool: the marquee follows the drag, its release
     // becomes the selection (a plain click deselects).
     if let Some(drag) = outcome.selection_drag {
@@ -1001,7 +1016,14 @@ pub fn draw_canvas_content(
         );
         if drag.finished {
             doc.ui.selection_preview = None;
-            actions.push(PhotoAction::SetSelection(marquee));
+            // A plain click with a modifier keeps the active selection.
+            let keep = marquee.is_none() && op != photo_engine::SelectionOp::Replace;
+            if !keep {
+                actions.push(PhotoAction::SetSelection(combine(
+                    doc.ui.selection.as_ref(),
+                    marquee,
+                )));
+            }
         } else {
             doc.ui.selection_preview = marquee;
         }
@@ -1013,11 +1035,13 @@ pub fn draw_canvas_content(
     if let Some(lasso) = outcome.lasso {
         if lasso.finished {
             doc.ui.lasso_preview.clear();
-            let size = geom.map(|g| (g.doc_size.x.max(1.0) as u32, g.doc_size.y.max(1.0) as u32));
-            let selection = size.and_then(|(width, height)| {
+            let selection = doc_size.and_then(|(width, height)| {
                 photo_engine::Selection::from_polygon(&lasso.points, width, height)
             });
-            actions.push(PhotoAction::SetSelection(selection));
+            actions.push(PhotoAction::SetSelection(combine(
+                doc.ui.selection.as_ref(),
+                selection,
+            )));
         } else {
             doc.ui.lasso_preview = lasso.points;
         }
@@ -1060,9 +1084,10 @@ pub fn draw_canvas_content(
         actions.push(PhotoAction::MagicWand {
             x: click.x,
             y: click.y,
+            op,
         });
     }
-    draw_selection(ui, doc, ctx, doc_rect, geom);
+    draw_selection(ui, doc, ctx, doc_rect, geom, op);
     if matches!(
         doc.ui.tool,
         PhotoCanvasTool::Brush | PhotoCanvasTool::Eraser

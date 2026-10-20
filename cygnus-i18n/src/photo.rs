@@ -1091,7 +1091,9 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::InvertSelection => "Intervertir la sélection",
         PhotoTextKey::MaskFromSelection => "Masque depuis la sélection",
         PhotoTextKey::SelectHint => "Sélection",
-        PhotoTextKey::SelectHintText => "Glisser : sélectionner — clic : désélectionner",
+        PhotoTextKey::SelectHintText => {
+            "Glisser : sélectionner — Maj : ajouter, Alt : soustraire — clic : désélectionner"
+        }
         PhotoTextKey::SelectionRect => "Rectangle",
         PhotoTextKey::SelectionEllipse => "Ellipse",
         PhotoTextKey::HistoryOpMaskFromSelection => "Masque depuis la sélection",
@@ -1100,9 +1102,13 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SpacingLabel => "Espacement",
         PhotoTextKey::StabilizerLabel => "Stabilisateur",
         PhotoTextKey::LassoHint => "Lasso",
-        PhotoTextKey::LassoHintText => "Glisser : tracer la sélection — relâcher : fermer",
+        PhotoTextKey::LassoHintText => {
+            "Glisser : tracer la sélection — Maj : ajouter, Alt : soustraire"
+        }
         PhotoTextKey::WandHint => "Baguette magique",
-        PhotoTextKey::WandHintText => "Clic : sélectionner les couleurs proches",
+        PhotoTextKey::WandHintText => {
+            "Clic : sélectionner les couleurs proches — Maj : ajouter, Alt : soustraire"
+        }
         PhotoTextKey::ToleranceLabel => "Tolérance",
         PhotoTextKey::ContiguousLabel => "Contiguë",
         PhotoTextKey::MaskDensityLabel => "Densité",
@@ -1368,7 +1374,9 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::InvertSelection => "Invert selection",
         PhotoTextKey::MaskFromSelection => "Mask from selection",
         PhotoTextKey::SelectHint => "Selection",
-        PhotoTextKey::SelectHintText => "Drag: select — click: deselect",
+        PhotoTextKey::SelectHintText => {
+            "Drag: select — Shift: add, Alt: subtract — click: deselect"
+        }
         PhotoTextKey::SelectionRect => "Rectangle",
         PhotoTextKey::SelectionEllipse => "Ellipse",
         PhotoTextKey::HistoryOpMaskFromSelection => "Mask from selection",
@@ -1377,9 +1385,9 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::SpacingLabel => "Spacing",
         PhotoTextKey::StabilizerLabel => "Stabilizer",
         PhotoTextKey::LassoHint => "Lasso",
-        PhotoTextKey::LassoHintText => "Drag: draw the selection — release: close it",
+        PhotoTextKey::LassoHintText => "Drag: draw the selection — Shift: add, Alt: subtract",
         PhotoTextKey::WandHint => "Magic wand",
-        PhotoTextKey::WandHintText => "Click: select similar colors",
+        PhotoTextKey::WandHintText => "Click: select similar colors — Shift: add, Alt: subtract",
         PhotoTextKey::ToleranceLabel => "Tolerance",
         PhotoTextKey::ContiguousLabel => "Contiguous",
         PhotoTextKey::MaskDensityLabel => "Density",

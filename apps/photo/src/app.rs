@@ -572,7 +572,7 @@ impl PhotoApp {
                     });
                 }
             }
-            PhotoAction::MagicWand { x, y } => {
+            PhotoAction::MagicWand { x, y, op } => {
                 // Worker-side flood on the exact composite; the answer
                 // (`SelectionChanged`) updates the document selection.
                 if let Some(doc) = self.active_doc_opt() {
@@ -582,6 +582,7 @@ impl PhotoApp {
                         y,
                         tolerance: wand.tolerance.clamp(0.0, 255.0).round() as u8,
                         contiguous: wand.contiguous,
+                        op,
                     });
                 }
             }
@@ -1519,6 +1520,19 @@ mod tests {
 
     /// One frame of the full workspace with `events`.
     fn draw_frame(app: &mut PhotoApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        draw_frame_with(app, ctx, events, egui::Modifiers::default());
+    }
+
+    /// [`draw_frame`] with held `modifiers`.
+    fn draw_frame_with(
+        app: &mut PhotoApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+    ) {
+        // egui 0.36 tracks held modifiers through this event.
+        let mut events = events;
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1697,6 +1711,52 @@ mod tests {
             wait_for_undo(&mut app, &ctx),
             "gradient recorded as an edit"
         );
+    }
+
+    #[test]
+    fn shift_drag_adds_a_second_marquee_to_the_selection() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Select),
+        );
+        let at = |fx: f32, fy: f32| dest.min + egui::vec2(dest.width() * fx, dest.height() * fy);
+        let marquee = |app: &mut PhotoApp, a: egui::Pos2, b: egui::Pos2, shift: bool| {
+            let modifiers = egui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            draw_frame_with(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(a), primary(a, true)],
+                modifiers,
+            );
+            for step in 1..=4 {
+                let q = a + (b - a) * (step as f32 / 4.0);
+                draw_frame_with(app, &ctx, vec![egui::Event::PointerMoved(q)], modifiers);
+            }
+            draw_frame_with(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(b), primary(b, false)],
+                modifiers,
+            );
+        };
+        marquee(&mut app, at(0.05, 0.1), at(0.3, 0.9), false);
+        marquee(&mut app, at(0.7, 0.1), at(0.95, 0.9), true);
+        let selection = app
+            .active_doc_opt()
+            .and_then(|doc| doc.ui.selection.clone())
+            .expect("selection");
+        // Document 400 x 300: both strips selected, the middle not.
+        assert_eq!(selection.coverage(60.5, 150.5), 1.0, "first marquee kept");
+        assert_eq!(
+            selection.coverage(330.5, 150.5),
+            1.0,
+            "second marquee added"
+        );
+        assert_eq!(selection.coverage(200.5, 150.5), 0.0, "gap between them");
     }
 
     #[test]
