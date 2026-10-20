@@ -255,6 +255,20 @@ pub enum PhotoAction {
     /// Replace the active selection (`None` = deselect; mirrored to
     /// the worker, no history).
     SetSelection(Option<photo_engine::Selection>),
+    /// Paint bucket click at document pixel `(x, y)`.
+    FillAt {
+        /// Document x.
+        x: f32,
+        /// Document y.
+        y: f32,
+    },
+    /// Gradient from `start` to `end` (document pixels).
+    FillGradient {
+        /// Start point.
+        start: (f32, f32),
+        /// End point.
+        end: (f32, f32),
+    },
     /// Magic wand click at document pixel `(x, y)` (worker flood).
     MagicWand {
         /// Document x.

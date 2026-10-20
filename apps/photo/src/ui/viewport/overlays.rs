@@ -55,6 +55,22 @@ pub fn draw_document_bounds(
     }
 }
 
+/// Gradient tool feedback: line from `start` to `end` (screen points)
+/// with a ring at each end.
+pub fn draw_gradient_line(
+    painter: &egui::Painter,
+    ctx: &PhotoUiContext,
+    start: egui::Pos2,
+    end: egui::Pos2,
+) {
+    let theme = ctx.shared.theme();
+    let stroke = egui::Stroke::new(theme.borders.medium, theme.colors.accent);
+    painter.line_segment([start, end], stroke);
+    for point in [start, end] {
+        painter.circle(point, theme.spacing.xs, theme.colors.bg_canvas, stroke);
+    }
+}
+
 /// Dash and gap length of the marching ants, in screen points.
 const ANTS_DASH: f32 = 4.0;
 

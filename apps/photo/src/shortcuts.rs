@@ -50,6 +50,8 @@ pub enum PhotoShortcut {
     ToolSelect,
     ToolLasso,
     ToolWand,
+    ToolBucket,
+    ToolGradient,
     // Edit
     Undo,
     Redo,
@@ -80,7 +82,7 @@ pub enum PhotoShortcut {
 
 impl PhotoShortcut {
     /// Every action, stable display order in the window.
-    pub const ALL: [PhotoShortcut; 30] = [
+    pub const ALL: [PhotoShortcut; 32] = [
         PhotoShortcut::ToolBrush,
         PhotoShortcut::ToolEraser,
         PhotoShortcut::ToolEyedropper,
@@ -91,6 +93,8 @@ impl PhotoShortcut {
         PhotoShortcut::ToolSelect,
         PhotoShortcut::ToolLasso,
         PhotoShortcut::ToolWand,
+        PhotoShortcut::ToolBucket,
+        PhotoShortcut::ToolGradient,
         PhotoShortcut::Undo,
         PhotoShortcut::Redo,
         PhotoShortcut::DeleteLayer,
@@ -127,6 +131,8 @@ impl PhotoShortcut {
             Self::ToolSelect => "tool_select",
             Self::ToolLasso => "tool_lasso",
             Self::ToolWand => "tool_wand",
+            Self::ToolBucket => "tool_bucket",
+            Self::ToolGradient => "tool_gradient",
             Self::SelectAll => "select_all",
             Self::Deselect => "deselect",
             Self::InvertSelection => "invert_selection",
@@ -164,6 +170,8 @@ impl PhotoShortcut {
             Self::ToolSelect => "Sélection",
             Self::ToolLasso => "Lasso",
             Self::ToolWand => "Baguette magique",
+            Self::ToolBucket => "Pot de peinture",
+            Self::ToolGradient => "Dégradé",
             Self::SelectAll => "Tout sélectionner",
             Self::Deselect => "Désélectionner",
             Self::InvertSelection => "Intervertir la sélection",
@@ -200,7 +208,9 @@ impl PhotoShortcut {
             | Self::ToolZoom
             | Self::ToolSelect
             | Self::ToolLasso
-            | Self::ToolWand => "Outils",
+            | Self::ToolWand
+            | Self::ToolBucket
+            | Self::ToolGradient => "Outils",
             Self::SelectAll | Self::Deselect | Self::InvertSelection => "Sélection",
             Self::Undo | Self::Redo | Self::DeleteLayer => "Édition",
             Self::NewProject | Self::Open | Self::Save | Self::SaveAs | Self::Export => "Fichier",
@@ -253,6 +263,8 @@ impl PhotoShortcut {
             Self::ToolSelect => PhotoAction::SetTool(PhotoCanvasTool::Select),
             Self::ToolLasso => PhotoAction::SetTool(PhotoCanvasTool::Lasso),
             Self::ToolWand => PhotoAction::SetTool(PhotoCanvasTool::Wand),
+            Self::ToolBucket => PhotoAction::SetTool(PhotoCanvasTool::Bucket),
+            Self::ToolGradient => PhotoAction::SetTool(PhotoCanvasTool::Gradient),
             Self::SelectAll => PhotoAction::SelectAll,
             Self::Deselect => PhotoAction::Deselect,
             Self::InvertSelection => PhotoAction::InvertSelection,
@@ -462,7 +474,7 @@ mod tests {
         );
     }
 
-    /// All 30 shortcuts map to an action, except the 2 documented
+    /// All 32 shortcuts map to an action, except the 2 documented
     /// gaps (`ZoomFit`, `OpenPreferences`).
     #[test]
     fn every_shortcut_maps_or_is_documented_gap() {
@@ -479,7 +491,7 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(mapped, 28);
+        assert_eq!(mapped, 30);
     }
 
     /// Targeted conversions: tools, file (O001), layers, panels.

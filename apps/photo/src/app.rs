@@ -35,6 +35,7 @@ use crate::ui::{PhotoEngineCommand, spawn_photo_engine_worker};
 use cygnus_ui::dialogs::{pick_image_to_open, pick_project_to_open, pick_project_to_save};
 use cygnus_ui::layout::PanelId;
 use photo_engine::Document;
+use photo_engine::session::PaintTarget;
 use std::path::Path;
 use std::sync::mpsc::channel;
 
@@ -533,6 +534,44 @@ impl PhotoApp {
                 }
                 self.send_active(PhotoEngineCommand::SetSelection(selection));
             }
+            PhotoAction::FillAt { x, y } => {
+                if let Some(doc) = self.active_doc_opt()
+                    && let Some((target, mask)) = paint_target(doc)
+                {
+                    let brush = doc.ui.brush;
+                    // Masks take the color's gray (reveal / hide).
+                    let color = if mask { gray(brush.color) } else { brush.color };
+                    self.send_active(PhotoEngineCommand::FillAt {
+                        target,
+                        x,
+                        y,
+                        color,
+                        tolerance: doc.ui.bucket.tolerance.clamp(0.0, 255.0).round() as u8,
+                        contiguous: doc.ui.bucket.contiguous,
+                        opacity: brush.opacity,
+                    });
+                }
+            }
+            PhotoAction::FillGradient { start, end } => {
+                if let Some(doc) = self.active_doc_opt()
+                    && let Some((target, mask)) = paint_target(doc)
+                {
+                    let brush = doc.ui.brush;
+                    let (from, to) = if mask {
+                        (gray(brush.color), gray(brush.secondary))
+                    } else {
+                        (brush.color, brush.secondary)
+                    };
+                    self.send_active(PhotoEngineCommand::FillGradient {
+                        target,
+                        start,
+                        end,
+                        from,
+                        to,
+                        opacity: brush.opacity,
+                    });
+                }
+            }
             PhotoAction::MagicWand { x, y } => {
                 // Worker-side flood on the exact composite; the answer
                 // (`SelectionChanged`) updates the document selection.
@@ -625,18 +664,7 @@ impl PhotoApp {
                 // the layer source (historical behavior). The focused
                 // mask may live in a filter-owned pile: its layer must
                 // be the selection.
-                let mask_target = self.active_doc_opt().and_then(|doc| {
-                    let focus = doc.ui.focused_attachment?;
-                    let focus_layer = find_layer_in(&doc.ui.layers, focus.owner)
-                        .map(|_| focus.owner)
-                        .or_else(|| find_layer_of_attachment(&doc.ui.layers, focus.owner))?;
-                    if Some(focus_layer) != doc.ui.selected {
-                        return None;
-                    }
-                    find_attachment_in(&doc.ui.layers, focus.owner, focus.id)
-                        .filter(|(_, is_filter)| !is_filter)
-                        .map(|_| (focus.owner, focus.id))
-                });
+                let mask_target = self.active_doc_opt().and_then(focused_mask);
                 if let Some((owner, mask)) = mask_target {
                     // Mask painting ignores hue: the eraser always hides
                     // (black) and a dark brush color hides like the
@@ -855,6 +883,40 @@ fn project_title(path: &Path, language: cygnus_i18n::Language) -> String {
                 .get(cygnus_i18n::PhotoTextKey::UntitledDocument)
                 .to_owned()
         })
+}
+
+/// Focused mask of the selected layer (`(owner, mask)`), if any: paint
+/// tools then write into the mask instead of the layer pixels. The
+/// focused mask may live in a filter-owned pile: its layer must be the
+/// selection.
+fn focused_mask(doc: &OpenDocument) -> Option<(uuid::Uuid, uuid::Uuid)> {
+    let focus = doc.ui.focused_attachment?;
+    let focus_layer = find_layer_in(&doc.ui.layers, focus.owner)
+        .map(|_| focus.owner)
+        .or_else(|| find_layer_of_attachment(&doc.ui.layers, focus.owner))?;
+    if Some(focus_layer) != doc.ui.selected {
+        return None;
+    }
+    find_attachment_in(&doc.ui.layers, focus.owner, focus.id)
+        .filter(|(_, is_filter)| !is_filter)
+        .map(|_| (focus.owner, focus.id))
+}
+
+/// Buffer the fill tools write into: the focused mask, else the
+/// selected layer. The flag is true for masks (gray colors).
+fn paint_target(doc: &OpenDocument) -> Option<(PaintTarget, bool)> {
+    if let Some((owner, mask)) = focused_mask(doc) {
+        return Some((PaintTarget::Mask { owner, mask }, true));
+    }
+    doc.ui
+        .selected
+        .map(|layer| (PaintTarget::Layer(layer), false))
+}
+
+/// Gray of `color` (mask fills: luminance decides reveal / hide).
+fn gray(color: [u8; 3]) -> [u8; 3] {
+    let v = brush_luminance(color).round().clamp(0.0, 255.0) as u8;
+    [v, v, v]
 }
 
 /// Mask `mask` of `owner` in the layer snapshot (layer, filter or nested
@@ -1551,6 +1613,90 @@ mod tests {
             .expect("wand selection");
         // Blank document: one uniform color, everything selected.
         assert_eq!(selection.bounds(), (0.0, 0.0, 400.0, 300.0));
+    }
+
+    /// Waits (worker thread) until the active document can undo.
+    fn wait_for_undo(app: &mut PhotoApp, ctx: &egui::Context) -> bool {
+        for _ in 0..500 {
+            draw_frame(app, ctx, Vec::new());
+            if app.active_doc_opt().is_some_and(|doc| doc.ui.can_undo) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// Selects the first layer of the active document.
+    fn select_first_layer(app: &mut PhotoApp, ctx: &egui::Context) {
+        let layer = app
+            .active_doc_opt()
+            .and_then(|doc| doc.ui.layers.first().map(|layer| layer.id))
+            .expect("un calque");
+        app.handle_action(ctx, PhotoAction::SelectLayer(layer));
+    }
+
+    #[test]
+    fn bucket_click_through_the_workspace_fills_the_layer() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        select_first_layer(&mut app, &ctx);
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Bucket),
+        );
+        let p = dest.center();
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(p), primary(p, true)],
+        );
+        draw_frame(&mut app, &ctx, vec![primary(p, false)]);
+        assert!(wait_for_undo(&mut app, &ctx), "fill recorded as an edit");
+    }
+
+    #[test]
+    fn gradient_drag_through_the_workspace_fills_the_layer() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        select_first_layer(&mut app, &ctx);
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::Gradient),
+        );
+        let a = dest.min + dest.size() * 0.2;
+        let b = dest.min + dest.size() * 0.8;
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(a), primary(a, true)],
+        );
+        for step in 1..=4 {
+            let q = a + (b - a) * (step as f32 / 4.0);
+            draw_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(q)]);
+        }
+        assert!(
+            app.active_doc_opt()
+                .expect("doc")
+                .ui
+                .gradient_preview
+                .is_some(),
+            "line shown while dragging"
+        );
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(b), primary(b, false)],
+        );
+        assert!(
+            app.active_doc_opt()
+                .expect("doc")
+                .ui
+                .gradient_preview
+                .is_none()
+        );
+        assert!(
+            wait_for_undo(&mut app, &ctx),
+            "gradient recorded as an edit"
+        );
     }
 
     #[test]

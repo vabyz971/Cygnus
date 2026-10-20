@@ -218,6 +218,7 @@ pub fn show_mode_bar(
                     brush: &mut doc.ui.brush,
                     selection_kind: &mut doc.ui.selection_kind,
                     wand: &mut doc.ui.wand,
+                    bucket: &mut doc.ui.bucket,
                 },
                 theme,
                 texts,

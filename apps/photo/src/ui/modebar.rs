@@ -81,6 +81,8 @@ impl PhotoEditMode {
                 PhotoCanvasTool::Wand,
                 PhotoCanvasTool::Brush,
                 PhotoCanvasTool::Eraser,
+                PhotoCanvasTool::Bucket,
+                PhotoCanvasTool::Gradient,
                 PhotoCanvasTool::Eyedropper,
                 PhotoCanvasTool::Pan,
                 PhotoCanvasTool::Zoom,
@@ -434,6 +436,7 @@ mod tests {
         let mut brush = PhotoBrushSettings::default();
         let mut kind = photo_engine::SelectionKind::default();
         let mut wand = crate::state::WandSettings::default();
+        let mut bucket = crate::state::WandSettings::default();
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(draw_persona_switch(ui, &mut mode, &theme), None);
@@ -451,6 +454,7 @@ mod tests {
                         brush: &mut brush,
                         selection_kind: &mut kind,
                         wand: &mut wand,
+                        bucket: &mut bucket,
                     },
                     &theme,
                     texts,

@@ -45,6 +45,10 @@ pub enum PhotoCanvasTool {
     Lasso,
     /// Magic wand: click selects similar colors.
     Wand,
+    /// Paint bucket: click fills the similar-color area.
+    Bucket,
+    /// Gradient: drag from the primary to the secondary color.
+    Gradient,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -69,7 +73,9 @@ impl PhotoCanvasTool {
             | Self::Eyedropper
             | Self::Select
             | Self::Lasso
-            | Self::Wand => ViewportTool::Brush,
+            | Self::Wand
+            | Self::Bucket
+            | Self::Gradient => ViewportTool::Brush,
         }
     }
 
@@ -87,6 +93,8 @@ impl PhotoCanvasTool {
             Self::Select => texts.get(PhotoTextKey::SelectHintText),
             Self::Lasso => texts.get(PhotoTextKey::LassoHintText),
             Self::Wand => texts.get(PhotoTextKey::WandHintText),
+            Self::Bucket => texts.get(PhotoTextKey::BucketHintText),
+            Self::Gradient => texts.get(PhotoTextKey::GradientHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),
@@ -404,11 +412,35 @@ impl<'a> PhotoCanvas<'a> {
             }
             return outcome;
         }
-        // Wand: one click = one flood request.
-        if self.tool == PhotoCanvasTool::Wand {
+        // Wand / bucket: one click = one flood request.
+        if matches!(self.tool, PhotoCanvasTool::Wand | PhotoCanvasTool::Bucket) {
             self.stroke.clear();
             if response.response.clicked() {
-                outcome.wand_click = outcome.pointer_world.last().copied();
+                let click = outcome.pointer_world.last().copied();
+                if self.tool == PhotoCanvasTool::Wand {
+                    outcome.wand_click = click;
+                } else if self.active_layer.is_some() {
+                    outcome.fill_click = click;
+                }
+            }
+            return outcome;
+        }
+        // Gradient: start/end line, like the marquee.
+        if self.tool == PhotoCanvasTool::Gradient {
+            if ui.input(|input| input.pointer.primary_pressed()) {
+                self.stroke.clear();
+            }
+            self.stroke.extend(outcome.pointer_world.iter().copied());
+            if let (Some(start), Some(end)) = (self.stroke.first(), self.stroke.last()) {
+                let finished = response.response.drag_stopped() || response.response.clicked();
+                outcome.gradient_drag = Some(SelectionDrag {
+                    start: *start,
+                    end: *end,
+                    finished,
+                });
+                if finished {
+                    self.stroke.clear();
+                }
             }
             return outcome;
         }
@@ -511,6 +543,10 @@ pub struct PhotoCanvasOutcome {
     pub lasso: Option<LassoPath>,
     /// Magic wand click in document pixels.
     pub wand_click: Option<egui::Vec2>,
+    /// Paint bucket click in document pixels (active layer only).
+    pub fill_click: Option<egui::Vec2>,
+    /// Gradient line of the current gesture (document pixels).
+    pub gradient_drag: Option<SelectionDrag>,
     /// Selection tool gesture (`None` = no marquee this frame).
     pub selection_drag: Option<SelectionDrag>,
     /// Stroke to commit (`None` = nothing this frame; the app sends it).

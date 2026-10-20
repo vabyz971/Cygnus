@@ -40,6 +40,8 @@ pub struct ToolOptions<'a> {
     pub selection_kind: &'a mut SelectionKind,
     /// Magic wand options.
     pub wand: &'a mut crate::state::WandSettings,
+    /// Paint bucket options.
+    pub bucket: &'a mut crate::state::WandSettings,
 }
 
 /// Draws the active tool's settings (updates `options` in place, no
@@ -55,8 +57,34 @@ pub fn draw_tool_options(
         brush,
         selection_kind,
         wand,
+        bucket,
     } = options;
     match tool {
+        PhotoCanvasTool::Bucket | PhotoCanvasTool::Gradient => {
+            ui.spacing_mut().item_spacing.x = theme.spacing.sm;
+            if tool == PhotoCanvasTool::Bucket {
+                ValueField::new(texts.get(PhotoTextKey::ToleranceLabel), 0.0..=255.0).show(
+                    ui,
+                    theme,
+                    &mut bucket.tolerance,
+                );
+                bucket.tolerance = bucket.tolerance.clamp(0.0, 255.0);
+                ui.add_space(theme.spacing.sm);
+                Checkbox::new(texts.get(PhotoTextKey::ContiguousLabel)).show(
+                    ui,
+                    theme,
+                    &mut bucket.contiguous,
+                );
+                ui.add_space(theme.spacing.sm);
+            }
+            let mut opacity = brush.opacity;
+            ValueField::new(texts.get(PhotoTextKey::OpacityLabel), 0.0..=1.0)
+                .percent()
+                .show(ui, theme, &mut opacity);
+            brush.opacity = opacity.clamp(0.0, 1.0);
+            ui.add_space(theme.spacing.sm);
+            ui.label(caption_text(theme, tool.hint(texts)));
+        }
         PhotoCanvasTool::Wand => {
             ui.spacing_mut().item_spacing.x = theme.spacing.sm;
             ValueField::new(texts.get(PhotoTextKey::ToleranceLabel), 0.0..=255.0).show(
@@ -151,6 +179,8 @@ mod tests {
             PhotoCanvasTool::Node,
             PhotoCanvasTool::Lasso,
             PhotoCanvasTool::Wand,
+            PhotoCanvasTool::Bucket,
+            PhotoCanvasTool::Gradient,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
             PhotoCanvasTool::Brush,
@@ -160,6 +190,7 @@ mod tests {
             let mut brush = PhotoBrushSettings::default();
             let mut kind = SelectionKind::default();
             let mut wand = crate::state::WandSettings::default();
+            let mut bucket = crate::state::WandSettings::default();
             let before = brush;
             let theme = cygnus_ui::theme::CygnusTheme::dark();
             let texts = PhotoCatalog::new(cygnus_i18n::Language::Fr);
@@ -170,6 +201,7 @@ mod tests {
                             brush: &mut brush,
                             selection_kind: &mut kind,
                             wand: &mut wand,
+                            bucket: &mut bucket,
                         };
                         draw_tool_options(ui, tool, options, &theme, texts)
                     });

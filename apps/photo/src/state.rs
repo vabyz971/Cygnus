@@ -233,6 +233,10 @@ pub struct PhotoUiState {
     pub lasso_preview: Vec<(f32, f32)>,
     /// Magic wand options.
     pub wand: WandSettings,
+    /// Paint bucket options (same tolerance / contiguity model).
+    pub bucket: WandSettings,
+    /// Gradient line being dragged (document pixels).
+    pub gradient_preview: Option<((f32, f32), (f32, f32))>,
     /// Explicit repaint requested.
     pub needs_repaint: bool,
     /// TEMPORARY INSTRUMENTATION (perf diagnostics): applied worker

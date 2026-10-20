@@ -33,9 +33,10 @@ use crate::ui::features::layers::types::PhotoLayerKind;
 use crate::ui::{
     CanvasMapping, InkFrameInput, NodeDrag, NodePoint, NodeRef, PhotoCanvas, PhotoCanvasOutcome,
     PhotoCanvasTool, StabilityAction, StableView, TransformDrag, clear_ink, clear_ink_overlay,
-    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_node_overlay,
-    draw_selection_outline, draw_transform_overlay, feed_ink_frame, frame_corners,
-    hit_test_topmost, ink_tool_active, path_nodes, point_in_quad, screen_to_doc, stability_action,
+    doc_to_screen, draw_brush_cursor, draw_cached_ink, draw_document_bounds, draw_gradient_line,
+    draw_node_overlay, draw_selection_outline, draw_transform_overlay, feed_ink_frame,
+    frame_corners, hit_test_topmost, ink_tool_active, path_nodes, point_in_quad, screen_to_doc,
+    stability_action,
 };
 use cygnus_i18n::{PhotoCatalog, PhotoTextKey};
 use cygnus_ui::components::{menu_row, menu_style};
@@ -785,7 +786,7 @@ pub fn draw_canvas_content(
     // thumbnails are therefore deferred to commit, §11).
     if matches!(
         doc.ui.tool,
-        PhotoCanvasTool::Select | PhotoCanvasTool::Lasso
+        PhotoCanvasTool::Select | PhotoCanvasTool::Lasso | PhotoCanvasTool::Gradient
     ) {
         // The marquee anchor / lasso path lives in `stroke` across frames: only the
         // paint overlay goes (clearing `stroke` here collapsed every
@@ -1023,6 +1024,36 @@ pub fn draw_canvas_content(
         doc.ui.needs_repaint = true;
     } else if doc.ui.tool != PhotoCanvasTool::Lasso {
         doc.ui.lasso_preview.clear();
+    }
+    // Paint bucket: worker fill of the target buffer.
+    if let Some(click) = outcome.fill_click {
+        actions.push(PhotoAction::FillAt {
+            x: click.x,
+            y: click.y,
+        });
+    }
+    // Gradient: live line, filled on release (a click without drag
+    // fills nothing).
+    if let Some(drag) = outcome.gradient_drag {
+        let (start, end) = ((drag.start.x, drag.start.y), (drag.end.x, drag.end.y));
+        if drag.finished {
+            doc.ui.gradient_preview = None;
+            if (drag.end - drag.start).length() >= 1.0 {
+                actions.push(PhotoAction::FillGradient { start, end });
+            }
+        } else {
+            doc.ui.gradient_preview = Some((start, end));
+        }
+        doc.ui.needs_repaint = true;
+    } else if doc.ui.tool != PhotoCanvasTool::Gradient {
+        doc.ui.gradient_preview = None;
+    }
+    if let (Some((start, end)), Some(rect), Some(g)) = (doc.ui.gradient_preview, doc_rect, geom)
+        && g.doc_size.x > 0.0
+    {
+        let scale = rect.width() / g.doc_size.x;
+        let to_screen = |(x, y): (f32, f32)| rect.min + egui::vec2(x, y) * scale;
+        draw_gradient_line(ui.painter(), ctx, to_screen(start), to_screen(end));
     }
     // Wand: worker flood on the exact composite.
     if let Some(click) = outcome.wand_click {

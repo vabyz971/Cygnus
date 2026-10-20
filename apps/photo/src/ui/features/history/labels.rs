@@ -48,6 +48,8 @@ pub fn history_label_key(op: &str) -> PhotoTextKey {
         "add_mask" => PhotoTextKey::HistoryOpAddMask,
         "add_mask_from_selection" => PhotoTextKey::HistoryOpMaskFromSelection,
         "set_mask_params" => PhotoTextKey::HistoryOpMaskSettings,
+        "fill" => PhotoTextKey::HistoryOpFill,
+        "gradient" => PhotoTextKey::HistoryOpGradient,
         "remove_mask" => PhotoTextKey::HistoryOpRemoveMask,
         "move_filter" => PhotoTextKey::HistoryOpMoveFilter,
         "move_mask" => PhotoTextKey::HistoryOpMoveMask,
