@@ -435,7 +435,7 @@ pub fn draw_photo_layer_item(
 fn layer_subtitle(layer: &PhotoLayerInfo, texts: cygnus_i18n::PhotoCatalog) -> String {
     let mut parts = vec![layer.kind.icon_label(texts).to_owned()];
     if layer.blend_mode != BlendMode::Normal {
-        parts.push(layer.blend_mode.label().to_owned());
+        parts.push(crate::ui::naming::blend_label(layer.blend_mode, texts).to_owned());
     }
     parts.push(format!("{} %", layer.opacity.round()));
     parts.join(" \u{b7} ")

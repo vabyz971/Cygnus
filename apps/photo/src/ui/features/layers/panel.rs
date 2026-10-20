@@ -232,7 +232,7 @@ fn draw_selection_header(
     }
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal(|ui| {
-            let options: [&str; 6] = BlendMode::ALL.map(BlendMode::label);
+            let options = BlendMode::ALL.map(|mode| crate::ui::naming::blend_label(mode, texts));
             egui::ComboBox::from_id_salt("layer_header_blend")
                 .width(theme.sizes.preset_card * 1.3)
                 .selected_text(options.get(choice).copied().unwrap_or(""))

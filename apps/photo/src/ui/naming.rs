@@ -78,6 +78,32 @@ pub fn untitled_title(language: Language, n: usize) -> String {
     )
 }
 
+/// Translated name of a blend mode (the engine label is English).
+#[must_use]
+pub fn blend_label(
+    mode: photo_engine::BlendMode,
+    texts: cygnus_i18n::PhotoCatalog,
+) -> &'static str {
+    use cygnus_i18n::PhotoTextKey as K;
+    use photo_engine::BlendMode as B;
+    texts.get(match mode {
+        B::Normal => K::BlendNormal,
+        B::Multiply => K::BlendMultiply,
+        B::Screen => K::BlendScreen,
+        B::Overlay => K::BlendOverlay,
+        B::Darken => K::BlendDarken,
+        B::Lighten => K::BlendLighten,
+        B::ColorDodge => K::BlendColorDodge,
+        B::ColorBurn => K::BlendColorBurn,
+        B::HardLight => K::BlendHardLight,
+        B::SoftLight => K::BlendSoftLight,
+        B::Difference => K::BlendDifference,
+        B::Exclusion => K::BlendExclusion,
+        B::LinearDodge => K::BlendLinearDodge,
+        B::LinearBurn => K::BlendLinearBurn,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +128,19 @@ mod tests {
         let fr = default_names(Language::Fr);
         assert_eq!(fr.mask, "Masque");
         assert_eq!(fr.filter("levels", "Levels"), "Niveaux");
+    }
+
+    #[test]
+    fn every_blend_mode_has_a_distinct_french_name() {
+        let texts = cygnus_i18n::PhotoCatalog::new(cygnus_i18n::Language::Fr);
+        let names: std::collections::HashSet<&str> = photo_engine::BlendMode::ALL
+            .iter()
+            .map(|mode| blend_label(*mode, texts))
+            .collect();
+        assert_eq!(names.len(), photo_engine::BlendMode::ALL.len());
+        assert_eq!(
+            blend_label(photo_engine::BlendMode::Multiply, texts),
+            "Produit"
+        );
     }
 }
