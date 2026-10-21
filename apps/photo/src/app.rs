@@ -364,6 +364,17 @@ impl PhotoApp {
                     value,
                 });
             }
+            PhotoAction::SetLayerStyles { layer, styles } => {
+                // Optimistic: sliders follow the gesture at once.
+                if let Some(doc) = self.active_doc_mut_opt()
+                    && let Some(info) =
+                        crate::ui::features::layers::find_layer_in_mut(&mut doc.ui.layers, layer)
+                {
+                    info.styles = Some(styles);
+                    doc.ui.needs_repaint = true;
+                }
+                self.send_active(PhotoEngineCommand::SetLayerStyles { layer, styles });
+            }
             PhotoAction::SetMaskParams {
                 owner,
                 mask,

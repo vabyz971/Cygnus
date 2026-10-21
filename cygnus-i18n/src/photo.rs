@@ -569,6 +569,18 @@ pub enum PhotoTextKey {
     PenSelectHintText,
     /// History: selection change.
     HistoryOpSelection,
+    /// Layer styles section title.
+    LayerStylesTitle,
+    /// Drop shadow style.
+    DropShadowLabel,
+    /// Outer glow style.
+    OuterGlowLabel,
+    /// Angle field.
+    AngleLabel,
+    /// Distance field.
+    DistanceLabel,
+    /// History: layer styles change.
+    HistoryOpLayerStyles,
 }
 
 /// Photo catalog bound to a language.
@@ -852,6 +864,12 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::PenSelectHint,
     PhotoTextKey::PenSelectHintText,
     PhotoTextKey::HistoryOpSelection,
+    PhotoTextKey::LayerStylesTitle,
+    PhotoTextKey::DropShadowLabel,
+    PhotoTextKey::OuterGlowLabel,
+    PhotoTextKey::AngleLabel,
+    PhotoTextKey::DistanceLabel,
+    PhotoTextKey::HistoryOpLayerStyles,
 ];
 
 impl PhotoCatalog {
@@ -1163,6 +1181,12 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
             "Clic : ajouter un point — clic sur le premier point, double-clic ou Entrée : fermer — Échap : annuler"
         }
         PhotoTextKey::HistoryOpSelection => "Sélection",
+        PhotoTextKey::LayerStylesTitle => "Styles du calque",
+        PhotoTextKey::DropShadowLabel => "Ombre portée",
+        PhotoTextKey::OuterGlowLabel => "Lueur externe",
+        PhotoTextKey::AngleLabel => "Angle",
+        PhotoTextKey::DistanceLabel => "Distance",
+        PhotoTextKey::HistoryOpLayerStyles => "Styles du calque",
     }
 }
 
@@ -1448,6 +1472,12 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
             "Click: add a point — click the first point, double-click or Enter: close — Esc: cancel"
         }
         PhotoTextKey::HistoryOpSelection => "Selection",
+        PhotoTextKey::LayerStylesTitle => "Layer styles",
+        PhotoTextKey::DropShadowLabel => "Drop shadow",
+        PhotoTextKey::OuterGlowLabel => "Outer glow",
+        PhotoTextKey::AngleLabel => "Angle",
+        PhotoTextKey::DistanceLabel => "Distance",
+        PhotoTextKey::HistoryOpLayerStyles => "Layer styles",
     }
 }
 

@@ -80,6 +80,14 @@ pub enum InspectorAction {
         /// Inverted coverage.
         inverted: bool,
     },
+    /// Replace the selected pixel layer's styles (absolute values,
+    /// coalesced slider gesture worker-side).
+    SetLayerStyles {
+        /// Target pixel layer.
+        layer: Uuid,
+        /// New styles.
+        styles: photo_engine::document::styles::LayerStyles,
+    },
     /// Install a built-in preset on the focused filter.
     ApplyPreset {
         /// Owning layer.
@@ -121,8 +129,14 @@ impl InspectorPanel {
         // its section: owner = selection, or one of its filters
         // (filter-owned masks).
         let Some(focus) = focused else {
-            empty(ui);
-            return Vec::new();
+            // Pixel layer alone: its styles; anything else: the hint.
+            return match layer.styles {
+                Some(styles) => super::sections::draw_styles_section(ui, ctx, layer.id, styles),
+                None => {
+                    empty(ui);
+                    Vec::new()
+                }
+            };
         };
         let owner_is_layer = focus.owner == layer.id;
         let owner_is_filter = crate::ui::features::layers::types::find_filter_in(

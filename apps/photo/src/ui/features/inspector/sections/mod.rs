@@ -26,5 +26,7 @@
 
 pub mod attachment;
 pub mod curve_editor;
+pub mod styles;
 
 pub use attachment::draw_attachment_section;
+pub use styles::draw_styles_section;

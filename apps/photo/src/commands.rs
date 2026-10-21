@@ -131,6 +131,13 @@ pub enum PhotoAction {
         /// New value.
         value: f32,
     },
+    /// Replace a pixel layer's styles (worker, coalesced gesture).
+    SetLayerStyles {
+        /// Target pixel layer.
+        layer: Uuid,
+        /// New styles.
+        styles: photo_engine::document::styles::LayerStyles,
+    },
     /// Set a mask's density, feather and inversion (worker, coalesced
     /// continuous gesture).
     SetMaskParams {

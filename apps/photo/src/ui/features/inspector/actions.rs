@@ -71,6 +71,9 @@ pub fn inspector_action_to_photo(action: InspectorAction) -> PhotoAction {
             feather,
             inverted,
         },
+        InspectorAction::SetLayerStyles { layer, styles } => {
+            PhotoAction::SetLayerStyles { layer, styles }
+        }
         InspectorAction::ApplyPreset { owner, id, preset } => PhotoAction::ApplyFilterPreset {
             layer: owner,
             filter: id,
