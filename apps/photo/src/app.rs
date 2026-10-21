@@ -1898,6 +1898,25 @@ mod tests {
     }
 
     #[test]
+    fn undo_restores_the_previous_selection_from_the_worker() {
+        let (mut app, ctx, _) = app_with_placed_canvas();
+        app.handle_action(&ctx, PhotoAction::SelectAll);
+        assert!(wait_for_undo(&mut app, &ctx), "selecting is undoable");
+        app.handle_action(&ctx, PhotoAction::Undo);
+        for _ in 0..500 {
+            draw_frame(&mut app, &ctx, Vec::new());
+            let doc = app.active_doc_opt().expect("doc");
+            if doc.ui.selection.is_none() && !doc.ui.can_undo {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let doc = app.active_doc_opt().expect("doc");
+        assert_eq!(doc.ui.selection, None, "undo dropped the selection");
+        assert!(doc.ui.selection_outline.is_empty(), "outline follows");
+    }
+
+    #[test]
     fn selection_actions_update_the_document_selection() {
         let ctx = egui::Context::default();
         let mut app = PhotoApp::new();

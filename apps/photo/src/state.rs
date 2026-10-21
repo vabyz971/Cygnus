@@ -134,6 +134,20 @@ impl PhotoUiState {
         self.needs_repaint = true;
     }
 
+    /// Adopts the worker's selection (undo / redo restore it) without
+    /// touching a gesture in progress; no-op when unchanged.
+    pub fn sync_selection(&mut self, selection: Option<photo_engine::Selection>) {
+        if self.selection == selection {
+            return;
+        }
+        self.selection_outline = selection
+            .as_ref()
+            .map(|selection| selection.outline(SELECTION_SEGMENTS))
+            .unwrap_or_default();
+        self.selection = selection;
+        self.needs_repaint = true;
+    }
+
     /// Thumbnail views for the Layers panel (texture id + size).
     pub fn thumb_views(&self) -> HashMap<Uuid, crate::ui::LayerThumbView> {
         self.thumb_cache
@@ -504,9 +518,6 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
     let t_apply = std::time::Instant::now();
     let mut presentation = PresentationTimings::default();
     match response {
-        PhotoEngineResponse::SelectionChanged { selection } => {
-            ui.set_selection(selection);
-        }
         PhotoEngineResponse::LayersChanged {
             layers,
             preview,
@@ -516,7 +527,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             undo_labels,
             redo_labels,
             gpu_frame,
+            selection,
         } => {
+            ui.sync_selection(selection);
             ui.layers = layers;
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
@@ -656,7 +669,9 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
             can_redo,
             undo_labels,
             redo_labels,
+            selection,
         } => {
+            ui.sync_selection(selection);
             // Snapshot only: the displayed texture is kept as
             // is (no new render produced worker-side). A no-op drag
             // commit lands here: the proxy has nothing left to bridge.
@@ -1016,6 +1031,7 @@ mod tests {
             undo_labels: Vec::new(),
             redo_labels: Vec::new(),
             gpu_frame: None,
+            selection: None,
         }
     }
 
@@ -1055,6 +1071,7 @@ mod tests {
                 can_redo: false,
                 undo_labels: vec![String::from("Opacité")],
                 redo_labels: Vec::new(),
+                selection: None,
             },
         );
         // Panel up to date (undo), texture intact.

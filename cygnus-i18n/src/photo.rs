@@ -567,6 +567,8 @@ pub enum PhotoTextKey {
     PenSelectHint,
     /// Pen selection usage.
     PenSelectHintText,
+    /// History: selection change.
+    HistoryOpSelection,
 }
 
 /// Photo catalog bound to a language.
@@ -849,6 +851,7 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::HistoryOpClone,
     PhotoTextKey::PenSelectHint,
     PhotoTextKey::PenSelectHintText,
+    PhotoTextKey::HistoryOpSelection,
 ];
 
 impl PhotoCatalog {
@@ -1159,6 +1162,7 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::PenSelectHintText => {
             "Clic : ajouter un point — clic sur le premier point, double-clic ou Entrée : fermer — Échap : annuler"
         }
+        PhotoTextKey::HistoryOpSelection => "Sélection",
     }
 }
 
@@ -1443,6 +1447,7 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::PenSelectHintText => {
             "Click: add a point — click the first point, double-click or Enter: close — Esc: cancel"
         }
+        PhotoTextKey::HistoryOpSelection => "Selection",
     }
 }
 
