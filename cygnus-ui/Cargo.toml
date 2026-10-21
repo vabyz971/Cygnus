@@ -1,6 +1,6 @@
 [package]
 name = "cygnus-ui"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["vabyz971 <vabyz971@gmail.com>"]
 edition.workspace = true
 license.workspace = true

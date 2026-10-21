@@ -7,7 +7,7 @@ Cygnus is a creative suite (Photo, Video, Audio) developed in **Rust** using **e
 
 | App | Version |
 |-----|--------|
-| **Photo** | `0.8.0` |
+| **Photo** | `0.9.0` (alpha) |
 | **Video** | `0.1.0` |
 | **Audio** | `0.1.0` |
 
