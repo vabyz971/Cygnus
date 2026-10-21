@@ -20,8 +20,8 @@
 
 ## v0.9 "Photo Persona"
 
-Status: in progress (Photo 0.8.0 ships O007–O012; O013–O016 since). Remaining work, shortest first:
-O017 first layer styles → O018 layer multi-select + align/distribute.
+Status: in progress (Photo 0.8.0 ships O007–O012; O013–O017 since). Remaining work, shortest first:
+O018 layer multi-select + align/distribute.
 
 - [x] **Selections**
   - [x] Rectangle / ellipse marquee, select all / deselect / invert, mask from selection (O007).
@@ -30,9 +30,9 @@ O017 first layer styles → O018 layer multi-select + align/distribute.
   - [x] Pen (polygonal) selection (O015).
   - [x] Undoable selection changes (O016).
 - [x] **Paintable masks**: density / feather / invert, non-destructive, `.cygp` v7 (O010).
-- [ ] **Live Filters + 1st Layer Style**
+- [x] **Live Filters + 1st Layer Style**
   - [x] Live filters as sub-layers with masks and presets (v0.8.3).
-  - [ ] Drop shadow + outer glow layer styles (O017, `.cygp` bump).
+  - [x] Drop shadow + outer glow layer styles, `.cygp` v9 (O017).
 - [x] **Brush v2**
   - [x] Hardness / flow / spacing / stabilizer (O008).
   - [x] Paint bucket + linear gradient (O011).
