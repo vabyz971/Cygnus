@@ -145,6 +145,8 @@ jobs:
 
             Downloads:
             - Linux x86_64: `.tar.gz` (run `./cygnus-photo`; needs Vulkan, Wayland or X11)
+            - NixOS: `nix run github:vabyz971/Cygnus` (the generic Linux binary cannot
+              find its libraries in /nix/store)
             - Windows x86_64: `.zip` (run `cygnus-photo.exe`)
             - macOS Apple Silicon / Intel: `.zip` with `Cygnus Photo.app`
               (unsigned: right-click > Open the first time)

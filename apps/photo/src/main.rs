@@ -32,8 +32,8 @@ mod shortcuts;
 mod state;
 mod ui;
 
-fn main() {
-    eframe::run_native(
+fn main() -> std::process::ExitCode {
+    let started = eframe::run_native(
         "Cygnus Photo",
         eframe::NativeOptions {
             // Client-side chrome (`ui::window_chrome`): the brand,
@@ -54,6 +54,59 @@ fn main() {
                     .with_render_state(cc.wgpu_render_state.clone()),
             ))
         }),
-    )
-    .expect("Failed to start eframe");
+    );
+    match started {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            // The debug form names the cause (`NoWaylandLib`…), the display
+            // form reads better: both feed the hints.
+            let cause = format!("{error} ({error:?})");
+            eprintln!("{}", startup_failure_message(&cause));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Readable startup failure (no panic): the cause, plus the usual fix
+/// when the display or GPU libraries could not be loaded.
+fn startup_failure_message(error: &str) -> String {
+    let mut message = format!("Cygnus Photo could not start: {error}");
+    let missing_libs = [
+        "NoWaylandLib",
+        "NoX11",
+        "XNotSupported",
+        "LibraryOpenError",
+        "library could not be loaded",
+    ]
+    .iter()
+    .any(|marker| error.contains(marker));
+    if missing_libs {
+        message.push_str(
+            "\n\nThe display libraries (Wayland or X11, xkbcommon, Vulkan) were not found.\n\
+             - Debian / Ubuntu: sudo apt install libwayland-client0 libxkbcommon0 libvulkan1\n\
+             - Fedora: sudo dnf install libwayland-client libxkbcommon vulkan-loader\n\
+             - Arch: sudo pacman -S wayland libxkbcommon vulkan-icd-loader\n\
+             - NixOS: run `nix run github:vabyz971/Cygnus` (the downloaded binary\n\
+               cannot find libraries in /nix/store on its own).",
+        );
+    }
+    message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_display_libraries_get_install_hints() {
+        let message = startup_failure_message("WaylandError(Connection(NoWaylandLib))");
+        assert!(message.contains("NoWaylandLib"), "cause kept");
+        assert!(message.contains("nix run"), "NixOS hint");
+        assert!(message.contains("apt install"), "distribution hints");
+        let other = startup_failure_message("no adapter");
+        assert!(
+            !other.contains("nix run"),
+            "hints only for missing libraries"
+        );
+    }
 }
