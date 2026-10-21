@@ -155,7 +155,7 @@ pub fn draw_layer_list(
                         actions.extend(draw_photo_layer_item(
                             ui,
                             layer,
-                            Some(layer.id) == sel.selected,
+                            Some(layer.id) == sel.selected || layer.selected,
                             rename,
                             thumbs.get(&layer.id).copied(),
                             row.depth,

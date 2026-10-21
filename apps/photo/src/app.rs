@@ -442,6 +442,39 @@ impl PhotoApp {
                 if let Some(doc) = self.active_doc_mut_opt() {
                     doc.ui.selected = Some(id);
                     doc.ui.focused_attachment = None;
+                    doc.ui.extra_selected.clear();
+                    doc.ui.mark_extra_selection();
+                }
+            }
+            PhotoAction::ToggleLayerSelection(id) => {
+                if let Some(doc) = self.active_doc_mut_opt() {
+                    if doc.ui.selected.is_none() {
+                        doc.ui.selected = Some(id);
+                    } else if doc.ui.selected != Some(id) {
+                        if let Some(index) = doc.ui.extra_selected.iter().position(|e| *e == id) {
+                            doc.ui.extra_selected.remove(index);
+                        } else {
+                            doc.ui.extra_selected.push(id);
+                        }
+                    }
+                    doc.ui.focused_attachment = None;
+                    doc.ui.mark_extra_selection();
+                    doc.ui.needs_repaint = true;
+                }
+            }
+            PhotoAction::AlignLayers(align) => {
+                let layers: Vec<uuid::Uuid> = self
+                    .active_doc_opt()
+                    .map(|doc| {
+                        doc.ui
+                            .selected
+                            .into_iter()
+                            .chain(doc.ui.extra_selected.iter().copied())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !layers.is_empty() {
+                    self.send_active(PhotoEngineCommand::AlignLayers { layers, align });
                 }
             }
             PhotoAction::FocusAttachment { owner, id } => {
@@ -1925,6 +1958,79 @@ mod tests {
         let doc = app.active_doc_opt().expect("doc");
         assert_eq!(doc.ui.selection, None, "undo dropped the selection");
         assert!(doc.ui.selection_outline.is_empty(), "outline follows");
+    }
+
+    /// Draws frames until `done` holds (worker thread), at most ~2.5 s.
+    fn wait_until(app: &mut PhotoApp, ctx: &egui::Context, done: impl Fn(&PhotoApp) -> bool) {
+        for _ in 0..500 {
+            draw_frame(app, ctx, Vec::new());
+            if done(app) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn ctrl_click_multi_select_then_align_runs_in_the_worker() {
+        let (mut app, ctx, _) = app_with_placed_canvas();
+        app.handle_action(&ctx, PhotoAction::AddEmptyLayer);
+        wait_until(&mut app, &ctx, |app| {
+            app.active_doc_opt()
+                .is_some_and(|doc| doc.ui.layers.len() == 2)
+        });
+        let ids: Vec<uuid::Uuid> = app
+            .active_doc_opt()
+            .expect("doc")
+            .ui
+            .layers
+            .iter()
+            .map(|layer| layer.id)
+            .collect();
+        assert_eq!(ids.len(), 2, "two layers");
+        app.handle_action(
+            &ctx,
+            PhotoAction::MoveLayer {
+                layer: ids[0],
+                dx: 30.0,
+                dy: 20.0,
+            },
+        );
+        app.handle_action(&ctx, PhotoAction::SelectLayer(ids[0]));
+        app.handle_action(&ctx, PhotoAction::ToggleLayerSelection(ids[1]));
+        {
+            let doc = app.active_doc_opt().expect("doc");
+            assert_eq!(doc.ui.extra_selected, vec![ids[1]]);
+            assert!(
+                doc.ui.layers.iter().any(|l| l.id == ids[1] && l.selected),
+                "secondary row highlighted"
+            );
+        }
+        app.handle_action(
+            &ctx,
+            PhotoAction::AlignLayers(photo_engine::LayerAlign::Left),
+        );
+        wait_until(&mut app, &ctx, |app| {
+            app.active_doc_opt().is_some_and(|doc| {
+                doc.ui.history_undo.last().map(String::as_str) == Some("align_layers")
+            })
+        });
+        let doc = app.active_doc_opt().expect("doc");
+        assert_eq!(
+            doc.ui.history_undo.last().map(String::as_str),
+            Some("align_layers"),
+            "align recorded"
+        );
+        assert_eq!(doc.ui.extra_selected, vec![ids[1]], "selection kept");
+        // A plain click goes back to a single selection.
+        app.handle_action(&ctx, PhotoAction::SelectLayer(ids[1]));
+        assert!(
+            app.active_doc_opt()
+                .expect("doc")
+                .ui
+                .extra_selected
+                .is_empty()
+        );
     }
 
     #[test]

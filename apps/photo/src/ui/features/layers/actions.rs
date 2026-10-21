@@ -36,6 +36,7 @@ pub fn layer_panel_action_to_photo(action: LayerPanelAction) -> PhotoAction {
         LayerPanelAction::AddMaskToFilter(filter) => PhotoAction::AddMaskToFilter { filter },
         LayerPanelAction::Delete => PhotoAction::DeleteSelectedLayer,
         LayerPanelAction::Select(id) => PhotoAction::SelectLayer(id),
+        LayerPanelAction::ToggleSelect(id) => PhotoAction::ToggleLayerSelection(id),
         LayerPanelAction::SelectAttachment { owner, id } => {
             PhotoAction::FocusAttachment { owner, id }
         }

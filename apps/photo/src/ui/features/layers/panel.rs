@@ -66,6 +66,8 @@ pub enum LayerPanelAction {
     Delete,
     /// Select a layer (click on its row).
     Select(Uuid),
+    /// Toggle a layer in the multi-selection (Ctrl / Shift + click).
+    ToggleSelect(Uuid),
     /// Focus an attachment (click on its tree row):
     /// the owner becomes the primary selection.
     SelectAttachment {
@@ -487,6 +489,7 @@ fn draw_layers_panel(
     for item_action in item_actions {
         match item_action {
             LayerItemAction::Select(id) => actions.push(LayerPanelAction::Select(id)),
+            LayerItemAction::ToggleSelect(id) => actions.push(LayerPanelAction::ToggleSelect(id)),
             LayerItemAction::SelectAttachment { owner, id } => {
                 actions.push(LayerPanelAction::SelectAttachment { owner, id });
             }

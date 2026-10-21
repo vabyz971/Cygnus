@@ -152,6 +152,14 @@ pub(crate) enum CygnusIcon {
     Gradient,
     Stamp,
     PenSelect,
+    AlignLeft,
+    AlignCenterH,
+    AlignRight,
+    AlignTop,
+    AlignMiddle,
+    AlignBottom,
+    DistributeH,
+    DistributeV,
 }
 
 impl CygnusIcon {
@@ -229,6 +237,14 @@ impl CygnusIcon {
             Self::Gradient => ICON_GRADIENT,
             Self::Stamp => ICON_APPROVAL,
             Self::PenSelect => ICON_PENTAGON,
+            Self::AlignLeft => ICON_ALIGN_HORIZONTAL_LEFT,
+            Self::AlignCenterH => ICON_ALIGN_HORIZONTAL_CENTER,
+            Self::AlignRight => ICON_ALIGN_HORIZONTAL_RIGHT,
+            Self::AlignTop => ICON_ALIGN_VERTICAL_TOP,
+            Self::AlignMiddle => ICON_ALIGN_VERTICAL_CENTER,
+            Self::AlignBottom => ICON_ALIGN_VERTICAL_BOTTOM,
+            Self::DistributeH => ICON_HORIZONTAL_DISTRIBUTE,
+            Self::DistributeV => ICON_VERTICAL_DISTRIBUTE,
         }
     }
 

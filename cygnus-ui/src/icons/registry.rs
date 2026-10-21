@@ -126,6 +126,14 @@ impl IconRegistry {
             Icon::Gradient => CygnusIcon::Gradient,
             Icon::Stamp => CygnusIcon::Stamp,
             Icon::PenSelect => CygnusIcon::PenSelect,
+            Icon::AlignLeft => CygnusIcon::AlignLeft,
+            Icon::AlignCenterH => CygnusIcon::AlignCenterH,
+            Icon::AlignRight => CygnusIcon::AlignRight,
+            Icon::AlignTop => CygnusIcon::AlignTop,
+            Icon::AlignMiddle => CygnusIcon::AlignMiddle,
+            Icon::AlignBottom => CygnusIcon::AlignBottom,
+            Icon::DistributeH => CygnusIcon::DistributeH,
+            Icon::DistributeV => CygnusIcon::DistributeV,
         }
     }
 }
@@ -206,6 +214,14 @@ pub const ALL_ICONS: &[Icon] = &[
     Icon::Gradient,
     Icon::Stamp,
     Icon::PenSelect,
+    Icon::AlignLeft,
+    Icon::AlignCenterH,
+    Icon::AlignRight,
+    Icon::AlignTop,
+    Icon::AlignMiddle,
+    Icon::AlignBottom,
+    Icon::DistributeH,
+    Icon::DistributeV,
 ];
 
 /// Standard Cygnus icon button: frameless, hover background, optional tooltip.
@@ -295,7 +311,7 @@ mod tests {
         // is added without being registered in ALL_ICONS.
         // (`Open` and `Folder` share the folder glyph but count as two
         // distinct usages, hence 48 vs 47 on the glyph side.)
-        assert_eq!(ALL_ICONS.len(), 72);
+        assert_eq!(ALL_ICONS.len(), 80);
     }
 
     #[test]

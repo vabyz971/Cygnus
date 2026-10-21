@@ -175,6 +175,10 @@ pub enum PhotoAction {
     },
     /// Select a layer (local UI state).
     SelectLayer(Uuid),
+    /// Add / remove a layer from the multi-selection (local UI state).
+    ToggleLayerSelection(Uuid),
+    /// Align or distribute the selected layers (worker).
+    AlignLayers(photo_engine::LayerAlign),
     /// Focus an attachment (local UI state, owner selected too).
     FocusAttachment {
         /// Owner (layer id, or filter id for filter-owned masks).

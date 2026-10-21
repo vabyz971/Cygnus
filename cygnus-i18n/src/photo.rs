@@ -581,6 +581,24 @@ pub enum PhotoTextKey {
     DistanceLabel,
     /// History: layer styles change.
     HistoryOpLayerStyles,
+    /// Align layers: left edges.
+    AlignLeft,
+    /// Align layers: horizontal centers.
+    AlignCenterH,
+    /// Align layers: right edges.
+    AlignRight,
+    /// Align layers: top edges.
+    AlignTop,
+    /// Align layers: vertical centers.
+    AlignMiddle,
+    /// Align layers: bottom edges.
+    AlignBottom,
+    /// Distribute layers horizontally.
+    DistributeH,
+    /// Distribute layers vertically.
+    DistributeV,
+    /// History: align or distribute layers.
+    HistoryOpAlign,
 }
 
 /// Photo catalog bound to a language.
@@ -870,6 +888,15 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::AngleLabel,
     PhotoTextKey::DistanceLabel,
     PhotoTextKey::HistoryOpLayerStyles,
+    PhotoTextKey::AlignLeft,
+    PhotoTextKey::AlignCenterH,
+    PhotoTextKey::AlignRight,
+    PhotoTextKey::AlignTop,
+    PhotoTextKey::AlignMiddle,
+    PhotoTextKey::AlignBottom,
+    PhotoTextKey::DistributeH,
+    PhotoTextKey::DistributeV,
+    PhotoTextKey::HistoryOpAlign,
 ];
 
 impl PhotoCatalog {
@@ -1187,6 +1214,15 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::AngleLabel => "Angle",
         PhotoTextKey::DistanceLabel => "Distance",
         PhotoTextKey::HistoryOpLayerStyles => "Styles du calque",
+        PhotoTextKey::AlignLeft => "Aligner à gauche",
+        PhotoTextKey::AlignCenterH => "Centrer horizontalement",
+        PhotoTextKey::AlignRight => "Aligner à droite",
+        PhotoTextKey::AlignTop => "Aligner en haut",
+        PhotoTextKey::AlignMiddle => "Centrer verticalement",
+        PhotoTextKey::AlignBottom => "Aligner en bas",
+        PhotoTextKey::DistributeH => "Répartir horizontalement",
+        PhotoTextKey::DistributeV => "Répartir verticalement",
+        PhotoTextKey::HistoryOpAlign => "Aligner les calques",
     }
 }
 
@@ -1478,6 +1514,15 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::AngleLabel => "Angle",
         PhotoTextKey::DistanceLabel => "Distance",
         PhotoTextKey::HistoryOpLayerStyles => "Layer styles",
+        PhotoTextKey::AlignLeft => "Align left",
+        PhotoTextKey::AlignCenterH => "Align horizontal centers",
+        PhotoTextKey::AlignRight => "Align right",
+        PhotoTextKey::AlignTop => "Align top",
+        PhotoTextKey::AlignMiddle => "Align vertical centers",
+        PhotoTextKey::AlignBottom => "Align bottom",
+        PhotoTextKey::DistributeH => "Distribute horizontally",
+        PhotoTextKey::DistributeV => "Distribute vertically",
+        PhotoTextKey::HistoryOpAlign => "Align layers",
     }
 }
 

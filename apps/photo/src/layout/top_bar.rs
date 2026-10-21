@@ -226,6 +226,9 @@ pub fn show_mode_bar(
             if let Some(tool) = outcome.tool {
                 actions.push(PhotoAction::SetTool(tool));
             }
+            if let Some(align) = outcome.align {
+                actions.push(PhotoAction::AlignLayers(align));
+            }
         });
     actions
 }

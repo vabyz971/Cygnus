@@ -115,6 +115,8 @@ impl PhotoEditMode {
 pub struct ModeBarOutcome {
     /// Tool picked from the switcher, if any.
     pub tool: Option<PhotoCanvasTool>,
+    /// Align / distribute requested from the Move tool options.
+    pub align: Option<photo_engine::LayerAlign>,
 }
 
 /// One persona tab: glyph + label, accent pill and dot when active.
@@ -392,7 +394,7 @@ pub fn draw_photo_modebar(
     ui.horizontal(|ui| {
         outcome.tool = tool_switcher(ui, mode, tool, theme, texts);
         ui.separator();
-        draw_tool_options(ui, tool, options, theme, texts);
+        outcome.align = draw_tool_options(ui, tool, options, theme, texts);
     });
     outcome
 }

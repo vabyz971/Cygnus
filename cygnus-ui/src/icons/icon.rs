@@ -170,4 +170,20 @@ pub enum Icon {
     Stamp,
     /// Polygonal (pen) selection.
     PenSelect,
+    /// Layout: AlignLeft.
+    AlignLeft,
+    /// Layout: AlignCenterH.
+    AlignCenterH,
+    /// Layout: AlignRight.
+    AlignRight,
+    /// Layout: AlignTop.
+    AlignTop,
+    /// Layout: AlignMiddle.
+    AlignMiddle,
+    /// Layout: AlignBottom.
+    AlignBottom,
+    /// Layout: DistributeH.
+    DistributeH,
+    /// Layout: DistributeV.
+    DistributeV,
 }

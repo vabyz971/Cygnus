@@ -27,7 +27,43 @@ use cygnus_ui::components::{Checkbox, IconButton, ValueField};
 use cygnus_ui::icons::Icon;
 use cygnus_ui::theme::CygnusTheme;
 use cygnus_ui::theme::typography::caption_text;
-use photo_engine::SelectionKind;
+use photo_engine::{LayerAlign, SelectionKind};
+
+/// Move tool buttons: operation, glyph, tooltip.
+const ALIGN_BUTTONS: [(LayerAlign, Icon, PhotoTextKey); 8] = [
+    (LayerAlign::Left, Icon::AlignLeft, PhotoTextKey::AlignLeft),
+    (
+        LayerAlign::CenterH,
+        Icon::AlignCenterH,
+        PhotoTextKey::AlignCenterH,
+    ),
+    (
+        LayerAlign::Right,
+        Icon::AlignRight,
+        PhotoTextKey::AlignRight,
+    ),
+    (LayerAlign::Top, Icon::AlignTop, PhotoTextKey::AlignTop),
+    (
+        LayerAlign::Middle,
+        Icon::AlignMiddle,
+        PhotoTextKey::AlignMiddle,
+    ),
+    (
+        LayerAlign::Bottom,
+        Icon::AlignBottom,
+        PhotoTextKey::AlignBottom,
+    ),
+    (
+        LayerAlign::DistributeH,
+        Icon::DistributeH,
+        PhotoTextKey::DistributeH,
+    ),
+    (
+        LayerAlign::DistributeV,
+        Icon::DistributeV,
+        PhotoTextKey::DistributeV,
+    ),
+];
 
 /// Largest brush diameter offered by the size field (image pixels).
 const MAX_BRUSH_SIZE: f32 = 500.0;
@@ -52,14 +88,34 @@ pub fn draw_tool_options(
     options: ToolOptions<'_>,
     theme: &CygnusTheme,
     texts: PhotoCatalog,
-) {
+) -> Option<LayerAlign> {
     let ToolOptions {
         brush,
         selection_kind,
         wand,
         bucket,
     } = options;
+    let mut align = None;
     match tool {
+        PhotoCanvasTool::Move => {
+            // Align / distribute the selected layers (Ctrl / Shift +
+            // click in the Layers panel to select several).
+            ui.spacing_mut().item_spacing.x = theme.spacing.xxs;
+            for (index, (op, icon, key)) in ALIGN_BUTTONS.iter().enumerate() {
+                if index == 6 {
+                    ui.add_space(theme.spacing.sm);
+                }
+                if IconButton::new(*icon)
+                    .tooltip(texts.get(*key))
+                    .show(ui, theme)
+                    .clicked()
+                {
+                    align = Some(*op);
+                }
+            }
+            ui.add_space(theme.spacing.md);
+            ui.label(caption_text(theme, tool.hint(texts)));
+        }
         PhotoCanvasTool::Bucket | PhotoCanvasTool::Gradient => {
             ui.spacing_mut().item_spacing.x = theme.spacing.sm;
             if tool == PhotoCanvasTool::Bucket {
@@ -163,6 +219,7 @@ pub fn draw_tool_options(
             ui.label(caption_text(theme, other.hint(texts)));
         }
     }
+    align
 }
 
 #[cfg(test)]

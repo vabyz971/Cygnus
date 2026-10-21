@@ -134,6 +134,23 @@ impl PhotoUiState {
         self.needs_repaint = true;
     }
 
+    /// Re-flags the snapshot rows of `extra_selected` (highlight) after a
+    /// worker snapshot replaced them; drops vanished layers.
+    pub fn mark_extra_selection(&mut self) {
+        fn walk(layers: &mut [crate::ui::PhotoLayerInfo], extra: &[Uuid], seen: &mut Vec<Uuid>) {
+            for layer in layers {
+                layer.selected = extra.contains(&layer.id);
+                if layer.selected {
+                    seen.push(layer.id);
+                }
+                walk(&mut layer.children, extra, seen);
+            }
+        }
+        let mut seen = Vec::new();
+        walk(&mut self.layers, &self.extra_selected, &mut seen);
+        self.extra_selected.retain(|id| seen.contains(id));
+    }
+
     /// Adopts the worker's selection (undo / redo restore it) without
     /// touching a gesture in progress; no-op when unchanged.
     pub fn sync_selection(&mut self, selection: Option<photo_engine::Selection>) {
@@ -251,6 +268,9 @@ pub struct PhotoUiState {
     pub bucket: WandSettings,
     /// Gradient line being dragged (document pixels).
     pub gradient_preview: Option<((f32, f32), (f32, f32))>,
+    /// Layers added to the selection with Ctrl / Shift + click (the
+    /// primary one stays `selected`).
+    pub extra_selected: Vec<Uuid>,
     /// Pen selection corners placed so far (document pixels).
     pub pen_points: Vec<(f32, f32)>,
     /// Clone stamp source (Alt+click, document pixels).
@@ -531,6 +551,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
         } => {
             ui.sync_selection(selection);
             ui.layers = layers;
+            ui.mark_extra_selection();
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
             ui.history_undo = undo_labels;
@@ -682,6 +703,7 @@ pub fn apply_response(ctx: &egui::Context, ui: &mut PhotoUiState, response: Phot
                 ui.drag_proxy = None;
             }
             ui.layers = layers;
+            ui.mark_extra_selection();
             ui.can_undo = can_undo;
             ui.can_redo = can_redo;
             ui.history_undo = undo_labels;

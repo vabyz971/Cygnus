@@ -56,6 +56,9 @@ pub struct LayerRenameState {
 pub enum LayerItemAction {
     /// Select this layer.
     Select(Uuid),
+    /// Add / remove this layer from the multi-selection (Ctrl or
+    /// Shift + click).
+    ToggleSelect(Uuid),
     /// Select an attachment (filter or mask): the owner
     /// becomes the primary selection (tree, O003+).
     SelectAttachment {
@@ -162,7 +165,12 @@ pub fn draw_photo_layer_item(
     let row_id = ui.make_persistent_id(("photo_layer_row", layer.id));
     let row_resp = ui.interact(row_rect, row_id, egui::Sense::click());
     if row_resp.clicked() {
-        actions.push(LayerItemAction::Select(layer.id));
+        let multi = ui.input(|input| input.modifiers.command || input.modifiers.shift);
+        actions.push(if multi {
+            LayerItemAction::ToggleSelect(layer.id)
+        } else {
+            LayerItemAction::Select(layer.id)
+        });
     }
     // Right click: selects the row and opens the
     // context menu (rerun-style sections: edit, visibility).
