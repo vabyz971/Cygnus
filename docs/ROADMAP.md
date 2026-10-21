@@ -20,8 +20,8 @@
 
 ## v0.9 "Photo Persona"
 
-Status: in progress (Photo 0.8.0 ships O007–O012; O013–O017 since). Remaining work, shortest first:
-O018 layer multi-select + align/distribute.
+Status: done (O007–O018). Follow-ups noted in `docs/SUIVI.md` (GPU layer
+styles, Bezier pen selection, multi-layer move / delete / grouping).
 
 - [x] **Selections**
   - [x] Rectangle / ellipse marquee, select all / deselect / invert, mask from selection (O007).
@@ -37,9 +37,9 @@ O018 layer multi-select + align/distribute.
   - [x] Hardness / flow / spacing / stabilizer (O008).
   - [x] Paint bucket + linear gradient (O011).
   - [x] Clone stamp (O014).
-- [ ] **Layers**
+- [x] **Layers**
   - [x] 14 blend modes, CPU and GPU, `.cygp` v8 (O012).
-  - [ ] Multi-select + align / distribute (O018).
+  - [x] Multi-select + align / distribute (O018).
   DoD: masked portrait composite + local retouch, re-editable after reload.
 
 ## v0.10 "Vector + Text" (makes the modes useful)
