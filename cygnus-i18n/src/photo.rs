@@ -563,6 +563,10 @@ pub enum PhotoTextKey {
     CloneHintText,
     /// History: clone stamp stroke.
     HistoryOpClone,
+    /// Polygonal (pen) selection tool name.
+    PenSelectHint,
+    /// Pen selection usage.
+    PenSelectHintText,
 }
 
 /// Photo catalog bound to a language.
@@ -843,6 +847,8 @@ pub(crate) const ALL_PHOTO_TEXT_KEYS: &[PhotoTextKey] = &[
     PhotoTextKey::CloneHint,
     PhotoTextKey::CloneHintText,
     PhotoTextKey::HistoryOpClone,
+    PhotoTextKey::PenSelectHint,
+    PhotoTextKey::PenSelectHintText,
 ];
 
 impl PhotoCatalog {
@@ -1149,6 +1155,10 @@ fn translate_fr(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CloneHint => "Tampon de duplication",
         PhotoTextKey::CloneHintText => "Alt+clic : définir la source — glisser : recopier",
         PhotoTextKey::HistoryOpClone => "Tampon de duplication",
+        PhotoTextKey::PenSelectHint => "Plume de sélection",
+        PhotoTextKey::PenSelectHintText => {
+            "Clic : ajouter un point — clic sur le premier point, double-clic ou Entrée : fermer — Échap : annuler"
+        }
     }
 }
 
@@ -1429,6 +1439,10 @@ fn translate_en(key: PhotoTextKey) -> &'static str {
         PhotoTextKey::CloneHint => "Clone stamp",
         PhotoTextKey::CloneHintText => "Alt+click: set the source — drag: clone",
         PhotoTextKey::HistoryOpClone => "Clone stamp",
+        PhotoTextKey::PenSelectHint => "Pen selection",
+        PhotoTextKey::PenSelectHintText => {
+            "Click: add a point — click the first point, double-click or Enter: close — Esc: cancel"
+        }
     }
 }
 

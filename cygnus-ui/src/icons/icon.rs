@@ -168,4 +168,6 @@ pub enum Icon {
     Gradient,
     /// Clone stamp.
     Stamp,
+    /// Polygonal (pen) selection.
+    PenSelect,
 }

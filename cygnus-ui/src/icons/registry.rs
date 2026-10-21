@@ -125,6 +125,7 @@ impl IconRegistry {
             Icon::PaintBucket => CygnusIcon::PaintBucket,
             Icon::Gradient => CygnusIcon::Gradient,
             Icon::Stamp => CygnusIcon::Stamp,
+            Icon::PenSelect => CygnusIcon::PenSelect,
         }
     }
 }
@@ -204,6 +205,7 @@ pub const ALL_ICONS: &[Icon] = &[
     Icon::PaintBucket,
     Icon::Gradient,
     Icon::Stamp,
+    Icon::PenSelect,
 ];
 
 /// Standard Cygnus icon button: frameless, hover background, optional tooltip.
@@ -293,7 +295,7 @@ mod tests {
         // is added without being registered in ALL_ICONS.
         // (`Open` and `Folder` share the folder glyph but count as two
         // distinct usages, hence 48 vs 47 on the glyph side.)
-        assert_eq!(ALL_ICONS.len(), 71);
+        assert_eq!(ALL_ICONS.len(), 72);
     }
 
     #[test]
