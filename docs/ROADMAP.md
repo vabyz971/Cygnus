@@ -20,15 +20,15 @@
 
 ## v0.9 "Photo Persona"
 
-Status: in progress (Photo 0.8.0 ships O007–O012; O013–O015 since). Remaining work, shortest first:
-O016 undoable selections → O017 first layer styles → O018 layer multi-select + align/distribute.
+Status: in progress (Photo 0.8.0 ships O007–O012; O013–O016 since). Remaining work, shortest first:
+O017 first layer styles → O018 layer multi-select + align/distribute.
 
-- [ ] **Selections**
+- [x] **Selections**
   - [x] Rectangle / ellipse marquee, select all / deselect / invert, mask from selection (O007).
   - [x] Lasso + magic wand (tolerance, contiguous) (O009).
   - [x] Add / subtract / intersect with Shift / Alt (O013).
   - [x] Pen (polygonal) selection (O015).
-  - [ ] Undoable selection changes (O016).
+  - [x] Undoable selection changes (O016).
 - [x] **Paintable masks**: density / feather / invert, non-destructive, `.cygp` v7 (O010).
 - [ ] **Live Filters + 1st Layer Style**
   - [x] Live filters as sub-layers with masks and presets (v0.8.3).
