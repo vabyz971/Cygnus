@@ -18,6 +18,7 @@
 //! no UI dependency (buffers are converted app-side). Uses datatypes +
 //! math-utils, exposed to apps.
 
+pub mod align;
 pub mod command;
 pub mod document;
 pub mod export;
@@ -43,6 +44,7 @@ pub mod thumb_cache;
 pub mod tile_key;
 pub mod tiles;
 
+pub use align::LayerAlign;
 pub use command::{Command, RenderEvent, RenderRevision};
 pub use document::{
     AdjustmentLayer, Appearance, BlendMode, Document, FilterLayer, FilterNode, GroupLayer,

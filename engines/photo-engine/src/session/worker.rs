@@ -1946,6 +1946,44 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::AlignLayers { layers, align } => {
+                // Pixel layers only: their placed box is exact.
+                let placed: Vec<(Uuid, crate::align::Bounds)> = layers
+                    .iter()
+                    .filter_map(|id| match self.document.find(*id) {
+                        Some(crate::LayerNode::Pixel(pixels)) => {
+                            let (w, h) = pixels.dimensions();
+                            crate::align::bounds_of(
+                                &pixels.transform.doc_corners(w as f32, h as f32),
+                            )
+                            .map(|b| (*id, b))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let document = (
+                    0.0,
+                    0.0,
+                    self.document.width as f32,
+                    self.document.height as f32,
+                );
+                let boxes: Vec<crate::align::Bounds> = placed.iter().map(|(_, b)| *b).collect();
+                let moves = crate::align::plan(&boxes, align, document);
+                if moves
+                    .iter()
+                    .all(|(dx, dy)| dx.abs() < 1e-3 && dy.abs() < 1e-3)
+                {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                for ((id, _), (dx, dy)) in placed.iter().zip(moves) {
+                    if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(*id) {
+                        pixels.transform.offset_x += dx;
+                        pixels.transform.offset_y += dy;
+                    }
+                }
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+            }
             PhotoEngineCommand::SetLayerStyles { layer, styles } => {
                 let styles = styles.sanitized();
                 let current = match self.document.find(layer) {
@@ -2712,6 +2750,31 @@ mod tests {
             !crate::gpu_view::GpuView::supports(&worker.document),
             "CPU fallback"
         );
+    }
+
+    #[test]
+    fn align_left_moves_layers_in_one_step() {
+        let mut doc = Document::new(100, 100);
+        let mut ids = Vec::new();
+        for x in [10.0, 40.0] {
+            let mut layer = PixelLayer::new("c", Arc::new(image::DynamicImage::new_rgba8(10, 10)));
+            layer.transform.offset_x = x;
+            ids.push(layer.id);
+            doc.push_layer(LayerNode::Pixel(layer));
+        }
+        let mut worker = EngineWorker::new(doc);
+        worker.apply(PhotoEngineCommand::AlignLayers {
+            layers: ids.clone(),
+            align: crate::LayerAlign::Left,
+        });
+        let offset = |worker: &EngineWorker, id: Uuid| match worker.document.find(id) {
+            Some(LayerNode::Pixel(p)) => p.transform.offset_x,
+            _ => panic!("pixels attendus"),
+        };
+        assert_eq!(offset(&worker, ids[1]), 10.0, "aligned on the leftmost");
+        assert_eq!(worker.history.undo_steps().len(), 1);
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(offset(&worker, ids[1]), 40.0);
     }
 
     #[test]

@@ -356,6 +356,14 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Align or distribute pixel layers (document-space bounding
+    /// boxes; one layer aligns on the document). One history step.
+    AlignLayers {
+        /// Layers to move.
+        layers: Vec<Uuid>,
+        /// Operation.
+        align: crate::LayerAlign,
+    },
     /// Replace a pixel layer's styles (absolute values; slider gestures
     /// coalesce into one history entry per layer).
     SetLayerStyles {
@@ -535,6 +543,7 @@ impl PhotoEngineCommand {
             Self::FillAt { .. } => "fill",
             Self::CloneStroke { .. } => "clone_stroke",
             Self::SetLayerStyles { .. } => "set_layer_styles",
+            Self::AlignLayers { .. } => "align_layers",
             Self::FillGradient { .. } => "gradient",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
@@ -633,6 +642,7 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
         | PhotoEngineCommand::AddMaskFromSelection { .. }
         | PhotoEngineCommand::SetMaskParams { .. }
         | PhotoEngineCommand::FillAt { .. }
+        | PhotoEngineCommand::AlignLayers { .. }
         | PhotoEngineCommand::FillGradient { .. }
         | PhotoEngineCommand::RemoveMask { .. }
         | PhotoEngineCommand::MoveMask { .. }
