@@ -356,6 +356,14 @@ pub enum PhotoEngineCommand {
     /// the following brush / eraser / mask strokes. Session state like
     /// `SetSelection`: no history, no render.
     SetBrushDynamics(crate::paint::BrushDynamics),
+    /// Replace a pixel layer's styles (absolute values; slider gestures
+    /// coalesce into one history entry per layer).
+    SetLayerStyles {
+        /// Target pixel layer.
+        layer: Uuid,
+        /// New styles.
+        styles: crate::document::styles::LayerStyles,
+    },
     /// Clone stamp stroke on a pixel layer: each painted pixel copies
     /// the layer's own pixel `offset` document pixels away (as it was
     /// before the stroke). Same tip as the brush (dynamics, selection).
@@ -526,6 +534,7 @@ impl PhotoEngineCommand {
             Self::SetMaskParams { .. } => "set_mask_params",
             Self::FillAt { .. } => "fill",
             Self::CloneStroke { .. } => "clone_stroke",
+            Self::SetLayerStyles { .. } => "set_layer_styles",
             Self::FillGradient { .. } => "gradient",
             Self::AddMaskFromSelection { .. } => "add_mask_from_selection",
         }
@@ -584,6 +593,10 @@ pub fn render_routing(command: &PhotoEngineCommand) -> (RenderEvent, RenderInval
             RenderInvalidation::Composite,
         ),
         PhotoEngineCommand::PaintStroke { layer, .. } => (
+            RenderEvent::NodeInvalidated(*layer),
+            RenderInvalidation::Composite,
+        ),
+        PhotoEngineCommand::SetLayerStyles { layer, .. } => (
             RenderEvent::NodeInvalidated(*layer),
             RenderInvalidation::Composite,
         ),
@@ -801,6 +814,16 @@ impl engine_runtime::Coalesce for PhotoEngineCommand {
                 *prev_density = *density;
                 *prev_feather = *feather;
                 *prev_inverted = *inverted;
+                true
+            }
+            (
+                PhotoEngineCommand::SetLayerStyles {
+                    layer: prev,
+                    styles: prev_styles,
+                },
+                PhotoEngineCommand::SetLayerStyles { layer, styles },
+            ) if prev == layer => {
+                *prev_styles = *styles;
                 true
             }
             (

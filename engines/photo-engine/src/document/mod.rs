@@ -6,6 +6,7 @@ pub mod model;
 pub mod preview_surface;
 pub mod scaled;
 pub mod scheduler;
+pub mod styles;
 #[cfg(test)]
 mod tests;
 pub mod tile_cache;

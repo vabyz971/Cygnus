@@ -981,6 +981,21 @@ pub fn fold_scope_stats(
                 };
                 let t_blend = std::time::Instant::now();
                 let (top, ox, oy) = prepare_top(&item);
+                // Layer styles (shadow, glow): underlays from the placed
+                // raster, blended just below the layer.
+                if l.styles.is_active() {
+                    for underlay in super::styles::underlays(&top, &l.styles) {
+                        blend_into(
+                            acc,
+                            &underlay.image,
+                            None,
+                            underlay.opacity * l.opacity,
+                            underlay.mode,
+                            ox + underlay.dx + origin_x,
+                            oy + underlay.dy + origin_y,
+                        );
+                    }
+                }
                 // Layer masks baked into appearance (source × filters × masks):
                 // nothing left to attenuate here — direct blend.
                 blend_into(

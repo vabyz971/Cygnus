@@ -1506,6 +1506,20 @@ impl Document {
     // -- History -------------------------------------------------------------
 
     /// Full snapshot (Arc-shared pixels — nearly free).
+    /// True when a visible-or-not layer draws a style (shadows reach
+    /// beyond their layer: partial invalidation must go global).
+    #[must_use]
+    pub fn has_layer_styles(&self) -> bool {
+        fn any(nodes: &[LayerNode]) -> bool {
+            nodes.iter().any(|node| match node {
+                LayerNode::Pixel(l) => l.styles.is_active() || any(&l.children),
+                LayerNode::Group(g) => any(&g.children),
+                _ => false,
+            })
+        }
+        any(&self.root)
+    }
+
     pub fn snapshot(&self) -> crate::history::Snapshot {
         crate::history::Snapshot {
             doc_size: (self.width, self.height),

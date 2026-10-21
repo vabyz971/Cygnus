@@ -424,6 +424,8 @@ pub struct PixelLayer {
     /// Incremented on EVERY mutation affecting appearance (source or filters).
     /// Document appearance-cache invalidation key.
     pub appearance_version: u64,
+    /// Drop shadow / outer glow drawn below the layer (compositor-side).
+    pub styles: super::styles::LayerStyles,
 }
 
 impl PixelLayer {
@@ -441,6 +443,7 @@ impl PixelLayer {
             visible: true,
             masks: Vec::new(),
             appearance_version: next_appearance_version(),
+            styles: super::styles::LayerStyles::default(),
         }
     }
 

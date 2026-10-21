@@ -401,6 +401,8 @@ impl Layer {
                     visible: self.visible,
                     masks: r.masks.clone(),
                     appearance_version: r.appearance_version,
+                    // Scene effects do not map to layer styles yet.
+                    styles: Default::default(),
                 }))
             }
             LayerContent::Group(g) => {

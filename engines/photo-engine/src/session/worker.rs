@@ -840,6 +840,8 @@ impl EngineWorker {
                 DirtyMark::Global
             }
             DirtyMark::Auto | DirtyMark::None => DirtyMark::None,
+            // Styled layers cast beyond their footprint: no partial update.
+            DirtyMark::Region(_) if self.document.has_layer_styles() => DirtyMark::Global,
             precise => precise,
         };
         match mark {
@@ -1944,6 +1946,22 @@ impl EngineWorker {
                 Mutation::changed(invalidation)
             }
             PhotoEngineCommand::Refresh => Mutation::changed(invalidation),
+            PhotoEngineCommand::SetLayerStyles { layer, styles } => {
+                let styles = styles.sanitized();
+                let current = match self.document.find(layer) {
+                    Some(crate::LayerNode::Pixel(pixels)) => pixels.styles,
+                    _ => return Mutation::unchanged(),
+                };
+                if current == styles {
+                    return Mutation::unchanged();
+                }
+                // Slider gesture: one history entry per layer.
+                self.push_history(Some(layer));
+                if let Some(crate::LayerNode::Pixel(pixels)) = self.document.find_mut(layer) {
+                    pixels.styles = styles;
+                }
+                Mutation::changed(invalidation).with_dirty(DirtyMark::Global)
+            }
             PhotoEngineCommand::CloneStroke {
                 layer,
                 points,
@@ -2648,6 +2666,52 @@ mod tests {
         assert_eq!(pixels.get_pixel(30, 10).0, [0, 0, 255, 255], "blue cloned");
         assert_eq!(pixels.get_pixel(38, 10)[3], 0, "outside the tip");
         assert_eq!(worker.history.undo_steps().len(), 1);
+    }
+
+    #[test]
+    fn drop_shadow_darkens_below_and_offset_in_one_step() {
+        use image::GenericImageView;
+        let mut doc = Document::new(60, 60);
+        doc.push_layer(LayerNode::Pixel(PixelLayer::new(
+            "fond",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(60, 60, image::Rgba([255, 255, 255, 255])),
+            )),
+        )));
+        let mut square = PixelLayer::new(
+            "carré",
+            Arc::new(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_pixel(20, 20, image::Rgba([255, 255, 255, 255])),
+            )),
+        );
+        square.transform.offset_x = 10.0;
+        square.transform.offset_y = 10.0;
+        let id = square.id;
+        doc.push_layer(LayerNode::Pixel(square));
+        let mut worker = EngineWorker::new(doc);
+        let mut styles = crate::document::styles::LayerStyles::default();
+        styles.drop_shadow.enabled = true;
+        styles.drop_shadow.opacity = 1.0;
+        styles.drop_shadow.angle = 90.0;
+        styles.drop_shadow.distance = 10.0;
+        styles.drop_shadow.size = 0.0;
+        for distance in [4.0, 8.0, 10.0] {
+            styles.drop_shadow.distance = distance;
+            worker.apply(PhotoEngineCommand::SetLayerStyles { layer: id, styles });
+        }
+        assert_eq!(worker.history.undo_steps().len(), 1, "one gesture");
+        let composite = worker.document.composite().expect("composite");
+        // Square spans y 10..30; light from the top: shadow y 20..40.
+        assert!(
+            composite.get_pixel(20, 35)[0] < 50,
+            "shadow below the square"
+        );
+        assert_eq!(composite.get_pixel(20, 20)[0], 255, "square stays white");
+        assert_eq!(composite.get_pixel(20, 5)[0], 255, "nothing above");
+        assert!(
+            !crate::gpu_view::GpuView::supports(&worker.document),
+            "CPU fallback"
+        );
     }
 
     #[test]

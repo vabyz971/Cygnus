@@ -282,7 +282,8 @@ fn adjustment_coverage_rgba(masks: &[&crate::document::LayerMask]) -> Vec<u8> {
 /// Recursive support check (see the module docs).
 fn supported(nodes: &[LayerNode]) -> bool {
     nodes.iter().filter(|n| n.visible()).all(|node| match node {
-        LayerNode::Pixel(l) => l.children.is_empty(),
+        // Layer styles are CPU-only for now.
+        LayerNode::Pixel(l) => l.children.is_empty() && !l.styles.is_active(),
         LayerNode::Vector(v) => !v.masks.iter().any(|m| m.enabled),
         LayerNode::Group(g) => !g.filter_layers.iter().any(|f| f.enabled) && supported(&g.children),
         LayerNode::Adjustment(a) => pixel_ops(&a.filters).is_some(),

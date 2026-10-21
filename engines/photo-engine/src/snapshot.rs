@@ -241,6 +241,8 @@ pub struct PhotoLayerInfo {
     /// Vector paths (`Some` for vector layers only): node editor
     /// overlay (handles + drags, layer space).
     pub paths: Option<Vec<crate::VectorPath>>,
+    /// Layer styles (`Some` for pixel layers only): inspector section.
+    pub styles: Option<crate::document::styles::LayerStyles>,
 }
 
 impl PhotoLayerInfo {
@@ -379,6 +381,10 @@ impl PhotoLayerInfo {
                     (region.width > 0 && region.height > 0).then_some((region.width, region.height))
                 }
                 LayerNode::Adjustment(_) => None,
+            },
+            styles: match node {
+                LayerNode::Pixel(pixels) => Some(pixels.styles),
+                LayerNode::Vector(_) | LayerNode::Group(_) | LayerNode::Adjustment(_) => None,
             },
             paths: match node {
                 LayerNode::Vector(vector) => Some(vector.vector.paths.clone()),

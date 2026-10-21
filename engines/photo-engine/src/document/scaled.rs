@@ -99,6 +99,7 @@ fn scale_node(node: &LayerNode, s: f32) -> Option<LayerNode> {
         LayerNode::Pixel(l) => {
             let mut l = l.clone();
             l.transform = scale_offset(&l.transform, s);
+            l.styles = l.styles.scaled(s);
             l.children = scale_nodes(&l.children, s)?;
             LayerNode::Pixel(l)
         }

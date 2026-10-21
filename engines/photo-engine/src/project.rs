@@ -17,10 +17,10 @@
 //! Native `.cygp` project format — UI-independent, reusable by the
 //! suite's other apps (layer video compositing…).
 //!
-//! FORMAT_VERSION 8: eight more blend modes. Versioned JSON container,
-//! PNG-then-base64 encoded images.
+//! FORMAT_VERSION 9: layer styles (drop shadow, outer glow). Versioned
+//! JSON container, PNG-then-base64 encoded images.
 //!
-//! Compatibility policy: v8 read natively, v7/v6/v5/v4 read natively
+//! Compatibility policy: v9 read natively, v8/v7/v6/v5/v4 read natively
 //! (newer fields absent = empty defaults), v3 MIGRATED (filters
 //! converted to neutral sub-layers); any other version is refused
 //! with a clear message.
@@ -41,13 +41,14 @@ use crate::document::{
 };
 use crate::scene::{PathSegment, VectorPath};
 
-/// Format version — bump on any incompatible change. v8: blend modes
+/// Format version — bump on any incompatible change. v9: layer styles
+/// (an older reader would silently drop them). v8: blend modes
 /// 6..=13 (an older reader would fail on the unknown names). v7: mask density
 /// and feather (an older reader would silently drop them). v6: vector
 /// layers. v5: nesting (pixel children, group filters, adjustment
 /// masks). v4: pixel filters = sub-layers (`filter_layers`) instead
 /// of `live_filters` (v3, migrated on read).
-pub const FORMAT_VERSION: u32 = 8;
+pub const FORMAT_VERSION: u32 = 9;
 
 /// Canonical Cygnus photo project extension.
 pub const PROJECT_EXTENSION: &str = "cygp";
@@ -133,6 +134,9 @@ struct PixelDto {
     visible: bool,
     #[serde(default)]
     masks: Vec<MaskDto>,
+    /// v9: drop shadow / outer glow (absent = no style).
+    #[serde(default)]
+    styles: crate::document::styles::LayerStyles,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -418,6 +422,7 @@ fn node_to_dto(node: &LayerNode) -> Result<LayerNodeDto, String> {
                 blend_mode: l.blend_mode,
                 visible: l.visible,
                 masks: masks_to_dto(&l.masks, &l.name)?,
+                styles: l.styles,
             })
         }
         LayerNode::Group(g) => {
@@ -502,6 +507,7 @@ fn node_from_dto(dto: LayerNodeDto, legacy_v3: bool) -> Result<LayerNode, String
                 .map(|c| node_from_dto(c, legacy_v3))
                 .collect();
             layer.children = children?;
+            layer.styles = p.styles.sanitized();
             layer.transform = sanitize_transform(p.transform);
             layer.opacity = p.opacity.clamp(0.0, 100.0);
             layer.blend_mode = p.blend_mode;
@@ -660,7 +666,7 @@ pub fn load(path: &Path) -> Result<LoadedProject, ProjectError> {
     let probe: VersionProbe = serde_json::from_slice(&json)
         .map_err(|e| ProjectError::Other(format!("invalid project: {e}")))?;
     let legacy_v3 = match probe.version {
-        FORMAT_VERSION | 7 | 6 | 5 | 4 => false,
+        FORMAT_VERSION | 8 | 7 | 6 | 5 | 4 => false,
         3 => true,
         v => return Err(ProjectError::UnsupportedVersion(v)),
     };
@@ -1222,6 +1228,28 @@ mod tests {
         save(&path, &doc).expect("sauvegarde");
         let loaded = load(&path).expect("chargement");
         assert_eq!(loaded.document.blend_of(id), Some(BlendMode::SoftLight));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn layer_styles_survive_a_roundtrip() {
+        let mut doc = Document::new(2, 2);
+        let mut layer = PixelLayer::new("fond", Arc::new(DynamicImage::new_rgba8(2, 2)));
+        layer.styles.drop_shadow.enabled = true;
+        layer.styles.drop_shadow.distance = 7.0;
+        layer.styles.outer_glow.enabled = true;
+        let styles = layer.styles;
+        let id = layer.id;
+        doc.push_layer(LayerNode::Pixel(layer));
+        let dir = std::env::temp_dir().join(format!("cygnus_styles_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("dossier temporaire");
+        let path = dir.join("styles.cygp");
+        save(&path, &doc).expect("sauvegarde");
+        let loaded = load(&path).expect("chargement");
+        let Some(LayerNode::Pixel(back)) = loaded.document.find(id) else {
+            panic!("calque pixel attendu");
+        };
+        assert_eq!(back.styles, styles);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
