@@ -228,9 +228,10 @@ impl EngineWorker {
         // `document` and `history` are disjoint fields: the lazy
         // snapshot only runs when a step is really recorded.
         let document = &self.document;
+        let selection = &self.selection;
         self.history
             .record(coalesce_layer.map(PhotoGesture::Slider), label, || {
-                document.snapshot()
+                snapshot_with(document, selection)
             });
     }
 
@@ -465,9 +466,11 @@ impl EngineWorker {
     /// its label) goes to redo. False when the stack is empty.
     fn apply_undo_step(&mut self) -> bool {
         let document = &self.document;
-        let Some(snapshot) = self.history.undo(|| document.snapshot()) else {
+        let selection = &self.selection;
+        let Some(snapshot) = self.history.undo(|| snapshot_with(document, selection)) else {
             return false;
         };
+        self.selection = snapshot.selection.clone();
         self.document.restore_snapshot(snapshot);
         true
     }
@@ -475,9 +478,11 @@ impl EngineWorker {
     /// One step forward, symmetric. False when the stack is empty.
     fn apply_redo_step(&mut self) -> bool {
         let document = &self.document;
-        let Some(snapshot) = self.history.redo(|| document.snapshot()) else {
+        let selection = &self.selection;
+        let Some(snapshot) = self.history.redo(|| snapshot_with(document, selection)) else {
             return false;
         };
+        self.selection = snapshot.selection.clone();
         self.document.restore_snapshot(snapshot);
         true
     }
@@ -651,6 +656,7 @@ impl EngineWorker {
                 undo_labels,
                 redo_labels,
                 gpu_frame,
+                selection: self.selection.clone(),
             }
         } else {
             self.metrics.last = Some(OpMetrics {
@@ -700,6 +706,7 @@ impl EngineWorker {
                 can_redo,
                 undo_labels,
                 redo_labels,
+                selection: self.selection.clone(),
             }
         }
     }
@@ -2167,17 +2174,27 @@ impl EngineWorker {
                     });
                 let (width, height) = (self.document.width.max(1), self.document.height.max(1));
                 let selection = op.apply(self.selection.as_ref(), selection, width, height);
-                self.selection = selection.clone();
-                Mutation::immediate(PhotoEngineResponse::SelectionChanged { selection })
+                if self.selection == selection {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
+                self.selection = selection;
+                // The state response carries the new selection.
+                Mutation::changed(invalidation)
             }
             PhotoEngineCommand::SetBrushDynamics(dynamics) => {
                 self.brush_dynamics = dynamics.sanitized();
                 Mutation::unchanged()
             }
             PhotoEngineCommand::SetSelection(selection) => {
-                // Session state: no history step, no pixels changed.
+                // Undoable like Photoshop (no pixels change: state
+                // response only).
+                if self.selection == selection {
+                    return Mutation::unchanged();
+                }
+                self.push_history(None);
                 self.selection = selection;
-                Mutation::unchanged()
+                Mutation::changed(invalidation)
             }
             PhotoEngineCommand::AddMaskFromSelection { layer } => {
                 let Some(selection) = self.selection.clone() else {
@@ -2222,6 +2239,16 @@ impl EngineWorker {
             }
         }
     }
+}
+
+/// History snapshot of the document plus the worker's selection.
+fn snapshot_with(
+    document: &Document,
+    selection: &Option<crate::Selection>,
+) -> crate::history::Snapshot {
+    let mut snapshot = document.snapshot();
+    snapshot.selection = selection.clone();
+    snapshot
 }
 
 /// Invalidates a mask bearer's appearance after mutating its
@@ -2386,8 +2413,12 @@ mod tests {
         let (mut worker, id) = selection_worker();
         let selection =
             crate::Selection::from_drag(crate::SelectionKind::Rect, (0.0, 0.0), (20.0, 20.0));
-        worker.apply(PhotoEngineCommand::SetSelection(selection));
-        assert!(!worker.history.can_undo(), "selecting is not an edit");
+        worker.apply(PhotoEngineCommand::SetSelection(selection.clone()));
+        assert!(worker.history.can_undo(), "selecting is undoable");
+        worker.apply(PhotoEngineCommand::Undo);
+        assert_eq!(worker.selection, None, "undo restores no selection");
+        worker.apply(PhotoEngineCommand::Redo);
+        assert_eq!(worker.selection, selection, "redo restores it");
         worker.apply(PhotoEngineCommand::PaintStroke {
             layer: id,
             points: vec![(5.0, 10.0), (35.0, 10.0)],
@@ -2457,8 +2488,9 @@ mod tests {
             contiguous: true,
             op: crate::SelectionOp::Replace,
         });
-        let PhotoEngineResponse::SelectionChanged {
+        let PhotoEngineResponse::StateChanged {
             selection: Some(selection),
+            ..
         } = response
         else {
             panic!("selection attendue");
@@ -2466,7 +2498,7 @@ mod tests {
         assert_eq!(selection.coverage(10.5, 10.5), 1.0, "dark half");
         assert_eq!(selection.coverage(30.5, 10.5), 0.0, "light half");
         assert_eq!(worker.selection, Some(selection), "worker keeps it");
-        assert!(!worker.history.can_undo());
+        assert!(worker.history.can_undo(), "undoable like any selection");
     }
 
     #[test]
@@ -2544,9 +2576,14 @@ mod tests {
         let pixels = layer_pixels(&worker, id);
         assert_eq!(pixels.get_pixel(10, 10).0, [0, 200, 0, 255], "filled");
         assert_eq!(pixels.get_pixel(30, 10)[3], 0, "outside the selection");
-        assert_eq!(worker.history.undo_steps().len(), 1, "one step");
+        // Two steps: the selection (undoable since O016) and the fill.
+        assert_eq!(worker.history.undo_steps().len(), 2);
         worker.apply(PhotoEngineCommand::Undo);
         assert_eq!(layer_pixels(&worker, id).get_pixel(10, 10)[3], 0);
+        assert!(
+            worker.selection.is_some(),
+            "undoing the fill keeps the selection"
+        );
     }
 
     #[test]
@@ -3828,7 +3865,6 @@ mod tests {
             PhotoEngineResponse::DragProxyReady { .. }
             | PhotoEngineResponse::DragProxyUnavailable { .. } => panic!("proxy inattendu"),
             PhotoEngineResponse::StateChanged { .. } => panic!("rendu attendu"),
-            PhotoEngineResponse::SelectionChanged { .. } => panic!("sélection inattendue"),
             PhotoEngineResponse::ThumbnailUpdated { .. } => {
                 panic!("pas de miniature seule sur apply solo")
             }

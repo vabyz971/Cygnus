@@ -58,6 +58,9 @@ pub enum PhotoEngineResponse {
         /// `preview`, which stays for CPU consumers (histogram,
         /// eyedropper) and as the fallback.
         gpu_frame: Option<crate::gpu_view::GpuFrame>,
+        /// Active pixel selection (the worker is the source of truth:
+        /// undo / redo restore it).
+        selection: Option<crate::Selection>,
     },
     /// Deferred CPU preview of the render `revision` (sent when the queue
     /// went quiet after GPU-only responses): feeds the histogram and the
@@ -83,6 +86,8 @@ pub enum PhotoEngineResponse {
         undo_labels: Vec<String>,
         /// Redoable step operation ids (O003).
         redo_labels: Vec<String>,
+        /// Active pixel selection (see `LayersChanged`).
+        selection: Option<crate::Selection>,
     },
     /// Secondary thumbnail arrived AFTER the canvas (Phase 6G.3): the
     /// previous `LayersChanged` carried the canvas preview + thumbnails
@@ -139,12 +144,6 @@ pub enum PhotoEngineResponse {
     ProjectSaved {
         /// Written file path.
         path: PathBuf,
-    },
-    /// The worker computed a new selection (magic wand); the UI adopts
-    /// it as its active selection.
-    SelectionChanged {
-        /// New selection (`None` = nothing matched).
-        selection: Option<crate::Selection>,
     },
 }
 

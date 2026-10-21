@@ -1510,6 +1510,7 @@ impl Document {
         crate::history::Snapshot {
             doc_size: (self.width, self.height),
             root: self.root.clone(),
+            selection: None,
         }
     }
 

@@ -42,6 +42,9 @@ use crate::document::{Document, LayerNode};
 pub struct Snapshot {
     pub doc_size: (u32, u32),
     pub root: Vec<LayerNode>,
+    /// Active pixel selection at that step (session state recorded by
+    /// the editing worker; `None` from plain document snapshots).
+    pub selection: Option<crate::Selection>,
 }
 
 /// Hybrid history entry.
@@ -242,6 +245,7 @@ mod tests {
         Snapshot {
             doc_size: (4, 4),
             root: values.iter().map(|&v| pixel(v)).collect(),
+            selection: None,
         }
     }
 
