@@ -182,6 +182,7 @@ mod tests {
             PhotoCanvasTool::Bucket,
             PhotoCanvasTool::Gradient,
             PhotoCanvasTool::Clone,
+            PhotoCanvasTool::PenSelect,
             PhotoCanvasTool::Pan,
             PhotoCanvasTool::Zoom,
             PhotoCanvasTool::Brush,

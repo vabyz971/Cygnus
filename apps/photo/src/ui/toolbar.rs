@@ -41,6 +41,7 @@ pub(crate) fn tool_icon(tool: PhotoCanvasTool, texts: PhotoCatalog) -> (Icon, &'
         PhotoCanvasTool::Bucket => (Icon::PaintBucket, texts.get(PhotoTextKey::BucketHint)),
         PhotoCanvasTool::Gradient => (Icon::Gradient, texts.get(PhotoTextKey::GradientHint)),
         PhotoCanvasTool::Clone => (Icon::Stamp, texts.get(PhotoTextKey::CloneHint)),
+        PhotoCanvasTool::PenSelect => (Icon::PenSelect, texts.get(PhotoTextKey::PenSelectHint)),
         PhotoCanvasTool::Pan => (Icon::Hand, texts.get(PhotoTextKey::PanHint)),
         PhotoCanvasTool::Zoom => (Icon::Search, texts.get(PhotoTextKey::ZoomHint)),
         PhotoCanvasTool::Brush => (Icon::Brush, texts.get(PhotoTextKey::BrushHint)),

@@ -78,6 +78,7 @@ impl PhotoEditMode {
                 PhotoCanvasTool::Move,
                 PhotoCanvasTool::Select,
                 PhotoCanvasTool::Lasso,
+                PhotoCanvasTool::PenSelect,
                 PhotoCanvasTool::Wand,
                 PhotoCanvasTool::Brush,
                 PhotoCanvasTool::Eraser,

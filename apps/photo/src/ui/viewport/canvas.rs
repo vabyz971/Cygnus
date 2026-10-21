@@ -51,6 +51,8 @@ pub enum PhotoCanvasTool {
     Gradient,
     /// Clone stamp: Alt+click sets the source, dragging copies from it.
     Clone,
+    /// Polygonal (pen) selection: clicks add corners, closing selects.
+    PenSelect,
     /// Hand: dragging moves the view.
     Pan,
     /// Zoom: click = zoom in, right-click = out.
@@ -78,7 +80,8 @@ impl PhotoCanvasTool {
             | Self::Wand
             | Self::Bucket
             | Self::Gradient
-            | Self::Clone => ViewportTool::Brush,
+            | Self::Clone
+            | Self::PenSelect => ViewportTool::Brush,
         }
     }
 
@@ -99,6 +102,7 @@ impl PhotoCanvasTool {
             Self::Bucket => texts.get(PhotoTextKey::BucketHintText),
             Self::Gradient => texts.get(PhotoTextKey::GradientHintText),
             Self::Clone => texts.get(PhotoTextKey::CloneHintText),
+            Self::PenSelect => texts.get(PhotoTextKey::PenSelectHintText),
             Self::Pan => texts.get(PhotoTextKey::PanHintText),
             Self::Zoom => texts.get(PhotoTextKey::ZoomHintText),
             Self::Brush => texts.get(PhotoTextKey::BrushHintText),
@@ -416,6 +420,17 @@ impl<'a> PhotoCanvas<'a> {
             }
             return outcome;
         }
+        // Pen selection: each click reports a corner (double-click
+        // closes); the path itself lives in the document state.
+        if self.tool == PhotoCanvasTool::PenSelect {
+            self.stroke.clear();
+            if response.response.double_clicked() {
+                outcome.pen_click = outcome.pointer_world.last().copied().map(|p| (p, true));
+            } else if response.response.clicked() {
+                outcome.pen_click = outcome.pointer_world.last().copied().map(|p| (p, false));
+            }
+            return outcome;
+        }
         // Wand / bucket: one click = one flood request.
         if matches!(self.tool, PhotoCanvasTool::Wand | PhotoCanvasTool::Bucket) {
             self.stroke.clear();
@@ -561,6 +576,8 @@ pub struct PhotoCanvasOutcome {
     pub gradient_drag: Option<SelectionDrag>,
     /// Clone stamp source picked this frame (Alt+click, document pixels).
     pub clone_source: Option<egui::Vec2>,
+    /// Pen selection click (document pixels, true = double-click).
+    pub pen_click: Option<(egui::Vec2, bool)>,
     /// Selection tool gesture (`None` = no marquee this frame).
     pub selection_drag: Option<SelectionDrag>,
     /// Stroke to commit (`None` = nothing this frame; the app sends it).

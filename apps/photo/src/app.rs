@@ -1544,6 +1544,11 @@ mod tests {
         (app, ctx, dest)
     }
 
+    thread_local! {
+        /// Test clock fed to `RawInput::time` (seconds).
+        static FRAME_CLOCK: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    }
+
     /// One frame of the full workspace with `events`.
     fn draw_frame(app: &mut PhotoApp, ctx: &egui::Context, events: Vec<egui::Event>) {
         draw_frame_with(app, ctx, events, egui::Modifiers::default());
@@ -1559,7 +1564,15 @@ mod tests {
         // egui 0.36 tracks held modifiers through this event.
         let mut events = events;
         events.insert(0, egui::Event::ModifiersChanged(modifiers));
+        // Steady clock (50 ms per frame): clicks stay clicks, and idle
+        // frames separate clicks that must not merge into a double-click.
+        let time = FRAME_CLOCK.with(|clock| {
+            let now = clock.get() + 0.05;
+            clock.set(now);
+            now
+        });
         let input = egui::RawInput {
+            time: Some(time),
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(1400.0, 900.0),
@@ -1834,6 +1847,54 @@ mod tests {
             "first stroke fixes the aligned offset"
         );
         assert!(wait_for_undo(&mut app, &ctx), "clone stroke recorded");
+    }
+
+    #[test]
+    fn pen_selection_closes_on_its_first_point() {
+        let (mut app, ctx, dest) = app_with_placed_canvas();
+        app.handle_action(
+            &ctx,
+            PhotoAction::SetTool(crate::ui::PhotoCanvasTool::PenSelect),
+        );
+        let at = |fx: f32, fy: f32| dest.min + egui::vec2(dest.width() * fx, dest.height() * fy);
+        let click = |app: &mut PhotoApp, p: egui::Pos2| {
+            draw_frame(
+                app,
+                &ctx,
+                vec![egui::Event::PointerMoved(p), primary(p, true)],
+            );
+            draw_frame(app, &ctx, vec![primary(p, false)]);
+            // Pause: the next click must not count as a double-click.
+            for _ in 0..10 {
+                draw_frame(app, &ctx, Vec::new());
+            }
+        };
+        let corners = [at(0.1, 0.1), at(0.9, 0.1), at(0.9, 0.9), at(0.1, 0.9)];
+        for p in corners {
+            click(&mut app, p);
+        }
+        assert_eq!(app.active_doc_opt().expect("doc").ui.pen_points.len(), 4);
+        assert!(app.active_doc_opt().expect("doc").ui.selection.is_none());
+        click(&mut app, corners[0]);
+        let doc = app.active_doc_opt().expect("doc");
+        assert!(doc.ui.pen_points.is_empty(), "path consumed");
+        let selection = doc.ui.selection.clone().expect("polygon selected");
+        assert_eq!(selection.coverage(200.5, 150.5), 1.0);
+        assert_eq!(selection.coverage(5.5, 5.5), 0.0);
+        // Escape drops a path in progress.
+        click(&mut app, at(0.3, 0.3));
+        draw_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        assert!(app.active_doc_opt().expect("doc").ui.pen_points.is_empty());
     }
 
     #[test]

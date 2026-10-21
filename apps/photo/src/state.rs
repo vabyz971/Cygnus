@@ -237,6 +237,8 @@ pub struct PhotoUiState {
     pub bucket: WandSettings,
     /// Gradient line being dragged (document pixels).
     pub gradient_preview: Option<((f32, f32), (f32, f32))>,
+    /// Pen selection corners placed so far (document pixels).
+    pub pen_points: Vec<(f32, f32)>,
     /// Clone stamp source (Alt+click, document pixels).
     pub clone_source: Option<(f32, f32)>,
     /// Clone stamp source minus destination, fixed by the first stroke

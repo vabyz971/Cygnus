@@ -702,6 +702,10 @@ fn draw_selection(
         .request_repaint_after(std::time::Duration::from_millis(ANTS_FRAME_MS));
 }
 
+/// Screen distance (points) under which a click closes the pen path
+/// on its first corner.
+const PEN_CLOSE_DISTANCE: f32 = 8.0;
+
 /// Ellipse sampling of the marquee being dragged.
 const MARQUEE_SEGMENTS: usize = 96;
 /// Marching ants speed (screen points per second).
@@ -1052,6 +1056,68 @@ pub fn draw_canvas_content(
         doc.ui.needs_repaint = true;
     } else if doc.ui.tool != PhotoCanvasTool::Lasso {
         doc.ui.lasso_preview.clear();
+    }
+    // Pen selection: clicks add corners; clicking the first corner, a
+    // double-click or Enter closes the polygon; Escape drops it.
+    if doc.ui.tool == PhotoCanvasTool::PenSelect {
+        let (enter, escape) = ui.input(|input| {
+            (
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        let scale = match (doc_rect, geom) {
+            (Some(rect), Some(g)) if g.doc_size.x > 0.0 => rect.width() / g.doc_size.x,
+            _ => 1.0,
+        };
+        let mut close = enter;
+        if let Some((point, double)) = outcome.pen_click {
+            let point = (point.x, point.y);
+            let snap = PEN_CLOSE_DISTANCE / scale.max(f32::EPSILON);
+            let on_first = doc.ui.pen_points.first().is_some_and(|first| {
+                ((first.0 - point.0).powi(2) + (first.1 - point.1).powi(2)).sqrt() <= snap
+            });
+            if on_first && doc.ui.pen_points.len() >= 3 {
+                close = true;
+            } else {
+                if doc.ui.pen_points.last() != Some(&point) {
+                    doc.ui.pen_points.push(point);
+                }
+                close |= double;
+            }
+            doc.ui.needs_repaint = true;
+        }
+        if escape {
+            doc.ui.pen_points.clear();
+        } else if close && doc.ui.pen_points.len() >= 3 {
+            let points = std::mem::take(&mut doc.ui.pen_points);
+            let selection = doc_size.and_then(|(width, height)| {
+                photo_engine::Selection::from_polygon(&points, width, height)
+            });
+            actions.push(PhotoAction::SetSelection(combine(
+                doc.ui.selection.as_ref(),
+                selection,
+            )));
+        }
+        // Path so far + rubber band to the cursor.
+        if let Some(rect) = doc_rect
+            && !doc.ui.pen_points.is_empty()
+        {
+            let mut line: Vec<egui::Pos2> = doc
+                .ui
+                .pen_points
+                .iter()
+                .map(|(x, y)| rect.min + egui::vec2(*x, *y) * scale)
+                .collect();
+            if let Some(hover) = outcome.hover_pos {
+                line.push(hover);
+            }
+            let phase = (ui.input(|input| input.time) * ANTS_SPEED) as f32;
+            draw_selection_outline(ui.painter(), ctx, &[line], phase);
+            doc.ui.needs_repaint = true;
+        }
+    } else {
+        doc.ui.pen_points.clear();
     }
     // Clone stamp: a new source resets the aligned offset.
     if let Some(source) = outcome.clone_source {
