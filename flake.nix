@@ -21,22 +21,28 @@
         libxi
         libxrandr
       ];
-      cargoToml = builtins.fromTOML (builtins.readFile ./apps/photo/Cargo.toml);
+      # The version is shared by every crate through [workspace.package].
+      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
     in
     {
       devShells.${system}.default = pkgs.mkShell {
-        buildInputs = with pkgs; [
+        packages = with pkgs; [
           cargo
           rustc
           rustfmt
           clippy
           rust-analyzer
-          # Dépendances requises par wgpu sur Linux
+          # License check required by the J0 milestone (deny.toml).
+          cargo-deny
+          # Runs the graft MCP server declared in .mcp.json through npx.
+          # python3 lets node-gyp build tree-sitter when no prebuilt
+          # binary matches (the C compiler comes from mkShell's stdenv).
+          nodejs_22
+          python3
           pkg-config
-          vulkan-loader
-          libxkbcommon
-          wayland
         ];
+        # Libraries required by wgpu / winit on Linux.
+        buildInputs = runtimeLibs;
         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
       };
 
@@ -45,21 +51,20 @@
       packages.${system} = rec {
         cygnus-photo = pkgs.rustPlatform.buildRustPackage {
           pname = "cygnus-photo";
-          version = cargoToml.package.version;
+          version = cargoToml.workspace.package.version;
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "photo" ];
+          cargoBuildFlags = [ "-p" "cygnus-photo" ];
           # The test suite needs a GPU and a display: run by the CI instead.
           doCheck = false;
           nativeBuildInputs = with pkgs; [ pkg-config makeWrapper ];
           buildInputs = runtimeLibs;
           postInstall = ''
-            mv $out/bin/photo $out/bin/cygnus-photo
             wrapProgram $out/bin/cygnus-photo \
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
           '';
           meta = {
-            description = "Cygnus Photo — open-source photo, vector and layout editor";
+            description = "Cygnus Photo — open-source non-destructive photo editor";
             license = pkgs.lib.licenses.gpl3Plus;
             mainProgram = "cygnus-photo";
             platforms = [ system ];
