@@ -1,0 +1,10 @@
+# Rust build output.
+/target/
+
+# Nix build results and direnv cache.
+/result
+/result-*
+/.direnv/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
