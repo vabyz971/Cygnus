@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the toolchain pinned in rust-toolchain.toml.
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Build
+        run: cargo build --workspace
+
+  linux-checks:
+    name: License headers and dependency licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: License headers
+        run: scripts/check-headers.sh
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.99.0"
+          command: check
