@@ -1,0 +1,21 @@
+[package]
+name = "cygnus-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cygnus-cli"
+path = "src/main.rs"
+
+[dependencies]
+cygnus-commands.workspace = true
+cygnus-photo-core.workspace = true
+cygnus-photo-render.workspace = true
+cygnus-photo-io.workspace = true
+
+[lints]
+workspace = true

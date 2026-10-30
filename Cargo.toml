@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ui-kit",
+    "crates/commands",
+    "crates/mcp-server",
+    "crates/file-format",
+    "photo/core",
+    "photo/render",
+    "photo/io",
+    "apps/photo",
+    "apps/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/vabyz971/Cygnus"
+publish = false
+
+# Internal crates, by path. Allowed edges follow docs/spec.md, section 7.4.
+[workspace.dependencies]
+cygnus-ui-kit = { path = "crates/ui-kit" }
+cygnus-commands = { path = "crates/commands" }
+cygnus-mcp-server = { path = "crates/mcp-server" }
+cygnus-file-format = { path = "crates/file-format" }
+cygnus-photo-core = { path = "photo/core" }
+cygnus-photo-render = { path = "photo/render" }
+cygnus-photo-io = { path = "photo/io" }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
