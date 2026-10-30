@@ -1,0 +1,47 @@
+# cargo-deny configuration: every dependency must be compatible with the
+# GPL v3 (AGENTS.md, rule 7). Run with `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# GPL v3 compatible licenses only. Adding a license here requires a dated
+# decision in docs/decisions/.
+allow = [
+    "GPL-3.0-or-later",
+    "GPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "LGPL-3.0-only",
+    "LGPL-2.1-or-later",
+    "MPL-2.0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The list is written ahead of the dependencies that will need it.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal crates are referenced by path only and never published.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
