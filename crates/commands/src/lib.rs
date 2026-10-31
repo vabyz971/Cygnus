@@ -16,3 +16,18 @@
 
 //! Command bus shared by Cygnus applications: typed and serializable command
 //! catalog, undo/redo history, and generation of the MCP tool definitions.
+//!
+//! This crate knows nothing about images. An application defines its
+//! commands as one type implementing [`Command`] and [`Catalog`]; every
+//! change to its document goes through a [`CommandBus`]
+//! (docs/decisions/0010).
+
+mod bus;
+mod catalog;
+mod command;
+mod journal;
+
+pub use bus::{BusLimits, CommandBus, Entry, GroupId, Source};
+pub use catalog::{Catalog, CommandInfo, Stability, catalog_json};
+pub use command::{Applied, ChangeSet, Command};
+pub use journal::{ChangesSince, Revision};
