@@ -1,0 +1,70 @@
+// This file is part of Cygnus.
+// Copyright (C) 2026 vabyz971
+//
+// Cygnus is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// Cygnus is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+// details.
+//
+// You should have received a copy of the GNU General Public License along
+// with Cygnus. If not, see <https://www.gnu.org/licenses/>.
+
+// Color conversions: the only place where they are written
+// (docs/decisions/0011). Every shader that converts colors includes this
+// module.
+//
+// Conventions: intermediate results are linear light with premultiplied
+// alpha; stored and exported pixels are sRGB-encoded with straight alpha.
+
+// sRGB transfer function (IEC 61966-2-1), encoded value to linear light.
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+// Inverse sRGB transfer function, linear light to encoded value.
+fn linear_to_srgb(c: f32) -> f32 {
+    let v = clamp(c, 0.0, 1.0);
+    if v <= 0.0031308 {
+        return v * 12.92;
+    }
+    return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+// Straight sRGB-encoded RGBA (0..1) to linear premultiplied RGBA.
+fn decode_srgb(straight: vec4<f32>) -> vec4<f32> {
+    let linear = vec3<f32>(
+        srgb_to_linear(straight.r),
+        srgb_to_linear(straight.g),
+        srgb_to_linear(straight.b),
+    );
+    return vec4<f32>(linear * straight.a, straight.a);
+}
+
+// Linear premultiplied RGBA to straight sRGB-encoded RGBA (0..1). A fully
+// transparent pixel has no color: it encodes to zero.
+fn encode_srgb(premultiplied: vec4<f32>) -> vec4<f32> {
+    let alpha = clamp(premultiplied.a, 0.0, 1.0);
+    if alpha <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let linear = premultiplied.rgb / alpha;
+    return vec4<f32>(
+        linear_to_srgb(linear.r),
+        linear_to_srgb(linear.g),
+        linear_to_srgb(linear.b),
+        alpha,
+    );
+}
+
+// Quantizes a 0..1 value to an integer from 0 to `max_value`.
+fn quantize(v: f32, max_value: f32) -> u32 {
+    return u32(round(clamp(v, 0.0, 1.0) * max_value));
+}

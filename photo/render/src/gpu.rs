@@ -285,6 +285,11 @@ pub fn open_headless() -> Result<Gpu, GpuError> {
     let instance = instance();
     let adapter = select_adapter(&instance)?;
     let (device, queue) = pollster::block_on(adapter.request_device(&device_descriptor(&adapter)))?;
+    // wgpu's default handler panics. Errors are caught by error scopes where
+    // they can happen; anything else is reported, never a crash.
+    device.on_uncaptured_error(std::sync::Arc::new(|error: wgpu::Error| {
+        eprintln!("cygnus: uncaught GPU error: {error}");
+    }));
     Ok(Gpu {
         info: adapter.get_info(),
         device,

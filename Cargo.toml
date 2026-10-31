@@ -49,6 +49,9 @@ wgpu = "=30.0.1"
 half = "2.7"
 pollster = "1.0"
 thiserror = "2.0"
+bytemuck = "1.25"
+# PNG output of `cygnus render` and golden images (0015).
+png = "0.18"
 
 # Serialization and configuration files.
 serde = { version = "1", features = ["derive"] }

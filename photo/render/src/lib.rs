@@ -24,3 +24,9 @@
 
 pub mod format;
 pub mod gpu;
+pub mod image;
+pub mod renderer;
+pub mod shaders;
+
+pub use image::{ExportBits, Image};
+pub use renderer::{RenderError, Renderer};

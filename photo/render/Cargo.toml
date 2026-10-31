@@ -13,6 +13,11 @@ wgpu.workspace = true
 half.workspace = true
 pollster.workspace = true
 thiserror.workspace = true
+bytemuck.workspace = true
+png.workspace = true
+
+[dev-dependencies]
+cygnus-commands.workspace = true
 
 [lints]
 workspace = true
