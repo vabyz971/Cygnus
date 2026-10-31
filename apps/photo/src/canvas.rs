@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use cygnus_commands::{ChangeSet, CommandBus, Revision, Source};
 use cygnus_photo_core::script::{SCRIPT_VERSION, Script};
-use cygnus_photo_core::{Document, PhotoChanges, PhotoCommand};
+use cygnus_photo_core::{CoreError, Document, PhotoChanges, PhotoCommand};
 use cygnus_photo_render::{Canvas, CanvasView, RenderError, Renderer};
 use cygnus_ui_kit::theme::palette;
 use eframe::egui_wgpu;
@@ -67,6 +67,18 @@ pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError>
             error: None,
         });
     Ok(())
+}
+
+/// Work counters and cache size of the canvas, for the benchmark.
+pub fn stats(
+    render_state: &egui_wgpu::RenderState,
+) -> Option<(cygnus_photo_render::CanvasStats, u32)> {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .map(|resources| (resources.canvas.stats(), resources.canvas.capacity()))
 }
 
 /// Last canvas error, if the canvas could not be drawn.
@@ -177,6 +189,34 @@ impl Session {
             center: [0.0, 0.0],
             fit_pending: true,
         }
+    }
+
+    /// Opens an already built document.
+    pub fn from_document(document: Document) -> Self {
+        Self {
+            snapshot: Arc::new(document.clone()),
+            document,
+            bus: CommandBus::new(),
+            sent: Revision::ZERO,
+            zoom: 1.0,
+            center: [0.0, 0.0],
+            fit_pending: true,
+        }
+    }
+
+    /// Applies `command` to the document.
+    pub fn execute(&mut self, command: PhotoCommand, source: Source) -> Result<(), CoreError> {
+        self.bus
+            .execute(&mut self.document, command, source)
+            .map(|_| ())
+    }
+
+    /// Places the view: `zoom` screen pixels per document pixel, `center`
+    /// document point at the center of the canvas.
+    pub fn set_camera(&mut self, zoom: f32, center: [f32; 2]) {
+        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.center = center;
+        self.fit_pending = false;
     }
 
     /// The document.

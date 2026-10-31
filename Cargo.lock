@@ -739,6 +739,7 @@ dependencies = [
  "egui-phosphor",
  "egui_dock",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -770,6 +771,7 @@ dependencies = [
  "half",
  "png",
  "pollster",
+ "serde_json",
  "thiserror 2.0.21",
  "wgpu",
 ]

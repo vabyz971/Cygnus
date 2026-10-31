@@ -1,0 +1,138 @@
+// This file is part of Cygnus.
+// Copyright (C) 2026 vabyz971
+//
+// Cygnus is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// Cygnus is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+// details.
+//
+// You should have received a copy of the GNU General Public License along
+// with Cygnus. If not, see <https://www.gnu.org/licenses/>.
+
+//! Headless fluidity benchmark (docs/decisions/0014).
+//!
+//! cargo run --release -p cygnus-photo-render --example fluidity -- \
+//!     [--out report.json] [--viewport 2560x1440]
+//!
+//! Each frame updates the canvas and draws it on an offscreen target, then
+//! waits for the GPU: the frame time includes all GPU work, but neither the
+//! presentation to a screen nor the vertical synchronization. The run in
+//! the application (`CYGNUS_BENCH=fluidity`) is the reference measurement.
+
+use std::error::Error;
+use std::time::Instant;
+
+use cygnus_commands::{ChangeSet, CommandBus, Source};
+use cygnus_photo_core::PhotoChanges;
+use cygnus_photo_render::bench::{self, FrameSample, RunInfo};
+use cygnus_photo_render::{Canvas, CanvasView, Renderer, gpu};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let mut out = String::from("fluidity-headless.json");
+    let mut viewport = [2560u32, 1440];
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--out" => out = args.next().ok_or("--out expects a path")?,
+            "--viewport" => {
+                let value = args.next().ok_or("--viewport expects WIDTHxHEIGHT")?;
+                let (w, h) = value
+                    .split_once('x')
+                    .ok_or("--viewport expects WIDTHxHEIGHT")?;
+                viewport = [w.parse()?, h.parse()?];
+            }
+            other => return Err(format!("unknown argument {other:?}").into()),
+        }
+    }
+
+    eprintln!("building the 24 Mpx, 10-layer document...");
+    let started = Instant::now();
+    let mut document = bench::build_document()?;
+    eprintln!("built in {:.1} s", started.elapsed().as_secs_f64());
+
+    let gpu = gpu::open_headless()?;
+    eprintln!("adapter: {} ({:?})", gpu.info.name, gpu.info.backend);
+    let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut canvas = Canvas::new(&renderer, format)?;
+    let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("benchmark target"),
+        size: wgpu::Extent3d {
+            width: viewport[0],
+            height: viewport[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+    let rect = [0.0, 0.0, viewport[0] as f32, viewport[1] as f32];
+
+    let mut bus = CommandBus::new();
+    let mut changes = PhotoChanges::everything();
+    let mut samples = Vec::new();
+    for frame in bench::camera_path([rect[2], rect[3]]) {
+        let start = Instant::now();
+        if frame.edit {
+            let cursor = bus.revision();
+            bus.execute(&mut document, bench::edit_command(), Source::Test)?;
+            changes = bus.changes_since(cursor).changes;
+        }
+        let view = CanvasView {
+            origin: bench::origin(&frame, rect),
+            scale: frame.scale,
+            viewport: rect,
+            background: [0.08, 0.09, 0.11],
+            checker: [[0.29, 0.31, 0.35], [0.23, 0.24, 0.28]],
+            checker_size: 8.0,
+        };
+        canvas.prepare(&renderer, &document, &changes, &view)?;
+        changes = PhotoChanges::default();
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            canvas.paint(&mut pass);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        gpu.device.poll(wgpu::PollType::wait_indefinitely())?;
+        samples.push(FrameSample {
+            phase: frame.phase,
+            time: start.elapsed(),
+            stats: canvas.stats(),
+        });
+    }
+
+    let info = RunInfo {
+        mode: "headless".to_owned(),
+        timing: "wall time of canvas update and draw on an offscreen target, waiting for the GPU; no presentation, no vsync".to_owned(),
+        adapter: format!("{} | {:?} | {} {}", gpu.info.name, gpu.info.backend, gpu.info.driver, gpu.info.driver_info),
+        viewport,
+        cache_bytes: u64::from(canvas.capacity()) * 256 * 256 * 8,
+        document_bytes: bench::document_bytes(&document),
+    };
+    let report = bench::report(&info, &samples);
+    std::fs::write(&out, serde_json::to_string_pretty(&report)? + "\n")?;
+    eprintln!("report written to {out}");
+    Ok(())
+}

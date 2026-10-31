@@ -19,6 +19,7 @@
 //! (Layers, Adjustments).
 
 mod app;
+mod bench;
 mod canvas;
 mod demo;
 mod i18n;
@@ -39,7 +40,7 @@ use cygnus_ui_kit::theme;
 /// as the headless renderer (docs/decisions/0012 and 0014). An adapter that
 /// does not meet them is refused at start-up with the list of what it
 /// lacks.
-fn wgpu_options() -> egui_wgpu::WgpuConfiguration {
+fn wgpu_options(no_vsync: bool) -> egui_wgpu::WgpuConfiguration {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends = gpu::BACKENDS;
     setup.device_descriptor = Arc::new(gpu::device_descriptor);
@@ -49,23 +50,42 @@ fn wgpu_options() -> egui_wgpu::WgpuConfiguration {
         })
         .map_err(|error| error.to_string())
     }));
-    egui_wgpu::WgpuConfiguration {
+    let mut configuration = egui_wgpu::WgpuConfiguration {
         wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(setup),
         ..Default::default()
+    };
+    if no_vsync {
+        // The benchmark measures frames, not the display refresh rate.
+        configuration.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
     }
+    configuration
 }
 
 fn main() -> ExitCode {
     i18n::install();
 
+    // Development mode: fluidity benchmark (docs/decisions/0014).
+    let bench = match std::env::var(bench::ENV).ok().as_deref() {
+        None => false,
+        Some("fluidity") => true,
+        Some(other) => {
+            eprintln!("cygnus-photo: unknown benchmark {other:?} (expected \"fluidity\")");
+            return ExitCode::from(2);
+        }
+    };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(tr(keys::APP_NAME))
             .with_app_id("cygnus-photo")
-            .with_inner_size([1600.0, 1000.0])
+            .with_inner_size(if bench {
+                [2560.0, 1440.0]
+            } else {
+                [1600.0, 1000.0]
+            })
             .with_min_inner_size([1024.0, 640.0]),
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: wgpu_options(),
+        wgpu_options: wgpu_options(bench),
         ..Default::default()
     };
 
@@ -79,7 +99,11 @@ fn main() -> ExitCode {
                 .as_ref()
                 .ok_or("the wgpu renderer is not available")?;
             canvas::install(render_state)?;
-            Ok(Box::new(app::PhotoApp::new()))
+            if bench {
+                Ok(Box::new(app::PhotoApp::new_bench()?))
+            } else {
+                Ok(Box::new(app::PhotoApp::new()))
+            }
         }),
     );
 

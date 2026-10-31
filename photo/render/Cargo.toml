@@ -15,9 +15,8 @@ pollster.workspace = true
 thiserror.workspace = true
 bytemuck.workspace = true
 png.workspace = true
-
-[dev-dependencies]
 cygnus-commands.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

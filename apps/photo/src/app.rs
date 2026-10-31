@@ -25,6 +25,7 @@ use cygnus_ui_kit::theme::{metrics, palette};
 use cygnus_ui_kit::widgets::{self, DocumentTab, Persona, Tool};
 use egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
 
+use crate::bench::BenchRun;
 use crate::canvas::{self, Session};
 use crate::demo;
 use crate::keys;
@@ -125,6 +126,7 @@ pub struct PhotoApp {
     document: usize,
     session: Session,
     placeholder: placeholder::State,
+    bench: Option<BenchRun>,
 }
 
 impl PhotoApp {
@@ -146,7 +148,18 @@ impl PhotoApp {
                 Source::Test,
             ),
             placeholder: placeholder::State::default(),
+            bench: None,
         }
+    }
+
+    /// Creates the main screen running the fluidity benchmark.
+    pub fn new_bench() -> Result<Self, String> {
+        let (run, session) = BenchRun::start()?;
+        Ok(Self {
+            session,
+            bench: Some(run),
+            ..Self::new()
+        })
     }
 
     fn menus(&mut self, ui: &mut Ui) {
@@ -241,7 +254,12 @@ impl PhotoApp {
         widgets::tool_rail(ui, &tools, &mut self.tool, placeholder::color_swatches);
     }
 
-    fn canvas(&mut self, ui: &mut Ui, canvas_error: Option<String>) {
+    fn canvas(
+        &mut self,
+        ui: &mut Ui,
+        canvas_error: Option<String>,
+        render_state: Option<&eframe::egui_wgpu::RenderState>,
+    ) {
         let tabs = [DocumentTab {
             title: tr(keys::DEMO_TITLE),
             close_hint: tr(keys::DOCUMENT_CLOSE),
@@ -293,7 +311,17 @@ impl PhotoApp {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(palette::CANVAS))
             .show(ui, |ui| match canvas_error {
-                None => self.session.show(ui, pan_tool),
+                None => {
+                    if let Some(run) = &mut self.bench {
+                        let size = ui.max_rect().size() * ui.ctx().pixels_per_point();
+                        if run.frame(&mut self.session, [size.x, size.y], render_state) {
+                            ui.ctx().request_repaint();
+                        } else {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    }
+                    self.session.show(ui, pan_tool);
+                }
                 Some(error) => {
                     ui.centered_and_justified(|ui| {
                         ui.label(
@@ -328,7 +356,8 @@ impl PhotoApp {
 
 impl eframe::App for PhotoApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
-        let canvas_error = frame.wgpu_render_state().and_then(canvas::last_error);
+        let render_state = frame.wgpu_render_state().cloned();
+        let canvas_error = render_state.as_ref().and_then(canvas::last_error);
         widgets::menu_bar(ui, tr(keys::APP_NAME), |ui| self.menus(ui));
         self.persona_bar(ui);
         widgets::options_bar(ui, |ui| {
@@ -340,7 +369,7 @@ impl eframe::App for PhotoApp {
             placeholder: &mut self.placeholder,
         };
         self.dock.show(ui, &mut viewer);
-        self.canvas(ui, canvas_error);
+        self.canvas(ui, canvas_error, render_state.as_ref());
     }
 
     fn on_exit(&mut self) {
