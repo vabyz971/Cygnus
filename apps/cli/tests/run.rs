@@ -20,8 +20,8 @@ use std::process::Command;
 
 #[test]
 fn binary_exits_with_success() {
-    let status = Command::new(env!("CARGO_BIN_EXE_cygnus-cli"))
+    let status = Command::new(env!("CARGO_BIN_EXE_cygnus"))
         .status()
-        .expect("failed to run the cygnus-cli binary");
+        .expect("failed to run the cygnus binary");
     assert!(status.success(), "unexpected exit status: {status}");
 }

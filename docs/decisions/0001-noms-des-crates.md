@@ -30,4 +30,4 @@ Les dépendances internes sont déclarées une seule fois dans `[workspace.depen
 
 - Une future application suit le même schéma (`cygnus-<app>-<domaine>`).
 - Le flake Nix construit le paquet `cygnus-photo`.
-- Le nom du binaire sans fenêtre pourra être raccourci (par exemple `cygnus`) par une décision ultérieure.
+- Le binaire sans fenêtre s'appelle `cygnus` depuis la décision 0017 (le paquet reste `cygnus-cli`).

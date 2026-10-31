@@ -15,5 +15,152 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 //! Headless mode of Cygnus, for tests and agents.
+//!
+//! `cygnus render <script.json> <output.png>` builds a document from a
+//! development script (docs/decisions/0015) through the command bus and
+//! exports it with the renderer of the application: there is no other
+//! rendering path. Exit codes: 0 success, 1 failure, 2 usage error.
 
-fn main() {}
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use cygnus_commands::Source;
+use cygnus_photo_core::Depth;
+use cygnus_photo_core::script::{Script, ScriptError};
+use cygnus_photo_render::gpu::{self, GpuError};
+use cygnus_photo_render::{ExportBits, RenderError, Renderer};
+
+const USAGE: &str = "\
+Cygnus, headless mode.
+
+Usage:
+  cygnus render <script.json> <output.png> [--bits 8|16]
+      Builds the document described by a development script and exports
+      it as an sRGB PNG. The bit depth defaults to the document depth.
+  cygnus --help
+      Shows this help.
+
+Environment:
+  CYGNUS_ADAPTER   part of the GPU adapter name to use (for example llvmpipe)";
+
+#[derive(Debug, thiserror::Error)]
+enum CliError {
+    #[error("{0}\n\n{USAGE}")]
+    Usage(String),
+    #[error("cannot read {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{}: {source}", path.display())]
+    Script { path: PathBuf, source: ScriptError },
+    #[error(transparent)]
+    Gpu(#[from] GpuError),
+    #[error("rendering failed: {0}")]
+    Render(#[from] RenderError),
+    #[error("cannot write {}: {reason}", path.display())]
+    Write { path: PathBuf, reason: String },
+}
+
+impl CliError {
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::Usage(_) => 2,
+            _ => 1,
+        }
+    }
+}
+
+struct RenderArgs {
+    script: PathBuf,
+    output: PathBuf,
+    bits: Option<ExportBits>,
+}
+
+fn parse_render(args: &[String]) -> Result<RenderArgs, CliError> {
+    let mut positional = Vec::new();
+    let mut bits = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--bits" {
+            bits = match iter.next().map(String::as_str) {
+                Some("8") => Some(ExportBits::Eight),
+                Some("16") => Some(ExportBits::Sixteen),
+                _ => return Err(CliError::Usage("--bits expects 8 or 16".to_owned())),
+            };
+        } else {
+            positional.push(arg);
+        }
+    }
+    match positional.as_slice() {
+        [script, output] => Ok(RenderArgs {
+            script: PathBuf::from(script),
+            output: PathBuf::from(output),
+            bits,
+        }),
+        _ => Err(CliError::Usage(
+            "usage: cygnus render <script.json> <output.png> [--bits 8|16]".to_owned(),
+        )),
+    }
+}
+
+fn render(args: RenderArgs) -> Result<(), CliError> {
+    let text = std::fs::read_to_string(&args.script).map_err(|source| CliError::Read {
+        path: args.script.clone(),
+        source,
+    })?;
+    let script_error = |source| CliError::Script {
+        path: args.script.clone(),
+        source,
+    };
+    let document = Script::parse(&text)
+        .map_err(script_error)?
+        .build(Source::Cli)
+        .map_err(script_error)?;
+
+    let gpu = gpu::open_headless()?;
+    let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
+    let bits = args.bits.unwrap_or(match document.depth {
+        Depth::U8 => ExportBits::Eight,
+        Depth::U16 => ExportBits::Sixteen,
+    });
+    let image = renderer.export(&document, bits)?;
+
+    let write_error = |path: &Path, reason: String| CliError::Write {
+        path: path.to_owned(),
+        reason,
+    };
+    let mut bytes = Vec::new();
+    image
+        .write_png(&mut bytes)
+        .map_err(|error| write_error(&args.output, error.to_string()))?;
+    std::fs::write(&args.output, bytes)
+        .map_err(|error| write_error(&args.output, error.to_string()))
+}
+
+fn run(args: &[String]) -> Result<(), CliError> {
+    match args.split_first() {
+        // Without arguments, or when asked: help, and success.
+        None => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        Some((command, _)) if command == "--help" || command == "-h" || command == "help" => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        Some((command, rest)) if command == "render" => render(parse_render(rest)?),
+        Some((command, _)) => Err(CliError::Usage(format!("unknown command {command:?}"))),
+    }
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("cygnus: {error}");
+            ExitCode::from(error.exit_code())
+        }
+    }
+}

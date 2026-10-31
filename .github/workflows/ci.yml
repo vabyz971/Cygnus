@@ -75,7 +75,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
       - uses: Swatinem/rust-cache@v2
       - name: GPU tests
-        run: cargo test -p cygnus-photo-render -- --nocapture
+        run: cargo test -p cygnus-photo-render -p cygnus-cli -- --nocapture
       # Actual and difference images of failed golden comparisons.
       - name: Upload golden failures
         if: failure()

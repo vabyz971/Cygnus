@@ -8,7 +8,8 @@ repository.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "cygnus-cli"
+# The headless command is `cygnus` (docs/decisions/0017).
+name = "cygnus"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,6 +17,7 @@ cygnus-commands.workspace = true
 cygnus-photo-core.workspace = true
 cygnus-photo-render.workspace = true
 cygnus-photo-io.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

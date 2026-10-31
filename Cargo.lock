@@ -700,6 +700,7 @@ dependencies = [
  "cygnus-photo-core",
  "cygnus-photo-io",
  "cygnus-photo-render",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
