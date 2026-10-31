@@ -182,6 +182,8 @@ Le document est un arbre de calques unique ; l'interface, le serveur MCP et la l
 
 Les vues lisent le modèle ; l'application, le serveur MCP et la ligne de commande le modifient uniquement par le bus de commandes.
 
+**Version texte du schéma.** Trois entrées (application `egui`, serveur MCP, ligne de commande sans fenêtre) envoient des commandes au bus de commandes. Le bus les applique au modèle du document. Le modèle alimente trois services : le rendu GPU (il compile l'arbre), les fichiers (lecture et écriture) et les vues du modèle (panneau Calques, graphe après la bêta).
+
 ### 7.1 Un modèle, deux vues
 
 - Le modèle du document est la source de vérité : l'arbre de calques.
@@ -240,6 +242,8 @@ Règles de dépendance : `apps` dépend de `photo`, et tout dépend de `crates`,
 
 Chaque application est un exécutable distinct au départ. Les réunir plus tard en un seul programme à modes « studio » reste possible sans changer cette structure.
 
+Les noms de la table sont ceux des dossiers. Les paquets Cargo portent le préfixe `cygnus-` (par exemple `cygnus-photo-core`), comme décidé dans `docs/decisions/0001`.
+
 ## 8. Serveur MCP intégré
 
 Le serveur MCP donne à un agent IA les mêmes commandes que l'interface, sans pouvoir supplémentaire, et reste désactivé tant que l'utilisateur ne l'active pas.
@@ -284,8 +288,6 @@ Le code est écrit par des agents IA, encadrés par une spec, des tâches courte
 - `docs/decisions/` : une décision d'architecture par fichier, avec sa date et sa raison. Toute extraction de code vers `crates/` y est consignée.
 - `docs/views/` : une fiche de design par vue d'interface (section 6).
 
-anglais
-
 **Boucle d'une tâche**
 
 1. L'humain choisit une ou quelques exigences (par exemple CAL-2 et CAL-3) et rédige la consigne : contexte, identifiants, fichiers concernés, critères d'acceptation, interdits.
@@ -315,6 +317,19 @@ La bêta s'atteint en huit jalons ordonnés, chacun fermé par un critère que l
 
 Les jalons sont ordonnés mais pas datés : leur durée sera estimée à la fin de J0, avec la vitesse réelle du travail avec les agents.
 
+**Version texte de la feuille de route.**
+
+| Jalon | Contenu | Critère de sortie |
+| --- | --- | --- |
+| J0 Fondations | Dépôt neuf, `AGENTS.md`, crates squelettes, intégration continue, mode sans fenêtre | Intégration continue verte sur Linux, Windows et macOS |
+| J1 Interface | Écran principal de la maquette, panneaux ancrables, workspaces | Prototype `egui_dock` validé sur les trois systèmes |
+| J2 Document, rendu | Modèle, bus de commandes, rendu GPU par tuiles, calque pixel | Aperçu identique à l'export, cibles de fluidité mesurées |
+| J3 Calques, réglages | Groupes, masques, réglages, historique, objets incorporés | Scénario photo complet réussi en mode sans fenêtre |
+| J4 Agent MCP | Serveur MCP généré depuis le catalogue, panneau Agent | Un agent exécute le scénario photo |
+| J5 Outils, pinceau | Sélections, pinceau, gomme, tampon, recadrage, transformation | Retouche complète à la souris et à la tablette |
+| J6 Fichiers, vues | Nouveau document, import, export, préférences, format `.cygnus` | Ouvrir, retoucher, enregistrer, rouvrir, exporter |
+| J7 Stabilisation | Correction de bogues, performances, documentation du format | Critères de sortie de la bêta atteints (ci-dessous) |
+
 **Critères de sortie de la bêta (J7)**
 
 - Chaque exigence de la section 4 a un test d'acceptation qui passe.
@@ -326,7 +341,7 @@ Les jalons sont ordonnés mais pas datés : leur durée sera estimée à la fin 
 
 ## 11. Hors périmètre, risques et décisions ouvertes
 
-Neuf décisions restent à trancher avant ou pendant les premiers jalons, et six risques sont identifiés avec leur parade.
+Huit décisions restent à trancher avant ou pendant les premiers jalons, et six risques sont identifiés avec leur parade.
 
 **Hors périmètre de ce projet.** Les studios Vector, Layout, Audio et Vidéo, les versions mobiles, la génération d'image par IA, le RAW et les extensions tierces. Ils pourront faire l'objet de cahiers des charges séparés une fois la bêta Photo publiée.
 
@@ -342,7 +357,7 @@ Neuf décisions restent à trancher avant ou pendant les premiers jalons, et six
 | GPU minimal supporté | À mesurer | À fixer au jalon J2 |
 | Transport du serveur MCP | HTTP local, socket local ou stdio | HTTP local avec jeton |
 | Préfixes de commit | Par domaine (`rendu:`, `ui:`, `fichier:`) ou unique | Par domaine |
-| Sort de l'ancien dépôt Cygnus | Le renommer en cygnus-legacy et l'archiver, ou garder le nom avec une branche orpheline | À choisir avant le jalon J0 |
+| Sort de l'ancien dépôt Cygnus | Le renommer en cygnus-legacy et l'archiver, ou garder le nom avec une branche orpheline | Réglé : ancien dépôt renommé en legacy, nouveau dépôt Cygnus créé |
 
 ### 11.2 Risques
 
