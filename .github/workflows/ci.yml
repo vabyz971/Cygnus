@@ -46,3 +46,33 @@ jobs:
         with:
           rust-version: "1.99.0"
           command: check
+
+  # Renderer tests on a GPU adapter (docs/decisions/0013): lavapipe on Linux,
+  # WARP on Windows, the runner's Metal device on macOS. CYGNUS_REQUIRE_GPU
+  # turns a missing adapter into a failure instead of a skip.
+  gpu:
+    name: GPU (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            adapter: llvmpipe
+          - os: windows-2022
+            adapter: ""
+          - os: macos-14
+            adapter: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      CYGNUS_REQUIRE_GPU: "1"
+      CYGNUS_ADAPTER: ${{ matrix.adapter }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: rustup toolchain install
+      - name: Install lavapipe (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - uses: Swatinem/rust-cache@v2
+      - name: GPU tests
+        run: cargo test -p cygnus-photo-render --test gpu -- --nocapture

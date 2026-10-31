@@ -16,3 +16,11 @@
 
 //! Rendering for Cygnus Photo: compiles the layer tree into GPU passes
 //! written in WGSL, over a tiled canvas.
+//!
+//! There is a single rendering path, on the GPU, shared by the interactive
+//! canvas, the export, the command line and the tests (docs/decisions/0012
+//! and 0013). Software adapters such as lavapipe or WARP are drivers like
+//! any other: this crate has no CPU fallback.
+
+pub mod format;
+pub mod gpu;

@@ -43,6 +43,13 @@ eframe = { version = "=0.36.2", default-features = false, features = [
 egui_dock = { version = "=0.21.1", features = ["serde"] }
 egui-phosphor = { version = "=0.14.0", default-features = false, features = ["regular"] }
 
+# Rendering. wgpu must be exactly the version egui-wgpu uses, so that the
+# canvas shares eframe's device (docs/decisions/0015).
+wgpu = "=30.0.1"
+half = "2.7"
+pollster = "1.0"
+thiserror = "2.0"
+
 # Serialization and configuration files.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

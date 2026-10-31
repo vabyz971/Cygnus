@@ -9,6 +9,10 @@ publish.workspace = true
 
 [dependencies]
 cygnus-photo-core.workspace = true
+wgpu.workspace = true
+half.workspace = true
+pollster.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
