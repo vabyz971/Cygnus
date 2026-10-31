@@ -18,3 +18,14 @@
 //! panels, dialogs, preferences and keyboard shortcuts.
 //!
 //! This crate knows nothing about layers or pixels.
+
+pub mod config;
+pub mod dock;
+pub mod i18n;
+pub mod theme;
+pub mod widgets;
+pub mod workspace;
+
+/// Icon glyphs (Phosphor, regular weight), usable inside any label once
+/// [`theme::install`] has registered the icon font.
+pub use egui_phosphor::regular as icons;

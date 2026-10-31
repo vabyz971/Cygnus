@@ -5,7 +5,16 @@
 all-features = true
 
 [advisories]
-ignore = []
+# Each ignored advisory needs a reason and a decision (docs/decisions/0004).
+ignore = [
+    # paste: unmaintained, compile-time macro only, pulled by egui_dock.
+    { id = "RUSTSEC-2024-0436", reason = "transitive via egui_dock, build-time macro, no fix upstream" },
+    # zbus split crates: still maintained inside zbus, pulled by the
+    # AccessKit screen reader support of eframe on Linux.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant, transitive via eframe accesskit, merged into zbus" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names, transitive via eframe accesskit, merged into zbus" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, transitive via eframe accesskit, merged into zbus" },
+]
 
 [licenses]
 # GPL v3 compatible licenses only. Adding a license here requires a dated
