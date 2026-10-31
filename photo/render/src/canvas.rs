@@ -91,8 +91,15 @@ enum Op {
     },
 }
 
+/// The tiles needed do not fit in the cache.
 #[derive(Debug)]
-struct OverBudget;
+struct OverBudget {
+    /// Whether the cache was changed before the problem was found, in which
+    /// case its content may be inconsistent and must be dropped.
+    partial: bool,
+}
+
+const PARTIAL: OverBudget = OverBudget { partial: true };
 
 /// Slots of the scratch pool: parents built in one downsample dispatch.
 const SCRATCH_SLOTS: u32 = 16;
@@ -364,9 +371,11 @@ impl Canvas {
                     .entries
                     .iter()
                     .filter(|(key, _)| !pinned.contains(key))
-                    .min_by_key(|(_, entry)| entry.used)
+                    // Level 0 first: a tile of level L may cost up to 4^L
+                    // compositions to rebuild. Then least recently used.
+                    .min_by_key(|(key, entry)| (key.level, entry.used))
                     .map(|(key, entry)| (*key, entry.slot))
-                    .ok_or(OverBudget)?;
+                    .ok_or(PARTIAL)?;
                 self.entries.remove(&victim.0);
                 self.stats.evicted += 1;
                 victim.1
@@ -451,7 +460,7 @@ impl Canvas {
         let visible = self.visible(level, view);
         // Building a coarse tile keeps one chain of children per level.
         if visible.len() as u64 + 4 * u64::from(level) + 1 > u64::from(self.capacity) {
-            return Err(OverBudget);
+            return Err(OverBudget { partial: false });
         }
         // Visible tiles, resident or not, are never evicted.
         let mut pinned: HashSet<TileKey> = visible.iter().copied().collect();
@@ -590,13 +599,17 @@ impl Canvas {
         let ops = loop {
             match self.plan_level(level, view) {
                 Ok(ops) => break ops,
-                Err(OverBudget) if level < top => {
-                    // Not enough room: forget the partial plan, go coarser.
-                    self.entries.clear();
-                    self.slots.iter_mut().for_each(|slot| *slot = None);
+                Err(OverBudget { partial }) if level < top => {
+                    // Not enough room: go coarser. Only a plan that failed
+                    // halfway leaves the cache to be dropped; the usual case
+                    // (too many visible tiles) is detected before any change.
+                    if partial {
+                        self.entries.clear();
+                        self.slots.iter_mut().for_each(|slot| *slot = None);
+                    }
                     level += 1;
                 }
-                Err(OverBudget) => {
+                Err(OverBudget { .. }) => {
                     return Err(RenderError::Unsupported(
                         "a canvas cache this small for this view",
                     ));

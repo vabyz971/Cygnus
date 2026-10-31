@@ -286,6 +286,22 @@ impl Renderer {
         Ok(image)
     }
 
+    fn storage_bytes(&self, label: &str, bytes: &[u8]) -> wgpu::Buffer {
+        // Same minimum size as `storage`.
+        let padding = [0u8; 16];
+        let bytes = if bytes.len() < padding.len() {
+            &padding[..]
+        } else {
+            bytes
+        };
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+    }
+
     pub(crate) fn storage(&self, label: &str, words: &[u32]) -> wgpu::Buffer {
         // Bindings may not be empty, and must hold at least one 16-byte job
         // structure even when there is no job.
@@ -345,13 +361,13 @@ impl Renderer {
         target: &wgpu::TextureView,
     ) {
         // Decode: raw tiles, packed in u32 words, to the layer pool.
-        let mut raw: Vec<u32> = Vec::new();
+        let mut raw: Vec<u8> = Vec::new();
         let mut decode_jobs: Vec<u32> = Vec::new();
         for ((layer, coord), slot) in &batch.slots {
             let Some(tile) = document.pixels.tile(*layer, *coord) else {
                 continue;
             };
-            let offset = raw.len() as u32;
+            let offset = (raw.len() / 4) as u32;
             let bits = pack_tile(tile, &mut raw);
             decode_jobs.extend([offset, *slot, bits, 0]);
         }
@@ -364,7 +380,7 @@ impl Renderer {
                 ops.extend([*slot, layer.mode.code(), layer.opacity.to_bits(), 0]);
             }
         }
-        let raw_buffer = self.storage("cygnus raw tiles", &raw);
+        let raw_buffer = self.storage_bytes("cygnus raw tiles", &raw);
         let decode_buffer = self.storage("cygnus decode jobs", &decode_jobs);
         let ops_buffer = self.storage("cygnus composite ops", &ops);
         let composite_buffer = self.storage("cygnus composite jobs", &composite_jobs);
@@ -492,27 +508,30 @@ impl Renderer {
     }
 }
 
-/// Appends `tile` to `raw` as u32 words, the layout the decode shader reads,
-/// and returns its bits per channel.
-fn pack_tile(tile: &Tile, raw: &mut Vec<u32>) -> u32 {
+/// Appends `tile` to `raw` in the layout the decode shader reads (u32
+/// words: RGBA bytes in 8 bits, RG and BA pairs of u16 in 16 bits, little
+/// endian), and returns its bits per channel. On little-endian machines this
+/// is the memory layout of the tile itself: a plain copy.
+fn pack_tile(tile: &Tile, raw: &mut Vec<u8>) -> u32 {
+    #[cfg(target_endian = "little")]
     match tile {
         Tile::U8(values) => {
-            raw.extend(values.as_chunks::<4>().0.iter().map(|p| {
-                u32::from(p[0])
-                    | u32::from(p[1]) << 8
-                    | u32::from(p[2]) << 16
-                    | u32::from(p[3]) << 24
-            }));
+            raw.extend_from_slice(values);
             8
         }
         Tile::U16(values) => {
-            raw.extend(
-                values
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|p| u32::from(p[0]) | u32::from(p[1]) << 16),
-            );
+            raw.extend_from_slice(bytemuck::cast_slice(values));
+            16
+        }
+    }
+    #[cfg(not(target_endian = "little"))]
+    match tile {
+        Tile::U8(values) => {
+            raw.extend_from_slice(values);
+            8
+        }
+        Tile::U16(values) => {
+            raw.extend(values.iter().flat_map(|value| value.to_le_bytes()));
             16
         }
     }
