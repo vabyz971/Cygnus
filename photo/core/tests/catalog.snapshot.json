@@ -1,0 +1,490 @@
+[
+  {
+    "description": "Replaces the document with a new, empty one.",
+    "name": "document.create",
+    "params": {
+      "$defs": {
+        "ColorProfile": {
+          "description": "Color profile of the document. Only sRGB before milestone J6.",
+          "oneOf": [
+            {
+              "const": "srgb",
+              "description": "sRGB IEC 61966-2-1.",
+              "type": "string"
+            }
+          ]
+        },
+        "Depth": {
+          "description": "Bits per channel of the document pixels.",
+          "oneOf": [
+            {
+              "const": "u8",
+              "description": "8 bits per channel.",
+              "type": "string"
+            },
+            {
+              "const": "u16",
+              "description": "16 bits per channel.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `document.create`.",
+      "properties": {
+        "depth": {
+          "$ref": "#/$defs/Depth",
+          "description": "Bits per channel."
+        },
+        "height": {
+          "description": "Height in pixels, 1 to 65535.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/ColorProfile",
+          "default": "srgb",
+          "description": "Color profile."
+        },
+        "resolution": {
+          "default": 72.0,
+          "description": "Resolution in pixels per inch.",
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width in pixels, 1 to 65535.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "depth"
+      ],
+      "title": "DocumentCreate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Adds an empty pixel layer to a group.",
+    "name": "layer.create",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.create`.",
+      "properties": {
+        "index": {
+          "default": null,
+          "description": "Position in the parent, 0 being the bottom; the top when absent.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "default": "",
+          "description": "Name of the layer.",
+          "type": "string"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parent group; the root group when absent."
+        }
+      },
+      "title": "LayerCreate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Changes the name, visibility, opacity, blend mode or lock of a layer.",
+    "name": "layer.update",
+    "params": {
+      "$defs": {
+        "BlendMode": {
+          "description": "Layer blend modes (CAL-3). Only `Normal` is rendered before milestone J3;\nthe others are declared now so that the serialized form is stable.",
+          "oneOf": [
+            {
+              "const": "normal",
+              "description": "Normal (source over).",
+              "type": "string"
+            },
+            {
+              "const": "multiply",
+              "description": "Multiply.",
+              "type": "string"
+            },
+            {
+              "const": "screen",
+              "description": "Screen.",
+              "type": "string"
+            },
+            {
+              "const": "overlay",
+              "description": "Overlay.",
+              "type": "string"
+            },
+            {
+              "const": "soft_light",
+              "description": "Soft light.",
+              "type": "string"
+            },
+            {
+              "const": "darken",
+              "description": "Darken.",
+              "type": "string"
+            },
+            {
+              "const": "lighten",
+              "description": "Lighten.",
+              "type": "string"
+            },
+            {
+              "const": "difference",
+              "description": "Difference.",
+              "type": "string"
+            },
+            {
+              "const": "hue",
+              "description": "Hue.",
+              "type": "string"
+            },
+            {
+              "const": "saturation",
+              "description": "Saturation.",
+              "type": "string"
+            },
+            {
+              "const": "color",
+              "description": "Color.",
+              "type": "string"
+            },
+            {
+              "const": "luminosity",
+              "description": "Luminosity.",
+              "type": "string"
+            }
+          ]
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.update`. Absent properties are left unchanged.",
+      "properties": {
+        "blend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlendMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "New blend mode."
+        },
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer to change."
+        },
+        "locked": {
+          "description": "New lock state.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "New name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "opacity": {
+          "description": "New opacity, from 0 to 1.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "visible": {
+          "description": "New visibility.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LayerUpdate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Deletes a layer.",
+    "name": "layer.delete",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.delete`.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer to delete."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LayerDelete",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Moves a layer to another position or group.",
+    "name": "layer.move",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.move`.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer to move."
+        },
+        "index": {
+          "description": "New position in the parent, 0 being the bottom, counted once the\nlayer is removed from its current place.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New parent group; the root group when absent."
+        }
+      },
+      "required": [
+        "id",
+        "index"
+      ],
+      "title": "LayerMove",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Fills a rectangle of a pixel layer with a color.",
+    "name": "pixels.fill",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "Rect": {
+          "description": "A rectangle of document pixels.",
+          "properties": {
+            "height": {
+              "description": "Height.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width": {
+              "description": "Width.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "x": {
+              "description": "Left edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "y": {
+              "description": "Top edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `pixels.fill`.",
+      "properties": {
+        "color": {
+          "description": "Color as straight RGBA in the document profile, each channel from 0\nto 1.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "layer": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Pixel layer to fill."
+        },
+        "rect": {
+          "$ref": "#/$defs/Rect",
+          "description": "Area to fill, clipped to the layer."
+        }
+      },
+      "required": [
+        "layer",
+        "rect",
+        "color"
+      ],
+      "title": "PixelsFill",
+      "type": "object"
+    },
+    "stability": "development"
+  },
+  {
+    "description": "Writes a block of pixel values into a pixel layer.",
+    "name": "pixels.write",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "Rect": {
+          "description": "A rectangle of document pixels.",
+          "properties": {
+            "height": {
+              "description": "Height.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width": {
+              "description": "Width.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "x": {
+              "description": "Left edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "y": {
+              "description": "Top edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `pixels.write`.",
+      "properties": {
+        "layer": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Pixel layer to write."
+        },
+        "rect": {
+          "$ref": "#/$defs/Rect",
+          "description": "Area to write, inside the layer."
+        },
+        "samples": {
+          "description": "Straight RGBA values in the document depth and profile, row by row,\n`rect.width * rect.height * 4` values.",
+          "items": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "layer",
+        "rect",
+        "samples"
+      ],
+      "title": "PixelsWrite",
+      "type": "object"
+    },
+    "stability": "development"
+  }
+]

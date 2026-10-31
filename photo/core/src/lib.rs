@@ -15,3 +15,16 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 //! Pixel document model of Cygnus Photo and its commands.
+//!
+//! The model is a tree of layers (docs/decisions/0009); it only changes
+//! through the [`PhotoCommand`]s of the catalog (0010). This crate has no
+//! GPU dependency: the model and the commands are tested without a GPU.
+
+pub mod changes;
+pub mod commands;
+pub mod model;
+pub mod pixels;
+
+pub use changes::PhotoChanges;
+pub use commands::{CoreError, PhotoCommand};
+pub use model::{BlendMode, ColorProfile, Depth, Document, Node, NodeId, NodeKind, Rect};
