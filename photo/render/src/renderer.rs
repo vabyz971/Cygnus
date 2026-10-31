@@ -96,12 +96,12 @@ fn program(document: &Document) -> Result<Vec<ProgramLayer>, RenderError> {
     Ok(layers)
 }
 
-struct Pool {
-    view: wgpu::TextureView,
+pub(crate) struct Pool {
+    pub(crate) view: wgpu::TextureView,
 }
 
 impl Pool {
-    fn new(device: &wgpu::Device, label: &str, slots: u32) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, label: &str, slots: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -150,10 +150,18 @@ pub struct Renderer {
     composites: Pool,
 }
 
-/// One output tile of a batch and the layer tiles it composites.
-struct OutputTile {
-    coord: TileCoord,
+/// One output tile of a batch: where it goes, and the layer tiles it
+/// composites (with their slots in the layer pool).
+pub(crate) struct OutputTile {
+    pub(crate) coord: TileCoord,
+    pub(crate) target: u32,
     ops: Vec<(ProgramLayer, u32)>,
+}
+
+/// Output tiles whose layer tiles fit in the layer pool together.
+pub(crate) struct Batch {
+    pub(crate) outputs: Vec<OutputTile>,
+    slots: BTreeMap<(NodeId, TileCoord), u32>,
 }
 
 impl Renderer {
@@ -175,19 +183,31 @@ impl Renderer {
         }
     }
 
-    /// Renders the whole document and returns it as an image: the export
-    /// path, also used by the tests and the command line.
-    pub fn export(&self, document: &Document, bits: ExportBits) -> Result<Image, RenderError> {
+    pub(crate) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub(crate) fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// Splits the composition of `outputs` into batches whose layer tiles
+    /// fit in the layer pool. `target(index_in_batch, coord)` gives the
+    /// destination slot of each output tile; `max_outputs` bounds a batch.
+    pub(crate) fn plan(
+        &self,
+        document: &Document,
+        outputs: impl IntoIterator<Item = TileCoord>,
+        max_outputs: usize,
+        mut target: impl FnMut(usize, TileCoord) -> u32,
+    ) -> Result<Vec<Batch>, RenderError> {
         let layers = program(document)?;
-        let mut image = Image {
-            width: document.width,
-            height: document.height,
-            bits,
-            data: vec![0; document.width as usize * document.height as usize * 4],
+        let mut batches = Vec::new();
+        let mut batch = Batch {
+            outputs: Vec::new(),
+            slots: BTreeMap::new(),
         };
-        let mut batch: Vec<OutputTile> = Vec::new();
-        let mut slots: BTreeMap<(NodeId, TileCoord), u32> = BTreeMap::new();
-        for coord in tiles_in(document.bounds()) {
+        for coord in outputs {
             let present: Vec<ProgramLayer> = layers
                 .iter()
                 .copied()
@@ -198,30 +218,66 @@ impl Renderer {
                     count: present.len(),
                 });
             }
-            let full = batch.len() == COMPOSITE_SLOTS as usize
-                || slots.len() + present.len() > LAYER_SLOTS as usize;
+            let full = batch.outputs.len() == max_outputs
+                || batch.slots.len() + present.len() > LAYER_SLOTS as usize;
             if full {
-                self.run_batch(document, &batch, &slots, &mut image)?;
-                batch.clear();
-                slots.clear();
+                batches.push(std::mem::replace(
+                    &mut batch,
+                    Batch {
+                        outputs: Vec::new(),
+                        slots: BTreeMap::new(),
+                    },
+                ));
             }
             let mut ops = Vec::with_capacity(present.len());
             for layer in present {
-                let next = slots.len() as u32;
-                let slot = *slots.entry((layer.id, coord)).or_insert(next);
+                let next = batch.slots.len() as u32;
+                let slot = *batch.slots.entry((layer.id, coord)).or_insert(next);
                 ops.push((layer, slot));
             }
-            batch.push(OutputTile { coord, ops });
+            let index = batch.outputs.len();
+            batch.outputs.push(OutputTile {
+                coord,
+                target: target(index, coord),
+                ops,
+            });
         }
-        if !batch.is_empty() {
-            self.run_batch(document, &batch, &slots, &mut image)?;
+        if !batch.outputs.is_empty() {
+            batches.push(batch);
+        }
+        Ok(batches)
+    }
+
+    /// Renders the whole document and returns it as an image: the export
+    /// path, also used by the tests and the command line.
+    pub fn export(&self, document: &Document, bits: ExportBits) -> Result<Image, RenderError> {
+        let mut image = Image {
+            width: document.width,
+            height: document.height,
+            bits,
+            data: vec![0; document.width as usize * document.height as usize * 4],
+        };
+        let batches = self.plan(
+            document,
+            tiles_in(document.bounds()),
+            COMPOSITE_SLOTS as usize,
+            |index, _| index as u32,
+        )?;
+        for batch in &batches {
+            self.export_batch(document, batch, &mut image)?;
         }
         Ok(image)
     }
 
-    fn storage(&self, label: &str, words: &[u32]) -> wgpu::Buffer {
-        // Bindings may not be empty.
-        let words = if words.is_empty() { &[0u32][..] } else { words };
+    pub(crate) fn storage(&self, label: &str, words: &[u32]) -> wgpu::Buffer {
+        // Bindings may not be empty, and must hold at least one 16-byte job
+        // structure even when there is no job.
+        let padding = [0u32; 4];
+        let words = if words.len() < padding.len() {
+            &padding[..]
+        } else {
+            words
+        };
         self.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -262,20 +318,19 @@ impl Renderer {
         pass.dispatch_workgroups(TILE_SIZE / WORKGROUP, TILE_SIZE / WORKGROUP, tiles);
     }
 
-    fn run_batch(
+    /// Records the decode and composite passes of `batch` into `encoder`,
+    /// writing each output tile to its target slot of `target`.
+    pub(crate) fn record_composite(
         &self,
+        encoder: &mut wgpu::CommandEncoder,
         document: &Document,
-        batch: &[OutputTile],
-        slots: &BTreeMap<(NodeId, TileCoord), u32>,
-        image: &mut Image,
-    ) -> Result<(), RenderError> {
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-
+        batch: &Batch,
+        target: &wgpu::TextureView,
+    ) {
         // Decode: raw tiles, packed in u32 words, to the layer pool.
         let mut raw: Vec<u32> = Vec::new();
         let mut decode_jobs: Vec<u32> = Vec::new();
-        for ((layer, coord), slot) in slots {
+        for ((layer, coord), slot) in &batch.slots {
             let Some(tile) = document.pixels.tile(*layer, *coord) else {
                 continue;
             };
@@ -286,40 +341,16 @@ impl Renderer {
         // Composite: one job per output tile.
         let mut ops: Vec<u32> = Vec::new();
         let mut composite_jobs: Vec<u32> = Vec::new();
-        for (index, tile) in batch.iter().enumerate() {
-            composite_jobs.extend([ops.len() as u32 / 4, tile.ops.len() as u32, index as u32, 0]);
+        for tile in &batch.outputs {
+            composite_jobs.extend([ops.len() as u32 / 4, tile.ops.len() as u32, tile.target, 0]);
             for (layer, slot) in &tile.ops {
                 ops.extend([*slot, layer.mode.code(), layer.opacity.to_bits(), 0]);
             }
         }
-        // Export: one job per output tile.
-        let bits = image.bits.bits();
-        // One u32 word per pixel in 8 bits, two in 16 bits.
-        let words_per_tile = TILE_PIXELS * bits / 8;
-        let mut export_jobs: Vec<u32> = Vec::new();
-        for index in 0..batch.len() as u32 {
-            export_jobs.extend([index, index * words_per_tile, bits, 0]);
-        }
-        let output_bytes = u64::from(words_per_tile) * batch.len() as u64 * 4;
-
         let raw_buffer = self.storage("cygnus raw tiles", &raw);
         let decode_buffer = self.storage("cygnus decode jobs", &decode_jobs);
         let ops_buffer = self.storage("cygnus composite ops", &ops);
         let composite_buffer = self.storage("cygnus composite jobs", &composite_jobs);
-        let export_buffer = self.storage("cygnus export jobs", &export_jobs);
-        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cygnus export output"),
-            size: output_bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cygnus readback"),
-            size: output_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let decode_group = self.bind(
             &self.decode,
             &[
@@ -334,9 +365,51 @@ impl Renderer {
                 wgpu::BindingResource::TextureView(&self.layers.view),
                 ops_buffer.as_entire_binding(),
                 composite_buffer.as_entire_binding(),
-                wgpu::BindingResource::TextureView(&self.composites.view),
+                wgpu::BindingResource::TextureView(target),
             ],
         );
+        let decode_count = decode_jobs.len() as u32 / 4;
+        if decode_count > 0 {
+            Self::dispatch(encoder, &self.decode, &decode_group, decode_count);
+        }
+        Self::dispatch(
+            encoder,
+            &self.composite,
+            &composite_group,
+            batch.outputs.len() as u32,
+        );
+    }
+
+    fn export_batch(
+        &self,
+        document: &Document,
+        batch: &Batch,
+        image: &mut Image,
+    ) -> Result<(), RenderError> {
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+
+        let bits = image.bits.bits();
+        // One u32 word per pixel in 8 bits, two in 16 bits.
+        let words_per_tile = TILE_PIXELS * bits / 8;
+        let mut export_jobs: Vec<u32> = Vec::new();
+        for tile in &batch.outputs {
+            export_jobs.extend([tile.target, tile.target * words_per_tile, bits, 0]);
+        }
+        let output_bytes = u64::from(words_per_tile) * batch.outputs.len() as u64 * 4;
+        let export_buffer = self.storage("cygnus export jobs", &export_jobs);
+        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cygnus export output"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cygnus readback"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let export_group = self.bind(
             &self.export,
             &[
@@ -349,21 +422,12 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let decode_count = decode_jobs.len() as u32 / 4;
-        if decode_count > 0 {
-            Self::dispatch(&mut encoder, &self.decode, &decode_group, decode_count);
-        }
-        Self::dispatch(
-            &mut encoder,
-            &self.composite,
-            &composite_group,
-            batch.len() as u32,
-        );
+        self.record_composite(&mut encoder, document, batch, &self.composites.view);
         Self::dispatch(
             &mut encoder,
             &self.export,
             &export_group,
-            batch.len() as u32,
+            batch.outputs.len() as u32,
         );
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_bytes);
         self.queue.submit([encoder.finish()]);
@@ -376,8 +440,8 @@ impl Renderer {
         }
 
         let words = self.read(&readback)?;
-        for (index, tile) in batch.iter().enumerate() {
-            let start = index * words_per_tile as usize;
+        for tile in &batch.outputs {
+            let start = (tile.target * words_per_tile) as usize;
             unpack_tile(
                 &words[start..start + words_per_tile as usize],
                 tile.coord,
@@ -387,7 +451,7 @@ impl Renderer {
         Ok(())
     }
 
-    fn read(&self, buffer: &wgpu::Buffer) -> Result<Vec<u32>, RenderError> {
+    pub(crate) fn read(&self, buffer: &wgpu::Buffer) -> Result<Vec<u32>, RenderError> {
         let slice = buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {

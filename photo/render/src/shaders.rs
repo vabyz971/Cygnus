@@ -32,6 +32,7 @@ const BLEND: &str = include_str!("shaders/blend.wgsl");
 const DECODE: &str = include_str!("shaders/decode.wgsl");
 const COMPOSITE: &str = include_str!("shaders/composite.wgsl");
 const EXPORT: &str = include_str!("shaders/export.wgsl");
+const DISPLAY: &str = include_str!("shaders/display.wgsl");
 
 /// Name of the WGSL constant holding the code of `mode`, such as
 /// `BLEND_SOFT_LIGHT`.
@@ -83,6 +84,11 @@ pub fn export() -> String {
     assemble(EXPORT, &[COLOR])
 }
 
+/// Display pass: composite tiles to the screen.
+pub fn display() -> String {
+    assemble(DISPLAY, &[COLOR])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +110,7 @@ mod tests {
         validate("decode", &decode());
         validate("composite", &composite());
         validate("export", &export());
+        validate("display", &display());
     }
 
     #[test]
@@ -131,6 +138,7 @@ mod tests {
             ("decode", DECODE),
             ("composite", COMPOSITE),
             ("export", EXPORT),
+            ("display", DISPLAY),
         ] {
             assert!(
                 !source.contains("fn blend"),
@@ -143,6 +151,7 @@ mod tests {
             ("decode", DECODE),
             ("composite", COMPOSITE),
             ("export", EXPORT),
+            ("display", DISPLAY),
         ] {
             assert!(
                 !source.contains("fn srgb_to_linear"),

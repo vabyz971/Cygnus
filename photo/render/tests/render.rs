@@ -204,3 +204,16 @@ fn unsupported_blend_mode_is_refused() {
         RenderError::UnsupportedBlendMode(BlendMode::Multiply)
     ));
 }
+
+#[test]
+fn document_without_pixels_exports_transparent() {
+    let Some((_, renderer)) = setup() else { return };
+    let document = build_json(
+        r#"[
+        {"command": "document.create", "params": {"width": 20, "height": 10, "depth": "u16"}},
+        {"command": "layer.create", "params": {"name": "vide"}}
+    ]"#,
+    );
+    let image = export16(&renderer, &document);
+    assert!(image.data.iter().all(|value| *value == 0));
+}
