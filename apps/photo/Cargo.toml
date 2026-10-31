@@ -19,6 +19,11 @@ cygnus-file-format.workspace = true
 cygnus-photo-core.workspace = true
 cygnus-photo-render.workspace = true
 cygnus-photo-io.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_dock.workspace = true
+egui-phosphor.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

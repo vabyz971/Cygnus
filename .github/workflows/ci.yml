@@ -21,6 +21,10 @@ jobs:
       # Installs the toolchain pinned in rust-toolchain.toml.
       - name: Install toolchain
         run: rustup toolchain install
+      # Development headers used by eframe's windowing backends (winit).
+      - name: Install system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all --check

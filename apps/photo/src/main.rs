@@ -18,4 +18,44 @@
 //! `photo` crates and the MCP server, and holds the Photo-specific panels
 //! (Layers, Adjustments).
 
-fn main() {}
+mod app;
+mod i18n;
+mod keys;
+mod panels;
+mod placeholder;
+
+use std::process::ExitCode;
+
+use cygnus_ui_kit::i18n::tr;
+use cygnus_ui_kit::theme;
+
+fn main() -> ExitCode {
+    i18n::install();
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title(tr(keys::APP_NAME))
+            .with_app_id("cygnus-photo")
+            .with_inner_size([1600.0, 1000.0])
+            .with_min_inner_size([1024.0, 640.0]),
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
+
+    let result = eframe::run_native(
+        "cygnus-photo",
+        options,
+        Box::new(|creation| {
+            theme::install(&creation.egui_ctx);
+            Ok(Box::new(app::PhotoApp::new()))
+        }),
+    );
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("cygnus-photo: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}

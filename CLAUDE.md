@@ -8,9 +8,13 @@ Les règles de `AGENTS.md` (importé ci-dessus) s'appliquent intégralement et n
 
 ## État actuel du dépôt
 
-- Jalon J0 (`docs/tasks/J0-fondations.md`) : workspace Cargo de crates vides, lints, CI, vérification des en-têtes et des licences. Aucune logique métier, aucune dépendance `egui`/`egui_dock`/`wgpu` avant J1/J2.
+- Jalons livrés : J0 (fondations) et J1 (`docs/tasks/J1-interface.md` : fenêtre, écran principal de la maquette, panneaux ancrables, workspaces). Toujours ni document, ni commandes, ni rendu du canevas (J2).
+- Interface : `egui`/`eframe` (moteur wgpu) et `egui_dock`, versions figées ensemble (décision 0004 : `egui_dock` impose `egui` 0.36). Tout le thème (couleurs, tailles, polices) est dans `crates/ui-kit/src/theme.rs` ; les icônes Phosphor passent par `widgets::icon` (famille de police dédiée, décision 0005).
+- Traductions : chaque texte affiché passe par une clé déclarée dans `apps/photo/src/keys.rs` (`define_keys!`) et traduite dans `apps/photo/i18n/fr.txt` ; un test échoue sur toute clé sans traduction ou traduction sans clé.
+- Tout ce qui est factice (calques, courbe, histogramme, valeurs du pinceau) est dans `apps/photo/src/placeholder.rs`, à supprimer en J3.
+- Disposition sauvegardée dans `~/.config/cygnus/photo/workspace.json` (décision 0007) ; incrémenter `LAYOUT_VERSION` si `Panel` change.
 - Les paquets portent le préfixe `cygnus-` (`cygnus-photo-core`, `cygnus-cli`...) ; les dépendances internes sont déclarées dans `[workspace.dependencies]` du `Cargo.toml` racine (décision 0001).
-- Maquette de l'écran principal : `docs/views/Cygnus Photo — model.png`.
+- Maquette de l'écran principal : `docs/views/ecran-principal.png`.
 - Ancien code (lecture seule) : `../Cygnus-legacy` (avec majuscule sur ce poste).
 - Les flakes ne voient que les fichiers suivis par git : un nouveau fichier doit être `git add` avant `nix build`.
 

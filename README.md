@@ -4,7 +4,7 @@ Cygnus est une suite créative open source (GPL v3) écrite en Rust. Sa premièr
 
 ## État
 
-Jalon J0 (fondations) : workspace Cargo, contrôles de qualité et intégration continue. Aucune fonctionnalité n'est encore disponible.
+Jalon J1 (interface) : la fenêtre affiche l'écran principal de la maquette, avec panneaux ancrables et disposition sauvegardée. Le contenu des panneaux est factice : il n'y a encore ni document ni rendu d'image.
 
 ## Documents
 
@@ -18,6 +18,7 @@ Jalon J0 (fondations) : workspace Cargo, contrôles de qualité et intégration 
 nix develop            # sous NixOS ; sinon rustup lit rust-toolchain.toml
 cargo build --workspace
 cargo test --workspace
+cargo run -p cygnus-photo
 ```
 
 ## Licence

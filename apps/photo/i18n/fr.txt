@@ -1,0 +1,144 @@
+# Cygnus Photo, French translation (first language of the application).
+# Format: one `key = value` entry per line. `{name}` is a placeholder.
+
+app.name = Cygnus Photo
+
+menu.file = Fichier
+menu.edit = Édition
+menu.document = Document
+menu.layer = Calque
+menu.select = Sélection
+menu.filters = Filtres
+menu.view = Affichage
+menu.window = Fenêtre
+menu.help = Aide
+
+file.new = Nouveau…
+file.open = Ouvrir…
+file.save = Enregistrer
+file.export = Exporter…
+file.quit = Quitter
+edit.undo = Annuler
+edit.redo = Rétablir
+edit.preferences = Préférences…
+document.settings = Paramètres du document…
+document.image_size = Taille de l'image…
+layer.new = Nouveau calque
+layer.duplicate = Dupliquer
+layer.delete = Supprimer
+layer.merge_down = Fusionner vers le bas
+select.all = Tout sélectionner
+select.none = Désélectionner
+select.invert = Inverser la sélection
+filters.gaussian_blur = Flou gaussien…
+filters.unsharp_mask = Netteté (masque flou)…
+view.zoom_in = Zoom avant
+view.zoom_out = Zoom arrière
+view.fit = Adapter à l'écran
+view.actual_size = 100 %
+window.reset_layout = Réinitialiser la disposition
+help.about = À propos de Cygnus Photo
+
+persona.photo = Photo
+persona.develop = Développement
+persona.liquify = Fluidité
+persona.tone_mapping = Tone Mapping
+persona.export = Export
+persona.unavailable = Disponible après la bêta
+
+action.export = Exporter
+
+tool.move = Déplacer
+tool.crop = Recadrer
+tool.rect_select = Sélection rectangulaire
+tool.lasso = Lasso
+tool.magic_wand = Baguette magique
+tool.brush = Pinceau
+tool.clone = Tampon de clonage
+tool.eraser = Gomme
+tool.eyedropper = Pipette
+tool.pan = Panoramique
+tool.zoom = Zoom
+tool.colors = Couleurs de premier plan et d'arrière-plan
+tool.swap_colors = Permuter les couleurs
+
+option.size = Taille
+option.hardness = Dureté
+option.opacity = Opacité
+option.flow = Flux
+option.mode = Mode
+option.stabilizer = Stabilisateur
+option.more = Plus d'options
+
+unit.px = {value} px
+unit.percent = {value} %
+
+blend.normal = Normal
+blend.multiply = Produit
+blend.screen = Écran
+blend.overlay = Superposition
+blend.soft_light = Lumière douce
+blend.darken = Obscurcir
+blend.lighten = Éclaircir
+blend.difference = Différence
+blend.hue = Teinte
+blend.saturation = Saturation
+blend.color = Couleur
+blend.luminosity = Luminosité
+
+document.close = Fermer le document
+document.dimensions = {width} × {height} px
+document.info = Informations du document
+
+canvas.pending = Le rendu du canevas arrive au jalon J2.
+zoom.in = Zoom avant
+zoom.out = Zoom arrière
+zoom.fit = Adapter à l'écran
+
+status.saved = Toutes les modifications sont enregistrées
+status.gpu = GPU
+status.shortcuts = Alt : pipette  ·  [ ] : taille du pinceau  ·  Espace : déplacer
+
+panel.histogram = Histogramme
+panel.adjustments = Réglages
+panel.layers = Calques
+panel.history = Historique
+panel.menu = Options du panneau
+
+histogram.rgb = RVB
+histogram.midtones = Tons moyens
+histogram.mean = Moyenne {value}
+histogram.std_dev = Écart type {value}
+
+adjustment.curves = Courbes
+adjustment.axes = SORTIE / ENTRÉE
+adjustment.strength = Intensité du réglage
+adjustment.mask_density = Densité du masque
+
+layers.opacity = Opacité
+layers.visibility = Afficher ou masquer le calque
+layers.locked = Calque verrouillé
+layers.mask = Masque du calque
+layers.settings = Paramètres du réglage
+layers.add = Nouveau calque
+layers.add_group = Nouveau groupe
+layers.add_adjustment = Nouveau calque de réglage
+layers.add_mask = Ajouter un masque
+layers.add_filter = Nouveau filtre
+layers.delete = Supprimer le calque
+
+placeholder.document_title = Dolomites — heure bleue.cygnus
+placeholder.document_format = RVB / 16 bits
+placeholder.exif = SONY α7 IV  ·  24 mm  ·  ƒ/8  ·  1/30 s  ·  ISO 100
+placeholder.mask_target = Masque : Lumière du ciel
+placeholder.status_action = Peindre sur le masque
+placeholder.layer_sky = Lumière du ciel
+placeholder.layer_sky_kind = Courbes · masque actif
+placeholder.layer_curves = Courbes
+placeholder.layer_curves_kind = Réglage · contraste doux
+placeholder.layer_balance = Équilibre colorimétrique
+placeholder.layer_balance_kind = Réglage · heure bleue
+placeholder.layer_source = Paysage original
+placeholder.layer_source_kind = Image · objet incorporé
+placeholder.history_entry = Pinceau sur le masque
+placeholder.history_time = 14:32
