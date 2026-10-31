@@ -763,8 +763,11 @@ dependencies = [
 name = "cygnus-photo-render"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "cygnus-commands",
  "cygnus-photo-core",
  "half",
+ "png",
  "pollster",
  "thiserror 2.0.21",
  "wgpu",

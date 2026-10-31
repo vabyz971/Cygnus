@@ -24,6 +24,7 @@ pub mod changes;
 pub mod commands;
 pub mod model;
 pub mod pixels;
+pub mod script;
 
 pub use changes::PhotoChanges;
 pub use commands::{CoreError, PhotoCommand};
