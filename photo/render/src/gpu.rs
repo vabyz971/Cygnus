@@ -89,6 +89,8 @@ pub enum Missing {
     },
     /// Usages of the compute format the adapter does not allow.
     ComputeFormatUsages(wgpu::TextureUsages),
+    /// The adapter cannot present to the application window.
+    Surface,
 }
 
 impl fmt::Display for Missing {
@@ -104,6 +106,7 @@ impl fmt::Display for Missing {
             Self::ComputeFormatUsages(usages) => {
                 write!(f, "format {COMPUTE_FORMAT:?} lacks usages {usages:?}")
             }
+            Self::Surface => write!(f, "cannot draw to the application window"),
         }
     }
 }
@@ -246,13 +249,18 @@ pub fn instance() -> wgpu::Instance {
     wgpu::Instance::new(descriptor)
 }
 
-/// Picks the adapter to render with: the one named by `CYGNUS_ADAPTER` if
-/// set, otherwise the best supported one.
-pub fn select_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, GpuError> {
-    let mut adapters = pollster::block_on(instance.enumerate_adapters(BACKENDS));
+/// Picks the adapter to render with among `adapters`: the one named by
+/// `CYGNUS_ADAPTER` if set, otherwise the best supported one. `usable`
+/// filters further (for example compatibility with a window surface). Used
+/// both without a window and by the application, through eframe.
+pub fn choose_adapter(
+    adapters: &[wgpu::Adapter],
+    usable: impl Fn(&wgpu::Adapter) -> bool,
+) -> Result<wgpu::Adapter, GpuError> {
     if adapters.is_empty() {
         return Err(GpuError::NoAdapter);
     }
+    let mut candidates: Vec<&wgpu::Adapter> = adapters.iter().collect();
     if let Ok(wanted) = std::env::var(ADAPTER_ENV) {
         let needle = wanted.to_lowercase();
         let available = adapters
@@ -260,23 +268,34 @@ pub fn select_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, GpuErr
             .map(|adapter| describe(&adapter.get_info()))
             .collect::<Vec<_>>()
             .join(", ");
-        adapters.retain(|adapter| adapter.get_info().name.to_lowercase().contains(&needle));
-        if adapters.is_empty() {
+        candidates.retain(|adapter| adapter.get_info().name.to_lowercase().contains(&needle));
+        if candidates.is_empty() {
             return Err(GpuError::NoMatchingAdapter { wanted, available });
         }
     }
     let mut rejected = Vec::new();
     let mut supported = Vec::new();
-    for adapter in adapters {
-        match check_adapter(&adapter) {
-            Ok(()) => supported.push(adapter),
+    for adapter in candidates {
+        match check_adapter(adapter) {
+            Ok(()) if usable(adapter) => supported.push(adapter),
+            Ok(()) => rejected.push(UnsupportedAdapter {
+                adapter: describe(&adapter.get_info()),
+                missing: vec![Missing::Surface],
+            }),
             Err(unsupported) => rejected.push(unsupported),
         }
     }
     supported
         .into_iter()
         .min_by_key(|adapter| rank(adapter.get_info().device_type))
+        .cloned()
         .ok_or(GpuError::Unsupported(rejected))
+}
+
+/// Picks the adapter to render with without a window.
+pub fn select_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, GpuError> {
+    let adapters = pollster::block_on(instance.enumerate_adapters(BACKENDS));
+    choose_adapter(&adapters, |_| true)
 }
 
 /// Opens a GPU device without a window, for the command line, the tests and

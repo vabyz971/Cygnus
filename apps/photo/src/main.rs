@@ -19,15 +19,41 @@
 //! (Layers, Adjustments).
 
 mod app;
+mod canvas;
+mod demo;
 mod i18n;
 mod keys;
 mod panels;
 mod placeholder;
 
 use std::process::ExitCode;
+use std::sync::Arc;
+
+use cygnus_photo_render::gpu;
+use eframe::egui_wgpu;
 
 use cygnus_ui_kit::i18n::tr;
 use cygnus_ui_kit::theme;
+
+/// GPU setup of the window: the same adapter rules and device requirements
+/// as the headless renderer (docs/decisions/0012 and 0014). An adapter that
+/// does not meet them is refused at start-up with the list of what it
+/// lacks.
+fn wgpu_options() -> egui_wgpu::WgpuConfiguration {
+    let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.backends = gpu::BACKENDS;
+    setup.device_descriptor = Arc::new(gpu::device_descriptor);
+    setup.native_adapter_selector = Some(Arc::new(|adapters, surface| {
+        gpu::choose_adapter(adapters, |adapter| {
+            surface.is_none_or(|surface| adapter.is_surface_supported(surface))
+        })
+        .map_err(|error| error.to_string())
+    }));
+    egui_wgpu::WgpuConfiguration {
+        wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
 
 fn main() -> ExitCode {
     i18n::install();
@@ -39,6 +65,7 @@ fn main() -> ExitCode {
             .with_inner_size([1600.0, 1000.0])
             .with_min_inner_size([1024.0, 640.0]),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: wgpu_options(),
         ..Default::default()
     };
 
@@ -47,6 +74,11 @@ fn main() -> ExitCode {
         options,
         Box::new(|creation| {
             theme::install(&creation.egui_ctx);
+            let render_state = creation
+                .wgpu_render_state
+                .as_ref()
+                .ok_or("the wgpu renderer is not available")?;
+            canvas::install(render_state)?;
             Ok(Box::new(app::PhotoApp::new()))
         }),
     );

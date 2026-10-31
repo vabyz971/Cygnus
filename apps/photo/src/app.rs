@@ -16,13 +16,17 @@
 
 //! Main screen of Cygnus Photo.
 
+use cygnus_commands::Source;
+use cygnus_photo_core::{Depth, Document};
 use cygnus_ui_kit::dock::DockContainer;
-use cygnus_ui_kit::i18n::{Key, tr};
+use cygnus_ui_kit::i18n::{Key, tr, tr_format};
 use cygnus_ui_kit::icons;
 use cygnus_ui_kit::theme::{metrics, palette};
 use cygnus_ui_kit::widgets::{self, DocumentTab, Persona, Tool};
 use egui::{Align, Frame, Layout, Margin, Panel, RichText, Ui};
 
+use crate::canvas::{self, Session};
+use crate::demo;
 use crate::keys;
 use crate::panels::{self, PanelViewer};
 use crate::placeholder;
@@ -45,6 +49,8 @@ const TOOLS: [(&str, Key); 11] = [
 
 /// Index of the brush in [`TOOLS`], the tool shown in the mockup.
 const BRUSH: usize = 5;
+/// Index of the pan tool in [`TOOLS`].
+const PAN: usize = 9;
 
 /// Personas: icon, label, available in the beta.
 const PERSONAS: [(&str, Key, bool); 5] = [
@@ -56,7 +62,7 @@ const PERSONAS: [(&str, Key, bool); 5] = [
 ];
 
 /// Inert menu entries, per menu. They come alive with their features.
-const MENUS: [(Key, &[Key]); 8] = [
+const MENUS: [(Key, &[Key]); 7] = [
     (
         keys::MENU_FILE,
         &[
@@ -91,17 +97,25 @@ const MENUS: [(Key, &[Key]); 8] = [
         keys::MENU_FILTERS,
         &[keys::FILTERS_GAUSSIAN_BLUR, keys::FILTERS_UNSHARP_MASK],
     ),
-    (
-        keys::MENU_VIEW,
-        &[
-            keys::VIEW_ZOOM_IN,
-            keys::VIEW_ZOOM_OUT,
-            keys::VIEW_FIT,
-            keys::VIEW_ACTUAL_SIZE,
-        ],
-    ),
     (keys::MENU_HELP, &[keys::HELP_ABOUT]),
 ];
+
+/// Color format and size of the document, for the document tab bar.
+fn document_info(ui: &mut Ui, document: &Document) {
+    widgets::icon_button(ui, icons::INFO, tr(keys::DOCUMENT_INFO));
+    let mono = |text: &str| RichText::new(text).monospace().color(palette::TEXT_MUTED);
+    ui.label(mono(tr(match document.depth {
+        Depth::U8 => keys::DOCUMENT_FORMAT_8,
+        Depth::U16 => keys::DOCUMENT_FORMAT_16,
+    })));
+    ui.label(mono(&tr_format(
+        keys::DOCUMENT_DIMENSIONS,
+        &[
+            ("width", &document.width.to_string()),
+            ("height", &document.height.to_string()),
+        ],
+    )));
+}
 
 /// The Cygnus Photo application window.
 pub struct PhotoApp {
@@ -109,6 +123,7 @@ pub struct PhotoApp {
     persona: usize,
     tool: usize,
     document: usize,
+    session: Session,
     placeholder: placeholder::State,
 }
 
@@ -120,14 +135,25 @@ impl PhotoApp {
             persona: 0,
             tool: BRUSH,
             document: 0,
+            session: Session::from_commands(
+                demo::commands([
+                    tr(keys::DEMO_LAYER_SKY),
+                    tr(keys::DEMO_LAYER_SUN),
+                    tr(keys::DEMO_LAYER_MOUNTAINS),
+                    tr(keys::DEMO_LAYER_LAKE),
+                    tr(keys::DEMO_LAYER_MIST),
+                ]),
+                Source::Test,
+            ),
             placeholder: placeholder::State::default(),
         }
     }
 
     fn menus(&mut self, ui: &mut Ui) {
         for (menu, entries) in MENUS {
-            // The Window menu goes before Help, as in the mockup.
+            // View and Window go before Help, as in the mockup.
             if menu == keys::MENU_HELP {
+                ui.menu_button(tr(keys::MENU_VIEW), |ui| self.view_menu(ui));
                 ui.menu_button(tr(keys::MENU_WINDOW), |ui| self.window_menu(ui));
             }
             ui.menu_button(tr(menu), |ui| {
@@ -142,6 +168,27 @@ impl PhotoApp {
                 }
             });
         }
+    }
+
+    fn view_menu(&mut self, ui: &mut Ui) {
+        if ui.button(tr(keys::VIEW_ZOOM_IN)).clicked() {
+            self.session.zoom_step(1);
+        }
+        if ui.button(tr(keys::VIEW_ZOOM_OUT)).clicked() {
+            self.session.zoom_step(-1);
+        }
+        if ui.button(tr(keys::VIEW_FIT)).clicked() {
+            self.session.fit();
+        }
+        if ui.button(tr(keys::VIEW_ACTUAL_SIZE)).clicked() {
+            self.session.actual_size();
+        }
+    }
+
+    fn zoom_text(&self) -> String {
+        let value = format!("{:.1}", self.session.zoom() * 100.0)
+            .replace('.', tr(keys::NUMBER_DECIMAL_SEPARATOR));
+        tr_format(keys::UNIT_PERCENT, &[("value", &value)])
     }
 
     fn window_menu(&mut self, ui: &mut Ui) {
@@ -194,13 +241,17 @@ impl PhotoApp {
         widgets::tool_rail(ui, &tools, &mut self.tool, placeholder::color_swatches);
     }
 
-    fn canvas(&mut self, ui: &mut Ui) {
+    fn canvas(&mut self, ui: &mut Ui, canvas_error: Option<String>) {
         let tabs = [DocumentTab {
-            title: placeholder::document_title(),
+            title: tr(keys::DEMO_TITLE),
             close_hint: tr(keys::DOCUMENT_CLOSE),
         }];
-        widgets::document_tabs(ui, &tabs, &mut self.document, placeholder::document_info);
+        let document = self.session.document();
+        widgets::document_tabs(ui, &tabs, &mut self.document, |ui| {
+            document_info(ui, document);
+        });
 
+        let zoom_text = self.zoom_text();
         Panel::bottom("canvas-zoom")
             .exact_size(metrics::STATUS_BAR_HEIGHT)
             .resizable(false)
@@ -211,12 +262,19 @@ impl PhotoApp {
             )
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    widgets::icon_button(ui, icons::MINUS, tr(keys::ZOOM_OUT));
-                    ui.label(
-                        RichText::new(placeholder::ZOOM_PERCENT.to_owned() + " %").monospace(),
-                    );
-                    widgets::icon_button(ui, icons::PLUS, tr(keys::ZOOM_IN));
-                    ui.add_enabled(false, egui::Button::new(tr(keys::ZOOM_FIT)).frame(false));
+                    if widgets::icon_button(ui, icons::MINUS, tr(keys::ZOOM_OUT)).clicked() {
+                        self.session.zoom_step(-1);
+                    }
+                    ui.label(RichText::new(zoom_text).monospace());
+                    if widgets::icon_button(ui, icons::PLUS, tr(keys::ZOOM_IN)).clicked() {
+                        self.session.zoom_step(1);
+                    }
+                    if ui
+                        .add(egui::Button::new(tr(keys::ZOOM_FIT)).frame(false))
+                        .clicked()
+                    {
+                        self.session.fit();
+                    }
                 });
             });
         Panel::bottom("canvas-exif")
@@ -231,12 +289,19 @@ impl PhotoApp {
                 ui.horizontal_centered(placeholder::exif_line);
             });
 
+        let pan_tool = self.tool == PAN;
         egui::CentralPanel::default()
             .frame(Frame::new().fill(palette::CANVAS))
-            .show(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new(tr(keys::CANVAS_PENDING)).color(palette::TEXT_MUTED));
-                });
+            .show(ui, |ui| match canvas_error {
+                None => self.session.show(ui, pan_tool),
+                Some(error) => {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(
+                            RichText::new(tr_format(keys::CANVAS_ERROR, &[("error", &error)]))
+                                .color(palette::TEXT_MUTED),
+                        );
+                    });
+                }
             });
     }
 
@@ -262,7 +327,8 @@ impl PhotoApp {
 }
 
 impl eframe::App for PhotoApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        let canvas_error = frame.wgpu_render_state().and_then(canvas::last_error);
         widgets::menu_bar(ui, tr(keys::APP_NAME), |ui| self.menus(ui));
         self.persona_bar(ui);
         widgets::options_bar(ui, |ui| {
@@ -274,7 +340,7 @@ impl eframe::App for PhotoApp {
             placeholder: &mut self.placeholder,
         };
         self.dock.show(ui, &mut viewer);
-        self.canvas(ui);
+        self.canvas(ui, canvas_error);
     }
 
     fn on_exit(&mut self) {

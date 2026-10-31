@@ -8,7 +8,7 @@ Les règles de `AGENTS.md` (importé ci-dessus) s'appliquent intégralement et n
 
 ## État actuel du dépôt
 
-- Jalons livrés : J0 (fondations) et J1 (interface). J2 en cours (`docs/tasks/J2-document-rendu.md`, décisions 0009 à 0017) : bus de commandes, modèle et commandes Photo, rendu GPU par tuiles et `cygnus render` faits ; restent le vrai canevas (B6), la pyramide et la mémoire (B7), le banc d'essai (B8).
+- Jalons livrés : J0 (fondations) et J1 (interface). J2 en cours (`docs/tasks/J2-document-rendu.md`, décisions 0009 à 0017) : bus de commandes, modèle et commandes Photo, rendu GPU par tuiles, `cygnus render` et vrai canevas (document de démonstration, `apps/photo/src/canvas.rs`) faits ; restent la pyramide et la mémoire (B7), le banc d'essai (B8). Le canevas affiche au plus 256 tuiles (≈ 16,7 Mpx) avant B7.
 - Interface : `egui`/`eframe` (moteur wgpu) et `egui_dock`, versions figées ensemble (décision 0004 : `egui_dock` impose `egui` 0.36). Tout le thème (couleurs, tailles, polices) est dans `crates/ui-kit/src/theme.rs` ; les icônes Phosphor passent par `widgets::icon` (famille de police dédiée, décision 0005).
 - Traductions : chaque texte affiché passe par une clé déclarée dans `apps/photo/src/keys.rs` (`define_keys!`) et traduite dans `apps/photo/i18n/fr.txt` ; un test échoue sur toute clé sans traduction ou traduction sans clé.
 - Tout ce qui est factice (calques, courbe, histogramme, valeurs du pinceau) est dans `apps/photo/src/placeholder.rs`, à supprimer en J3.

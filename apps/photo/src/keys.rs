@@ -97,7 +97,16 @@ cygnus_ui_kit::define_keys! {
     DOCUMENT_CLOSE = "document.close";
     DOCUMENT_DIMENSIONS = "document.dimensions";
     DOCUMENT_INFO = "document.info";
-    CANVAS_PENDING = "canvas.pending";
+    DOCUMENT_FORMAT_8 = "document.format_8";
+    DOCUMENT_FORMAT_16 = "document.format_16";
+    NUMBER_DECIMAL_SEPARATOR = "number.decimal_separator";
+    DEMO_TITLE = "demo.title";
+    DEMO_LAYER_SKY = "demo.layer_sky";
+    DEMO_LAYER_SUN = "demo.layer_sun";
+    DEMO_LAYER_MOUNTAINS = "demo.layer_mountains";
+    DEMO_LAYER_LAKE = "demo.layer_lake";
+    DEMO_LAYER_MIST = "demo.layer_mist";
+    CANVAS_ERROR = "canvas.error";
     ZOOM_IN = "zoom.in";
     ZOOM_OUT = "zoom.out";
     ZOOM_FIT = "zoom.fit";
@@ -128,8 +137,6 @@ cygnus_ui_kit::define_keys! {
     LAYERS_ADD_MASK = "layers.add_mask";
     LAYERS_ADD_FILTER = "layers.add_filter";
     LAYERS_DELETE = "layers.delete";
-    PLACEHOLDER_DOCUMENT_TITLE = "placeholder.document_title";
-    PLACEHOLDER_DOCUMENT_FORMAT = "placeholder.document_format";
     PLACEHOLDER_EXIF = "placeholder.exif";
     PLACEHOLDER_MASK_TARGET = "placeholder.mask_target";
     PLACEHOLDER_STATUS_ACTION = "placeholder.status_action";

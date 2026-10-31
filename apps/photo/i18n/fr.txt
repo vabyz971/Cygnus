@@ -89,8 +89,18 @@ blend.luminosity = Luminosité
 document.close = Fermer le document
 document.dimensions = {width} × {height} px
 document.info = Informations du document
+document.format_8 = RVB / 8 bits
+document.format_16 = RVB / 16 bits
+number.decimal_separator = ,
 
-canvas.pending = Le rendu du canevas arrive au jalon J2.
+demo.title = Démonstration
+demo.layer_sky = Ciel
+demo.layer_sun = Soleil
+demo.layer_mountains = Montagnes
+demo.layer_lake = Lac
+demo.layer_mist = Brume
+
+canvas.error = Le canevas ne peut pas être affiché : {error}
 zoom.in = Zoom avant
 zoom.out = Zoom arrière
 zoom.fit = Adapter à l'écran
@@ -127,8 +137,6 @@ layers.add_mask = Ajouter un masque
 layers.add_filter = Nouveau filtre
 layers.delete = Supprimer le calque
 
-placeholder.document_title = Dolomites — heure bleue.cygnus
-placeholder.document_format = RVB / 16 bits
 placeholder.exif = SONY α7 IV  ·  24 mm  ·  ƒ/8  ·  1/30 s  ·  ISO 100
 placeholder.mask_target = Masque : Lumière du ciel
 placeholder.status_action = Peindre sur le masque

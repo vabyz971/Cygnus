@@ -56,6 +56,10 @@ pub mod palette {
     pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x8A, 0x90, 0x9C);
     /// Disabled text and icons.
     pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x55, 0x5B, 0x66);
+    /// Light squares of the transparency checker.
+    pub const CHECKER_LIGHT: Color32 = Color32::from_rgb(0x4A, 0x4F, 0x59);
+    /// Dark squares of the transparency checker.
+    pub const CHECKER_DARK: Color32 = Color32::from_rgb(0x3A, 0x3E, 0x47);
     /// Success marks (saved state, GPU ready).
     pub const SUCCESS: Color32 = Color32::from_rgb(0x8F, 0xD1, 0x9E);
     /// Red, green and blue channels in plots.

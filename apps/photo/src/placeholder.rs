@@ -49,12 +49,6 @@ pub const BLEND_MODES: [Key; 12] = [
     keys::BLEND_LUMINOSITY,
 ];
 
-/// Placeholder document size, in pixels.
-pub const DOCUMENT_SIZE: (u32, u32) = (6000, 3375);
-
-/// Placeholder zoom factor, in percent.
-pub const ZOOM_PERCENT: &str = "18,7";
-
 /// Values the widgets of the placeholder content edit.
 pub struct State {
     brush_size: u32,
@@ -170,26 +164,6 @@ pub fn brush_options(ui: &mut Ui, state: &mut State) {
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         widgets::icon_button(ui, icons::SLIDERS_HORIZONTAL, tr(keys::OPTION_MORE));
     });
-}
-
-/// Title of the placeholder document.
-pub fn document_title() -> &'static str {
-    tr(keys::PLACEHOLDER_DOCUMENT_TITLE)
-}
-
-/// Size and color format of the placeholder document, for the tab bar.
-pub fn document_info(ui: &mut Ui) {
-    widgets::icon_button(ui, icons::INFO, tr(keys::DOCUMENT_INFO));
-    let mono = |text: &str| RichText::new(text).monospace().color(palette::TEXT_MUTED);
-    ui.label(mono(tr(keys::PLACEHOLDER_DOCUMENT_FORMAT)));
-    let (width, height) = DOCUMENT_SIZE;
-    ui.label(mono(&tr_format(
-        keys::DOCUMENT_DIMENSIONS,
-        &[
-            ("width", &width.to_string()),
-            ("height", &height.to_string()),
-        ],
-    )));
 }
 
 /// Camera settings line under the canvas (AFF-3).
