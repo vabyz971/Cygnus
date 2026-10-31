@@ -21,11 +21,13 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
+use std::sync::mpsc;
+
 use cygnus_commands::Source;
 use cygnus_photo_core::script::{SCRIPT_VERSION, Script};
-use cygnus_photo_core::{Document, PhotoCommand};
+use cygnus_photo_core::{Document, PhotoChanges, PhotoCommand};
 use cygnus_photo_render::gpu::{self, Gpu};
-use cygnus_photo_render::{ExportBits, Image, Renderer};
+use cygnus_photo_render::{Canvas, CanvasView, ExportBits, Image, Renderer};
 
 /// The headless device and a renderer, or `None` (test skipped).
 pub fn setup() -> Option<(Gpu, Renderer)> {
@@ -183,4 +185,88 @@ pub fn assert_close(actual: u16, expected: f64, channel: usize, what: &str) {
         distance <= allowed,
         "{what}: got {actual}, expected {expected} (linear distance {distance}, allowed {allowed})"
     );
+}
+
+/// Draws the canvas on an offscreen 8-bit target and reads it back as RGBA
+/// bytes, row by row.
+pub fn draw_on(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    canvas: &mut Canvas,
+    document: &Document,
+    changes: &PhotoChanges,
+    (width, height): (u32, u32),
+    view: CanvasView,
+) -> Vec<u8> {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    canvas.prepare(renderer, document, changes, &view).unwrap();
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = texture.create_view(&Default::default());
+    let row = (width * 4).div_ceil(256) * 256;
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: u64::from(row * height),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        canvas.paint(&mut pass);
+    }
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(height),
+            },
+        },
+        texture.size(),
+    );
+    gpu.queue.submit([encoder.finish()]);
+    let (sender, receiver) = mpsc::channel();
+    readback
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap()
+        });
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    receiver.recv().unwrap().unwrap();
+    let mapped = readback.slice(..).get_mapped_range().unwrap();
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        let start = (y * row) as usize;
+        pixels.extend_from_slice(&mapped[start..start + (width * 4) as usize]);
+    }
+    pixels
 }

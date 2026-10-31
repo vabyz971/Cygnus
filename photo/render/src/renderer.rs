@@ -97,11 +97,22 @@ fn program(document: &Document) -> Result<Vec<ProgramLayer>, RenderError> {
 }
 
 pub(crate) struct Pool {
+    pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
 }
 
 impl Pool {
     pub(crate) fn new(device: &wgpu::Device, label: &str, slots: u32) -> Self {
+        Self::with_usage(device, label, slots, wgpu::TextureUsages::empty())
+    }
+
+    /// A pool whose texture also allows `extra` usages (copies).
+    pub(crate) fn with_usage(
+        device: &wgpu::Device,
+        label: &str,
+        slots: u32,
+        extra: wgpu::TextureUsages,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -113,18 +124,24 @@ impl Pool {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: COMPUTE_FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | extra,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        Self { view }
+        Self { texture, view }
     }
 }
 
-fn pipeline(device: &wgpu::Device, label: &str, source: String) -> wgpu::ComputePipeline {
+pub(crate) fn pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    source: String,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -286,7 +303,7 @@ impl Renderer {
             })
     }
 
-    fn bind(
+    pub(crate) fn bind(
         &self,
         pipeline: &wgpu::ComputePipeline,
         resources: &[wgpu::BindingResource<'_>],

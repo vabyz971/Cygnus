@@ -255,10 +255,11 @@ impl Session {
             (center_px.x - self.center[0] * self.zoom).round(),
             (center_px.y - self.center[1] * self.zoom).round(),
         ];
-        self.paint(ui, rect, origin);
+        let viewport = [rect.min.x * ppp, rect.min.y * ppp, size_px[0], size_px[1]];
+        self.paint(ui, rect, origin, viewport);
     }
 
-    fn paint(&mut self, ui: &Ui, rect: Rect, origin: [f32; 2]) {
+    fn paint(&mut self, ui: &Ui, rect: Rect, origin: [f32; 2], viewport: [f32; 4]) {
         let revision = self.bus.revision();
         if revision != self.sent {
             self.snapshot = Arc::new(self.document.clone());
@@ -271,6 +272,7 @@ impl Session {
             view: CanvasView {
                 origin,
                 scale: self.zoom,
+                viewport,
                 background: rgb(palette::CANVAS),
                 checker: [rgb(palette::CHECKER_LIGHT), rgb(palette::CHECKER_DARK)],
                 checker_size: CHECKER_SIZE,

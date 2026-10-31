@@ -33,6 +33,7 @@ const DECODE: &str = include_str!("shaders/decode.wgsl");
 const COMPOSITE: &str = include_str!("shaders/composite.wgsl");
 const EXPORT: &str = include_str!("shaders/export.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
+const DOWNSAMPLE: &str = include_str!("shaders/downsample.wgsl");
 
 /// Name of the WGSL constant holding the code of `mode`, such as
 /// `BLEND_SOFT_LIGHT`.
@@ -84,6 +85,11 @@ pub fn export() -> String {
     assemble(EXPORT, &[COLOR])
 }
 
+/// Downsample pass: pyramid level L from level L - 1.
+pub fn downsample() -> String {
+    assemble(DOWNSAMPLE, &[])
+}
+
 /// Display pass: composite tiles to the screen.
 pub fn display() -> String {
     assemble(DISPLAY, &[COLOR])
@@ -111,6 +117,7 @@ mod tests {
         validate("composite", &composite());
         validate("export", &export());
         validate("display", &display());
+        validate("downsample", &downsample());
     }
 
     #[test]
@@ -139,6 +146,7 @@ mod tests {
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),
+            ("downsample", DOWNSAMPLE),
         ] {
             assert!(
                 !source.contains("fn blend"),
@@ -152,6 +160,7 @@ mod tests {
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),
+            ("downsample", DOWNSAMPLE),
         ] {
             assert!(
                 !source.contains("fn srgb_to_linear"),

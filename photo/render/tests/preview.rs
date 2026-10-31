@@ -22,8 +22,6 @@
 
 mod common;
 
-use std::sync::mpsc;
-
 use common::{build_json, setup};
 use cygnus_commands::ChangeSet;
 use cygnus_photo_core::{Document, PhotoChanges};
@@ -33,18 +31,17 @@ const BACKGROUND: [f32; 3] = [20.0 / 255.0, 23.0 / 255.0, 28.0 / 255.0];
 const LIGHT: [f32; 3] = [0.8, 0.8, 0.8];
 const DARK: [f32; 3] = [0.6, 0.6, 0.6];
 
-fn view(origin: [f32; 2], scale: f32) -> CanvasView {
+fn view(origin: [f32; 2], scale: f32, size: (u32, u32)) -> CanvasView {
     CanvasView {
         origin,
         scale,
+        viewport: [0.0, 0.0, size.0 as f32, size.1 as f32],
         background: BACKGROUND,
         checker: [LIGHT, DARK],
         checker_size: 8.0,
     }
 }
 
-/// Draws the canvas on an offscreen 8-bit target and reads it back as RGBA
-/// bytes, row by row.
 fn draw(
     gpu: &cygnus_photo_render::gpu::Gpu,
     renderer: &Renderer,
@@ -53,80 +50,16 @@ fn draw(
     height: u32,
     view: CanvasView,
 ) -> Vec<u8> {
-    let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut canvas = Canvas::new(renderer, format).unwrap();
-    canvas
-        .prepare(renderer, document, &PhotoChanges::everything(), &view)
-        .unwrap();
-    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: None,
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let target = texture.create_view(&Default::default());
-    let row = (width * 4).div_ceil(256) * 256;
-    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: u64::from(row * height),
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        canvas.paint(&mut pass);
-    }
-    encoder.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(row),
-                rows_per_image: Some(height),
-            },
-        },
-        texture.size(),
-    );
-    gpu.queue.submit([encoder.finish()]);
-    let (sender, receiver) = mpsc::channel();
-    readback
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap()
-        });
-    gpu.device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .unwrap();
-    receiver.recv().unwrap().unwrap();
-    let mapped = readback.slice(..).get_mapped_range().unwrap();
-    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        let start = (y * row) as usize;
-        pixels.extend_from_slice(&mapped[start..start + (width * 4) as usize]);
-    }
-    pixels
+    let mut canvas = Canvas::new(renderer, wgpu::TextureFormat::Rgba8Unorm).unwrap();
+    common::draw_on(
+        gpu,
+        renderer,
+        &mut canvas,
+        document,
+        &PhotoChanges::everything(),
+        (width, height),
+        view,
+    )
 }
 
 /// An opaque 300 × 200 document (row size not a multiple of 256 bytes),
@@ -152,7 +85,14 @@ fn preview_at_100_percent_equals_the_8_bit_export() {
     };
     let document = opaque_document();
     let export = renderer.export(&document, ExportBits::Eight).unwrap();
-    let shown = draw(&gpu, &renderer, &document, 300, 300, view([0.0, 0.0], 1.0));
+    let shown = draw(
+        &gpu,
+        &renderer,
+        &document,
+        300,
+        300,
+        view([0.0, 0.0], 1.0, (300, 300)),
+    );
     let exported: Vec<u8> = export.data.iter().map(|v| *v as u8).collect();
     let differing = shown
         .as_chunks::<4>()
@@ -175,7 +115,14 @@ fn zoom_repeats_pixels_and_surroundings_show_the_background() {
     let document = opaque_document();
     let export = renderer.export(&document, ExportBits::Eight).unwrap();
     // 200 %, document shifted by (10, 6) target pixels.
-    let shown = draw(&gpu, &renderer, &document, 700, 700, view([10.0, 6.0], 2.0));
+    let shown = draw(
+        &gpu,
+        &renderer,
+        &document,
+        700,
+        700,
+        view([10.0, 6.0], 2.0, (700, 700)),
+    );
     let at = |x: u32, y: u32| -> [u8; 4] {
         let i = ((y * 700 + x) * 4) as usize;
         [shown[i], shown[i + 1], shown[i + 2], shown[i + 3]]
@@ -209,7 +156,14 @@ fn transparent_pixels_show_the_checker() {
         {"command": "layer.create", "params": {"name": "vide"}}
     ]"#,
     );
-    let shown = draw(&gpu, &renderer, &document, 32, 32, view([0.0, 0.0], 1.0));
+    let shown = draw(
+        &gpu,
+        &renderer,
+        &document,
+        32,
+        32,
+        view([0.0, 0.0], 1.0, (32, 32)),
+    );
     let light = LIGHT.map(|c| (c * 255.0).round() as u8);
     let dark = DARK.map(|c| (c * 255.0).round() as u8);
     assert_eq!(&shown[0..3], &light);
@@ -229,7 +183,7 @@ fn only_changed_tiles_are_recomposited() {
 
     let mut document = opaque_document();
     let mut canvas = Canvas::new(&renderer, wgpu::TextureFormat::Rgba8Unorm).unwrap();
-    let v = view([0.0, 0.0], 1.0);
+    let v = view([0.0, 0.0], 1.0, (300, 300));
     canvas
         .prepare(&renderer, &document, &PhotoChanges::everything(), &v)
         .unwrap();

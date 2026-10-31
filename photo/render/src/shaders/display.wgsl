@@ -14,24 +14,26 @@
 // You should have received a copy of the GNU General Public License along
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
-// Display pass: draws the canvas into egui's frame (docs/decisions/0012).
-// Each screen pixel looks up the composite tile under it. Sampling is
-// nearest: at 100 %, each screen pixel is exactly one document pixel, and
-// the shown value is the 8-bit export value (same encoding and
-// quantization). Filtered views below 100 % arrive with the tile pyramid.
+// Display pass: draws the canvas into egui's frame (docs/decisions/0012
+// and 0018). Each screen pixel looks up the composite tiles of the pyramid
+// level chosen for the zoom. At 100 % and above, sampling is nearest: each
+// screen pixel is exactly one document pixel at 100 %, and the shown value
+// is the 8-bit export value (same encoding and quantization). Below 100 %,
+// the level is sampled bilinearly, in linear premultiplied light.
 
 struct Display {
     // Framebuffer position of the document origin, in pixels.
     origin: vec2<f32>,
     // Framebuffer pixels per document pixel.
     scale: f32,
-    // Tiles per row of the document.
+    // Document pixels per pixel of the displayed level (2^level).
+    level_scale: f32,
+    // Size of the displayed level, in its pixels.
+    level_size: vec2<u32>,
+    // Tiles per row of the displayed level.
     tiles_x: u32,
-    // Document size in pixels.
-    size: vec2<u32>,
     // Side of a transparency checker square, in framebuffer pixels.
     checker: f32,
-    _pad: u32,
     // sRGB colors: around the document, and the two checker squares.
     background: vec4<f32>,
     checker_light: vec4<f32>,
@@ -49,20 +51,41 @@ fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
 }
 
+// Composite value of one pixel of the displayed level; transparent outside
+// the level or where no tile is resident.
+fn fetch(p: vec2<i32>) -> vec4<f32> {
+    let size = vec2<i32>(display.level_size);
+    if p.x < 0 || p.y < 0 || p.x >= size.x || p.y >= size.y {
+        return vec4<f32>(0.0);
+    }
+    let pixel = vec2<u32>(p);
+    let tile = pixel / TILE_SIZE;
+    let slot = pages[tile.y * display.tiles_x + tile.x];
+    if slot < 0 {
+        return vec4<f32>(0.0);
+    }
+    return textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0);
+}
+
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let offset = position.xy - display.origin;
     let point = offset / display.scale;
-    let size = vec2<f32>(display.size);
+    let size = vec2<f32>(display.level_size) * display.level_scale;
     if point.x < 0.0 || point.y < 0.0 || point.x >= size.x || point.y >= size.y {
         return vec4<f32>(display.background.rgb, 1.0);
     }
-    let pixel = vec2<u32>(floor(point));
-    let tile = pixel / TILE_SIZE;
-    let slot = pages[tile.y * display.tiles_x + tile.x];
-    var color = vec4<f32>(0.0);
-    if slot >= 0 {
-        color = textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0);
+    let level_point = point / display.level_scale;
+    var color: vec4<f32>;
+    if display.scale >= 1.0 {
+        color = fetch(vec2<i32>(floor(level_point)));
+    } else {
+        let q = level_point - 0.5;
+        let p = vec2<i32>(floor(q));
+        let f = q - floor(q);
+        let top = mix(fetch(p), fetch(p + vec2<i32>(1, 0)), f.x);
+        let bottom = mix(fetch(p + vec2<i32>(0, 1)), fetch(p + vec2<i32>(1, 1)), f.x);
+        color = mix(top, bottom, f.y);
     }
     let straight = encode_srgb(color);
     let shown = vec4<f32>(
