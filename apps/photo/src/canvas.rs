@@ -29,7 +29,7 @@ use std::sync::Arc;
 use cygnus_commands::{ChangeSet, CommandBus, Revision, Source};
 use cygnus_photo_core::script::{SCRIPT_VERSION, Script};
 use cygnus_photo_core::{CoreError, Document, PhotoChanges, PhotoCommand};
-use cygnus_photo_render::{Canvas, CanvasView, RenderError, Renderer};
+use cygnus_photo_render::{Canvas, CanvasView, RenderError, Renderer, gpu};
 use cygnus_ui_kit::theme::palette;
 use eframe::egui_wgpu;
 use egui::{PointerButton, Rect, Sense, Ui};
@@ -55,7 +55,8 @@ pub struct CanvasResources {
 /// Creates the canvas resources on eframe's device.
 pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError> {
     let renderer = Renderer::new(&render_state.device, &render_state.queue)?;
-    let canvas = Canvas::new(&renderer, render_state.target_format)?;
+    let budget = gpu::cache_memory_budget(render_state.adapter.get_info().device_type);
+    let canvas = Canvas::new(&renderer, render_state.target_format, budget)?;
     render_state
         .renderer
         .write()

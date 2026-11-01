@@ -33,6 +33,7 @@ use std::collections::{HashMap, HashSet};
 use cygnus_photo_core::pixels::{TILE_SIZE, TileCoord};
 use cygnus_photo_core::{Document, PhotoChanges};
 
+use crate::format::COMPUTE_TEXEL_BYTES;
 use crate::renderer::{Pool, RenderError, Renderer, pipeline};
 use crate::shaders;
 
@@ -105,6 +106,59 @@ const PARTIAL: OverBudget = OverBudget { partial: true };
 const SCRATCH_SLOTS: u32 = 16;
 /// Smallest cache accepted when memory is short.
 const MIN_SLOTS: u32 = 16;
+/// Cache of a new canvas, before the document and the window are known.
+const INITIAL_SLOTS: u32 = 64;
+
+/// Number of tiles of all pyramid levels of a document of `size` pixels.
+fn pyramid_tiles(size: (u32, u32)) -> (u64, u32) {
+    let (mut width, mut height) = size;
+    let mut tiles = 0u64;
+    let mut levels = 0;
+    loop {
+        let (x, y) = (width.div_ceil(TILE_SIZE), height.div_ceil(TILE_SIZE));
+        tiles += u64::from(x) * u64::from(y);
+        if x <= 1 && y <= 1 {
+            return (tiles, levels);
+        }
+        width = width.div_ceil(2);
+        height = height.div_ceil(2);
+        levels += 1;
+    }
+}
+
+/// Cache size wanted for a document of `document` pixels shown in a window
+/// of `viewport` pixels (docs/decisions/0018): the whole pyramid of the
+/// document when possible, and at least twice the tiles a full window shows
+/// at 100 %, plus one chain of children per level. Bounded afterwards by
+/// the GPU (array layers, memory).
+pub fn desired_slots(document: (u32, u32), viewport: (f32, f32)) -> u32 {
+    let (pyramid, levels) = pyramid_tiles(document);
+    let side = |length: f32| u64::from((length.max(0.0) / TILE_SIZE as f32).ceil() as u32 + 3);
+    let window = 2 * side(viewport.0) * side(viewport.1) + 4 * u64::from(levels) + 1;
+    u32::try_from(pyramid.max(window)).unwrap_or(u32::MAX)
+}
+
+/// Allocates a cache pool of `wanted` tiles, halving on GPU out-of-memory
+/// down to `minimum`.
+fn allocate_cache(
+    device: &wgpu::Device,
+    wanted: u32,
+    minimum: u32,
+) -> Result<(Pool, u32), RenderError> {
+    allocate_with_retry(wanted, minimum, |n| {
+        let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let pool = Pool::with_usage(
+            device,
+            "cygnus canvas cache",
+            n,
+            wgpu::TextureUsages::COPY_DST,
+        );
+        match pollster::block_on(memory.pop()) {
+            Some(error) => Err(RenderError::Gpu(error.to_string())),
+            None => Ok(pool),
+        }
+    })
+}
 const UNIFORM_BYTES: u64 = 80;
 
 /// Calls `try_allocate` with `wanted` slots, halving on failure down to
@@ -131,6 +185,11 @@ pub struct Canvas {
     cache: Pool,
     scratch: Pool,
     capacity: u32,
+    /// Whether the cache size follows the document and the window.
+    automatic: bool,
+    /// Largest cache the GPU allows: array layers, lowered when an
+    /// allocation runs out of memory.
+    ceiling: u32,
     pages: wgpu::Buffer,
     pages_capacity: u64,
     uniform: wgpu::Buffer,
@@ -144,20 +203,37 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// Largest cache, in tiles: the array layer limit of the minimal GPU
-    /// (256 tiles, 128 MiB in the compute format).
-    pub const MAX_SLOTS: u32 = 256;
-
-    /// Creates the canvas for targets of `format` (egui's frame format),
-    /// with the largest cache the GPU memory allows.
-    pub fn new(renderer: &Renderer, format: wgpu::TextureFormat) -> Result<Self, RenderError> {
-        Self::with_capacity(renderer, format, Self::MAX_SLOTS)
+    /// Creates the canvas for targets of `format` (egui's frame format).
+    /// Its cache size follows the document and the window
+    /// ([`desired_slots`]), within the array layers of the GPU and
+    /// `memory_budget` bytes (see [`crate::gpu::cache_memory_budget`]).
+    pub fn new(
+        renderer: &Renderer,
+        format: wgpu::TextureFormat,
+        memory_budget: u64,
+    ) -> Result<Self, RenderError> {
+        let mut canvas = Self::build(renderer, format, INITIAL_SLOTS)?;
+        canvas.automatic = true;
+        let by_memory = memory_budget / u64::from(TILE_SIZE * TILE_SIZE * COMPUTE_TEXEL_BYTES);
+        canvas.ceiling = canvas
+            .ceiling
+            .min(u32::try_from(by_memory).unwrap_or(u32::MAX))
+            .max(MIN_SLOTS);
+        Ok(canvas)
     }
 
-    /// Creates the canvas with a cache of at most `slots` tiles (16 at
-    /// least). If the GPU is out of memory, the cache is halved until the
-    /// allocation succeeds.
+    /// Creates the canvas with a fixed cache of at most `slots` tiles (16
+    /// at least), for tests. If the GPU is out of memory, the cache is
+    /// halved until the allocation succeeds.
     pub fn with_capacity(
+        renderer: &Renderer,
+        format: wgpu::TextureFormat,
+        slots: u32,
+    ) -> Result<Self, RenderError> {
+        Self::build(renderer, format, slots)
+    }
+
+    fn build(
         renderer: &Renderer,
         format: wgpu::TextureFormat,
         slots: u32,
@@ -190,19 +266,8 @@ impl Canvas {
             cache: None,
         });
         let downsample = pipeline(device, "cygnus downsample", shaders::downsample());
-        let (cache, capacity) = allocate_with_retry(slots.min(Self::MAX_SLOTS), MIN_SLOTS, |n| {
-            let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-            let pool = Pool::with_usage(
-                device,
-                "cygnus canvas cache",
-                n,
-                wgpu::TextureUsages::COPY_DST,
-            );
-            match pollster::block_on(memory.pop()) {
-                Some(error) => Err(RenderError::Gpu(error.to_string())),
-                None => Ok(pool),
-            }
-        })?;
+        let ceiling = device.limits().max_texture_array_layers;
+        let (cache, capacity) = allocate_cache(device, slots.min(ceiling), MIN_SLOTS)?;
         let scratch = Pool::with_usage(
             device,
             "cygnus canvas scratch",
@@ -227,6 +292,8 @@ impl Canvas {
             cache,
             scratch,
             capacity,
+            automatic: false,
+            ceiling,
             pages,
             pages_capacity,
             uniform,
@@ -276,6 +343,43 @@ impl Canvas {
         })
     }
 
+    /// Resizes the cache to what the document and the window need, within
+    /// the GPU limits. The cache content is dropped when it is resized.
+    fn fit_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        viewport: (f32, f32),
+        resized: bool,
+    ) -> Result<(), RenderError> {
+        if !self.automatic {
+            return Ok(());
+        }
+        let desired = desired_slots(self.size, viewport).clamp(MIN_SLOTS, self.ceiling);
+        let grow = desired > self.capacity;
+        let shrink = resized && desired < self.capacity / 2;
+        if !grow && !shrink {
+            return Ok(());
+        }
+        let (cache, capacity) =
+            allocate_cache(device, desired, MIN_SLOTS.max(self.capacity.min(desired)))?;
+        if capacity < desired {
+            // The GPU memory does not allow more: do not try again.
+            self.ceiling = capacity;
+        }
+        self.cache = cache;
+        self.capacity = capacity;
+        self.entries.clear();
+        self.slots = vec![None; capacity as usize];
+        self.group = Self::bind_group(
+            device,
+            &self.display,
+            &self.cache,
+            &self.pages,
+            &self.uniform,
+        );
+        Ok(())
+    }
+
     /// Number of tiles the cache holds.
     pub fn capacity(&self) -> u32 {
         self.capacity
@@ -312,7 +416,9 @@ impl Canvas {
         level
     }
 
-    fn invalidate(&mut self, changes: &PhotoChanges, document: &Document) {
+    /// Invalidates what `changes` touched; returns whether the document size
+    /// changed.
+    fn invalidate(&mut self, changes: &PhotoChanges, document: &Document) -> bool {
         let resized = self.size != (document.width, document.height);
         if resized
             || changes.everything
@@ -324,7 +430,7 @@ impl Canvas {
             for entry in self.entries.values_mut() {
                 entry.valid = false;
             }
-            return;
+            return resized;
         }
         for coord in changes.pixels.values().flatten() {
             // A level 0 tile changes every tile above it.
@@ -335,6 +441,7 @@ impl Canvas {
                 }
             }
         }
+        false
     }
 
     /// Visible tiles of `level`, with one tile of margin for filtering.
@@ -587,7 +694,12 @@ impl Canvas {
         changes: &PhotoChanges,
         view: &CanvasView,
     ) -> Result<(), RenderError> {
-        self.invalidate(changes, document);
+        let resized = self.invalidate(changes, document);
+        self.fit_capacity(
+            renderer.device(),
+            (view.viewport[2], view.viewport[3]),
+            resized,
+        )?;
         self.clock += 1;
 
         // The level whose pixels are between one and two screen pixels.
@@ -689,6 +801,19 @@ impl Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn budget_holds_the_whole_pyramid_of_a_24_megapixel_document() {
+        // 384 + 96 + 24 + 6 + 2 + 1 tiles over six levels.
+        assert_eq!(pyramid_tiles((6000, 4000)), (513, 5));
+        assert_eq!(desired_slots((6000, 4000), (2126.0, 1086.0)), 513);
+    }
+
+    #[test]
+    fn budget_follows_a_4k_window_for_small_documents() {
+        // 3840 × 2160: (15 + 3) × (9 + 3) tiles, twice, for a one-tile document.
+        assert_eq!(desired_slots((200, 200), (3840.0, 2160.0)), 2 * 18 * 12 + 1);
+    }
 
     #[test]
     fn allocation_retries_with_half_the_slots_when_out_of_memory() {

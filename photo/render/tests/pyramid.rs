@@ -26,6 +26,7 @@ use common::{build_json, draw_on, setup};
 use cygnus_commands::{ChangeSet, CommandBus, Source};
 use cygnus_photo_core::commands::PixelsFill;
 use cygnus_photo_core::{Document, NodeId, PhotoChanges, PhotoCommand, Rect};
+use cygnus_photo_render::gpu;
 use cygnus_photo_render::{Canvas, CanvasView, ExportBits};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -143,7 +144,12 @@ fn reduced_view_is_coherent() {
         return;
     };
     let document = quadrants(1024);
-    let mut canvas = Canvas::new(&renderer, FORMAT).unwrap();
+    let mut canvas = Canvas::new(
+        &renderer,
+        FORMAT,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
     let size = (256, 256);
     let shown = draw_on(
         &gpu,
@@ -179,7 +185,12 @@ fn a_24_megapixel_document_is_displayed() {
         {"command": "pixels.fill", "params": {"layer": 1, "rect": {"x": 0, "y": 0, "width": 6000, "height": 4000}, "color": [0.3, 0.5, 0.7, 1.0]}}
     ]"#,
     );
-    let mut canvas = Canvas::new(&renderer, FORMAT).unwrap();
+    let mut canvas = Canvas::new(
+        &renderer,
+        FORMAT,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
     let size = (1200, 800);
     let shown = draw_on(
         &gpu,
@@ -207,7 +218,12 @@ fn pixel_changes_reach_reduced_levels() {
         return;
     };
     let mut document = quadrants(1024);
-    let mut canvas = Canvas::new(&renderer, FORMAT).unwrap();
+    let mut canvas = Canvas::new(
+        &renderer,
+        FORMAT,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
     let size = (256, 256);
     let reduced = view([0.0, 0.0], 0.25, size);
     draw_on(
@@ -252,4 +268,64 @@ fn pixel_changes_reach_reduced_levels() {
     let export = renderer.export(&document, ExportBits::Eight).unwrap();
     let expected = export.pixel(256, 256).map(|v| v as u8);
     assert!(close(pixel(&shown, 256, 64, 64), expected));
+}
+
+#[test]
+fn a_4k_window_keeps_the_whole_pyramid_of_a_24_megapixel_document() {
+    let Some((gpu, renderer)) = setup() else {
+        return;
+    };
+    if gpu.device.limits().max_texture_array_layers < 513 {
+        println!("skipped: the adapter offers fewer than 513 array layers");
+        return;
+    }
+    let document = build_json(
+        r#"[
+        {"command": "document.create", "params": {"width": 6000, "height": 4000, "depth": "u8"}},
+        {"command": "layer.create", "params": {"name": "plein"}},
+        {"command": "pixels.fill", "params": {"layer": 1, "rect": {"x": 0, "y": 0, "width": 6000, "height": 4000}, "color": [0.3, 0.5, 0.7, 1.0]}}
+    ]"#,
+    );
+    let mut canvas = Canvas::new(
+        &renderer,
+        FORMAT,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
+    let size = (3840, 2160);
+    // "Fit to screen" in a 4K window, then 100 % at the center.
+    let fit = 0.92 * (3840.0f32 / 6000.0).min(2160.0 / 4000.0);
+    let fit_origin = [
+        (1920.0 - 3000.0 * fit).round(),
+        (1080.0 - 2000.0 * fit).round(),
+    ];
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &PhotoChanges::everything(),
+        size,
+        view(fit_origin, fit, size),
+    );
+    assert!(
+        canvas.capacity() >= 513,
+        "cache of {} tiles",
+        canvas.capacity()
+    );
+    let none = PhotoChanges::default();
+    let shown = draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &none,
+        size,
+        view([-1080.0, -920.0], 1.0, size),
+    );
+    assert_eq!(canvas.level(), 0, "100 % shows full resolution");
+    let stats = canvas.stats();
+    assert_eq!(stats.evicted, 0, "{stats:?}");
+    assert_eq!(stats.composited, 384, "no tile composited twice: {stats:?}");
+    assert!(close(pixel(&shown, 3840, 1920, 1080), [77, 128, 179, 255]));
 }

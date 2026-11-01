@@ -34,6 +34,23 @@ pub const BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
 /// its name, for example `llvmpipe` or `WARP`.
 pub const ADAPTER_ENV: &str = "CYGNUS_ADAPTER";
 
+/// Array layers the renderer uses when the adapter offers them: they bound
+/// the canvas cache (docs/decisions/0018). Only the WebGPU default (256) is
+/// required.
+pub const PREFERRED_ARRAY_LAYERS: u32 = 2048;
+
+/// GPU memory the canvas cache may use, by kind of adapter. wgpu does not
+/// report the size of video memory; real out-of-memory errors from the
+/// driver are caught as well and shrink the cache (docs/decisions/0018).
+pub fn cache_memory_budget(device_type: wgpu::DeviceType) -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    match device_type {
+        wgpu::DeviceType::DiscreteGpu => 1024 * MIB,
+        // Integrated, virtual and software adapters share system memory.
+        _ => 512 * MIB,
+    }
+}
+
 /// Optional wgpu features the renderer requires. None so far.
 pub const REQUIRED_FEATURES: wgpu::Features = wgpu::Features::empty();
 
@@ -180,12 +197,18 @@ pub fn check_adapter(adapter: &wgpu::Adapter) -> Result<(), UnsupportedAdapter> 
 }
 
 /// Device request of the renderer. The application passes it to eframe, the
-/// headless renderer uses it directly.
-pub fn device_descriptor(_adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+/// headless renderer uses it directly. It asks for the required limits, plus
+/// up to [`PREFERRED_ARRAY_LAYERS`] array layers when the adapter has them.
+pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    let mut limits = required_limits();
+    limits.max_texture_array_layers = adapter
+        .limits()
+        .max_texture_array_layers
+        .clamp(limits.max_texture_array_layers, PREFERRED_ARRAY_LAYERS);
     wgpu::DeviceDescriptor {
         label: Some("cygnus device"),
         required_features: REQUIRED_FEATURES,
-        required_limits: required_limits(),
+        required_limits: limits,
         ..Default::default()
     }
 }

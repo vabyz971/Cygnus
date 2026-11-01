@@ -25,6 +25,7 @@ mod common;
 use common::{build_json, setup};
 use cygnus_commands::ChangeSet;
 use cygnus_photo_core::{Document, PhotoChanges};
+use cygnus_photo_render::gpu;
 use cygnus_photo_render::{Canvas, CanvasView, ExportBits, Renderer};
 
 const BACKGROUND: [f32; 3] = [20.0 / 255.0, 23.0 / 255.0, 28.0 / 255.0];
@@ -50,7 +51,12 @@ fn draw(
     height: u32,
     view: CanvasView,
 ) -> Vec<u8> {
-    let mut canvas = Canvas::new(renderer, wgpu::TextureFormat::Rgba8Unorm).unwrap();
+    let mut canvas = Canvas::new(
+        renderer,
+        wgpu::TextureFormat::Rgba8Unorm,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
     common::draw_on(
         gpu,
         renderer,
@@ -182,7 +188,12 @@ fn only_changed_tiles_are_recomposited() {
     use cygnus_photo_core::{NodeId, Rect};
 
     let mut document = opaque_document();
-    let mut canvas = Canvas::new(&renderer, wgpu::TextureFormat::Rgba8Unorm).unwrap();
+    let mut canvas = Canvas::new(
+        &renderer,
+        wgpu::TextureFormat::Rgba8Unorm,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )
+    .unwrap();
     let v = view([0.0, 0.0], 1.0, (300, 300));
     canvas
         .prepare(&renderer, &document, &PhotoChanges::everything(), &v)

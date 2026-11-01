@@ -59,7 +59,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("adapter: {} ({:?})", gpu.info.name, gpu.info.backend);
     let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut canvas = Canvas::new(&renderer, format)?;
+    let mut canvas = Canvas::new(
+        &renderer,
+        format,
+        gpu::cache_memory_budget(gpu.info.device_type),
+    )?;
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("benchmark target"),
         size: wgpu::Extent3d {
