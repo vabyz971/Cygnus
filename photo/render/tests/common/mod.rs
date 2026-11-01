@@ -108,17 +108,25 @@ pub struct Comparison {
     pub differing: usize,
     /// Pixels with a channel beyond one f16 step.
     pub beyond_tolerance: usize,
+    /// Largest distance of a channel, as a share of its tolerance.
+    pub max_ratio: f64,
+    /// Mean distance over all channels, as a share of their tolerance.
+    pub mean_ratio: f64,
     /// Total pixels.
     pub total: usize,
 }
 
+/// Largest mean distance between adapters, as a share of the per-channel
+/// tolerance (docs/decisions/0016).
+pub const MEAN_RATIO_BOUND: f64 = 0.01;
+
 impl Comparison {
     /// Tolerance of docs/decisions/0013 as amended by 0016: no channel of
-    /// any pixel beyond one f16 step (plus one export quantization step).
-    /// The share of differing pixels is reported, not limited: one color
+    /// any pixel beyond one f16 step (plus one export quantization step),
+    /// and a bounded mean distance ([`MEAN_RATIO_BOUND`]). The share of differing pixels is reported, not limited: one color
     /// off by one unit fills a whole flat area.
     pub fn passes(&self) -> bool {
-        self.beyond_tolerance == 0
+        self.beyond_tolerance == 0 && self.mean_ratio <= MEAN_RATIO_BOUND
     }
 }
 
@@ -132,8 +140,11 @@ pub fn compare(expected: &Image, actual: &Image) -> Comparison {
     let mut comparison = Comparison {
         differing: 0,
         beyond_tolerance: 0,
+        max_ratio: 0.0,
+        mean_ratio: 0.0,
         total: (expected.width * expected.height) as usize,
     };
+    let mut ratio_sum = 0.0;
     for (a, b) in expected
         .data
         .as_chunks::<4>()
@@ -145,12 +156,18 @@ pub fn compare(expected: &Image, actual: &Image) -> Comparison {
             continue;
         }
         comparison.differing += 1;
-        let beyond =
-            (0..4).any(|c| (linear(a[c], c) - linear(b[c], c)).abs() > tolerance(a[c], b[c], c));
+        let mut beyond = false;
+        for c in 0..4 {
+            let ratio = (linear(a[c], c) - linear(b[c], c)).abs() / tolerance(a[c], b[c], c);
+            ratio_sum += ratio;
+            comparison.max_ratio = comparison.max_ratio.max(ratio);
+            beyond |= ratio > 1.0;
+        }
         if beyond {
             comparison.beyond_tolerance += 1;
         }
     }
+    comparison.mean_ratio = ratio_sum / (comparison.total * 4) as f64;
     comparison
 }
 
