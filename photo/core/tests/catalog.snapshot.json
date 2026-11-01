@@ -1588,6 +1588,28 @@
     "stability": "stable"
   },
   {
+    "description": "Undoes the last action, a whole gesture at once.",
+    "name": "history.undo",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `history.undo` and `history.redo`: none.",
+      "title": "HistoryParams",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Redoes the last undone action.",
+    "name": "history.redo",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `history.undo` and `history.redo`: none.",
+      "title": "HistoryParams",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
     "description": "Fills a rectangle of a pixel layer with a color.",
     "name": "pixels.fill",
     "params": {

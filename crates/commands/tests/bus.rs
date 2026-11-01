@@ -17,156 +17,12 @@
 //! Command bus behaviour, exercised with a toy catalog: a map of named
 //! counters.
 
-use std::collections::{BTreeMap, BTreeSet};
+mod common;
 
+use common::*;
 use cygnus_commands::{
-    Applied, BusLimits, Catalog, ChangeSet, ChangesSince, Command, CommandBus, CommandInfo,
-    Revision, Source, Stability,
+    BusLimits, Catalog, ChangeSet, ChangesSince, Command, CommandBus, Revision, Source,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-type Counters = BTreeMap<String, i64>;
-
-/// Names of the counters touched, or every counter.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Touched {
-    all: bool,
-    names: BTreeSet<String>,
-}
-
-impl Touched {
-    fn one(name: &str) -> Self {
-        Self {
-            all: false,
-            names: [name.to_owned()].into(),
-        }
-    }
-}
-
-impl ChangeSet for Touched {
-    fn merge(&mut self, other: &Self) {
-        self.all |= other.all;
-        self.names.extend(other.names.iter().cloned());
-    }
-
-    fn everything() -> Self {
-        Self {
-            all: true,
-            names: BTreeSet::new(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        !self.all && self.names.is_empty()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct AddParams {
-    counter: String,
-    amount: i64,
-    /// Bytes the command pretends to carry, to exercise the memory budget.
-    #[serde(default)]
-    payload: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct SetParams {
-    counter: String,
-    value: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "command", content = "params")]
-enum Toy {
-    #[serde(rename = "counter.add")]
-    Add(AddParams),
-    #[serde(rename = "counter.set")]
-    Set(SetParams),
-}
-
-#[derive(Debug, PartialEq)]
-enum ToyError {
-    Overflow,
-}
-
-impl Command for Toy {
-    type Target = Counters;
-    type Changes = Touched;
-    type Error = ToyError;
-
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Add(_) => "counter.add",
-            Self::Set(_) => "counter.set",
-        }
-    }
-
-    fn payload_bytes(&self) -> usize {
-        match self {
-            Self::Add(params) => params.payload,
-            Self::Set(_) => 0,
-        }
-    }
-
-    fn apply(self, target: &mut Counters) -> Result<Applied<Self>, ToyError> {
-        match self {
-            Self::Add(params) => {
-                let current = target.get(&params.counter).copied().unwrap_or(0);
-                // Checked before any change: a refused command changes nothing.
-                let value = current
-                    .checked_add(params.amount)
-                    .ok_or(ToyError::Overflow)?;
-                target.insert(params.counter.clone(), value);
-                Ok(Applied {
-                    inverse: Self::Set(SetParams {
-                        counter: params.counter.clone(),
-                        value: current,
-                    }),
-                    inverse_bytes: params.payload,
-                    changes: Touched::one(&params.counter),
-                })
-            }
-            Self::Set(params) => {
-                let previous = target.insert(params.counter.clone(), params.value);
-                Ok(Applied {
-                    inverse: Self::Set(SetParams {
-                        counter: params.counter.clone(),
-                        value: previous.unwrap_or(0),
-                    }),
-                    inverse_bytes: 0,
-                    changes: Touched::one(&params.counter),
-                })
-            }
-        }
-    }
-}
-
-impl Catalog for Toy {
-    fn commands() -> Vec<CommandInfo> {
-        vec![
-            CommandInfo::new::<AddParams>("counter.add", "Adds to a counter.", Stability::Stable),
-            CommandInfo::new::<SetParams>("counter.set", "Sets a counter.", Stability::Development),
-        ]
-    }
-}
-
-fn add(counter: &str, amount: i64) -> Toy {
-    Toy::Add(AddParams {
-        counter: counter.to_owned(),
-        amount,
-        payload: 0,
-    })
-}
-
-fn heavy(counter: &str, payload: usize) -> Toy {
-    Toy::Add(AddParams {
-        counter: counter.to_owned(),
-        amount: 1,
-        payload,
-    })
-}
 
 #[test]
 fn applied_command_changes_target_and_revision() {
@@ -206,8 +62,8 @@ fn log_records_command_inverse_and_source() {
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].name, "counter.add");
     assert_eq!(entries[1].source, Source::Agent);
-    assert_eq!(entries[1].command.as_ref(), Some(&add("a", 4)));
-    let inverse = entries[1].inverse.clone().unwrap();
+    assert_eq!(entries[1].command, add("a", 4));
+    let inverse = entries[1].inverse.clone();
     // Applying the inverse restores the previous state.
     inverse.apply(&mut counters).unwrap();
     assert_eq!(counters["a"], 3);
@@ -286,63 +142,6 @@ fn unknown_cursor_gets_everything() {
 }
 
 #[test]
-fn memory_budget_is_respected() {
-    let mut counters = Counters::new();
-    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
-        retained_bytes: 1000,
-        ..BusLimits::default()
-    });
-    // Each command retains 200 bytes of payload and 200 of inverse.
-    for _ in 0..5 {
-        bus.execute(&mut counters, heavy("a", 200), Source::User)
-            .unwrap();
-        assert!(bus.retained_bytes() <= 1000);
-    }
-    let entries: Vec<_> = bus.entries().collect();
-    assert_eq!(
-        entries.len(),
-        5,
-        "entries are kept, only their data dropped"
-    );
-    // The oldest entries lost their command and inverse: no longer undoable.
-    assert!(!entries[0].is_undoable());
-    assert!(entries[0].command.is_none());
-    assert_eq!(entries[0].name, "counter.add");
-    // The most recent ones are intact.
-    assert!(entries[4].is_undoable());
-    assert_eq!(bus.forgotten(), 3);
-}
-
-#[test]
-fn single_command_above_budget_is_kept_but_not_undoable() {
-    let mut counters = Counters::new();
-    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
-        retained_bytes: 100,
-        ..BusLimits::default()
-    });
-    bus.execute(&mut counters, heavy("a", 500), Source::User)
-        .unwrap();
-    assert_eq!(counters["a"], 1);
-    assert!(bus.retained_bytes() <= 100);
-    assert!(!bus.entries().next().unwrap().is_undoable());
-}
-
-#[test]
-fn entry_count_is_bounded() {
-    let mut counters = Counters::new();
-    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
-        max_entries: 3,
-        ..BusLimits::default()
-    });
-    for _ in 0..10 {
-        bus.execute(&mut counters, add("a", 1), Source::User)
-            .unwrap();
-    }
-    assert_eq!(bus.entries().count(), 3);
-    assert_eq!(counters["a"], 10);
-}
-
-#[test]
 fn catalog_describes_every_command_with_its_schema() {
     let json = cygnus_commands::catalog_json::<Toy>();
     let commands = json.as_array().unwrap();
@@ -363,6 +162,7 @@ fn catalog_names_match_serialized_names() {
         Toy::Set(SetParams {
             counter: "a".to_owned(),
             value: 0,
+            payload: 0,
         }),
     ] {
         let json = serde_json::to_value(&command).unwrap();
@@ -373,4 +173,59 @@ fn catalog_names_match_serialized_names() {
                 .any(|info| info.name == command.name())
         );
     }
+}
+
+#[test]
+fn saturation_removes_the_oldest_entries_with_a_warning() {
+    let mut counters = Counters::new();
+    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
+        retained_bytes: 1000,
+        ..BusLimits::default()
+    });
+    // Each command retains 200 bytes of payload and 200 of inverse.
+    for _ in 0..5 {
+        bus.execute(&mut counters, heavy("a", 200), Source::User)
+            .unwrap();
+        assert!(bus.retained_bytes() <= 1000);
+    }
+    // The three oldest entries are gone entirely, and counted (0022).
+    assert_eq!(bus.entries().count(), 2);
+    assert_eq!(bus.truncated(), 3);
+    // Everything still listed can be undone; then nothing is left.
+    assert!(bus.undo(&mut counters, Source::User).unwrap());
+    assert!(bus.undo(&mut counters, Source::User).unwrap());
+    assert!(!bus.can_undo());
+    assert_eq!(counters["a"], 3);
+}
+
+#[test]
+fn single_command_above_budget_is_applied_but_not_kept() {
+    let mut counters = Counters::new();
+    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
+        retained_bytes: 100,
+        ..BusLimits::default()
+    });
+    bus.execute(&mut counters, heavy("a", 500), Source::User)
+        .unwrap();
+    assert_eq!(counters["a"], 1);
+    assert!(bus.retained_bytes() <= 100);
+    assert_eq!(bus.entries().count(), 0);
+    assert_eq!(bus.truncated(), 1);
+    assert!(!bus.can_undo());
+}
+
+#[test]
+fn entry_count_is_bounded() {
+    let mut counters = Counters::new();
+    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
+        max_entries: 3,
+        ..BusLimits::default()
+    });
+    for _ in 0..10 {
+        bus.execute(&mut counters, add("a", 1), Source::User)
+            .unwrap();
+    }
+    assert_eq!(bus.entries().count(), 3);
+    assert_eq!(bus.truncated(), 7);
+    assert_eq!(counters["a"], 10);
 }

@@ -365,6 +365,10 @@ pub struct PixelsWrite {
     pub samples: Vec<u16>,
 }
 
+/// Parameters of `history.undo` and `history.redo`: none.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct HistoryParams {}
+
 /// Saved state of some nodes and of their pixels: the inverse of
 /// structural commands. Each entry holds the node as it was (`None` if it
 /// did not exist) and its tiles.
@@ -432,6 +436,12 @@ pub enum PhotoCommand {
     /// Fills a mask with a linear gradient.
     #[serde(rename = "mask.gradient")]
     MaskGradient(MaskGradient),
+    /// Undoes the last action (a whole gesture at once).
+    #[serde(rename = "history.undo")]
+    HistoryUndo(HistoryParams),
+    /// Redoes the last undone action.
+    #[serde(rename = "history.redo")]
+    HistoryRedo(HistoryParams),
     /// Development: fills a rectangle of a pixel layer with a color.
     #[serde(rename = "pixels.fill")]
     PixelsFill(PixelsFill),
@@ -1292,11 +1302,61 @@ impl Command for PhotoCommand {
             Self::MaskUpdate(_) => "mask.update",
             Self::MaskFill(_) => "mask.fill",
             Self::MaskGradient(_) => "mask.gradient",
+            Self::HistoryUndo(_) => "history.undo",
+            Self::HistoryRedo(_) => "history.redo",
             Self::PixelsFill(_) => "pixels.fill",
             Self::PixelsWrite(_) => "pixels.write",
             Self::DocumentRestore(_) => "document.restore",
             Self::NodesRestore(_) => "nodes.restore",
             Self::PixelsRestore(_) => "pixels.restore",
+        }
+    }
+
+    fn history_action(&self) -> Option<cygnus_commands::HistoryAction> {
+        match self {
+            Self::HistoryUndo(_) => Some(cygnus_commands::HistoryAction::Undo),
+            Self::HistoryRedo(_) => Some(cygnus_commands::HistoryAction::Redo),
+            _ => None,
+        }
+    }
+
+    /// Changes of the same properties of the same node merge within a
+    /// gesture: dragging a slider makes one history entry.
+    fn coalesce_key(&self) -> Option<String> {
+        let fields = |flags: &[(bool, &str)]| -> String {
+            flags
+                .iter()
+                .filter(|(set, _)| *set)
+                .map(|(_, name)| *name)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        match self {
+            Self::LayerUpdate(p) => Some(format!(
+                "layer.update:{}:{}",
+                p.id.0,
+                fields(&[
+                    (p.name.is_some(), "name"),
+                    (p.visible.is_some(), "visible"),
+                    (p.opacity.is_some(), "opacity"),
+                    (p.blend.is_some(), "blend"),
+                    (p.locked.is_some(), "locked"),
+                    (p.clip.is_some(), "clip"),
+                    (p.isolation.is_some(), "isolation"),
+                ])
+            )),
+            Self::AdjustmentUpdate(p) => Some(format!("adjustment.update:{}", p.id.0)),
+            Self::FilterUpdate(p) => Some(format!("filter.update:{}", p.id.0)),
+            Self::MaskUpdate(p) => Some(format!(
+                "mask.update:{}:{}",
+                p.id.0,
+                fields(&[
+                    (p.density.is_some(), "density"),
+                    (p.inverted.is_some(), "inverted"),
+                    (p.enabled.is_some(), "enabled"),
+                ])
+            )),
+            _ => None,
         }
     }
 
@@ -1324,6 +1384,10 @@ impl Command for PhotoCommand {
             Self::MaskUpdate(params) => update_mask(document, params),
             Self::MaskFill(params) => fill_mask(document, params),
             Self::MaskGradient(params) => gradient_mask(document, params),
+            // Executed by the bus itself (docs/decisions/0022).
+            Self::HistoryUndo(_) | Self::HistoryRedo(_) => Err(CoreError::Unsupported(
+                "applying a history command outside the bus",
+            )),
             Self::PixelsFill(params) => fill_pixels(document, params),
             Self::PixelsWrite(params) => write_pixels(document, params),
             Self::DocumentRestore(previous) => restore_document(document, *previous),
@@ -1410,6 +1474,16 @@ impl Catalog for PhotoCommand {
             CommandInfo::new::<MaskGradient>(
                 "mask.gradient",
                 "Fills a mask with a linear gradient between two points.",
+                Stable,
+            ),
+            CommandInfo::new::<HistoryParams>(
+                "history.undo",
+                "Undoes the last action, a whole gesture at once.",
+                Stable,
+            ),
+            CommandInfo::new::<HistoryParams>(
+                "history.redo",
+                "Redoes the last undone action.",
                 Stable,
             ),
             CommandInfo::new::<PixelsFill>(

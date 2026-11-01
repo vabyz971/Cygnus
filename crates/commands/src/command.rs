@@ -68,4 +68,27 @@ pub trait Command: Sized + Clone {
 
     /// Applies the command to `target`.
     fn apply(self, target: &mut Self::Target) -> Result<Applied<Self>, Self::Error>;
+
+    /// For the history commands of the catalog (`history.undo`,
+    /// `history.redo`): the action the bus performs itself instead of
+    /// applying the command.
+    fn history_action(&self) -> Option<HistoryAction> {
+        None
+    }
+
+    /// Key under which consecutive commands of one gesture merge into one
+    /// history entry (for example the property of a node a slider drags).
+    /// `None`: the command never merges.
+    fn coalesce_key(&self) -> Option<String> {
+        None
+    }
+}
+
+/// History action performed by the bus (docs/decisions/0022).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryAction {
+    /// Undo the last entry (a whole gesture at once).
+    Undo,
+    /// Redo the last undone entry.
+    Redo,
 }

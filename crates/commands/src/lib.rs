@@ -29,5 +29,5 @@ mod journal;
 
 pub use bus::{BusLimits, CommandBus, Entry, GroupId, Source};
 pub use catalog::{Catalog, CommandInfo, Stability, catalog_json};
-pub use command::{Applied, ChangeSet, Command};
+pub use command::{Applied, ChangeSet, Command, HistoryAction};
 pub use journal::{ChangesSince, Revision};
