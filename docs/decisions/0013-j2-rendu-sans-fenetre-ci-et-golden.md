@@ -24,7 +24,7 @@ Entre les deux adaptateurs : **1 048 552 valeurs identiques au bit près sur 1 0
 - **Code unique** : `photo/render` crée l'instance avec `Backends::PRIMARY`, choisit l'adaptateur par `power_preference` ou par la variable `CYGNUS_ADAPTER` (sous-chaîne du nom, pour les tests), et demande le périphérique avec `device_descriptor(adapter)` (0012). Aucun chemin CPU dans notre code. Un adaptateur logiciel n'est qu'un pilote parmi d'autres, vu par wgpu comme un GPU.
 - **Linux (ubuntu-24.04)** : **lavapipe** (Vulkan logiciel de Mesa), via le paquet `mesa-vulkan-drivers`. Si sa version est trop ancienne, on prend la construction binaire de Mesa utilisée par la CI de wgpu. Mesuré localement : fonctionne.
 - **Windows (windows-2022)** : **WARP**, le rendu logiciel DirectX 12 de Microsoft, présent dans le système. La CI de wgpu installe une version plus récente de la DLL ; on fera de même si la version système pose problème.
-- **macOS (macos-14, Apple Silicon)** : **Metal** sur le GPU paravirtualisé du runner. La CI de wgpu lance ses tests GPU sur ce runner.
+- **macOS (macos-15, Apple Silicon)** : **Metal** sur le GPU paravirtualisé du runner. La CI de wgpu lance ses tests GPU sur ce type de runner. *(Mis à jour le 2026-11-01 : l'image macos-14 est retirée par GitHub le 2 novembre 2026, voir actions/runner-images#13518.)*
 
 **Ce qui ne sera pas possible, honnêtement :**
 

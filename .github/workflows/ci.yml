@@ -60,7 +60,7 @@ jobs:
             adapter: llvmpipe
           - os: windows-2022
             adapter: ""
-          - os: macos-14
+          - os: macos-15
             adapter: ""
     runs-on: ${{ matrix.os }}
     env:
