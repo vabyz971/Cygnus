@@ -41,6 +41,7 @@ fn new_layer(name: &str) -> PhotoCommand {
         name: name.to_owned(),
         parent: None,
         index: None,
+        kind: Default::default(),
     })
 }
 
@@ -111,14 +112,17 @@ fn every_command_has_an_exact_inverse() {
             name: "Dessous".to_owned(),
             parent: None,
             index: Some(0),
+            kind: Default::default(),
         }),
         PhotoCommand::LayerUpdate(LayerUpdate {
             id: NodeId(2),
             name: Some("Renommé".to_owned()),
             visible: Some(false),
             opacity: Some(0.25),
-            blend: Some(BlendMode::Normal),
+            blend: Some(BlendMode::Multiply),
             locked: Some(true),
+            clip: Some(true),
+            isolation: None,
         }),
         PhotoCommand::LayerDelete(LayerDelete { id: NodeId(1) }),
         PhotoCommand::LayerDelete(LayerDelete { id: NodeId(2) }),
@@ -194,14 +198,6 @@ fn refused_commands_change_nothing() {
             sample(),
             PhotoCommand::LayerUpdate(LayerUpdate {
                 id: NodeId(1),
-                blend: Some(BlendMode::Multiply),
-                ..LayerUpdate::new(NodeId(1))
-            }),
-        ),
-        (
-            sample(),
-            PhotoCommand::LayerUpdate(LayerUpdate {
-                id: NodeId(1),
                 opacity: Some(f32::NAN),
                 ..LayerUpdate::new(NodeId(1))
             }),
@@ -236,6 +232,7 @@ fn refused_commands_change_nothing() {
                 name: String::new(),
                 parent: None,
                 index: Some(3),
+                kind: Default::default(),
             }),
         ),
         (sample(), fill(1, rect(0, 0, 1, 1), [0.0, 0.0, 0.0, 2.0])),
@@ -486,7 +483,17 @@ fn catalog_lists_public_commands_with_their_stability() {
             "layer.create",
             "layer.update",
             "layer.delete",
+            "layer.duplicate",
             "layer.move",
+            "layer.group",
+            "layer.ungroup",
+            "adjustment.update",
+            "filter.update",
+            "mask.create",
+            "mask.delete",
+            "mask.update",
+            "mask.fill",
+            "mask.gradient",
             "pixels.fill",
             "pixels.write",
         ]

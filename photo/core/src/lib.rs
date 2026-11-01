@@ -20,12 +20,17 @@
 //! through the [`PhotoCommand`]s of the catalog (0010). This crate has no
 //! GPU dependency: the model and the commands are tested without a GPU.
 
+pub mod adjust;
 pub mod changes;
 pub mod commands;
 pub mod model;
 pub mod pixels;
 pub mod script;
 
+pub use adjust::{Adjustment, Filter};
 pub use changes::PhotoChanges;
 pub use commands::{CoreError, PhotoCommand};
-pub use model::{BlendMode, ColorProfile, Depth, Document, Node, NodeId, NodeKind, Rect};
+pub use model::{
+    BlendMode, ColorProfile, Depth, Document, Isolation, Node, NodeId, NodeKind, Placement, Rect,
+    Source, SourceId,
+};

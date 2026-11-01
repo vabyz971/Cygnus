@@ -25,10 +25,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::pixels::PixelStore;
+use crate::adjust::{Adjustment, Filter};
+use crate::pixels::{LayerTiles, PixelStore, TileFormat};
 
 /// Version of the serialized model.
-pub const MODEL_VERSION: u32 = 1;
+pub const MODEL_VERSION: u32 = 2;
 
 /// Largest document side, in pixels.
 pub const MAX_SIDE: u32 = 65_535;
@@ -188,20 +189,107 @@ impl Rect {
     }
 }
 
+/// How a group composes its children (docs/decisions/0020).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Isolation {
+    /// Children act directly on what is below; the group opacity and mask
+    /// mix the result with the backdrop. The default (Q2).
+    #[default]
+    PassThrough,
+    /// Children are composed apart, then the result is blended with the
+    /// group mode and opacity.
+    Isolated,
+}
+
+/// Identifier of an embedded source: the hexadecimal SHA-256 of its
+/// decoded content.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct SourceId(pub String);
+
+/// Where an embedded object is placed. Only an integer offset in J3; the
+/// affine transform of J5 extends this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Placement {
+    /// Horizontal offset of the source origin, in document pixels.
+    pub x: i32,
+    /// Vertical offset of the source origin, in document pixels.
+    pub y: i32,
+}
+
+/// An embedded image, stored once and never modified (DOC-2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    /// Name of the file it came from.
+    pub name: String,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Bits per channel.
+    pub depth: Depth,
+    /// Its pixels, RGBA tiles in its own coordinates.
+    pub tiles: LayerTiles,
+}
+
 /// What a node is.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
-    /// A group of nodes, drawn bottom to top. Only the root before J3.
+    /// A group of nodes, drawn bottom to top.
     Group {
         /// Children, bottom first.
         children: Vec<NodeId>,
+        /// How the children are composed.
+        #[serde(default)]
+        isolation: Isolation,
     },
     /// A pixel layer; its pixels live in the document [`PixelStore`].
     Pixel {
         /// Area the layer may hold pixels in.
         bounds: Rect,
     },
+    /// An adjustment layer, acting on what is below it in its group.
+    Adjustment {
+        /// The adjustment and its parameters.
+        adjustment: Adjustment,
+    },
+    /// A filter layer, acting on what is below it in its group.
+    Filter {
+        /// The filter and its parameters.
+        filter: Filter,
+    },
+    /// An embedded object: an unmodified source, placed in the document.
+    Embedded {
+        /// The source, in [`Document::sources`].
+        source: SourceId,
+        /// Where it is placed.
+        placement: Placement,
+    },
+    /// A gray mask, attached to the node that is its parent.
+    Mask {
+        /// Area the mask may hold pixels in.
+        bounds: Rect,
+        /// Effect of the mask, 0 (none) to 1 (full).
+        density: f32,
+        /// Whether the mask is inverted.
+        inverted: bool,
+        /// Whether the mask applies.
+        enabled: bool,
+        /// Gray value of the mask where no tile is stored.
+        empty: u16,
+    },
+}
+
+impl NodeKind {
+    /// Whether nodes of this kind can carry a mask, be blended and appear
+    /// in a group (every kind but masks).
+    pub fn is_layer(&self) -> bool {
+        !matches!(self, Self::Mask { .. })
+    }
 }
 
 /// A node of the layer tree.
@@ -222,8 +310,11 @@ pub struct Node {
     /// A locked node refuses changes, except to its visibility and lock, or
     /// changes made by a command that also unlocks it.
     pub locked: bool,
-    /// Mask node. Reserved: always `None` before milestone J3.
+    /// Mask node attached to this node.
     pub mask: Option<NodeId>,
+    /// Clipped to the first unclipped node below it in its group (CAL-5).
+    #[serde(default)]
+    pub clip: bool,
     /// What the node is.
     pub kind: NodeKind,
 }
@@ -253,6 +344,9 @@ pub struct Document {
     /// format stores them separately (milestone J6).
     #[serde(skip)]
     pub pixels: PixelStore,
+    /// Embedded sources, by identifier. Stored with the pixels (J6).
+    #[serde(skip)]
+    pub sources: BTreeMap<SourceId, Source>,
 }
 
 impl Default for Document {
@@ -285,8 +379,10 @@ impl Document {
                 blend: BlendMode::Normal,
                 locked: false,
                 mask: None,
+                clip: false,
                 kind: NodeKind::Group {
                     children: Vec::new(),
+                    isolation: Isolation::Isolated,
                 },
             },
         );
@@ -301,6 +397,7 @@ impl Document {
             nodes,
             next_id: 1,
             pixels: PixelStore::default(),
+            sources: BTreeMap::new(),
         }
     }
 
@@ -317,8 +414,18 @@ impl Document {
     /// Children of group `id`, bottom first; empty for other nodes.
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         match self.nodes.get(&id).map(|node| &node.kind) {
-            Some(NodeKind::Group { children }) => children,
+            Some(NodeKind::Group { children, .. }) => children,
             _ => &[],
+        }
+    }
+
+    /// Tile format of the pixels of node `id`: RGBA for pixel layers, gray
+    /// for masks; `None` for nodes without pixels of their own.
+    pub fn tile_format(&self, id: NodeId) -> Option<TileFormat> {
+        match self.nodes.get(&id).map(|node| &node.kind) {
+            Some(NodeKind::Pixel { .. }) => Some(TileFormat::rgba(self.depth)),
+            Some(NodeKind::Mask { empty, .. }) => Some(TileFormat::gray(self.depth, *empty)),
+            _ => None,
         }
     }
 
@@ -357,23 +464,66 @@ impl Document {
                 return Err(format!("node {} not below next_id", id.0));
             }
             for child in self.children(id) {
-                let parent = self.nodes.get(child).and_then(|child| child.parent);
-                if parent != Some(id) {
+                let child_node = self.nodes.get(child);
+                if child_node.and_then(|child| child.parent) != Some(id) {
                     return Err(format!("node {} has a wrong parent", child.0));
                 }
+                if child_node.is_some_and(|child| !child.kind.is_layer()) {
+                    return Err(format!("mask {} listed as a child", child.0));
+                }
                 stack.push(*child);
+            }
+            if let Some(mask) = node.mask {
+                let mask_node = self
+                    .nodes
+                    .get(&mask)
+                    .ok_or_else(|| format!("node {} has an unknown mask", id.0))?;
+                if mask_node.kind.is_layer() || mask_node.parent != Some(id) || id == self.root {
+                    return Err(format!("node {} has an invalid mask {}", id.0, mask.0));
+                }
+                if mask_node.mask.is_some() {
+                    return Err(format!("mask {} has a mask", mask.0));
+                }
+                stack.push(mask);
+            }
+            match &node.kind {
+                NodeKind::Adjustment { adjustment } => adjustment
+                    .validate()
+                    .map_err(|error| format!("node {}: {error}", id.0))?,
+                NodeKind::Filter { filter } => filter
+                    .validate()
+                    .map_err(|error| format!("node {}: {error}", id.0))?,
+                NodeKind::Embedded { source, .. } if !self.sources.contains_key(source) => {
+                    return Err(format!("node {} uses an unknown source", id.0));
+                }
+                NodeKind::Mask { density, .. } if !(0.0..=1.0).contains(density) => {
+                    return Err(format!("mask {} has density {density}", id.0));
+                }
+                NodeKind::Mask { .. } => {
+                    let owned = node
+                        .parent
+                        .and_then(|parent| self.nodes.get(&parent))
+                        .is_some_and(|parent| parent.mask == Some(id));
+                    if !owned {
+                        return Err(format!("mask {} is not attached to its parent", id.0));
+                    }
+                }
+                _ => {}
             }
         }
         if seen.len() != self.nodes.len() {
             return Err("unreachable nodes".to_owned());
         }
         for layer in self.pixels.layers() {
-            let is_pixel = matches!(
-                self.nodes.get(&layer).map(|node| &node.kind),
-                Some(NodeKind::Pixel { .. })
-            );
-            if !is_pixel {
-                return Err(format!("pixels stored for non-pixel node {}", layer.0));
+            let Some(format) = self.tile_format(layer) else {
+                return Err(format!("pixels stored for node {} without pixels", layer.0));
+            };
+            if self
+                .pixels
+                .tiles(layer)
+                .any(|(_, tile)| tile.channels() != format.channels)
+            {
+                return Err(format!("node {} stores tiles of the wrong kind", layer.0));
             }
         }
         Ok(())

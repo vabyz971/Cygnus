@@ -32,9 +32,6 @@ use crate::model::{Depth, NodeId, Rect};
 /// Side of a tile, in pixels.
 pub const TILE_SIZE: u32 = 256;
 
-/// Channel values per tile (RGBA).
-const TILE_VALUES: usize = (TILE_SIZE * TILE_SIZE * 4) as usize;
-
 /// Position of a tile, in tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TileCoord {
@@ -68,64 +65,157 @@ pub fn tiles_in(rect: Rect) -> impl Iterator<Item = TileCoord> {
         .filter(move |_| !empty)
 }
 
-/// Pixel values of one tile.
+/// Kind of pixels a tile holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Channels {
+    /// Color with alpha: pixel layers and embedded sources.
+    Rgba,
+    /// One gray channel: masks.
+    Gray,
+}
+
+impl Channels {
+    /// Number of values per pixel.
+    pub fn count(self) -> usize {
+        match self {
+            Self::Rgba => 4,
+            Self::Gray => 1,
+        }
+    }
+}
+
+/// Pixel values of one tile. RGBA tiles hold four values per pixel, gray
+/// tiles (masks) one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tile {
-    /// 8 bits per channel.
+    /// RGBA, 8 bits per channel.
     U8(Box<[u8]>),
-    /// 16 bits per channel.
+    /// RGBA, 16 bits per channel.
     U16(Box<[u16]>),
+    /// Gray, 8 bits.
+    Gray8(Box<[u8]>),
+    /// Gray, 16 bits.
+    Gray16(Box<[u16]>),
 }
 
 impl Tile {
-    /// A transparent tile.
+    /// A transparent RGBA tile.
     pub fn transparent(depth: Depth) -> Self {
-        match depth {
-            Depth::U8 => Self::U8(vec![0; TILE_VALUES].into_boxed_slice()),
-            Depth::U16 => Self::U16(vec![0; TILE_VALUES].into_boxed_slice()),
+        Self::filled(depth, Channels::Rgba, [0; 4])
+    }
+
+    /// A tile whose every pixel is `value` (only its first value for gray).
+    pub fn filled(depth: Depth, channels: Channels, value: [u16; 4]) -> Self {
+        let pixels = (TILE_SIZE * TILE_SIZE) as usize;
+        let n = channels.count();
+        let row: Vec<u16> = value[..n].to_vec();
+        let values: Vec<u16> = row.iter().copied().cycle().take(pixels * n).collect();
+        let narrow = |values: Vec<u16>| -> Box<[u8]> {
+            values
+                .into_iter()
+                .map(|v| u8::try_from(v).unwrap_or(u8::MAX))
+                .collect()
+        };
+        match (depth, channels) {
+            (Depth::U8, Channels::Rgba) => Self::U8(narrow(values)),
+            (Depth::U16, Channels::Rgba) => Self::U16(values.into_boxed_slice()),
+            (Depth::U8, Channels::Gray) => Self::Gray8(narrow(values)),
+            (Depth::U16, Channels::Gray) => Self::Gray16(values.into_boxed_slice()),
+        }
+    }
+
+    /// Kind of pixels of the tile.
+    pub fn channels(&self) -> Channels {
+        match self {
+            Self::U8(_) | Self::U16(_) => Channels::Rgba,
+            Self::Gray8(_) | Self::Gray16(_) => Channels::Gray,
         }
     }
 
     /// Memory used by the pixel values, in bytes.
     pub fn bytes(&self) -> usize {
         match self {
-            Self::U8(values) => values.len(),
-            Self::U16(values) => values.len() * 2,
+            Self::U8(values) | Self::Gray8(values) => values.len(),
+            Self::U16(values) | Self::Gray16(values) => values.len() * 2,
         }
     }
 
-    fn index(x: u32, y: u32) -> usize {
-        ((y * TILE_SIZE + x) * 4) as usize
+    fn index(&self, x: u32, y: u32) -> usize {
+        (y * TILE_SIZE + x) as usize * self.channels().count()
     }
 
-    /// RGBA values of the pixel at (`x`, `y`) inside the tile.
+    fn value(&self, i: usize) -> u16 {
+        match self {
+            Self::U8(values) | Self::Gray8(values) => u16::from(values[i]),
+            Self::U16(values) | Self::Gray16(values) => values[i],
+        }
+    }
+
+    /// Values of the pixel at (`x`, `y`) inside the tile: RGBA, or the gray
+    /// value repeated four times.
     pub fn get(&self, x: u32, y: u32) -> [u16; 4] {
-        let i = Self::index(x, y);
-        let mut out = [0; 4];
-        for (channel, value) in out.iter_mut().enumerate() {
-            *value = match self {
-                Self::U8(values) => u16::from(values[i + channel]),
-                Self::U16(values) => values[i + channel],
-            };
+        let i = self.index(x, y);
+        match self.channels() {
+            Channels::Rgba => [0, 1, 2, 3].map(|c| self.value(i + c)),
+            Channels::Gray => [self.value(i); 4],
         }
-        out
     }
 
-    fn set(&mut self, x: u32, y: u32, rgba: [u16; 4]) {
-        let i = Self::index(x, y);
-        for (channel, value) in rgba.into_iter().enumerate() {
+    fn set(&mut self, x: u32, y: u32, value: [u16; 4]) {
+        let i = self.index(x, y);
+        let n = self.channels().count();
+        for (channel, value) in value.into_iter().take(n).enumerate() {
             match self {
                 // Values are validated against the depth by the commands.
-                Self::U8(values) => values[i + channel] = u8::try_from(value).unwrap_or(u8::MAX),
-                Self::U16(values) => values[i + channel] = value,
+                Self::U8(values) | Self::Gray8(values) => {
+                    values[i + channel] = u8::try_from(value).unwrap_or(u8::MAX);
+                }
+                Self::U16(values) | Self::Gray16(values) => values[i + channel] = value,
             }
         }
     }
 
-    fn is_transparent(&self) -> bool {
-        match self {
-            Self::U8(values) => values.iter().all(|value| *value == 0),
-            Self::U16(values) => values.iter().all(|value| *value == 0),
+    /// Whether every pixel equals `value` (first value only for gray).
+    fn is_uniform(&self, value: [u16; 4]) -> bool {
+        let n = self.channels().count();
+        let len = self.bytes()
+            / match self {
+                Self::U8(_) | Self::Gray8(_) => 1,
+                Self::U16(_) | Self::Gray16(_) => 2,
+            };
+        (0..len).all(|i| self.value(i) == value[i % n])
+    }
+}
+
+/// Format of the tiles a layer stores, and the value of its pixels where no
+/// tile is stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TileFormat {
+    /// Bits per channel.
+    pub depth: Depth,
+    /// Kind of pixels.
+    pub channels: Channels,
+    /// Value of pixels without a stored tile: transparent for layers,
+    /// white or black for masks.
+    pub empty: [u16; 4],
+}
+
+impl TileFormat {
+    /// RGBA tiles, transparent where nothing is stored.
+    pub fn rgba(depth: Depth) -> Self {
+        Self {
+            depth,
+            channels: Channels::Rgba,
+            empty: [0; 4],
+        }
+    }
+
+    /// Gray mask tiles, `empty` where nothing is stored.
+    pub fn gray(depth: Depth, empty: u16) -> Self {
+        Self {
+            depth,
+            channels: Channels::Gray,
+            empty: [empty; 4],
         }
     }
 }
@@ -162,6 +252,16 @@ impl PixelStore {
         self.layers.get(&layer).and_then(|tiles| tiles.get(&coord))
     }
 
+    /// Values of one pixel of `layer`, `empty` where no tile is stored.
+    pub fn pixel_or(&self, layer: NodeId, x: u32, y: u32, empty: [u16; 4]) -> [u16; 4] {
+        let coord = TileCoord {
+            tx: x / TILE_SIZE,
+            ty: y / TILE_SIZE,
+        };
+        self.tile(layer, coord)
+            .map_or(empty, |tile| tile.get(x % TILE_SIZE, y % TILE_SIZE))
+    }
+
     /// RGBA values of one pixel of `layer`.
     pub fn pixel(&self, layer: NodeId, x: u32, y: u32) -> [u16; 4] {
         let coord = TileCoord {
@@ -187,22 +287,23 @@ impl PixelStore {
     }
 
     /// Writes the pixels of `rect` (already clipped to the layer) of `layer`
-    /// with `source(x, y)`, in document coordinates; new tiles get `depth`.
-    /// Returns the previous content of the touched tiles.
+    /// with `source(x, y)`, in document coordinates. New tiles take
+    /// `format`; a tile that ends up equal to the empty value is not
+    /// stored. Returns the previous content of the touched tiles.
     pub fn paint(
         &mut self,
         layer: NodeId,
         rect: Rect,
-        depth: Depth,
+        format: TileFormat,
         mut source: impl FnMut(u32, u32) -> [u16; 4],
     ) -> TileBackup {
         let tiles = self.layers.entry(layer).or_default();
         let mut backup = Vec::new();
         for coord in tiles_in(rect) {
             let previous = tiles.get(&coord).cloned();
-            let mut tile = previous
-                .clone()
-                .unwrap_or_else(|| Arc::new(Tile::transparent(depth)));
+            let mut tile = previous.clone().unwrap_or_else(|| {
+                Arc::new(Tile::filled(format.depth, format.channels, format.empty))
+            });
             let area = rect.intersect(&coord.rect());
             let target = Arc::make_mut(&mut tile);
             for y in area.y..area.y + area.height {
@@ -210,7 +311,7 @@ impl PixelStore {
                     target.set(x - coord.rect().x, y - coord.rect().y, source(x, y));
                 }
             }
-            if tile.is_transparent() {
+            if tile.is_uniform(format.empty) {
                 tiles.remove(&coord);
             } else {
                 tiles.insert(coord, tile);
@@ -281,13 +382,19 @@ mod tests {
     #[test]
     fn paint_then_restore_is_identity() {
         let mut store = PixelStore::default();
-        let first = store.paint(LAYER, Rect::of_size(300, 10), Depth::U16, |_, _| {
-            [1, 2, 3, 4]
-        });
+        let first = store.paint(
+            LAYER,
+            Rect::of_size(300, 10),
+            TileFormat::rgba(Depth::U16),
+            |_, _| [1, 2, 3, 4],
+        );
         let before = store.clone();
-        let backup = store.paint(LAYER, Rect::of_size(20, 20), Depth::U16, |x, _| {
-            [x as u16, 0, 0, 9]
-        });
+        let backup = store.paint(
+            LAYER,
+            Rect::of_size(20, 20),
+            TileFormat::rgba(Depth::U16),
+            |x, _| [x as u16, 0, 0, 9],
+        );
         assert_ne!(store, before);
         store.restore(LAYER, backup);
         assert_eq!(store, before);
@@ -299,20 +406,30 @@ mod tests {
     fn transparent_tiles_are_not_stored() {
         let mut store = PixelStore::default();
         let area = Rect::of_size(10, 10);
-        store.paint(LAYER, area, Depth::U8, |_, _| [0; 4]);
+        store.paint(LAYER, area, TileFormat::rgba(Depth::U8), |_, _| [0; 4]);
         assert_eq!(store.layers().count(), 0);
-        store.paint(LAYER, area, Depth::U8, |_, _| [255; 4]);
+        store.paint(LAYER, area, TileFormat::rgba(Depth::U8), |_, _| [255; 4]);
         assert_eq!(store.tiles(LAYER).count(), 1);
-        store.paint(LAYER, area, Depth::U8, |_, _| [0; 4]);
+        store.paint(LAYER, area, TileFormat::rgba(Depth::U8), |_, _| [0; 4]);
         assert_eq!(store.layers().count(), 0);
     }
 
     #[test]
     fn shared_tiles_are_copied_on_write() {
         let mut store = PixelStore::default();
-        store.paint(LAYER, Rect::of_size(4, 4), Depth::U8, |_, _| [10; 4]);
+        store.paint(
+            LAYER,
+            Rect::of_size(4, 4),
+            TileFormat::rgba(Depth::U8),
+            |_, _| [10; 4],
+        );
         let snapshot = store.clone();
-        store.paint(LAYER, Rect::of_size(1, 1), Depth::U8, |_, _| [20; 4]);
+        store.paint(
+            LAYER,
+            Rect::of_size(1, 1),
+            TileFormat::rgba(Depth::U8),
+            |_, _| [20; 4],
+        );
         assert_eq!(snapshot.pixel(LAYER, 0, 0), [10; 4]);
         assert_eq!(store.pixel(LAYER, 0, 0), [20; 4]);
     }

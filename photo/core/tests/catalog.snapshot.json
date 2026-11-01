@@ -72,10 +72,443 @@
     "stability": "stable"
   },
   {
-    "description": "Adds an empty pixel layer to a group.",
+    "description": "Adds a pixel layer, group, adjustment layer or filter layer to a group.",
     "name": "layer.create",
     "params": {
       "$defs": {
+        "Adjustment": {
+          "description": "An adjustment and its parameters.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Levels",
+              "description": "Levels.",
+              "properties": {
+                "kind": {
+                  "const": "levels",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/Curves",
+              "description": "Curves.",
+              "properties": {
+                "kind": {
+                  "const": "curves",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/HueSaturation",
+              "description": "Hue/saturation.",
+              "properties": {
+                "kind": {
+                  "const": "hue_saturation",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/BrightnessContrast",
+              "description": "Brightness/contrast.",
+              "properties": {
+                "kind": {
+                  "const": "brightness_contrast",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/ColorBalance",
+              "description": "Color balance.",
+              "properties": {
+                "kind": {
+                  "const": "color_balance",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "BrightnessContrast": {
+          "description": "Brightness/contrast adjustment.",
+          "properties": {
+            "brightness": {
+              "description": "From -100 to 100.",
+              "format": "float",
+              "type": "number"
+            },
+            "contrast": {
+              "description": "From -100 to 100.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "brightness",
+            "contrast"
+          ],
+          "type": "object"
+        },
+        "ColorBalance": {
+          "description": "Color balance adjustment.",
+          "properties": {
+            "highlights": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the highlights."
+            },
+            "midtones": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the midtones."
+            },
+            "preserve_luminosity": {
+              "description": "Keep the luminosity of each pixel.",
+              "type": "boolean"
+            },
+            "shadows": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the shadows."
+            }
+          },
+          "required": [
+            "shadows",
+            "midtones",
+            "highlights",
+            "preserve_luminosity"
+          ],
+          "type": "object"
+        },
+        "ColorShift": {
+          "description": "Color shift of one tonal range, each axis from -100 to 100.",
+          "properties": {
+            "cyan_red": {
+              "description": "Cyan (negative) to red (positive).",
+              "format": "float",
+              "type": "number"
+            },
+            "magenta_green": {
+              "description": "Magenta (negative) to green (positive).",
+              "format": "float",
+              "type": "number"
+            },
+            "yellow_blue": {
+              "description": "Yellow (negative) to blue (positive).",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cyan_red",
+            "magenta_green",
+            "yellow_blue"
+          ],
+          "type": "object"
+        },
+        "Curve": {
+          "description": "A tone curve: 2 to 16 points, x strictly increasing, all in 0..=1.",
+          "properties": {
+            "points": {
+              "description": "Control points `[x, y]`.",
+              "items": {
+                "items": {
+                  "format": "float",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "points"
+          ],
+          "type": "object"
+        },
+        "Curves": {
+          "description": "Curves adjustment (REG-3): master curve, then per channel.",
+          "properties": {
+            "blue": {
+              "$ref": "#/$defs/Curve",
+              "description": "Blue channel."
+            },
+            "green": {
+              "$ref": "#/$defs/Curve",
+              "description": "Green channel."
+            },
+            "master": {
+              "$ref": "#/$defs/Curve",
+              "description": "Applied to the three color channels, after the channel curves."
+            },
+            "red": {
+              "$ref": "#/$defs/Curve",
+              "description": "Red channel."
+            }
+          },
+          "required": [
+            "master",
+            "red",
+            "green",
+            "blue"
+          ],
+          "type": "object"
+        },
+        "Filter": {
+          "description": "A neighbourhood filter and its parameters.",
+          "oneOf": [
+            {
+              "description": "Gaussian blur; `radius` is the standard deviation, 0.1 to 100 px.",
+              "properties": {
+                "kind": {
+                  "const": "gaussian_blur",
+                  "type": "string"
+                },
+                "radius": {
+                  "description": "Standard deviation in document pixels.",
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Unsharp mask.",
+              "properties": {
+                "amount": {
+                  "description": "Strength, 0 to 5 (0 to 500 %).",
+                  "format": "float",
+                  "type": "number"
+                },
+                "kind": {
+                  "const": "unsharp_mask",
+                  "type": "string"
+                },
+                "radius": {
+                  "description": "Blur radius (standard deviation), 0.1 to 100 px.",
+                  "format": "float",
+                  "type": "number"
+                },
+                "threshold": {
+                  "description": "Smallest difference sharpened, 0 to 255 levels.",
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius",
+                "amount",
+                "threshold"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "HueSaturation": {
+          "description": "Hue/saturation adjustment.",
+          "properties": {
+            "hue": {
+              "description": "Hue shift in degrees, from -180 to 180.",
+              "format": "float",
+              "type": "number"
+            },
+            "lightness": {
+              "description": "Lightness change, from -100 to 100.",
+              "format": "float",
+              "type": "number"
+            },
+            "saturation": {
+              "description": "Saturation change, from -100 to 100.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "hue",
+            "saturation",
+            "lightness"
+          ],
+          "type": "object"
+        },
+        "Isolation": {
+          "description": "How a group composes its children (docs/decisions/0020).",
+          "oneOf": [
+            {
+              "const": "pass_through",
+              "description": "Children act directly on what is below; the group opacity and mask\nmix the result with the backdrop. The default (Q2).",
+              "type": "string"
+            },
+            {
+              "const": "isolated",
+              "description": "Children are composed apart, then the result is blended with the\ngroup mode and opacity.",
+              "type": "string"
+            }
+          ]
+        },
+        "LayerKind": {
+          "description": "Kind of a new layer, with its parameters.",
+          "oneOf": [
+            {
+              "description": "An empty pixel layer.",
+              "properties": {
+                "type": {
+                  "const": "pixel",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "An empty group.",
+              "properties": {
+                "isolation": {
+                  "$ref": "#/$defs/Isolation",
+                  "default": "pass_through",
+                  "description": "How the group composes its children; pass-through by default."
+                },
+                "type": {
+                  "const": "group",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "An adjustment layer.",
+              "properties": {
+                "adjustment": {
+                  "$ref": "#/$defs/Adjustment",
+                  "description": "The adjustment and its parameters."
+                },
+                "type": {
+                  "const": "adjustment",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "adjustment"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A filter layer.",
+              "properties": {
+                "filter": {
+                  "$ref": "#/$defs/Filter",
+                  "description": "The filter and its parameters."
+                },
+                "type": {
+                  "const": "filter",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "filter"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Levels": {
+          "description": "Levels adjustment: the master channel, then red, green and blue.",
+          "properties": {
+            "blue": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Blue channel."
+            },
+            "green": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Green channel."
+            },
+            "master": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Applied to the three color channels."
+            },
+            "red": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Red channel."
+            }
+          },
+          "required": [
+            "master",
+            "red",
+            "green",
+            "blue"
+          ],
+          "type": "object"
+        },
+        "LevelsChannel": {
+          "description": "Levels of one channel, values from 0 to 1.",
+          "properties": {
+            "gamma": {
+              "description": "Midtone gamma, from 0.1 to 10 (1 leaves midtones unchanged).",
+              "format": "float",
+              "type": "number"
+            },
+            "input_black": {
+              "description": "Input value mapped to black.",
+              "format": "float",
+              "type": "number"
+            },
+            "input_white": {
+              "description": "Input value mapped to white.",
+              "format": "float",
+              "type": "number"
+            },
+            "output_black": {
+              "description": "Output value of black.",
+              "format": "float",
+              "type": "number"
+            },
+            "output_white": {
+              "description": "Output value of white.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "input_black",
+            "input_white",
+            "gamma",
+            "output_black",
+            "output_white"
+          ],
+          "type": "object"
+        },
         "NodeId": {
           "description": "Stable identifier of a node, unique within its document and never\nreused.",
           "format": "uint64",
@@ -95,6 +528,13 @@
             "integer",
             "null"
           ]
+        },
+        "kind": {
+          "$ref": "#/$defs/LayerKind",
+          "default": {
+            "type": "pixel"
+          },
+          "description": "Kind of layer; a pixel layer when absent."
         },
         "name": {
           "default": "",
@@ -120,7 +560,7 @@
     "stability": "stable"
   },
   {
-    "description": "Changes the name, visibility, opacity, blend mode or lock of a layer.",
+    "description": "Changes the name, visibility, opacity, blend mode, lock, clipping or isolation of a layer.",
     "name": "layer.update",
     "params": {
       "$defs": {
@@ -189,6 +629,21 @@
             }
           ]
         },
+        "Isolation": {
+          "description": "How a group composes its children (docs/decisions/0020).",
+          "oneOf": [
+            {
+              "const": "pass_through",
+              "description": "Children act directly on what is below; the group opacity and mask\nmix the result with the backdrop. The default (Q2).",
+              "type": "string"
+            },
+            {
+              "const": "isolated",
+              "description": "Children are composed apart, then the result is blended with the\ngroup mode and opacity.",
+              "type": "string"
+            }
+          ]
+        },
         "NodeId": {
           "description": "Stable identifier of a node, unique within its document and never\nreused.",
           "format": "uint64",
@@ -210,9 +665,27 @@
           ],
           "description": "New blend mode."
         },
+        "clip": {
+          "description": "Clip to the layer below (CAL-5).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "id": {
           "$ref": "#/$defs/NodeId",
           "description": "Layer to change."
+        },
+        "isolation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Isolation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "New isolation, for groups only."
         },
         "locked": {
           "description": "New lock state.",
@@ -229,7 +702,7 @@
           ]
         },
         "opacity": {
-          "description": "New opacity, from 0 to 1.",
+          "description": "New opacity (intensity of an adjustment), from 0 to 1.",
           "format": "float",
           "type": [
             "number",
@@ -253,7 +726,7 @@
     "stability": "stable"
   },
   {
-    "description": "Deletes a layer.",
+    "description": "Deletes a layer and everything it contains.",
     "name": "layer.delete",
     "params": {
       "$defs": {
@@ -269,13 +742,41 @@
       "properties": {
         "id": {
           "$ref": "#/$defs/NodeId",
-          "description": "Layer to delete."
+          "description": "Layer to delete, with everything it contains."
         }
       },
       "required": [
         "id"
       ],
       "title": "LayerDelete",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Copies a layer and everything it contains just above it.",
+    "name": "layer.duplicate",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.duplicate`.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer to copy, with everything it contains; the copy goes just above."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LayerDuplicate",
       "type": "object"
     },
     "stability": "stable"
@@ -323,6 +824,765 @@
         "index"
       ],
       "title": "LayerMove",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Puts layers of the same group into a new group.",
+    "name": "layer.group",
+    "params": {
+      "$defs": {
+        "Isolation": {
+          "description": "How a group composes its children (docs/decisions/0020).",
+          "oneOf": [
+            {
+              "const": "pass_through",
+              "description": "Children act directly on what is below; the group opacity and mask\nmix the result with the backdrop. The default (Q2).",
+              "type": "string"
+            },
+            {
+              "const": "isolated",
+              "description": "Children are composed apart, then the result is blended with the\ngroup mode and opacity.",
+              "type": "string"
+            }
+          ]
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.group`.",
+      "properties": {
+        "ids": {
+          "description": "Layers to group, all in the same group.",
+          "items": {
+            "$ref": "#/$defs/NodeId"
+          },
+          "type": "array"
+        },
+        "isolation": {
+          "$ref": "#/$defs/Isolation",
+          "default": "pass_through",
+          "description": "How the new group composes its children; pass-through by default."
+        },
+        "name": {
+          "default": "",
+          "description": "Name of the new group.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "title": "LayerGroup",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Replaces a group by its children.",
+    "name": "layer.ungroup",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.ungroup`.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Group to undo: its children take its place, its mask is removed."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LayerUngroup",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Changes the parameters of an adjustment layer.",
+    "name": "adjustment.update",
+    "params": {
+      "$defs": {
+        "Adjustment": {
+          "description": "An adjustment and its parameters.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Levels",
+              "description": "Levels.",
+              "properties": {
+                "kind": {
+                  "const": "levels",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/Curves",
+              "description": "Curves.",
+              "properties": {
+                "kind": {
+                  "const": "curves",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/HueSaturation",
+              "description": "Hue/saturation.",
+              "properties": {
+                "kind": {
+                  "const": "hue_saturation",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/BrightnessContrast",
+              "description": "Brightness/contrast.",
+              "properties": {
+                "kind": {
+                  "const": "brightness_contrast",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/ColorBalance",
+              "description": "Color balance.",
+              "properties": {
+                "kind": {
+                  "const": "color_balance",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "BrightnessContrast": {
+          "description": "Brightness/contrast adjustment.",
+          "properties": {
+            "brightness": {
+              "description": "From -100 to 100.",
+              "format": "float",
+              "type": "number"
+            },
+            "contrast": {
+              "description": "From -100 to 100.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "brightness",
+            "contrast"
+          ],
+          "type": "object"
+        },
+        "ColorBalance": {
+          "description": "Color balance adjustment.",
+          "properties": {
+            "highlights": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the highlights."
+            },
+            "midtones": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the midtones."
+            },
+            "preserve_luminosity": {
+              "description": "Keep the luminosity of each pixel.",
+              "type": "boolean"
+            },
+            "shadows": {
+              "$ref": "#/$defs/ColorShift",
+              "description": "Shift of the shadows."
+            }
+          },
+          "required": [
+            "shadows",
+            "midtones",
+            "highlights",
+            "preserve_luminosity"
+          ],
+          "type": "object"
+        },
+        "ColorShift": {
+          "description": "Color shift of one tonal range, each axis from -100 to 100.",
+          "properties": {
+            "cyan_red": {
+              "description": "Cyan (negative) to red (positive).",
+              "format": "float",
+              "type": "number"
+            },
+            "magenta_green": {
+              "description": "Magenta (negative) to green (positive).",
+              "format": "float",
+              "type": "number"
+            },
+            "yellow_blue": {
+              "description": "Yellow (negative) to blue (positive).",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cyan_red",
+            "magenta_green",
+            "yellow_blue"
+          ],
+          "type": "object"
+        },
+        "Curve": {
+          "description": "A tone curve: 2 to 16 points, x strictly increasing, all in 0..=1.",
+          "properties": {
+            "points": {
+              "description": "Control points `[x, y]`.",
+              "items": {
+                "items": {
+                  "format": "float",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "points"
+          ],
+          "type": "object"
+        },
+        "Curves": {
+          "description": "Curves adjustment (REG-3): master curve, then per channel.",
+          "properties": {
+            "blue": {
+              "$ref": "#/$defs/Curve",
+              "description": "Blue channel."
+            },
+            "green": {
+              "$ref": "#/$defs/Curve",
+              "description": "Green channel."
+            },
+            "master": {
+              "$ref": "#/$defs/Curve",
+              "description": "Applied to the three color channels, after the channel curves."
+            },
+            "red": {
+              "$ref": "#/$defs/Curve",
+              "description": "Red channel."
+            }
+          },
+          "required": [
+            "master",
+            "red",
+            "green",
+            "blue"
+          ],
+          "type": "object"
+        },
+        "HueSaturation": {
+          "description": "Hue/saturation adjustment.",
+          "properties": {
+            "hue": {
+              "description": "Hue shift in degrees, from -180 to 180.",
+              "format": "float",
+              "type": "number"
+            },
+            "lightness": {
+              "description": "Lightness change, from -100 to 100.",
+              "format": "float",
+              "type": "number"
+            },
+            "saturation": {
+              "description": "Saturation change, from -100 to 100.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "hue",
+            "saturation",
+            "lightness"
+          ],
+          "type": "object"
+        },
+        "Levels": {
+          "description": "Levels adjustment: the master channel, then red, green and blue.",
+          "properties": {
+            "blue": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Blue channel."
+            },
+            "green": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Green channel."
+            },
+            "master": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Applied to the three color channels."
+            },
+            "red": {
+              "$ref": "#/$defs/LevelsChannel",
+              "description": "Red channel."
+            }
+          },
+          "required": [
+            "master",
+            "red",
+            "green",
+            "blue"
+          ],
+          "type": "object"
+        },
+        "LevelsChannel": {
+          "description": "Levels of one channel, values from 0 to 1.",
+          "properties": {
+            "gamma": {
+              "description": "Midtone gamma, from 0.1 to 10 (1 leaves midtones unchanged).",
+              "format": "float",
+              "type": "number"
+            },
+            "input_black": {
+              "description": "Input value mapped to black.",
+              "format": "float",
+              "type": "number"
+            },
+            "input_white": {
+              "description": "Input value mapped to white.",
+              "format": "float",
+              "type": "number"
+            },
+            "output_black": {
+              "description": "Output value of black.",
+              "format": "float",
+              "type": "number"
+            },
+            "output_white": {
+              "description": "Output value of white.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "input_black",
+            "input_white",
+            "gamma",
+            "output_black",
+            "output_white"
+          ],
+          "type": "object"
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `adjustment.update`.",
+      "properties": {
+        "adjustment": {
+          "$ref": "#/$defs/Adjustment",
+          "description": "New adjustment and parameters."
+        },
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Adjustment layer to change."
+        }
+      },
+      "required": [
+        "id",
+        "adjustment"
+      ],
+      "title": "AdjustmentUpdate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Changes the parameters of a filter layer.",
+    "name": "filter.update",
+    "params": {
+      "$defs": {
+        "Filter": {
+          "description": "A neighbourhood filter and its parameters.",
+          "oneOf": [
+            {
+              "description": "Gaussian blur; `radius` is the standard deviation, 0.1 to 100 px.",
+              "properties": {
+                "kind": {
+                  "const": "gaussian_blur",
+                  "type": "string"
+                },
+                "radius": {
+                  "description": "Standard deviation in document pixels.",
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Unsharp mask.",
+              "properties": {
+                "amount": {
+                  "description": "Strength, 0 to 5 (0 to 500 %).",
+                  "format": "float",
+                  "type": "number"
+                },
+                "kind": {
+                  "const": "unsharp_mask",
+                  "type": "string"
+                },
+                "radius": {
+                  "description": "Blur radius (standard deviation), 0.1 to 100 px.",
+                  "format": "float",
+                  "type": "number"
+                },
+                "threshold": {
+                  "description": "Smallest difference sharpened, 0 to 255 levels.",
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "radius",
+                "amount",
+                "threshold"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `filter.update`.",
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/Filter",
+          "description": "New filter and parameters."
+        },
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Filter layer to change."
+        }
+      },
+      "required": [
+        "id",
+        "filter"
+      ],
+      "title": "FilterUpdate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Adds a white or black mask to a layer or group.",
+    "name": "mask.create",
+    "params": {
+      "$defs": {
+        "MaskFill": {
+          "description": "Initial content of a new mask.",
+          "oneOf": [
+            {
+              "const": "white",
+              "description": "White: everything shows.",
+              "type": "string"
+            },
+            {
+              "const": "black",
+              "description": "Black: everything is hidden.",
+              "type": "string"
+            }
+          ]
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `mask.create`.",
+      "properties": {
+        "fill": {
+          "$ref": "#/$defs/MaskFill",
+          "default": "white",
+          "description": "Initial content."
+        },
+        "node": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer or group receiving the mask."
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "MaskCreate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Removes the mask of a layer or group.",
+    "name": "mask.delete",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `mask.delete`.",
+      "properties": {
+        "node": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Layer or group whose mask is removed."
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "MaskDelete",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Changes the density, inversion or activation of a mask.",
+    "name": "mask.update",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `mask.update`. Absent properties are left unchanged.",
+      "properties": {
+        "density": {
+          "description": "Effect of the mask, 0 (none) to 1 (full).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "Whether the mask applies.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Mask to change."
+        },
+        "inverted": {
+          "description": "Inversion.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "MaskUpdate",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Fills a rectangle of a mask with a gray value.",
+    "name": "mask.fill",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "Rect": {
+          "description": "A rectangle of document pixels.",
+          "properties": {
+            "height": {
+              "description": "Height.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "width": {
+              "description": "Width.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "x": {
+              "description": "Left edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "y": {
+              "description": "Top edge.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `mask.fill`.",
+      "properties": {
+        "mask": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Mask to fill."
+        },
+        "rect": {
+          "$ref": "#/$defs/Rect",
+          "description": "Area to fill, clipped to the mask."
+        },
+        "value": {
+          "description": "Gray value, 0 (black) to 1 (white).",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mask",
+        "rect",
+        "value"
+      ],
+      "title": "MaskFillRect",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Fills a mask with a linear gradient between two points.",
+    "name": "mask.gradient",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `mask.gradient`: a linear gradient over the whole mask\n(MAS-1).",
+      "properties": {
+        "end": {
+          "description": "End point, in document pixels.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "end_value": {
+          "description": "Gray value at the end and after it, 0 to 1.",
+          "format": "float",
+          "type": "number"
+        },
+        "mask": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Mask to fill."
+        },
+        "start": {
+          "description": "Start point, in document pixels.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "start_value": {
+          "description": "Gray value at the start and before it, 0 to 1.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mask",
+        "start",
+        "end",
+        "start_value",
+        "end_value"
+      ],
+      "title": "MaskGradient",
       "type": "object"
     },
     "stability": "stable"

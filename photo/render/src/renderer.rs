@@ -71,15 +71,34 @@ struct ProgramLayer {
     mode: BlendMode,
 }
 
-/// Visible pixel layers, bottom first. Groups arrive at milestone J3.
+/// Visible pixel layers, bottom first. Groups, masks, clipping,
+/// adjustments, filters and embedded objects are rendered from step B3 of
+/// J3 (docs/decisions/0021); until then they are refused, never ignored.
 fn program(document: &Document) -> Result<Vec<ProgramLayer>, RenderError> {
     let mut layers = Vec::new();
     for id in document.children(document.root) {
         let Some(node) = document.node(*id) else {
             continue;
         };
-        if !matches!(node.kind, NodeKind::Pixel { .. }) {
-            return Err(RenderError::Unsupported("rendering a group"));
+        match node.kind {
+            NodeKind::Pixel { .. } => {}
+            NodeKind::Group { .. } => return Err(RenderError::Unsupported("rendering a group")),
+            NodeKind::Adjustment { .. } => {
+                return Err(RenderError::Unsupported("rendering an adjustment layer"));
+            }
+            NodeKind::Filter { .. } => {
+                return Err(RenderError::Unsupported("rendering a filter layer"));
+            }
+            NodeKind::Embedded { .. } => {
+                return Err(RenderError::Unsupported("rendering an embedded object"));
+            }
+            NodeKind::Mask { .. } => continue,
+        }
+        if node.mask.is_some() {
+            return Err(RenderError::Unsupported("rendering a mask"));
+        }
+        if node.clip {
+            return Err(RenderError::Unsupported("rendering a clipped layer"));
         }
         if !node.blend.is_supported() {
             return Err(RenderError::UnsupportedBlendMode(node.blend));
@@ -360,7 +379,9 @@ impl Renderer {
                 continue;
             };
             let offset = (raw.len() / 4) as u32;
-            let bits = pack_tile(tile, &mut raw);
+            let Some(bits) = pack_tile(tile, &mut raw) else {
+                continue;
+            };
             decode_jobs.extend([offset, *slot, bits, 0]);
         }
         // Composite: one job per output tile.
@@ -503,29 +524,32 @@ impl Renderer {
 /// Appends `tile` to `raw` in the layout the decode shader reads (u32
 /// words: RGBA bytes in 8 bits, RG and BA pairs of u16 in 16 bits, little
 /// endian), and returns its bits per channel. On little-endian machines this
-/// is the memory layout of the tile itself: a plain copy.
-fn pack_tile(tile: &Tile, raw: &mut Vec<u8>) -> u32 {
+/// is the memory layout of the tile itself: a plain copy. Gray (mask)
+/// tiles are not RGBA layer tiles: `None`.
+fn pack_tile(tile: &Tile, raw: &mut Vec<u8>) -> Option<u32> {
     #[cfg(target_endian = "little")]
     match tile {
         Tile::U8(values) => {
             raw.extend_from_slice(values);
-            8
+            Some(8)
         }
         Tile::U16(values) => {
             raw.extend_from_slice(bytemuck::cast_slice(values));
-            16
+            Some(16)
         }
+        Tile::Gray8(_) | Tile::Gray16(_) => None,
     }
     #[cfg(not(target_endian = "little"))]
     match tile {
         Tile::U8(values) => {
             raw.extend_from_slice(values);
-            8
+            Some(8)
         }
         Tile::U16(values) => {
             raw.extend(values.iter().flat_map(|value| value.to_le_bytes()));
-            16
+            Some(16)
         }
+        Tile::Gray8(_) | Tile::Gray16(_) => None,
     }
 }
 

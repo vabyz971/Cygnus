@@ -53,6 +53,7 @@ fn layer(id: u64, name: &str, rect: Rect, color: impl Fn(f32, f32) -> Rgba) -> V
             name: name.to_owned(),
             parent: None,
             index: None,
+            kind: Default::default(),
         }),
         PhotoCommand::PixelsWrite(PixelsWrite {
             layer: NodeId(id),

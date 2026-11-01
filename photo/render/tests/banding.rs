@@ -57,6 +57,7 @@ fn gradient(value: impl Fn(u32) -> u16) -> Vec<PhotoCommand> {
             name: "gradient".to_owned(),
             parent: None,
             index: None,
+            kind: Default::default(),
         }),
         PhotoCommand::PixelsWrite(PixelsWrite {
             layer: NodeId(1),

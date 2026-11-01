@@ -170,6 +170,7 @@ fn layer_commands(id: u64) -> Vec<PhotoCommand> {
         name: format!("layer {id}"),
         parent: None,
         index: None,
+        kind: Default::default(),
     })];
     let phase = id as f32 * 0.7;
     for top in (0..HEIGHT).step_by(STRIP as usize) {
