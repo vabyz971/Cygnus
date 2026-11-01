@@ -1,0 +1,107 @@
+{
+  "adapter": "NVIDIA GeForce RTX 3080 Ti | Vulkan | NVIDIA 615.78.08",
+  "benchmark": "fluidity",
+  "canvas_cache_bytes": 134217728,
+  "decision": "docs/decisions/0019",
+  "document": {
+    "depth_bits": 16,
+    "height": 4000,
+    "layers": 10,
+    "pixel_memory_bytes": 2013265920,
+    "width": 6000
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "logical_cpus": 16,
+    "memory": "32753364 kB",
+    "os": "NixOS 26.05 (Yarara)"
+  },
+  "mode": "application",
+  "phases": [
+    {
+      "fps_at_median": 0.396510573252017,
+      "frames": 1,
+      "max_ms": 2522.000843,
+      "median_ms": 2522.000843,
+      "p95_ms": 2522.000843,
+      "p95_within_16_7_ms": false,
+      "p99_ms": 2522.000843,
+      "phase": "fit_cold",
+      "tiles_composited": 384,
+      "tiles_downsampled": 120,
+      "tiles_evicted": 248
+    },
+    {
+      "fps_at_median": 165.0559407594422,
+      "frames": 120,
+      "max_ms": 349.524624,
+      "median_ms": 6.058552,
+      "p95_ms": 6.420734,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 7.724952,
+      "phase": "fit_warm",
+      "tiles_composited": 0,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 165.0594552410751,
+      "frames": 240,
+      "max_ms": 232.797226,
+      "median_ms": 6.058423,
+      "p95_ms": 27.653723000000003,
+      "p95_within_16_7_ms": false,
+      "p99_ms": 30.289892,
+      "phase": "pan_100",
+      "tiles_composited": 145,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 145
+    },
+    {
+      "fps_at_median": 165.06027258383537,
+      "frames": 240,
+      "max_ms": 745.1242639999999,
+      "median_ms": 6.058393,
+      "p95_ms": 6.252648000000001,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 7.694062,
+      "phase": "zoom_5_to_800",
+      "tiles_composited": 121,
+      "tiles_downsampled": 8,
+      "tiles_evicted": 129
+    },
+    {
+      "fps_at_median": 165.05158192038175,
+      "frames": 120,
+      "max_ms": 8.130455,
+      "median_ms": 6.058712,
+      "p95_ms": 6.214117,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 7.695312,
+      "phase": "pan_300",
+      "tiles_composited": 0,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 164.96007223931483,
+      "frames": 30,
+      "max_ms": 115.17715000000001,
+      "median_ms": 6.062073000000001,
+      "p95_ms": 7.639291,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 115.17715000000001,
+      "phase": "edit_opacity",
+      "tiles_composited": 20,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    }
+  ],
+  "timing": "interval between consecutive frames of the real window: interface, canvas update, GPU work and presentation. Vsync was active: the Wayland compositor kept FIFO presentation although no-vsync was requested, so the median is capped at the 165 Hz refresh (6.06 ms) and shorter frame times cannot be measured in this mode.",
+  "viewport": [
+    2126,
+    1086
+  ],
+  "scenario": "docs/decisions/0014"
+}

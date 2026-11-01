@@ -1,7 +1,7 @@
 # 0019 — Mesures de fluidité de J2 et proposition de cibles
 
 - **Date** : 2026-10-31
-- **Statut** : proposée, en attente de confirmation ou de correction des cibles par l'utilisateur
+- **Statut** : acceptée avec corrections par l'utilisateur le 2026-11-01 (voir « Cibles décidées »)
 - **Exigences concernées** : spec section 5 (fluidité, mémoire) ; banc d'essai de 0014 ; étape B8 de 0015
 
 ## Machine de référence
@@ -74,7 +74,31 @@ Après correction : 128 tuiles composées pendant le zoom, et un 99e centile de 
   - les **pics du panoramique à 100 %**, quand une colonne de tuiles entre dans la vue : p95 de 17,5 ms sans fenêtre et de 24,5 ms dans l'application ;
   - le **changement d'opacité** d'un calque : 107 à 125 ms pour 20 à 35 tuiles visibles. C'est une image isolée, mais perceptible.
 
-## Proposition (à confirmer ou corriger par l'utilisateur)
+## Mesure après le budget calculé de 0018 (2026-11-01, sans fenêtre, 2560 × 1440)
+
+Cache de 513 tuiles (256,5 Mio) : toute la pyramide reste en mémoire.
+
+| Phase | Images | Médiane | p95 | p99 | Max | Tuiles composées | Évictions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Adapter, première image | 1 | 2313 | — | — | 2313 | 384 | 0 |
+| Adapter, cache chaud | 120 | 0,15 | 0,17 | 0,32 | 0,36 | 0 | 0 |
+| Panoramique 100 % | 240 | 0,13 | **0,15** | 0,30 | 0,34 | 0 | 0 |
+| Zoom 5 → 800 % | 240 | 0,12 | 0,20 | 0,33 | 1,66 | 0 | 0 |
+| Panoramique 300 % | 120 | 0,12 | 0,14 | 0,18 | 0,30 | 0 | 0 |
+| Changement d'opacité | 30 | 0,11 | 0,14 | 119 | 119 | 35 | 0 |
+
+Ce qui reste au-dessus des cibles : la première vue (2,3 s d'une traite) et l'image qui suit un changement de propriété (119 ms). Les deux viennent du calcul des tuiles fait en une seule fois.
+
+## Cibles décidées (utilisateur, 2026-11-01)
+
+1. **60 images/s** (p95 ≤ 16,7 ms) pour la vue stable, le zoom et le panoramique : confirmé.
+2. **Première vue** : l'interface n'est jamais bloquée plus de **100 ms**. Un affichage grossier apparaît d'abord, puis s'affine.
+3. **Changement de propriété** : image finale en moins de **150 ms**, et **aperçu réduit en moins de 33 ms** pendant un glissement (par exemple d'un curseur d'opacité).
+4. **Obligatoire en J3** : un **budget de temps par image** pour le calcul des tuiles. Le canevas répartit le travail sur plusieurs images, affiche les niveaux disponibles en attendant, et ne dépasse jamais le budget dans une image.
+
+État à la fin de J2 : la cible 1 est tenue. Les cibles 2 et 3 ne le sont pas encore, et le budget de temps par image (4) est la première tâche de rendu de J3.
+
+## Proposition initiale (historique)
 
 1. **Cible de 60 images/s (p95 ≤ 16,7 ms)** : **confirmée** pour la vue stable, le zoom et le panoramique dans une zone déjà calculée. **Non atteinte** pour le panoramique à 100 % qui découvre de nouvelles tuiles (p95 de 24,5 ms dans l'application).
 2. **Corrections de cible proposées pour la bêta** :

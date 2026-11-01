@@ -1,0 +1,107 @@
+{
+  "adapter": "NVIDIA GeForce RTX 3080 Ti | Vulkan | NVIDIA 615.78.08",
+  "benchmark": "fluidity",
+  "canvas_cache_bytes": 268959744,
+  "decision": "docs/decisions/0019",
+  "document": {
+    "depth_bits": 16,
+    "height": 4000,
+    "layers": 10,
+    "pixel_memory_bytes": 2013265920,
+    "width": 6000
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "logical_cpus": 16,
+    "memory": "32753372 kB",
+    "os": "NixOS 26.05 (Yarara)"
+  },
+  "mode": "headless",
+  "phases": [
+    {
+      "fps_at_median": 0.43236588622763583,
+      "frames": 1,
+      "max_ms": 2312.8559210000003,
+      "median_ms": 2312.8559210000003,
+      "p95_ms": 2312.8559210000003,
+      "p95_within_16_7_ms": false,
+      "p99_ms": 2312.8559210000003,
+      "phase": "fit_cold",
+      "tiles_composited": 384,
+      "tiles_downsampled": 96,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 6722.011225758747,
+      "frames": 120,
+      "max_ms": 0.36446,
+      "median_ms": 0.148765,
+      "p95_ms": 0.16759500000000002,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 0.322189,
+      "phase": "fit_warm",
+      "tiles_composited": 0,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 7721.769211761798,
+      "frames": 240,
+      "max_ms": 0.33726,
+      "median_ms": 0.129504,
+      "p95_ms": 0.14738500000000002,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 0.29945900000000003,
+      "phase": "pan_100",
+      "tiles_composited": 0,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 8530.749085077161,
+      "frames": 240,
+      "max_ms": 1.661608,
+      "median_ms": 0.117223,
+      "p95_ms": 0.20442600000000002,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 0.327429,
+      "phase": "zoom_5_to_800",
+      "tiles_composited": 0,
+      "tiles_downsampled": 32,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 8636.84651460059,
+      "frames": 120,
+      "max_ms": 0.30300900000000003,
+      "median_ms": 0.115783,
+      "p95_ms": 0.136394,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 0.177515,
+      "phase": "pan_300",
+      "tiles_composited": 0,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    },
+    {
+      "fps_at_median": 8982.062820547368,
+      "frames": 30,
+      "max_ms": 118.88006399999999,
+      "median_ms": 0.111333,
+      "p95_ms": 0.140784,
+      "p95_within_16_7_ms": true,
+      "p99_ms": 118.88006399999999,
+      "phase": "edit_opacity",
+      "tiles_composited": 35,
+      "tiles_downsampled": 0,
+      "tiles_evicted": 0
+    }
+  ],
+  "scenario": "docs/decisions/0014",
+  "timing": "wall time of canvas update and draw on an offscreen target, waiting for the GPU; no presentation, no vsync",
+  "viewport": [
+    2560,
+    1440
+  ]
+}

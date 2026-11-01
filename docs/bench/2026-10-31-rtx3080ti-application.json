@@ -2,7 +2,7 @@
   "adapter": "NVIDIA GeForce RTX 3080 Ti | Vulkan | NVIDIA 615.78.08",
   "benchmark": "fluidity",
   "canvas_cache_bytes": 134217728,
-  "decision": "docs/decisions/0014",
+  "decision": "docs/decisions/0019",
   "document": {
     "depth_bits": 16,
     "height": 4000,
@@ -98,9 +98,10 @@
       "tiles_evicted": 0
     }
   ],
-  "timing": "interval between consecutive frames of the real window, vsync off: interface, canvas update, GPU work and presentation",
+  "timing": "interval between consecutive frames of the real window: interface, canvas update, GPU work and presentation. Vsync was active: the Wayland compositor kept FIFO presentation although no-vsync was requested, so the median is capped at the 165 Hz refresh (6.06 ms) and shorter frame times cannot be measured in this mode.",
   "viewport": [
     2126,
     1086
-  ]
+  ],
+  "scenario": "docs/decisions/0014"
 }

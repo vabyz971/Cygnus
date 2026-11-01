@@ -349,7 +349,8 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
     }
     serde_json::json!({
         "benchmark": "fluidity",
-        "decision": "docs/decisions/0014",
+        "scenario": "docs/decisions/0014",
+        "decision": "docs/decisions/0019",
         "mode": info.mode,
         "timing": info.timing,
         "document": {

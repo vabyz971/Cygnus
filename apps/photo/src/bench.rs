@@ -119,7 +119,7 @@ impl BenchRun {
             .map_or(0, |(_, capacity)| capacity);
         let info = RunInfo {
             mode: "application".to_owned(),
-            timing: "interval between consecutive frames of the real window, vsync off: interface, canvas update, GPU work and presentation".to_owned(),
+            timing: "interval between consecutive frames of the real window: interface, canvas update, GPU work and presentation. No-vsync is requested, but a compositor may keep vsync: a median equal to the refresh period means vsync stayed on".to_owned(),
             adapter,
             viewport: self.viewport,
             cache_bytes: u64::from(capacity) * 256 * 256 * 8,

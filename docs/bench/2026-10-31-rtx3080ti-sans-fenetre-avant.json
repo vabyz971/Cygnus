@@ -2,7 +2,7 @@
   "adapter": "NVIDIA GeForce RTX 3080 Ti | Vulkan | NVIDIA 615.78.08",
   "benchmark": "fluidity",
   "canvas_cache_bytes": 134217728,
-  "decision": "docs/decisions/0014",
+  "decision": "docs/decisions/0019",
   "document": {
     "depth_bits": 16,
     "height": 4000,
@@ -102,5 +102,6 @@
   "viewport": [
     2560,
     1440
-  ]
+  ],
+  "scenario": "docs/decisions/0014"
 }
