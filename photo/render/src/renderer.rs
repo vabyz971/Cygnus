@@ -29,7 +29,6 @@ use std::sync::mpsc;
 
 use cygnus_photo_core::pixels::{TILE_SIZE, Tile, TileCoord, tiles_in};
 use cygnus_photo_core::{BlendMode, Document, NodeId, NodeKind};
-use wgpu::util::DeviceExt;
 
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
@@ -287,36 +286,29 @@ impl Renderer {
     }
 
     fn storage_bytes(&self, label: &str, bytes: &[u8]) -> wgpu::Buffer {
-        // Same minimum size as `storage`.
+        // Bindings may not be empty, and must hold at least one 16-byte job
+        // structure even when there is no job. The buffer is written through
+        // the queue, not mapped at creation: wgpu's mapped initialization
+        // panics when the GPU is out of memory, while a queue write reports
+        // the error to the error scopes like any other.
         let padding = [0u8; 16];
         let bytes = if bytes.len() < padding.len() {
             &padding[..]
         } else {
             bytes
         };
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytes,
-                usage: wgpu::BufferUsages::STORAGE,
-            })
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&buffer, 0, bytes);
+        buffer
     }
 
     pub(crate) fn storage(&self, label: &str, words: &[u32]) -> wgpu::Buffer {
-        // Bindings may not be empty, and must hold at least one 16-byte job
-        // structure even when there is no job.
-        let padding = [0u32; 4];
-        let words = if words.len() < padding.len() {
-            &padding[..]
-        } else {
-            words
-        };
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytemuck::cast_slice(words),
-                usage: wgpu::BufferUsages::STORAGE,
-            })
+        self.storage_bytes(label, bytemuck::cast_slice(words))
     }
 
     pub(crate) fn bind(
