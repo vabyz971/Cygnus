@@ -27,6 +27,21 @@ Pas maximaux en unités de 16 bits sur 65 535. En niveaux 8 bits, le pire cas de
   4. Les deux formats (calcul f16 et étape f32) sont nommés uniquement dans `photo/render/src/format.rs`, et le test qui l'impose est étendu.
 - **Vérification en phase B** : le test de bandes de J2 est étendu sur GPU, avec des niveaux et des courbes raides (les cas ci-dessus). Les seuils sont fixés au premier passage, puis jamais desserrés sans preuve. La décision est consignée à nouveau à la fin de J3 avec ces mesures GPU.
 
+## Précision de l'export 16 bits (demandée le 2026-11-02)
+
+Le résultat composé est stocké en f16 avant l'export ; avec le tableau de 0021, il contient des **valeurs encodées sRGB** dans 0..1. L'écart entre deux valeurs f16 voisines dépend de la plage, et l'arrondi en coûte au plus la moitié :
+
+| Plage encodée | Écart f16 (en unités 16 bits) | Erreur maximale d'arrondi | Précision effective | En niveaux 8 bits |
+| --- | --- | --- | --- | --- |
+| 0,5 à 1 (hautes lumières) | 2⁻¹¹ ≈ 32 unités | ± 16 unités (0,024 %) | environ 11 bits | 0,06 niveau |
+| 0,25 à 0,5 | 16 unités | ± 8 | environ 12 bits | 0,03 |
+| 0,125 à 0,25 | 8 unités | ± 4 | environ 13 bits | 0,016 |
+| en dessous de 0,125 (ombres) | 4 unités ou moins | ± 2 ou moins | 14 à 16 bits | — |
+
+- **Conséquence** : un export 16 bits ne conserve pas toute la précision d'une source 16 bits. Il garde environ **11 bits dans les hautes lumières**, et davantage vers les ombres. Pour un export 8 bits, la perte est nulle en pratique (au plus 0,06 niveau, arrondi compris).
+- **Ce que cela ne touche pas** : les calculs de la passe de composition (f32), les réglages (sources entières lues en f32), et l'identité aperçu-export (même quantification).
+- **Ce qui la supprimerait** : exporter depuis un résultat composé en format d'étape f32 au lieu du cache f16. L'export ne passant pas par le cache du canevas (il procède par lots, 0011), c'est possible sans toucher à l'aperçu, mais l'identité au bit près de l'aperçu à 100 % (8 bits) et de l'export devrait alors être revérifiée. **Non fait en J3** ; à rouvrir si un utilisateur 16 bits le demande.
+
 ## Alternatives écartées
 
 - **Tout passer en f32** : double la mémoire du cache et la bande passante de l'affichage, pour un gain nul sur le résultat final.

@@ -199,7 +199,7 @@ fn saturation_removes_the_oldest_entries_with_a_warning() {
 }
 
 #[test]
-fn single_command_above_budget_is_applied_but_not_kept() {
+fn newest_entry_is_kept_above_budget_with_a_warning() {
     let mut counters = Counters::new();
     let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
         retained_bytes: 100,
@@ -207,11 +207,17 @@ fn single_command_above_budget_is_applied_but_not_kept() {
     });
     bus.execute(&mut counters, heavy("a", 500), Source::User)
         .unwrap();
-    assert_eq!(counters["a"], 1);
-    assert!(bus.retained_bytes() <= 100);
-    assert_eq!(bus.entries().count(), 0);
+    // The newest entry stays, above budget, and the bus says so.
+    assert_eq!(bus.entries().count(), 1);
+    assert_eq!(bus.truncated(), 0);
+    assert!(bus.over_budget());
+    assert!(bus.can_undo());
+    // A newer small command: the big one is now the oldest, and goes.
+    bus.execute(&mut counters, add("b", 1), Source::User)
+        .unwrap();
+    assert_eq!(bus.entries().count(), 1);
     assert_eq!(bus.truncated(), 1);
-    assert!(!bus.can_undo());
+    assert!(!bus.over_budget());
 }
 
 #[test]

@@ -397,10 +397,11 @@ fn snapshots_share_tiles_instead_of_copying_them() {
 }
 
 #[test]
-fn deleting_a_big_group_keeps_memory_bounded_and_warns() {
+fn deleting_a_big_group_stays_undoable_and_warns() {
     // Three layers of 32 MiB: deleting the group keeps 96 MiB for undo,
     // above the 64 MiB budget.
     let (mut document, mut bus, group) = big_group(3);
+    let before = document.clone();
     assert_eq!(bus.truncated(), 0);
     bus.execute(
         &mut document,
@@ -409,12 +410,16 @@ fn deleting_a_big_group_keeps_memory_bounded_and_warns() {
     )
     .unwrap();
     assert!(document.node(group).is_none(), "the command is applied");
-    assert!(bus.retained_bytes() <= 64 * 1024 * 1024);
-    // Older entries cannot be undone without this one: the history is
-    // emptied from the oldest, and the removal is reported (0022).
-    assert!(!bus.can_undo());
+    // The newest entry is kept above budget, with a warning; the older
+    // ones are removed (0022).
+    assert!(bus.over_budget());
     assert!(bus.truncated() > 0);
+    assert_eq!(bus.entries().count(), 1);
+    // The deletion can still be undone.
+    assert!(bus.undo(&mut document, Source::Test).unwrap());
     document.validate().unwrap();
+    assert!(same(&document, &before));
+    assert!(!bus.can_undo(), "nothing older was kept");
 }
 
 #[test]

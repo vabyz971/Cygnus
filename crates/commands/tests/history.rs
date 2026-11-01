@@ -188,13 +188,35 @@ fn saturation_never_removes_the_open_gesture() {
     // Over budget, but only the entry outside the gesture may go.
     assert_eq!(bus.truncated(), 1);
     assert_eq!(bus.entries().count(), 4);
-    // Once closed and still over budget, the gesture goes as a whole,
-    // never in part.
+    // Once closed, the gesture is the newest entry: kept whole even above
+    // budget, with a warning; it can be undone.
     bus.end_gesture();
-    assert_eq!(bus.entries().count(), 0);
-    assert_eq!(bus.truncated(), 5);
-    assert!(!bus.undo(&mut counters, Source::User).unwrap());
-    assert_eq!(counters["b"], 4);
+    assert_eq!(bus.entries().count(), 4);
+    assert_eq!(bus.truncated(), 1);
+    assert!(bus.over_budget());
+    assert!(bus.undo(&mut counters, Source::User).unwrap());
+    assert_eq!(counters["b"], 0, "the gesture is undone whole");
+}
+
+#[test]
+fn an_older_gesture_goes_as_a_whole() {
+    let mut counters = Counters::new();
+    let mut bus = CommandBus::<Toy>::with_limits(BusLimits {
+        retained_bytes: 1000,
+        ..BusLimits::default()
+    });
+    bus.begin_gesture();
+    for _ in 0..2 {
+        bus.execute(&mut counters, heavy("a", 200), Source::User)
+            .unwrap();
+    }
+    bus.end_gesture();
+    // A newer entry pushes the total over budget: the older gesture goes,
+    // whole, never in part.
+    bus.execute(&mut counters, heavy("b", 200), Source::User)
+        .unwrap();
+    assert_eq!(bus.truncated(), 2);
+    assert_eq!(bus.entries().count(), 1);
 }
 
 #[test]

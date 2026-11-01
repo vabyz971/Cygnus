@@ -95,8 +95,9 @@ impl Default for BusLimits {
 /// undone last). Undo applies the inverse of the last entry, or of the
 /// whole last gesture; applying an inverse yields the command that redoes
 /// it. A new command clears what could be redone. Memory is bounded: past
-/// the limits, the oldest entries are removed entirely (never those of the
-/// open gesture), and the removals are counted in [`Self::truncated`] for
+/// the limits, the oldest entries are removed entirely, a gesture as a
+/// whole; the newest entry (or gesture) is always kept, even above budget
+/// ([`Self::over_budget`]). Removals are counted in [`Self::truncated`] for
 /// the interface to warn about.
 pub struct CommandBus<C: Command> {
     limits: BusLimits,
@@ -357,13 +358,18 @@ impl<C: Command> CommandBus<C> {
 
     fn enforce_limits(&mut self) {
         // Oldest done entries first, a gesture always as a whole (undoing
-        // part of it would be meaningless), never the open gesture.
+        // part of it would be meaningless). The newest entry (or gesture)
+        // is always kept, even above budget: `over_budget` reports it.
         while self.over_limits() {
             let Some(front) = self.entries.front() else {
                 break;
             };
             let group = front.group;
-            if group.is_some() && group == self.gesture {
+            let newest = match self.entries.back() {
+                Some(last) => self.entries.len() == 1 || (group.is_some() && last.group == group),
+                None => true,
+            };
+            if newest {
                 break;
             }
             loop {
@@ -400,6 +406,12 @@ impl<C: Command> CommandBus<C> {
     /// Memory currently retained by the history, in bytes.
     pub fn retained_bytes(&self) -> usize {
         self.retained_bytes
+    }
+
+    /// Whether the history retains more memory than its budget: the newest
+    /// entry alone exceeds it and is kept anyway. The interface warns.
+    pub fn over_budget(&self) -> bool {
+        self.retained_bytes > self.limits.retained_bytes
     }
 
     /// Number of history entries removed to respect the limits since the

@@ -67,6 +67,12 @@ Les formats `Rgba16Uint` et `R16Uint` sont dans le cœur de WebGPU : le GPU mini
 | **Réduction de la pyramide, filtrage bilinéaire de l'affichage, futurs rééchantillonnages (J5)** | **linéaire** (décodage, moyenne, réencodage) | **démonstration contraire proposée** : moyenner des valeurs encodées assombrit les détails fins contrastés (un damier noir et blanc réduit donne 0,5 encodé, soit 21 % de luminance au lieu de 50 %). Ces étapes ne servent qu'à l'affichage réduit et aux transformations ; elles ne touchent pas la composition à 100 % ni l'export |
 | Affichage et export | sRGB encodé, quantifié en 8 ou 16 bits | plus de conversion de transfert à la sortie |
 
+**Validé par l'utilisateur le 2026-11-02, avec ces conditions :**
+
+- **même réduction linéaire pour l'aperçu grossier et l'image affinée** : à un zoom inférieur à 100 %, les tuiles approximatives de l'aperçu (sources réduites, 0024) et les tuiles exactes (pyramide des résultats, 0018) sont réduites par la même fonction, en linéaire. Un test compare leur **luminosité moyenne** sur une même vue, pour que l'affinage ne fasse pas « sauter » la luminosité (B7) ;
+- **coût mesuré** : le décodage et le réencodage du filtrage bilinéaire en linéaire dans le shader d'affichage (quatre décodages et un encodage par pixel d'écran) sont mesurés au banc, en comparant avec et sans (B3 et B7) ;
+- **précision de l'export 16 bits** : documentée dans 0026.
+
 **Conséquence pour la spec** : la section 5 indique « calcul interne en f16 linéaire ». Si ce tableau est confirmé, elle devient « composition en valeurs encodées sRGB (f32 dans les passes, f16 en cache), rééchantillonnages en linéaire ». C'est à l'utilisateur de réexporter la spec.
 
 ## Proposition : objets incorporés
