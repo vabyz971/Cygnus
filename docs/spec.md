@@ -134,13 +134,13 @@ Chaque exigence porte un identifiant (DOC-1, CAL-2, etc.) pour que les agents et
 
 ## 5. Exigences non fonctionnelles
 
-Les cibles chiffrées ci-dessous sont des propositions : chacune est confirmée ou corrigée par une mesure sur du matériel réel avant la fin du jalon J2.
+Les cibles de fluidité ont été confirmées au jalon J2 par une mesure sur une RTX 3080 Ti (décision 0019). Elles restent à mesurer sur une machine modeste.
 
 | Critère | Exigence | Vérification |
 | --- | --- | --- |
-| Fluidité | Pinceau, zoom et panoramique restent fluides sur une photo de 24 Mpx en 16 bits avec une dizaine de calques. Cible proposée : 60 images/s. | Banc d'essai automatisé |
+| Fluidité | Sur une photo de 24 Mpx en 16 bits avec une dizaine de calques : 60 images/s en vue stable et en zoom, 30 images/s en panoramique sur des tuiles non calculées. L'interface ne reste jamais bloquée plus de 100 ms (affichage grossier d'abord, puis affinage). Un changement de propriété produit l'image finale en moins de 150 ms, avec un aperçu réduit en moins de 33 ms pendant un glissement. | Banc d'essai automatisé |
 | Mémoire | Canevas découpé en tuiles, texture GPU éparse : un document n'est jamais chargé en entier si ce n'est pas nécessaire. | Test sur très grande image |
-| Couleur | Calcul interne en virgule flottante 16 bits (f16) linéaire sur GPU, conversion vers le profil de l'écran à l'affichage. | Images de référence |
+| Couleur | Calcul interne en virgule flottante 16 bits (f16) linéaire sur GPU, conversion vers l'écran à l'affichage (écran supposé sRGB en J2). Le choix du f16 est à revoir après J3, d'après le test de bandes. | Images de référence |
 | Cohérence | L'aperçu à 100 % et l'export sont identiques (section 2.1). | Tests golden en intégration continue |
 | Plateformes | Linux, Windows, macOS ; rendu via wgpu (Vulkan, Metal, DirectX 12). Le GPU minimal supporté reste à définir. | Intégration continue sur les trois systèmes |
 | Fiabilité | Aucun `unwrap()` ni `expect()` hors tests ; erreurs affichées clairement ; fichier corrompu = message, jamais un plantage. | Revue automatique, tests de fichiers invalides |
@@ -195,14 +195,14 @@ Les vues lisent le modèle ; l'application, le serveur MCP et la ligne de comman
 ### 7.2 Commandes
 
 - Toute modification est une commande typée et sérialisable (un nom et des paramètres).
-- Le bus applique la commande, l'inscrit dans l'historique et prévient les vues.
+- Le bus applique la commande, l'inscrit dans l'historique et expose la liste de ce qu'elle a changé, que chaque consommateur (vues, cache des tuiles, fenêtre graphe) relit indépendamment.
 - Le catalogue de commandes est unique : il alimente l'interface, le serveur MCP (section 8), la ligne de commande et les tests.
 
 ### 7.3 Rendu
 
 - L'arbre est compilé en graphe de rendu GPU (wgpu). Les passes sont écrites en WGSL et les formules de fusion n'existent qu'en un seul exemplaire.
 - Le canevas est découpé en tuiles (texture éparse). Le calcul se fait en f16 linéaire, converti à l'affichage.
-- Un cache par tuile est invalidé uniquement par les commandes qui touchent la zone.
+- Un cache par tuile est invalidé uniquement par les commandes qui touchent la zone. Le budget de tuiles en mémoire GPU est calculé d'après la taille de la fenêtre et la mémoire disponible, et le calcul des tuiles obéit à un budget de temps par image : les tuiles manquantes s'affichent d'abord en niveau grossier.
 - Le canevas est dessiné directement par wgpu dans la fenêtre `egui`, hors de la boucle de widgets.
 
 ### 7.4 Organisation du dépôt
@@ -324,11 +324,13 @@ Les jalons sont ordonnés mais pas datés : leur durée sera estimée à la fin 
 | J0 Fondations | Dépôt neuf, `AGENTS.md`, crates squelettes, intégration continue, mode sans fenêtre | Intégration continue verte sur Linux, Windows et macOS |
 | J1 Interface | Écran principal de la maquette, panneaux ancrables, workspaces | Prototype `egui_dock` validé sur les trois systèmes |
 | J2 Document, rendu | Modèle, bus de commandes, rendu GPU par tuiles, calque pixel | Aperçu identique à l'export, cibles de fluidité mesurées |
-| J3 Calques, réglages | Groupes, masques, réglages, historique, objets incorporés | Scénario photo complet réussi en mode sans fenêtre |
+| J3 Calques, réglages | Groupes, masques, réglages, historique, objets incorporés, modes de fusion, filtres (flou gaussien, netteté) | Scénario photo complet réussi en mode sans fenêtre |
 | J4 Agent MCP | Serveur MCP généré depuis le catalogue, panneau Agent | Un agent exécute le scénario photo |
 | J5 Outils, pinceau | Sélections, pinceau, gomme, tampon, recadrage, transformation | Retouche complète à la souris et à la tablette |
 | J6 Fichiers, vues | Nouveau document, import, export, préférences, format `.cygnus` | Ouvrir, retoucher, enregistrer, rouvrir, exporter |
 | J7 Stabilisation | Correction de bogues, performances, documentation du format | Critères de sortie de la bêta atteints (ci-dessous) |
+
+**État au 1er novembre 2026.** J0, J1 et J2 sont terminés ; la CI est verte sur Linux, Windows et macOS, y compris les tests GPU (lavapipe, WARP, Metal). Réserves de J2 : aucune machine modeste n'a passé le banc de fluidité, et le message d'état du repli vers un niveau grossier est reporté à J3. Les filtres de la section 3 (flou gaussien, netteté) n'étaient affectés à aucun jalon : ils sont ajoutés à la fin de J3, car ils valident les passes avec marge prévues dans l'architecture de rendu. Le schéma de la feuille de route ci-dessus n'est pas encore mis à jour ; la version texte fait foi.
 
 **Critères de sortie de la bêta (J7)**
 
@@ -354,7 +356,7 @@ Huit décisions restent à trancher avant ou pendant les premiers jalons, et six
 | Tampon de clonage | Dans la bêta ou après | Dans la bêta (retouche photo de base) |
 | Langues de l'interface | Français seul ou français + anglais | Français + anglais dès la bêta si les textes sont externalisés |
 | Gestion des profils ICC | Complète ou limitée à sRGB, Display P3, Adobe RGB | Limitée en bêta |
-| GPU minimal supporté | À mesurer | À fixer au jalon J2 |
+| GPU minimal supporté | À mesurer | Défini par les fonctions et limites wgpu vérifiées au démarrage ; mesure sur une machine modeste à faire |
 | Transport du serveur MCP | HTTP local, socket local ou stdio | HTTP local avec jeton |
 | Préfixes de commit | Par domaine (`rendu:`, `ui:`, `fichier:`) ou unique | Par domaine |
 | Sort de l'ancien dépôt Cygnus | Le renommer en cygnus-legacy et l'archiver, ou garder le nom avec une branche orpheline | Réglé : ancien dépôt renommé en legacy, nouveau dépôt Cygnus créé |
