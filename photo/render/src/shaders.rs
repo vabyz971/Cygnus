@@ -131,11 +131,8 @@ mod tests {
     }
 
     #[test]
-    fn every_supported_mode_has_a_case_in_the_blend_module() {
-        for mode in BlendMode::ALL
-            .into_iter()
-            .filter(|mode| mode.is_supported())
-        {
+    fn every_mode_has_a_case_in_the_blend_module() {
+        for mode in BlendMode::ALL {
             let case = format!("case {}:", blend_constant(mode));
             assert!(BLEND.contains(&case), "blend.wgsl lacks `{case}`");
         }

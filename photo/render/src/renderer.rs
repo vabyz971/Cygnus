@@ -28,8 +28,8 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
+use cygnus_photo_core::Document;
 use cygnus_photo_core::pixels::{TILE_SIZE, Tile, TileCoord, tiles_in};
-use cygnus_photo_core::{BlendMode, Document};
 
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
@@ -54,9 +54,6 @@ const TILE_PIXELS: u32 = TILE_SIZE * TILE_SIZE;
 /// Why a document could not be rendered.
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
-    /// A layer uses a blend mode the renderer does not support yet.
-    #[error("blend mode {0:?} is not supported yet")]
-    UnsupportedBlendMode(BlendMode),
     /// A structure the renderer does not support yet.
     #[error("{0} is not supported yet")]
     Unsupported(&'static str),

@@ -236,9 +236,6 @@ fn node(
     if !node.visible {
         return Ok(());
     }
-    if !node.blend.is_supported() {
-        return Err(RenderError::UnsupportedBlendMode(node.blend));
-    }
     let mask = mask(document, node.mask, coord);
     let (mode, opacity) = match role {
         Role::Base => (BlendMode::Normal, 1.0),

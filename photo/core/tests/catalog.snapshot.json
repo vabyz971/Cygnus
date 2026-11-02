@@ -565,7 +565,7 @@
     "params": {
       "$defs": {
         "BlendMode": {
-          "description": "Layer blend modes (CAL-3). Only `Normal` is rendered before milestone J3;\nthe others are declared now so that the serialized form is stable.",
+          "description": "Layer blend modes (CAL-3), following W3C Compositing and Blending\nLevel 1.",
           "oneOf": [
             {
               "const": "normal",

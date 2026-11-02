@@ -22,8 +22,7 @@
 mod common;
 
 use common::{assert_close, build_json, export16, setup};
-use cygnus_photo_core::{BlendMode, NodeId};
-use cygnus_photo_render::{ExportBits, RenderError};
+use cygnus_photo_render::ExportBits;
 
 /// 600 × 400, 16 bits: a horizontal gradient layer (written row 0 then
 /// filled) and a second layer whose commands are given by `top`.
@@ -183,26 +182,6 @@ fn large_documents_are_rendered_in_batches() {
     assert_eq!(image.pixel(0, 2303), [0, 0, 255, 255]);
     assert_eq!(image.pixel(4095, 2303), [0, 0, 255, 255]);
     assert_eq!(image.pixel(2047, 1151), [255, 0, 0, 255]);
-}
-
-#[test]
-fn unsupported_blend_mode_is_refused() {
-    let Some((_, renderer)) = setup() else { return };
-    let mut document = build_json(
-        r#"[
-        {"command": "document.create", "params": {"width": 4, "height": 4, "depth": "u8"}},
-        {"command": "layer.create", "params": {"name": "a"}}
-    ]"#,
-    );
-    // Commands refuse this mode; the renderer must refuse it too.
-    if let Some(node) = document.nodes.get_mut(&NodeId(1)) {
-        node.blend = BlendMode::Multiply;
-    }
-    let error = renderer.export(&document, ExportBits::Eight).unwrap_err();
-    assert!(matches!(
-        error,
-        RenderError::UnsupportedBlendMode(BlendMode::Multiply)
-    ));
 }
 
 #[test]

@@ -42,8 +42,8 @@ pub const MAX_SIDE: u32 = 65_535;
 #[serde(transparent)]
 pub struct NodeId(pub u64);
 
-/// Layer blend modes (CAL-3). Only `Normal` is rendered before milestone J3;
-/// the others are declared now so that the serialized form is stable.
+/// Layer blend modes (CAL-3), following W3C Compositing and Blending
+/// Level 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BlendMode {
@@ -94,11 +94,6 @@ impl BlendMode {
     /// Numeric code of the mode, shared with the WGSL blend module.
     pub fn code(self) -> u32 {
         self as u32
-    }
-
-    /// Whether the renderer supports the mode yet.
-    pub fn is_supported(self) -> bool {
-        matches!(self, Self::Normal)
     }
 }
 
