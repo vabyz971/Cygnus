@@ -73,13 +73,23 @@ pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError>
 /// Work counters and cache size of the canvas, for the benchmark.
 pub fn stats(
     render_state: &egui_wgpu::RenderState,
-) -> Option<(cygnus_photo_render::CanvasStats, u32)> {
+) -> Option<(
+    cygnus_photo_render::CanvasStats,
+    u32,
+    cygnus_photo_render::SourceStats,
+)> {
     render_state
         .renderer
         .read()
         .callback_resources
         .get::<CanvasResources>()
-        .map(|resources| (resources.canvas.stats(), resources.canvas.capacity()))
+        .map(|resources| {
+            (
+                resources.canvas.stats(),
+                resources.canvas.capacity(),
+                resources.renderer.source_stats(),
+            )
+        })
 }
 
 /// Last canvas error, if the canvas could not be drawn.

@@ -31,6 +31,7 @@ use cygnus_photo_core::script::ScriptError;
 use cygnus_photo_core::{Depth, Document, NodeId, PhotoCommand, Rect};
 
 use crate::canvas::CanvasStats;
+use crate::sources::SourceStats;
 
 /// Benchmark document width, in pixels.
 pub const WIDTH: u32 = 6000;
@@ -270,6 +271,8 @@ pub struct FrameSample {
     pub time: Duration,
     /// Canvas counters after the frame.
     pub stats: CanvasStats,
+    /// Source pool counters after the frame.
+    pub sources: SourceStats,
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -295,6 +298,8 @@ pub struct RunInfo {
     pub cache_bytes: u64,
     /// CPU memory of the document pixels, in bytes.
     pub document_bytes: u64,
+    /// Slots of the layer and mask source pools.
+    pub source_slots: (u32, u32),
 }
 
 fn read_first(path: &str, prefix: &str) -> Option<String> {
@@ -321,14 +326,17 @@ pub fn machine() -> serde_json::Value {
 pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
     let mut phases = Vec::new();
     let mut previous = CanvasStats::default();
+    let mut previous_sources = SourceStats::default();
     let mut index = 0;
     while index < samples.len() {
         let phase = samples[index].phase;
         let start = previous;
+        let start_sources = previous_sources;
         let mut times = Vec::new();
         while index < samples.len() && samples[index].phase == phase {
             times.push(samples[index].time.as_secs_f64() * 1000.0);
             previous = samples[index].stats;
+            previous_sources = samples[index].sources;
             index += 1;
         }
         let mut sorted = times.clone();
@@ -346,6 +354,8 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "tiles_composited": previous.composited - start.composited,
             "tiles_downsampled": previous.downsampled - start.downsampled,
             "tiles_evicted": previous.evicted - start.evicted,
+            "source_tiles_uploaded": previous_sources.uploads - start_sources.uploads,
+            "source_tiles_evicted": previous_sources.evictions - start_sources.evictions,
         }));
     }
     serde_json::json!({
@@ -365,6 +375,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         "adapter": info.adapter,
         "machine": machine(),
         "canvas_cache_bytes": info.cache_bytes,
+        "source_pool_slots": info.source_slots,
         "phases": phases,
     })
 }

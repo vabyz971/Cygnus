@@ -17,7 +17,10 @@
 //! Headless fluidity benchmark (docs/decisions/0014).
 //!
 //! cargo run --release -p cygnus-photo-render --example fluidity -- \
-//!     [--out report.json] [--viewport 2560x1440]
+//!     [--out report.json] [--viewport 2560x1440] [--cache-slots N]
+//!
+//! `--cache-slots` fixes the canvas cache instead of the computed budget,
+//! to measure panning over tiles that are not in the cache.
 //!
 //! Each frame updates the canvas and draws it on an offscreen target, then
 //! waits for the GPU: the frame time includes all GPU work, but neither the
@@ -35,6 +38,7 @@ use cygnus_photo_render::{Canvas, CanvasView, Renderer, gpu};
 fn main() -> Result<(), Box<dyn Error>> {
     let mut out = String::from("fluidity-headless.json");
     let mut viewport = [2560u32, 1440];
+    let mut cache_slots: Option<u32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -45,6 +49,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .split_once('x')
                     .ok_or("--viewport expects WIDTHxHEIGHT")?;
                 viewport = [w.parse()?, h.parse()?];
+            }
+            "--cache-slots" => {
+                cache_slots = Some(
+                    args.next()
+                        .ok_or("--cache-slots expects a number")?
+                        .parse()?,
+                );
             }
             other => return Err(format!("unknown argument {other:?}").into()),
         }
@@ -59,11 +70,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("adapter: {} ({:?})", gpu.info.name, gpu.info.backend);
     let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let mut canvas = Canvas::new(
-        &renderer,
-        format,
-        gpu::cache_memory_budget(gpu.info.device_type),
-    )?;
+    let mut canvas = match cache_slots {
+        Some(slots) => Canvas::with_capacity(&renderer, format, slots)?,
+        None => Canvas::new(
+            &renderer,
+            format,
+            gpu::cache_memory_budget(gpu.info.device_type),
+        )?,
+    };
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("benchmark target"),
         size: wgpu::Extent3d {
@@ -124,6 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             phase: frame.phase,
             time: start.elapsed(),
             stats: canvas.stats(),
+            sources: renderer.source_stats(),
         });
     }
 
@@ -134,6 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         viewport,
         cache_bytes: u64::from(canvas.capacity()) * 256 * 256 * 8,
         document_bytes: bench::document_bytes(&document),
+        source_slots: renderer.source_stats().capacity,
     };
     let report = bench::report(&info, &samples);
     std::fs::write(&out, serde_json::to_string_pretty(&report)? + "\n")?;

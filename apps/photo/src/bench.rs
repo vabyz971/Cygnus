@@ -23,7 +23,6 @@
 use std::time::Instant;
 
 use cygnus_commands::Source;
-use cygnus_photo_render::CanvasStats;
 use cygnus_photo_render::bench::{self, CameraFrame, FrameSample, RunInfo};
 use eframe::egui_wgpu;
 
@@ -75,14 +74,15 @@ impl BenchRun {
             return false;
         }
         let now = Instant::now();
-        let stats = render_state
+        let (stats, sources) = render_state
             .and_then(canvas::stats)
-            .map_or(CanvasStats::default(), |(stats, _)| stats);
+            .map_or(Default::default(), |(stats, _, sources)| (stats, sources));
         if let Some((start, index)) = self.started.take() {
             self.samples.push(FrameSample {
                 phase: self.path[index].phase,
                 time: now - start,
                 stats,
+                sources,
             });
         }
         if self.path.is_empty() {
@@ -114,9 +114,11 @@ impl BenchRun {
                 info.name, info.backend, info.driver, info.driver_info
             )
         });
-        let capacity = render_state
+        let (capacity, source_slots) = render_state
             .and_then(canvas::stats)
-            .map_or(0, |(_, capacity)| capacity);
+            .map_or((0, (0, 0)), |(_, capacity, sources)| {
+                (capacity, sources.capacity)
+            });
         let info = RunInfo {
             mode: "application".to_owned(),
             timing: "interval between consecutive frames of the real window: interface, canvas update, GPU work and presentation. No-vsync is requested, but a compositor may keep vsync: a median equal to the refresh period means vsync stayed on".to_owned(),
@@ -124,6 +126,7 @@ impl BenchRun {
             viewport: self.viewport,
             cache_bytes: u64::from(capacity) * 256 * 256 * 8,
             document_bytes: bench::document_bytes(session.document()),
+            source_slots,
         };
         let report = bench::report(&info, &self.samples);
         let path =
