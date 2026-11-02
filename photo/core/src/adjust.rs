@@ -80,10 +80,11 @@ impl LevelsChannel {
     }
 }
 
-/// Levels adjustment: the master channel, then red, green and blue.
+/// Levels adjustment. Each color channel goes through its own levels
+/// first, then through the master levels, as with curves.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Levels {
-    /// Applied to the three color channels.
+    /// Applied to the three color channels, after the channel levels.
     pub master: LevelsChannel,
     /// Red channel.
     pub red: LevelsChannel,
@@ -134,6 +135,9 @@ impl Curve {
     fn tangents(&self) -> Vec<f32> {
         let p = &self.points;
         let n = p.len();
+        if n < 2 {
+            return vec![0.0; n];
+        }
         let secant: Vec<f32> = p
             .windows(2)
             .map(|w| (w[1][1] - w[0][1]) / (w[1][0] - w[0][0]))
@@ -166,10 +170,99 @@ impl Curve {
         m
     }
 
+    fn shape(&self) -> Shape<'_> {
+        Shape {
+            points: &self.points,
+            tangents: self.tangents(),
+        }
+    }
+
     /// Value of the curve at `x` (0..=1). Flat outside the first and last
     /// points. This is the only definition of the curve shape.
     pub fn evaluate(&self, x: f32) -> f32 {
-        let p = &self.points;
+        self.shape().evaluate(x)
+    }
+
+    /// The curve sampled at `size` evenly spaced inputs from 0 to 1.
+    pub fn table(&self, size: usize) -> Vec<f32> {
+        let shape = self.shape();
+        let last = size.saturating_sub(1).max(1) as f32;
+        (0..size).map(|i| shape.evaluate(i as f32 / last)).collect()
+    }
+
+    /// Lookup table read by the renderer with linear interpolation
+    /// (docs/decisions/0028). It covers the domain of the cubic part, from
+    /// the first to the last point: the renderer bounds its input to that
+    /// domain, where the curve is flat outside, so the table has no kink.
+    /// Its size is the smallest power of two from [`MIN_CURVE_TABLE`] whose
+    /// interpolation error stays within [`CURVE_TABLE_TOLERANCE`], at most
+    /// [`MAX_CURVE_TABLE`]. The error of linear interpolation over a step
+    /// `h` is at most `h² / 8 × max |f''|`, and `f''` is linear on each
+    /// cubic segment, so its maximum is at an end of a segment.
+    pub fn lookup_table(&self) -> CurveTable {
+        let shape = self.shape();
+        let (Some(first), Some(last)) = (self.points.first(), self.points.last()) else {
+            return CurveTable {
+                start: 0.0,
+                end: 1.0,
+                values: vec![0.0, 1.0],
+            };
+        };
+        let (start, end) = (first[0], last[0]);
+        let curvature = shape.max_second_derivative();
+        let mut size = MIN_CURVE_TABLE;
+        while size < MAX_CURVE_TABLE {
+            let step = f64::from(end - start) / (size - 1) as f64;
+            if step * step / 8.0 * curvature <= CURVE_TABLE_TOLERANCE {
+                break;
+            }
+            size *= 2;
+        }
+        let values = if start == 0.0 && end == 1.0 {
+            // Same inputs as `table`, so that a full table holds exactly
+            // the values of every 16-bit level.
+            let last = (size - 1) as f32;
+            (0..size).map(|i| shape.evaluate(i as f32 / last)).collect()
+        } else {
+            let last = (size - 1) as f64;
+            let span = f64::from(end - start);
+            (0..size)
+                .map(|i| shape.evaluate((f64::from(start) + span * i as f64 / last) as f32))
+                .collect()
+        };
+        CurveTable { start, end, values }
+    }
+}
+
+/// Smallest size of a curve lookup table.
+pub const MIN_CURVE_TABLE: usize = 4096;
+/// Largest size of a curve lookup table: one entry per 16-bit level.
+pub const MAX_CURVE_TABLE: usize = 65536;
+/// Largest interpolation error of a curve lookup table, a quarter of a
+/// 16-bit unit (docs/decisions/0028).
+pub const CURVE_TABLE_TOLERANCE: f64 = 0.25 / 65535.0;
+
+/// A curve sampled for the renderer (see [`Curve::lookup_table`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurveTable {
+    /// Input of the first value, the x of the first point.
+    pub start: f32,
+    /// Input of the last value, the x of the last point.
+    pub end: f32,
+    /// Values at evenly spaced inputs from `start` to `end`.
+    pub values: Vec<f32>,
+}
+
+/// Points of a curve with their slopes.
+struct Shape<'a> {
+    points: &'a [[f32; 2]],
+    tangents: Vec<f32>,
+}
+
+impl Shape<'_> {
+    fn evaluate(&self, x: f32) -> f32 {
+        let p = self.points;
+        let m = &self.tangents;
         let (Some(first), Some(last)) = (p.first(), p.last()) else {
             return x;
         };
@@ -179,7 +272,6 @@ impl Curve {
         if x >= last[0] {
             return last[1];
         }
-        let m = self.tangents();
         let i = p
             .windows(2)
             .position(|w| x < w[1][0])
@@ -195,14 +287,26 @@ impl Curve {
         value.clamp(0.0, 1.0)
     }
 
-    /// The curve sampled at `size` evenly spaced inputs from 0 to 1.
-    pub fn table(&self, size: usize) -> Vec<f32> {
-        let last = size.saturating_sub(1).max(1) as f32;
-        (0..size).map(|i| self.evaluate(i as f32 / last)).collect()
+    /// Largest |f''| over the cubic segments, at their ends, in x units.
+    fn max_second_derivative(&self) -> f64 {
+        let p = self.points;
+        let m = &self.tangents;
+        (0..p.len().saturating_sub(1))
+            .map(|i| {
+                let h = f64::from(p[i + 1][0] - p[i][0]);
+                let (y0, y1) = (f64::from(p[i][1]), f64::from(p[i + 1][1]));
+                let (d0, d1) = (h * f64::from(m[i]), h * f64::from(m[i + 1]));
+                // Second derivative of the Hermite basis in t at t = 0 and 1.
+                let at0 = 6.0 * (y1 - y0) - 4.0 * d0 - 2.0 * d1;
+                let at1 = -6.0 * (y1 - y0) + 2.0 * d0 + 4.0 * d1;
+                at0.abs().max(at1.abs()) / (h * h)
+            })
+            .fold(0.0, f64::max)
     }
 }
 
-/// Curves adjustment (REG-3): master curve, then per channel.
+/// Curves adjustment (REG-3). Each color channel goes through its own
+/// curve first, then through the master curve.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Curves {
     /// Applied to the three color channels, after the channel curves.
@@ -447,5 +551,97 @@ mod tests {
             .validate()
             .is_ok()
         );
+    }
+
+    /// Largest gap between the linear interpolation of a lookup table and
+    /// the curve, over dense samples, in 16-bit units.
+    fn table_error(curve: &Curve) -> f64 {
+        let table = curve.lookup_table();
+        let values = &table.values;
+        let (start, end) = (f64::from(table.start), f64::from(table.end));
+        let last = (values.len() - 1) as f64;
+        let samples = 400_000;
+        (0..=samples)
+            .map(|k| {
+                // The input as the renderer holds it, in f32.
+                let x32 = k as f32 / samples as f32;
+                let x = f64::from(x32);
+                // As the shader: the input is bounded to the domain.
+                let u = (x.clamp(start, end) - start) / (end - start) * last;
+                let i = (u.floor() as usize).min(values.len() - 2);
+                let f = u - i as f64;
+                let lerp =
+                    f64::from(values[i]) + (f64::from(values[i + 1]) - f64::from(values[i])) * f;
+                (lerp - f64::from(curve.evaluate(x32))).abs() * 65535.0
+            })
+            .fold(0.0, f64::max)
+    }
+
+    fn curve(points: &[[f32; 2]]) -> Curve {
+        Curve {
+            points: points.to_vec(),
+        }
+    }
+
+    #[test]
+    fn lookup_tables_stay_within_a_quarter_of_a_16_bit_unit() {
+        // The curves of docs/decisions/0028, from gentle to very steep.
+        for points in [
+            &[[0.0, 0.0], [1.0, 1.0]][..],
+            &[[0.0, 0.0], [0.25, 0.18], [0.75, 0.82], [1.0, 1.0]],
+            &[[0.0, 0.0], [0.45, 0.05], [0.55, 0.95], [1.0, 1.0]],
+            &[[0.0, 0.0], [0.9, 0.0], [1.0, 1.0]],
+            &[[0.0, 0.0], [0.5, 0.02], [0.51, 0.98], [1.0, 1.0]],
+            // Flat ends: the table covers 0.2..0.4 only, without the kinks.
+            &[[0.2, 0.1], [0.4, 0.9]],
+            &[[0.1, 0.0], [0.3, 0.7], [0.32, 0.75], [0.95, 1.0]],
+        ] {
+            let curve = curve(points);
+            let error = table_error(&curve);
+            // 0.25 of interpolation, plus the f32 rounding of `evaluate`
+            // itself, which reaches 0.1 unit on the steepest curve (slope
+            // about 140): the table cannot be closer than its reference.
+            assert!(
+                error <= 0.35,
+                "{points:?}: {error} units with {} entries",
+                curve.lookup_table().values.len()
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_tables_grow_only_for_steep_curves() {
+        let size = |points: &[[f32; 2]]| curve(points).lookup_table().values.len();
+        assert_eq!(size(&[[0.0, 0.0], [1.0, 1.0]]), MIN_CURVE_TABLE);
+        assert_eq!(
+            size(&[[0.0, 0.0], [0.25, 0.18], [0.75, 0.82], [1.0, 1.0]]),
+            MIN_CURVE_TABLE
+        );
+        let steep = size(&[[0.0, 0.0], [0.5, 0.02], [0.51, 0.98], [1.0, 1.0]]);
+        assert!(
+            steep > MIN_CURVE_TABLE && steep <= MAX_CURVE_TABLE,
+            "{steep}"
+        );
+        // Points closer than the table can follow: bounded size.
+        assert_eq!(
+            size(&[[0.0, 0.0], [0.5, 0.0], [0.5001, 1.0], [1.0, 1.0]]),
+            MAX_CURVE_TABLE
+        );
+    }
+
+    #[test]
+    fn a_full_table_hits_every_16_bit_level_exactly() {
+        let curve = curve(&[[0.0, 0.0], [0.5, 0.0], [0.5001, 1.0], [1.0, 1.0]]);
+        let table = curve.lookup_table();
+        assert_eq!((table.start, table.end), (0.0, 1.0));
+        assert_eq!(table.values.len(), 65536);
+        for level in (0..=65535u32).step_by(97) {
+            let x = level as f32 / 65535.0;
+            assert_eq!(
+                table.values[level as usize],
+                curve.evaluate(x),
+                "level {level}"
+            );
+        }
     }
 }

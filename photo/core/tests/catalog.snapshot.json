@@ -248,7 +248,7 @@
           "type": "object"
         },
         "Curves": {
-          "description": "Curves adjustment (REG-3): master curve, then per channel.",
+          "description": "Curves adjustment (REG-3). Each color channel goes through its own\ncurve first, then through the master curve.",
           "properties": {
             "blue": {
               "$ref": "#/$defs/Curve",
@@ -444,7 +444,7 @@
           ]
         },
         "Levels": {
-          "description": "Levels adjustment: the master channel, then red, green and blue.",
+          "description": "Levels adjustment. Each color channel goes through its own levels\nfirst, then through the master levels, as with curves.",
           "properties": {
             "blue": {
               "$ref": "#/$defs/LevelsChannel",
@@ -456,7 +456,7 @@
             },
             "master": {
               "$ref": "#/$defs/LevelsChannel",
-              "description": "Applied to the three color channels."
+              "description": "Applied to the three color channels, after the channel levels."
             },
             "red": {
               "$ref": "#/$defs/LevelsChannel",
@@ -1089,7 +1089,7 @@
           "type": "object"
         },
         "Curves": {
-          "description": "Curves adjustment (REG-3): master curve, then per channel.",
+          "description": "Curves adjustment (REG-3). Each color channel goes through its own\ncurve first, then through the master curve.",
           "properties": {
             "blue": {
               "$ref": "#/$defs/Curve",
@@ -1143,7 +1143,7 @@
           "type": "object"
         },
         "Levels": {
-          "description": "Levels adjustment: the master channel, then red, green and blue.",
+          "description": "Levels adjustment. Each color channel goes through its own levels\nfirst, then through the master levels, as with curves.",
           "properties": {
             "blue": {
               "$ref": "#/$defs/LevelsChannel",
@@ -1155,7 +1155,7 @@
             },
             "master": {
               "$ref": "#/$defs/LevelsChannel",
-              "description": "Applied to the three color channels."
+              "description": "Applied to the three color channels, after the channel levels."
             },
             "red": {
               "$ref": "#/$defs/LevelsChannel",
