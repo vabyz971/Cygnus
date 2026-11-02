@@ -71,3 +71,9 @@ Le fuzzing des décodeurs (spec section 5) est prévu en J6.
 | **B10** | Filtres de voisinage (0023), **en dernier** | Golden images flou et netteté ; mesure du temps final. Peut glisser vers J5 sur décision |
 
 Le banc de fluidité est relancé en B7, puis à la fin de J3, sur 24 Mpx en 16 bits et 10 calques dont des réglages et des masques. Le rapport est rangé dans `docs/bench/` sous un nom daté avec la machine.
+
+## Points suivis (décidés par l'utilisateur, 2026-11-02)
+
+1. **Réserve de sources à dimensionner en B7.** La réserve fixe de 256 tuiles de calques (et 256 de masques) est plus petite qu'une vue à 100 % (450 à 600 tuiles de calques à 2126 × 1086 avec 10 calques) : elle sature, et un changement de propriété renvoie presque toutes les sources de la vue (184 tuiles sur 200 mesurées après B3, 0019), contrairement à la condition de 0021. En B7, sa taille est calculée d'après le budget mémoire du GPU, comme le cache des composites (0018), et doit au moins contenir les sources d'une vue à 100 %. Vérification : le banc rapporte zéro source renvoyée lors d'un changement d'opacité.
+2. **Mesure officielle du panoramique** : le scénario à cache limité à 128 tuiles (`--cache-slots 128`), qui compose réellement des tuiles nouvelles. Le cache calculé garde toute la pyramide du document de 24 Mpx, donc le panoramique n'y compose rien et ne mesure que l'affichage.
+3. **Première vue** : la mesure comprend l'envoi initial de toutes les sources lues (`write_texture`), la composition et l'attente de la fin du travail GPU ; elle exclut la construction du document, la création des pipelines et l'allocation des réserves.
