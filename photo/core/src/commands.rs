@@ -100,6 +100,16 @@ pub enum CoreError {
         /// Depth the change would reach.
         depth: usize,
     },
+    /// The change would clip a node onto an adjustment or filter layer,
+    /// which has no pixels to clip to (docs/decisions/0028).
+    #[error(
+        "layer {} cannot be clipped onto an adjustment or filter layer: clip it onto a pixel layer or a group",
+        id.0
+    )]
+    ClipOntoEffect {
+        /// The clipped node whose base would be an adjustment or a filter.
+        id: NodeId,
+    },
 }
 
 fn invalid(param: &'static str, reason: impl Into<String>) -> CoreError {
@@ -1379,25 +1389,44 @@ impl Command for PhotoCommand {
     }
 
     fn apply(self, document: &mut Document) -> Outcome {
-        // Commands that can add a level of nesting are checked after the
-        // fact on the real document, which is restored if the limit is
-        // passed: a refused command has no effect.
+        // Commands that change the structure are checked after the fact on
+        // the real document, which is restored if they break a structural
+        // rule: a refused command has no effect.
         let may_nest = match &self {
             Self::LayerCreate(params) => matches!(params.kind, LayerKind::Group { .. }),
             Self::LayerUpdate(params) => params.clip == Some(true),
             Self::LayerGroup(_) | Self::LayerMove(_) | Self::LayerDuplicate(_) => true,
             _ => false,
         };
-        if !may_nest {
+        let may_clip = match &self {
+            Self::LayerUpdate(params) => params.clip == Some(true),
+            Self::LayerCreate(_)
+            | Self::LayerDelete(_)
+            | Self::LayerDuplicate(_)
+            | Self::LayerMove(_)
+            | Self::LayerGroup(_)
+            | Self::LayerUngroup(_) => true,
+            _ => false,
+        };
+        if !may_nest && !may_clip {
             return self.apply_unchecked(document);
         }
-        let before = document.nesting_depth();
+        let depth_before = document.nesting_depth();
+        let clipped_before = document.clipped_onto_effects();
         let backup = document.clone();
         let applied = self.apply_unchecked(document)?;
         let depth = document.nesting_depth();
-        if depth > MAX_NESTING && depth > before {
+        if may_nest && depth > MAX_NESTING && depth > depth_before {
             *document = backup;
             return Err(CoreError::TooDeep { depth });
+        }
+        if let Some(id) = document
+            .clipped_onto_effects()
+            .into_iter()
+            .find(|id| !clipped_before.contains(id))
+        {
+            *document = backup;
+            return Err(CoreError::ClipOntoEffect { id });
         }
         Ok(applied)
     }

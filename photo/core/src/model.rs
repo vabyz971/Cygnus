@@ -290,6 +290,12 @@ impl NodeKind {
     pub fn is_layer(&self) -> bool {
         !matches!(self, Self::Mask { .. })
     }
+
+    /// Whether the node acts on what is below it instead of having pixels:
+    /// adjustment and filter layers.
+    pub fn is_effect(&self) -> bool {
+        matches!(self, Self::Adjustment { .. } | Self::Filter { .. })
+    }
 }
 
 /// A node of the layer tree.
@@ -445,6 +451,34 @@ impl Document {
             i = end;
         }
         depth
+    }
+
+    /// Clipped nodes whose base, the first unclipped layer below them in
+    /// their group, is an adjustment or a filter (docs/decisions/0028).
+    /// Commands never create such a node; a document read from elsewhere
+    /// may contain one, and the renderer then shows it nowhere.
+    pub fn clipped_onto_effects(&self) -> Vec<NodeId> {
+        let mut found = Vec::new();
+        let mut groups = vec![self.root];
+        while let Some(group) = groups.pop() {
+            let mut base: Option<&Node> = None;
+            for node in self
+                .children(group)
+                .iter()
+                .filter_map(|id| self.nodes.get(id))
+                .filter(|node| node.kind.is_layer())
+            {
+                if matches!(node.kind, NodeKind::Group { .. }) {
+                    groups.push(node.id);
+                }
+                if !node.clip || base.is_none() {
+                    base = Some(node);
+                } else if base.is_some_and(|base| base.kind.is_effect()) {
+                    found.push(node.id);
+                }
+            }
+        }
+        found
     }
 
     /// Children of group `id`, bottom first; empty for other nodes.
