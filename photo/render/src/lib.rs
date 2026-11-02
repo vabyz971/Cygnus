@@ -27,9 +27,12 @@ pub mod canvas;
 pub mod format;
 pub mod gpu;
 pub mod image;
+mod program;
 pub mod renderer;
 pub mod shaders;
+mod sources;
 
 pub use canvas::{Canvas, CanvasStats, CanvasView};
 pub use image::{ExportBits, Image};
 pub use renderer::{RenderError, Renderer};
+pub use sources::SourceStats;

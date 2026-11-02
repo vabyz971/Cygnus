@@ -49,6 +49,33 @@ fn unpack_compute(texel: vec4<u32>) -> vec4<f32> {
 }
 ";
 
+/// Texture format of the source pool: layer tiles as stored in the
+/// document (sRGB-encoded, straight alpha), 8-bit values multiplied by 257
+/// (docs/decisions/0021). It happens to be the compute format too.
+pub const SOURCE_FORMAT: wgpu::TextureFormat = COMPUTE_FORMAT;
+
+/// Bytes of one texel of [`SOURCE_FORMAT`].
+pub const SOURCE_TEXEL_BYTES: u32 = 8;
+
+/// Texture format of the mask pool: gray mask tiles, 8-bit values
+/// multiplied by 257.
+pub const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+
+/// Bytes of one texel of [`MASK_FORMAT`].
+pub const MASK_TEXEL_BYTES: u32 = 2;
+
+/// WGSL functions reading the source and mask pools: straight 0..1 color,
+/// and mask coverage 0..1.
+pub const SOURCE_CODEC_WGSL: &str = "
+fn unpack_source(texel: vec4<u32>) -> vec4<f32> {
+    return vec4<f32>(texel) / 65535.0;
+}
+
+fn unpack_mask(texel: vec4<u32>) -> f32 {
+    return f32(texel.r) / 65535.0;
+}
+";
+
 /// One texel of [`COMPUTE_FORMAT`] on the CPU side (uploads, readbacks).
 pub type ComputeTexel = [u16; 4];
 
@@ -71,6 +98,15 @@ mod tests {
     fn texel_size_matches_the_texture_format() {
         let block = COMPUTE_FORMAT.block_copy_size(None).unwrap();
         assert_eq!(block, COMPUTE_TEXEL_BYTES);
+    }
+
+    #[test]
+    fn pool_texel_sizes_match_their_formats() {
+        assert_eq!(
+            SOURCE_FORMAT.block_copy_size(None).unwrap(),
+            SOURCE_TEXEL_BYTES
+        );
+        assert_eq!(MASK_FORMAT.block_copy_size(None).unwrap(), MASK_TEXEL_BYTES);
     }
 
     #[test]
@@ -97,7 +133,12 @@ mod tests {
     #[test]
     fn compute_format_is_named_only_here() {
         // Built at run time so that this file does not match itself.
-        let names = [["Rgba16", "Uint"].concat(), ["rgba16", "uint"].concat()];
+        let names = [
+            ["Rgba16", "Uint"].concat(),
+            ["rgba16", "uint"].concat(),
+            ["R16", "Uint"].concat(),
+            ["r16", "uint"].concat(),
+        ];
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
         for dir in ["src", "tests", "examples"] {
@@ -117,7 +158,7 @@ mod tests {
             .collect();
         assert!(
             offenders.is_empty(),
-            "compute format named outside format.rs: {offenders:?}"
+            "pixel formats named outside format.rs: {offenders:?}"
         );
     }
 }

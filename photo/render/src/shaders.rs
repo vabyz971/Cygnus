@@ -25,11 +25,12 @@
 use cygnus_photo_core::BlendMode;
 use cygnus_photo_core::pixels::TILE_SIZE;
 
-use crate::format::{COMPUTE_CODEC_WGSL, COMPUTE_FORMAT_WGSL, COMPUTE_SAMPLED_WGSL};
+use crate::format::{
+    COMPUTE_CODEC_WGSL, COMPUTE_FORMAT_WGSL, COMPUTE_SAMPLED_WGSL, SOURCE_CODEC_WGSL,
+};
 
 const COLOR: &str = include_str!("shaders/color.wgsl");
 const BLEND: &str = include_str!("shaders/blend.wgsl");
-const DECODE: &str = include_str!("shaders/decode.wgsl");
 const COMPOSITE: &str = include_str!("shaders/composite.wgsl");
 const EXPORT: &str = include_str!("shaders/export.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
@@ -64,6 +65,7 @@ fn prelude() -> String {
 fn assemble(main: &str, modules: &[&str]) -> String {
     let mut source = prelude();
     source.push_str(COMPUTE_CODEC_WGSL);
+    source.push_str(SOURCE_CODEC_WGSL);
     for module in modules {
         source.push_str(module);
     }
@@ -73,14 +75,10 @@ fn assemble(main: &str, modules: &[&str]) -> String {
         .replace("COMPUTE_SAMPLED", COMPUTE_SAMPLED_WGSL)
 }
 
-/// Decode pass: stored tiles to the compute format.
-pub fn decode() -> String {
-    assemble(DECODE, &[COLOR])
-}
-
-/// Composite pass: composition program of each tile.
+/// Composite pass: composition program of each tile, reading the source
+/// pools.
 pub fn composite() -> String {
-    assemble(COMPOSITE, &[BLEND])
+    assemble(COMPOSITE, &[COLOR, BLEND])
 }
 
 /// Export pass: compute format to 8- or 16-bit sRGB.
@@ -116,7 +114,6 @@ mod tests {
 
     #[test]
     fn every_shader_is_valid_wgsl() {
-        validate("decode", &decode());
         validate("composite", &composite());
         validate("export", &export());
         validate("display", &display());
@@ -145,7 +142,6 @@ mod tests {
         // The normal formula and the blend function are defined once.
         for (name, source) in [
             ("color", COLOR),
-            ("decode", DECODE),
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),
@@ -159,7 +155,6 @@ mod tests {
         // Color conversions are defined once too.
         for (name, source) in [
             ("blend", BLEND),
-            ("decode", DECODE),
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),

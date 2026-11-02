@@ -18,9 +18,10 @@
 // (AGENTS.md rule 1, docs/decisions/0012). Mode codes BLEND_* are generated
 // from the Rust BlendMode enum when shaders are assembled.
 //
-// `dst` is the backdrop and `src` the layer, both linear premultiplied, the
-// layer opacity already applied to `src`. Formulas follow W3C Compositing
-// and Blending Level 1.
+// `dst` is the backdrop and `src` the layer, both sRGB-encoded and
+// premultiplied (docs/decisions/0021, Q1), the layer opacity and mask
+// already applied to `src`. Formulas follow W3C Compositing and Blending
+// Level 1.
 
 // Normal: source-over (W3C, section 5.1 and 9.1.4), premultiplied form:
 // co = cs + cb * (1 - as), ao = as + ab * (1 - as).
@@ -37,6 +38,22 @@ fn blend(mode: u32, dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
         // before any GPU work, so this branch is never taken.
         default: {
             return blend_normal(dst, src);
+        }
+    }
+}
+
+// Source-atop (W3C, section 9.1.4, Porter-Duff), premultiplied form, for
+// clipped layers (CAL-5): co = cs * ab + cb * (1 - as), ao = ab. The
+// source keeps only the coverage of the backdrop.
+fn blend_atop(mode: u32, dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+    switch mode {
+        case BLEND_NORMAL: {
+            return vec4<f32>(src.rgb * dst.a + dst.rgb * (1.0 - src.a), dst.a);
+        }
+        // Other modes arrive with step B4 of J3; refused before any GPU
+        // work until then.
+        default: {
+            return vec4<f32>(src.rgb * dst.a + dst.rgb * (1.0 - src.a), dst.a);
         }
     }
 }

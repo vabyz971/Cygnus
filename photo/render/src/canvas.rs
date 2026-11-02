@@ -578,14 +578,15 @@ impl Canvas {
         Ok(ops)
     }
 
-    fn record(
-        &self,
-        renderer: &Renderer,
-        document: &Document,
-        ops: &[Op],
-    ) -> Result<wgpu::CommandBuffer, RenderError> {
+    /// Records and submits the work of `ops`. Each composite batch is
+    /// submitted before the next one makes its sources resident, so that
+    /// a reused source slot is never read by older work.
+    fn run(&self, renderer: &Renderer, document: &Document, ops: &[Op]) -> Result<(), RenderError> {
         let device = renderer.device();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let queue = renderer.queue();
+        let new_encoder =
+            || device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = new_encoder();
         let mut index = 0;
         while index < ops.len() {
             match &ops[index] {
@@ -601,7 +602,13 @@ impl Canvas {
                         targets.get(&coord).copied().unwrap_or(0)
                     })?;
                     for batch in &batches {
-                        renderer.record_composite(&mut encoder, document, batch, &self.cache.view);
+                        queue.submit([std::mem::replace(&mut encoder, new_encoder()).finish()]);
+                        renderer.record_composite(
+                            &mut encoder,
+                            document,
+                            batch,
+                            &self.cache.view,
+                        )?;
                     }
                 }
                 Op::Downsample { .. } => {
@@ -622,7 +629,8 @@ impl Canvas {
                 }
             }
         }
-        Ok(encoder.finish())
+        queue.submit([encoder.finish()]);
+        Ok(())
     }
 
     fn record_downsample(
@@ -736,8 +744,7 @@ impl Canvas {
         let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
 
         if !ops.is_empty() {
-            let commands = self.record(renderer, document, &ops)?;
-            queue.submit([commands]);
+            self.run(renderer, document, &ops)?;
         }
 
         let (tiles_x, tiles_y) = self.level_tiles(level);

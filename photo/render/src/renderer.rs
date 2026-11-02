@@ -14,28 +14,36 @@
 // You should have received a copy of the GNU General Public License along
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tile renderer: decodes layer tiles, composites them and exports the
-//! result (docs/decisions/0011 and 0012).
+//! Tile renderer: composites layer tiles and exports the result
+//! (docs/decisions/0011, 0012 and 0021).
 //!
 //! The document is processed in batches of output tiles, so that it never
-//! has to be resident on the GPU at once. Each batch decodes the layer
-//! tiles it needs into the layer pool, runs the composition program of each
-//! output tile into the composite pool, then converts the composites to
-//! integers for the readback. Every GPU error is caught by an error scope
-//! and returned, never turned into a crash.
+//! has to be resident on the GPU at once. Each batch makes the layer and
+//! mask tiles it needs resident in the source pools (integers, as stored in
+//! the document; [`crate::sources`]), runs the composition program of each
+//! output tile ([`crate::program`]) into a pool of the compute format, then
+//! converts the composites to integers for the readback. Every GPU error is
+//! caught by an error scope and returned, never turned into a crash.
 
-use std::collections::BTreeMap;
-use std::sync::mpsc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use cygnus_photo_core::pixels::{TILE_SIZE, Tile, TileCoord, tiles_in};
-use cygnus_photo_core::{BlendMode, Document, NodeId, NodeKind};
+use cygnus_photo_core::{BlendMode, Document};
 
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
+use crate::program::{self, Op};
 use crate::shaders;
+use crate::sources::{PoolKind, SourceKey, SourceStats, TilePool};
 
-/// Slots of the layer pool: decoded layer tiles of one batch.
-const LAYER_SLOTS: u32 = 128;
+/// Slots of each source pool by default, within the array layers of the
+/// device: 128 MiB of layer tiles and 32 MiB of mask tiles.
+const DEFAULT_SOURCE_SLOTS: u32 = 256;
+/// Words of one operation in the composite shader (`Op`).
+const OP_WORDS: usize = 8;
+/// Slot value meaning "no mask tile" (`NO_SLOT` in WGSL).
+const NO_SLOT: u32 = u32::MAX;
 /// Slots of the composite pool: output tiles of one batch.
 const COMPOSITE_SLOTS: u32 = 64;
 /// Workgroup side, as in the shaders.
@@ -49,69 +57,18 @@ pub enum RenderError {
     /// A layer uses a blend mode the renderer does not support yet.
     #[error("blend mode {0:?} is not supported yet")]
     UnsupportedBlendMode(BlendMode),
-    /// A structure the renderer does not support yet (groups, J3).
+    /// A structure the renderer does not support yet.
     #[error("{0} is not supported yet")]
     Unsupported(&'static str),
-    /// A tile has more layers than the pool can hold at once.
-    #[error("{count} layers overlap one tile, at most {LAYER_SLOTS} are supported")]
+    /// A tile reads more layer or mask tiles than a source pool holds.
+    #[error("{count} layer or mask tiles overlap one tile, more than the source pool holds")]
     TooManyLayers {
-        /// Number of overlapping layers.
+        /// Number of tiles read.
         count: usize,
     },
     /// The GPU reported an error.
     #[error("GPU error: {0}")]
     Gpu(String),
-}
-
-/// One layer of the composition program.
-#[derive(Debug, Clone, Copy)]
-struct ProgramLayer {
-    id: NodeId,
-    opacity: f32,
-    mode: BlendMode,
-}
-
-/// Visible pixel layers, bottom first. Groups, masks, clipping,
-/// adjustments, filters and embedded objects are rendered from step B3 of
-/// J3 (docs/decisions/0021); until then they are refused, never ignored.
-fn program(document: &Document) -> Result<Vec<ProgramLayer>, RenderError> {
-    let mut layers = Vec::new();
-    for id in document.children(document.root) {
-        let Some(node) = document.node(*id) else {
-            continue;
-        };
-        match node.kind {
-            NodeKind::Pixel { .. } => {}
-            NodeKind::Group { .. } => return Err(RenderError::Unsupported("rendering a group")),
-            NodeKind::Adjustment { .. } => {
-                return Err(RenderError::Unsupported("rendering an adjustment layer"));
-            }
-            NodeKind::Filter { .. } => {
-                return Err(RenderError::Unsupported("rendering a filter layer"));
-            }
-            NodeKind::Embedded { .. } => {
-                return Err(RenderError::Unsupported("rendering an embedded object"));
-            }
-            NodeKind::Mask { .. } => continue,
-        }
-        if node.mask.is_some() {
-            return Err(RenderError::Unsupported("rendering a mask"));
-        }
-        if node.clip {
-            return Err(RenderError::Unsupported("rendering a clipped layer"));
-        }
-        if !node.blend.is_supported() {
-            return Err(RenderError::UnsupportedBlendMode(node.blend));
-        }
-        if node.visible {
-            layers.push(ProgramLayer {
-                id: *id,
-                opacity: node.opacity,
-                mode: node.blend,
-            });
-        }
-    }
-    Ok(layers)
 }
 
 pub(crate) struct Pool {
@@ -174,48 +131,103 @@ pub(crate) fn pipeline(
     })
 }
 
+/// Source pools and their use clock.
+struct Sources {
+    layers: TilePool,
+    masks: TilePool,
+    clock: u64,
+    stats: SourceStats,
+}
+
 /// Tile renderer bound to one GPU device.
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    decode: wgpu::ComputePipeline,
     composite: wgpu::ComputePipeline,
     export: wgpu::ComputePipeline,
-    layers: Pool,
+    sources: Mutex<Sources>,
     composites: Pool,
 }
 
-/// One output tile of a batch: where it goes, and the layer tiles it
-/// composites (with their slots in the layer pool).
+/// One output tile of a batch: where it goes, and its program.
 pub(crate) struct OutputTile {
     pub(crate) coord: TileCoord,
     pub(crate) target: u32,
-    ops: Vec<(ProgramLayer, u32)>,
+    ops: Vec<Op>,
 }
 
-/// Output tiles whose layer tiles fit in the layer pool together.
+/// Output tiles whose layer and mask tiles fit in the source pools
+/// together.
 pub(crate) struct Batch {
     pub(crate) outputs: Vec<OutputTile>,
-    slots: BTreeMap<(NodeId, TileCoord), u32>,
+    layers: BTreeSet<SourceKey>,
+    masks: BTreeSet<SourceKey>,
+}
+
+impl Batch {
+    fn new() -> Self {
+        Self {
+            outputs: Vec::new(),
+            layers: BTreeSet::new(),
+            masks: BTreeSet::new(),
+        }
+    }
 }
 
 impl Renderer {
-    /// Creates the pipelines and pools on `device`.
+    /// Creates the pipelines and pools on `device`, with source pools of
+    /// [`DEFAULT_SOURCE_SLOTS`] tiles each (fewer if the device has fewer
+    /// array layers).
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RenderError> {
+        let slots = DEFAULT_SOURCE_SLOTS.min(device.limits().max_texture_array_layers);
+        Self::with_source_slots(device, queue, slots, slots)
+    }
+
+    /// Creates the renderer with source pools of `layer_slots` layer tiles
+    /// and `mask_slots` mask tiles (at least one each), for tests of
+    /// residency under a reduced budget.
+    pub fn with_source_slots(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layer_slots: u32,
+        mask_slots: u32,
+    ) -> Result<Self, RenderError> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let layers = TilePool::new(device, PoolKind::Layers, layer_slots.max(1));
+        let masks = TilePool::new(device, PoolKind::Masks, mask_slots.max(1));
+        let stats = SourceStats {
+            capacity: (layers.capacity(), masks.capacity()),
+            ..SourceStats::default()
+        };
         let renderer = Self {
             device: device.clone(),
             queue: queue.clone(),
-            decode: pipeline(device, "cygnus decode", shaders::decode()),
             composite: pipeline(device, "cygnus composite", shaders::composite()),
             export: pipeline(device, "cygnus export", shaders::export()),
-            layers: Pool::new(device, "cygnus layer pool", LAYER_SLOTS),
+            sources: Mutex::new(Sources {
+                layers,
+                masks,
+                clock: 0,
+                stats,
+            }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
+        if let Some(error) = pollster::block_on(memory.pop()) {
+            return Err(RenderError::Gpu(error.to_string()));
+        }
         match pollster::block_on(scope.pop()) {
             Some(error) => Err(RenderError::Gpu(error.to_string())),
             None => Ok(renderer),
         }
+    }
+
+    /// Counters of the source pools.
+    pub fn source_stats(&self) -> SourceStats {
+        self.sources
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stats
     }
 
     pub(crate) fn device(&self) -> &wgpu::Device {
@@ -226,9 +238,10 @@ impl Renderer {
         &self.queue
     }
 
-    /// Splits the composition of `outputs` into batches whose layer tiles
-    /// fit in the layer pool. `target(index_in_batch, coord)` gives the
-    /// destination slot of each output tile; `max_outputs` bounds a batch.
+    /// Splits the composition of `outputs` into batches whose layer and
+    /// mask tiles fit in the source pools together.
+    /// `target(index_in_batch, coord)` gives the destination slot of each
+    /// output tile; `max_outputs` bounds a batch.
     pub(crate) fn plan(
         &self,
         document: &Document,
@@ -236,40 +249,28 @@ impl Renderer {
         max_outputs: usize,
         mut target: impl FnMut(usize, TileCoord) -> u32,
     ) -> Result<Vec<Batch>, RenderError> {
-        let layers = program(document)?;
+        let capacity = self.source_stats().capacity;
+        let (layer_slots, mask_slots) = (capacity.0 as usize, capacity.1 as usize);
         let mut batches = Vec::new();
-        let mut batch = Batch {
-            outputs: Vec::new(),
-            slots: BTreeMap::new(),
-        };
+        let mut batch = Batch::new();
         for coord in outputs {
-            let present: Vec<ProgramLayer> = layers
-                .iter()
-                .copied()
-                .filter(|layer| document.pixels.tile(layer.id, coord).is_some())
-                .collect();
-            if present.len() > LAYER_SLOTS as usize {
-                return Err(RenderError::TooManyLayers {
-                    count: present.len(),
-                });
+            let ops = program::tile_program(document, coord)?;
+            let (layers, masks) = program::sources(&ops);
+            for (count, slots) in [(layers.len(), layer_slots), (masks.len(), mask_slots)] {
+                if count > slots {
+                    return Err(RenderError::TooManyLayers { count });
+                }
             }
+            let new_layers = layers.iter().filter(|k| !batch.layers.contains(k)).count();
+            let new_masks = masks.iter().filter(|k| !batch.masks.contains(k)).count();
             let full = batch.outputs.len() == max_outputs
-                || batch.slots.len() + present.len() > LAYER_SLOTS as usize;
+                || batch.layers.len() + new_layers > layer_slots
+                || batch.masks.len() + new_masks > mask_slots;
             if full {
-                batches.push(std::mem::replace(
-                    &mut batch,
-                    Batch {
-                        outputs: Vec::new(),
-                        slots: BTreeMap::new(),
-                    },
-                ));
+                batches.push(std::mem::replace(&mut batch, Batch::new()));
             }
-            let mut ops = Vec::with_capacity(present.len());
-            for layer in present {
-                let next = batch.slots.len() as u32;
-                let slot = *batch.slots.entry((layer.id, coord)).or_insert(next);
-                ops.push((layer, slot));
-            }
+            batch.layers.extend(layers);
+            batch.masks.extend(masks);
             let index = batch.outputs.len();
             batch.outputs.push(OutputTile {
                 coord,
@@ -305,14 +306,17 @@ impl Renderer {
     }
 
     fn storage_bytes(&self, label: &str, bytes: &[u8]) -> wgpu::Buffer {
-        // Bindings may not be empty, and must hold at least one 16-byte job
-        // structure even when there is no job. The buffer is written through
+        // Bindings may not be empty, and must hold at least one structure
+        // even when there is no job (32 bytes: one composite operation). The buffer is written through
         // the queue, not mapped at creation: wgpu's mapped initialization
         // panics when the GPU is out of memory, while a queue write reports
         // the error to the error scopes like any other.
-        let padding = [0u8; 16];
-        let bytes = if bytes.len() < padding.len() {
-            &padding[..]
+        const MIN_BYTES: usize = 32;
+        let mut padded;
+        let bytes = if bytes.len() < MIN_BYTES {
+            padded = bytes.to_vec();
+            padded.resize(MIN_BYTES, 0);
+            &padded[..]
         } else {
             bytes
         };
@@ -362,68 +366,96 @@ impl Renderer {
         pass.dispatch_workgroups(TILE_SIZE / WORKGROUP, TILE_SIZE / WORKGROUP, tiles);
     }
 
-    /// Records the decode and composite passes of `batch` into `encoder`,
-    /// writing each output tile to its target slot of `target`.
+    /// Makes the source tiles of `batch` resident, then records its
+    /// composite pass into `encoder`, writing each output tile to its target
+    /// slot of `target`.
+    ///
+    /// Uploads take effect before the next submission: the caller must
+    /// submit the work recorded by a previous call before calling again, so
+    /// that a slot reused here is not read by older work.
     pub(crate) fn record_composite(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         document: &Document,
         batch: &Batch,
         target: &wgpu::TextureView,
-    ) {
-        // Decode: raw tiles, packed in u32 words, to the layer pool.
-        let mut raw: Vec<u8> = Vec::new();
-        let mut decode_jobs: Vec<u32> = Vec::new();
-        for ((layer, coord), slot) in &batch.slots {
-            let Some(tile) = document.pixels.tile(*layer, *coord) else {
-                continue;
+    ) -> Result<(), RenderError> {
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        let sources = &mut *sources;
+        sources.clock += 1;
+        let tiles =
+            |keys: &BTreeSet<SourceKey>| -> Result<Vec<(SourceKey, &Arc<Tile>)>, RenderError> {
+                keys.iter()
+                    .map(|key| {
+                        document
+                            .pixels
+                            .tile(key.0, key.1)
+                            .map(|tile| (*key, tile))
+                            .ok_or(RenderError::Unsupported(
+                                "a source tile missing from its document",
+                            ))
+                    })
+                    .collect()
             };
-            let offset = (raw.len() / 4) as u32;
-            let Some(bits) = pack_tile(tile, &mut raw) else {
-                continue;
-            };
-            decode_jobs.extend([offset, *slot, bits, 0]);
-        }
-        // Composite: one job per output tile.
+        let layer_slots = sources.layers.ensure(
+            &self.queue,
+            &tiles(&batch.layers)?,
+            sources.clock,
+            &mut sources.stats,
+        )?;
+        let mask_slots = sources.masks.ensure(
+            &self.queue,
+            &tiles(&batch.masks)?,
+            sources.clock,
+            &mut sources.stats,
+        )?;
+
+        // One job per output tile, eight words per operation.
         let mut ops: Vec<u32> = Vec::new();
-        let mut composite_jobs: Vec<u32> = Vec::new();
+        let mut jobs: Vec<u32> = Vec::new();
         for tile in &batch.outputs {
-            composite_jobs.extend([ops.len() as u32 / 4, tile.ops.len() as u32, tile.target, 0]);
-            for (layer, slot) in &tile.ops {
-                ops.extend([*slot, layer.mode.code(), layer.opacity.to_bits(), 0]);
+            jobs.extend([
+                (ops.len() / OP_WORDS) as u32,
+                tile.ops.len() as u32,
+                tile.target,
+                0,
+            ]);
+            for op in &tile.ops {
+                let slot = op
+                    .source
+                    .and_then(|key| layer_slots.get(&key).copied())
+                    .unwrap_or(0);
+                let mask_slot = op
+                    .mask
+                    .tile
+                    .and_then(|key| mask_slots.get(&key).copied())
+                    .unwrap_or(NO_SLOT);
+                ops.extend([
+                    op.code as u32,
+                    slot,
+                    op.mode.code(),
+                    op.opacity.to_bits(),
+                    mask_slot,
+                    op.mask.value.to_bits(),
+                    op.mask.density.to_bits(),
+                    u32::from(op.mask.inverted),
+                ]);
             }
         }
-        let raw_buffer = self.storage_bytes("cygnus raw tiles", &raw);
-        let decode_buffer = self.storage("cygnus decode jobs", &decode_jobs);
         let ops_buffer = self.storage("cygnus composite ops", &ops);
-        let composite_buffer = self.storage("cygnus composite jobs", &composite_jobs);
-        let decode_group = self.bind(
-            &self.decode,
-            &[
-                raw_buffer.as_entire_binding(),
-                decode_buffer.as_entire_binding(),
-                wgpu::BindingResource::TextureView(&self.layers.view),
-            ],
-        );
-        let composite_group = self.bind(
+        let jobs_buffer = self.storage("cygnus composite jobs", &jobs);
+        let group = self.bind(
             &self.composite,
             &[
-                wgpu::BindingResource::TextureView(&self.layers.view),
+                wgpu::BindingResource::TextureView(&sources.layers.view),
+                wgpu::BindingResource::TextureView(&sources.masks.view),
                 ops_buffer.as_entire_binding(),
-                composite_buffer.as_entire_binding(),
+                jobs_buffer.as_entire_binding(),
                 wgpu::BindingResource::TextureView(target),
             ],
         );
-        let decode_count = decode_jobs.len() as u32 / 4;
-        if decode_count > 0 {
-            Self::dispatch(encoder, &self.decode, &decode_group, decode_count);
-        }
-        Self::dispatch(
-            encoder,
-            &self.composite,
-            &composite_group,
-            batch.outputs.len() as u32,
-        );
+        Self::dispatch(encoder, &self.composite, &group, batch.outputs.len() as u32);
+        Ok(())
     }
 
     fn export_batch(
@@ -468,7 +500,7 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.record_composite(&mut encoder, document, batch, &self.composites.view);
+        self.record_composite(&mut encoder, document, batch, &self.composites.view)?;
         Self::dispatch(
             &mut encoder,
             &self.export,
@@ -518,38 +550,6 @@ impl Renderer {
         drop(view);
         buffer.unmap();
         Ok(words)
-    }
-}
-
-/// Appends `tile` to `raw` in the layout the decode shader reads (u32
-/// words: RGBA bytes in 8 bits, RG and BA pairs of u16 in 16 bits, little
-/// endian), and returns its bits per channel. On little-endian machines this
-/// is the memory layout of the tile itself: a plain copy. Gray (mask)
-/// tiles are not RGBA layer tiles: `None`.
-fn pack_tile(tile: &Tile, raw: &mut Vec<u8>) -> Option<u32> {
-    #[cfg(target_endian = "little")]
-    match tile {
-        Tile::U8(values) => {
-            raw.extend_from_slice(values);
-            Some(8)
-        }
-        Tile::U16(values) => {
-            raw.extend_from_slice(bytemuck::cast_slice(values));
-            Some(16)
-        }
-        Tile::Gray8(_) | Tile::Gray16(_) => None,
-    }
-    #[cfg(not(target_endian = "little"))]
-    match tile {
-        Tile::U8(values) => {
-            raw.extend_from_slice(values);
-            Some(8)
-        }
-        Tile::U16(values) => {
-            raw.extend(values.iter().flat_map(|value| value.to_le_bytes()));
-            Some(16)
-        }
-        Tile::Gray8(_) | Tile::Gray16(_) => None,
     }
 }
 
