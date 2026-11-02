@@ -76,6 +76,18 @@ Le tableau précédent supposait un arrondi au plus proche du f16, avec ± 16 un
 
 L'alpha est toujours exporté exactement. En 8 bits, la couleur reste à un niveau près dès que le pixel a un alpha 8 bits non nul (alpha ≥ 129). Le f16 était plus fin pour les très petites valeurs prémultipliées ; cette perte, limitée aux pixels presque transparents, est acceptée en échange de l'exactitude des pixels opaques.
 
+## Mesure GPU des réglages raides (B5, 2026-11-02)
+
+Test `steep_curves_and_levels_add_no_banding` (`photo/render/tests/adjust.rs`), dégradés 16 bits de 4 096 pixels, cache en entiers 16 bits, export 16 bits, sur lavapipe et une RTX 3080 Ti :
+
+| Cas | Entrées | Valeurs distinctes en sortie | Écart à la formule |
+| --- | --- | --- | --- |
+| Courbe raide (0,45 → 0,05 ; 0,55 → 0,95), entrées 0,40 à 0,525 au pas de 2 | 4 096 | 3 429 (les extrémités plates de la courbe confondent des entrées) | au plus 1 unité |
+| Niveaux, hautes lumières ×10 (0,9..1) | 4 096 | 4 096 | au plus 1 unité |
+| Niveaux, ombres ×10 (0..0,1) | 4 096 | 4 096 | au plus 1 unité |
+
+Seuils fixés à ce premier passage : chaque sortie à **1 unité au plus** de la formule (calcul en f64), sortie monotone. Aucune bande ajoutée par le stockage : la colonne « source stockée en f16 » du tableau du début (436 valeurs distinctes sur 6 555 pour les hautes lumières ×10) ne se produit plus.
+
 ## Alternatives écartées
 
 - **Tout passer en f32** : double la mémoire du cache et la bande passante de l'affichage, pour un gain nul sur le résultat final.

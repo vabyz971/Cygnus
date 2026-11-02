@@ -122,6 +122,25 @@ Le p95 du panoramique sur contenu non calculé passe de 17,5 ms (J2, sans fenêt
 - Une vue à 100 % de 2126 × 1086 touche 45 à 60 tuiles, soit 450 à 600 tuiles de calques : plus que la réserve. Pendant le panoramique, chaque colonne nouvelle renvoie ses 10 calques (1 660 envois pour 166 tuiles, autant d'évictions).
 - Conséquence : après la première vue, un **changement d'opacité renvoie 184 tuiles sur 200** au lieu de 0, contrairement à la condition de 0021 (« un changement de propriété ne renvoie aucune donnée résidente »). Il reste sous la cible de 150 ms (15 à 51 ms), mais la réserve doit au moins contenir une vue à 100 % : à dimensionner d'après le budget mémoire du GPU en B7 (proposition à venir avec 0024).
 
+## Mesure après B5 de J3 (2026-11-02, sans fenêtre, 2126 × 1086)
+
+Document du banc changé (0027, 0028) : 24 Mpx, 16 bits, **10 calques dont 7 calques pixel et 3 réglages** (courbes, niveaux masqués, teinte/saturation) **et 2 masques en dégradé** (sur les niveaux et sur un calque pixel). Deux phases ajoutées : un point de la courbe glissé, une commande `adjustment.update` par image, pendant 60 images à 300 % puis à la vue ajustée. Les chiffres ne se comparent pas directement à ceux de B3 (3 calques pixel de moins, 3 réglages et 2 masques de plus). Rapports : `docs/bench/2026-11-02-rtx3080ti-sans-fenetre-b5-*.json`.
+
+| Phase | Cache calculé (513 tuiles) : médiane / p95 / max | Cache de 128 tuiles (mesure officielle du panoramique) : médiane / p95 / max | Tuiles composées | Sources envoyées (cache 128) |
+| --- | --- | --- | --- | --- |
+| Adapter, première image | 196 | 169 | 384 | 3 456 |
+| Adapter, cache chaud | 0,12 / 0,15 / 0,8 | 0,12 / 0,12 / 0,1 | 0 | 0 |
+| Panoramique 100 % | 0,11 / 0,14 / 0,3 | 0,10 / **3,9** / 157 | 168 | 1 512 |
+| Zoom 5 → 800 % | 0,10 / 0,15 / 1,6 | 0,09 / 0,24 / 134 | 430 | 3 834 |
+| Panoramique 300 % | 0,09 / 0,10 / 0,1 | 0,09 / 0,71 / 6,8 | 36 | 287 |
+| Changement d'opacité | 0,09 / 0,13 / 6,6 | 0,09 / 0,10 / 3,4 | 20 | 42 |
+| **Glissement d'un point de courbe, 300 %** | 0,58 / 0,63 / 2,1 | 0,60 / 0,66 / 2,4 | 20 par image | 0 |
+| **Glissement d'un point de courbe, vue ajustée** | **177 / 185 / 200** | **175 / 182 / 220** | 384 par image | 3 456 par image |
+
+- **Courbes pendant le glissement** : le calcul des quatre tables d'une courbe prend **0,1 ms** sur le processeur (médiane, 0,14 ms au plus). Seule la courbe maître change (les trois courbes de canal identiques restent résidentes) : 63 tables envoyées pour 60 pas, **16 Kio par pas** (4 096 entrées). À 300 %, l'image complète d'un pas coûte 0,6 ms, sous la cible de 33 ms.
+- **À la vue ajustée, la cible de 33 ms n'est pas tenue (177 ms)** : un changement de propriété invalide tout le cache, et l'image réduite se recalcule depuis les 384 tuiles du niveau 0 ; la réserve de 256 tuiles sources sature et renvoie 3 456 tuiles par image. Ce coût est celui de la première vue : il revient à B7 (aperçu grossier depuis les pyramides de sources, budget de temps par image, réserve dimensionnée ; points suivis de 0027).
+- Panoramique officiel (cache de 128 tuiles) : p95 de 3,9 ms, sous la cible de 16,7 ms ; le maximum (157 ms) reste la première image du panoramique, pour B7.
+
 ## Cibles décidées (utilisateur, 2026-11-01)
 
 1. **60 images/s** (p95 ≤ 16,7 ms) pour la vue stable, le zoom et le panoramique : confirmé.
