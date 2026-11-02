@@ -89,6 +89,39 @@ Cache de 513 tuiles (256,5 Mio) : toute la pyramide reste en mémoire.
 
 Ce qui reste au-dessus des cibles : la première vue (2,3 s d'une traite) et l'image qui suit un changement de propriété (119 ms). Les deux viennent du calcul des tuiles fait en une seule fois.
 
+## Mesure après B3 de J3 (2026-11-01, sans fenêtre)
+
+Code de B3 : réserves de sources entières résidentes (256 tuiles de calques, 256 de masques), plus de passe de décodage f16, interpréteur à registres. Même document (24 Mpx, 16 bits, 10 calques), même parcours, RTX 3080 Ti. Le banc rapporte désormais les envois et évictions de la réserve de sources. Rapports : `docs/bench/2026-11-01-rtx3080ti-sans-fenetre-b3-*.json`.
+
+**Fenêtre de 2126 × 1086** (taille de la mesure dans l'application), cache calculé de 513 tuiles :
+
+| Phase | Médiane | p95 | p99 | Max | Tuiles composées | Sources envoyées | Sources évincées |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Adapter, première image | 229 | — | — | 229 | 384 | 3 840 | 3 584 |
+| Adapter, cache chaud | 0,12 | 0,13 | 0,14 | 0,2 | 0 | 0 | 0 |
+| Panoramique 100 % | 0,10 | **0,12** | 0,25 | 0,7 | 0 | 0 | 0 |
+| Zoom 5 → 800 % | 0,10 | 0,16 | 0,18 | 1,6 | 0 | 0 | 0 |
+| Panoramique 300 % | 0,10 | 0,12 | 0,23 | 0,6 | 0 | 0 | 0 |
+| Changement d'opacité | 0,09 | 0,11 | 15,3 | 15,3 | 20 | 184 | 184 |
+
+**2560 × 1440**, à comparer à la mesure après 0018 ci-dessus : première image **229 ms** (contre 2313), changement d'opacité **51 ms** (contre 119), les autres phases inchangées (p95 ≤ 0,3 ms).
+
+**Panoramique sur des tuiles non calculées** : le cache calculé garde toute la pyramide, donc le panoramique à 100 % ci-dessus ne compose rien. Avec un cache fixé à 128 tuiles (`--cache-slots 128`), à 2126 × 1086 :
+
+| Phase | Médiane | p95 | p99 | Max | Tuiles composées | Sources envoyées |
+| --- | --- | --- | --- | --- | --- | --- |
+| Panoramique 100 % | 0,12 | **4,9** | 5,7 | 143 | 166 | 1 660 |
+| Zoom 5 → 800 % | 0,10 | 0,15 | 1,6 | 169 | 430 | 4 300 |
+| Panoramique 300 % | 0,09 | 0,95 | 4,3 | 8,4 | 36 | 344 |
+
+Le p95 du panoramique sur contenu non calculé passe de 17,5 ms (J2, sans fenêtre) à 4,9 ms : une tuile nouvelle de 10 calques coûte environ 0,6 ms au lieu de 6. Le maximum (143 ms) est la première image du panoramique, qui compose toute la vue d'un coup : c'est le budget de temps par image (0024, B7) qui le traitera. La cause exacte du gain (envoi direct par `write_texture` au lieu du tampon de décodage et de la passe f16) n'a pas été isolée.
+
+**Saturation de la réserve de sources (256 tuiles de calques)** : elle sature, comme prévu.
+
+- La première vue lit toutes les tuiles du niveau 0 (384 × 10 = 3 840 tuiles de calques, 1,9 Gio) : chaque tuile est envoyée une fois, puis évincée. Seules les pyramides de sources de 0024 éviteront ce volume.
+- Une vue à 100 % de 2126 × 1086 touche 45 à 60 tuiles, soit 450 à 600 tuiles de calques : plus que la réserve. Pendant le panoramique, chaque colonne nouvelle renvoie ses 10 calques (1 660 envois pour 166 tuiles, autant d'évictions).
+- Conséquence : après la première vue, un **changement d'opacité renvoie 184 tuiles sur 200** au lieu de 0, contrairement à la condition de 0021 (« un changement de propriété ne renvoie aucune donnée résidente »). Il reste sous la cible de 150 ms (15 à 51 ms), mais la réserve doit au moins contenir une vue à 100 % : à dimensionner d'après le budget mémoire du GPU en B7 (proposition à venir avec 0024).
+
 ## Cibles décidées (utilisateur, 2026-11-01)
 
 1. **60 images/s** (p95 ≤ 16,7 ms) pour la vue stable, le zoom et le panoramique : confirmé.
