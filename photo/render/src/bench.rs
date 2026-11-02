@@ -18,15 +18,22 @@
 //! and the report, shared by the headless example and the in-application
 //! run, so that both measure exactly the same scenario.
 //!
-//! Document: 6000 × 4000 px (24 Mpx), 16 bits, ten fully covered pixel
-//! layers, Normal blend, opacities from 30 to 100 %. Camera path: fit
-//! (cold, then warm), pan at 100 %, continuous zoom from 5 to 800 %,
-//! diagonal pan at 300 %, then an opacity change.
+//! Document: 6000 × 4000 px (24 Mpx), 16 bits, ten layers (docs/decisions/
+//! 0027 and 0028): seven fully covered pixel layers, Normal blend,
+//! opacities from 30 to 100 %, and three adjustment layers (curves, levels,
+//! hue/saturation); two gradient masks, on a pixel layer and on the levels.
+//! Camera path: fit (cold, then warm), pan at 100 %, continuous zoom from
+//! 5 to 800 %, diagonal pan at 300 %, an opacity change, then a curve point
+//! dragged at 300 % and at fit.
 
 use std::time::Duration;
 
 use cygnus_commands::{BusLimits, CommandBus, Source};
-use cygnus_photo_core::commands::{DocumentCreate, LayerCreate, LayerUpdate, PixelsWrite};
+use cygnus_photo_core::adjust::{Adjustment, Curve, Curves, HueSaturation, Levels, LevelsChannel};
+use cygnus_photo_core::commands::{
+    AdjustmentUpdate, DocumentCreate, LayerCreate, LayerKind, LayerUpdate, MaskCreate,
+    MaskGradient, PixelsWrite,
+};
 use cygnus_photo_core::script::ScriptError;
 use cygnus_photo_core::{Depth, Document, NodeId, PhotoCommand, Rect};
 
@@ -37,12 +44,18 @@ use crate::sources::SourceStats;
 pub const WIDTH: u32 = 6000;
 /// Benchmark document height, in pixels.
 pub const HEIGHT: u32 = 4000;
-/// Number of pixel layers.
+/// Number of layers, adjustments included.
 pub const LAYERS: u64 = 10;
+/// Number of pixel layers.
+pub const PIXEL_LAYERS: u64 = 7;
 /// Rows written per command while building the document.
 const STRIP: u32 = 256;
-/// Layer whose opacity changes in the last phase.
-pub const EDITED_LAYER: NodeId = NodeId(5);
+/// Layer whose opacity changes in the edit phase.
+pub const EDITED_LAYER: NodeId = NodeId(6);
+/// Curves adjustment whose point is dragged.
+pub const CURVES_LAYER: NodeId = NodeId(5);
+/// Frames of each curve drag phase.
+const DRAG_FRAMES: u32 = 60;
 
 /// Phases of the camera path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -59,6 +72,10 @@ pub enum Phase {
     Pan300,
     /// Frames after an opacity change of one layer.
     Edit,
+    /// A curve point dragged, one change per frame, at 300 %.
+    CurveDrag300,
+    /// A curve point dragged, one change per frame, at fit.
+    CurveDragFit,
 }
 
 impl Phase {
@@ -71,6 +88,8 @@ impl Phase {
             Self::Zoom => "zoom_5_to_800",
             Self::Pan300 => "pan_300",
             Self::Edit => "edit_opacity",
+            Self::CurveDrag300 => "curve_drag_300",
+            Self::CurveDragFit => "curve_drag_fit",
         }
     }
 }
@@ -84,8 +103,18 @@ pub struct CameraFrame {
     pub scale: f32,
     /// Document point at the center of the viewport.
     pub center: [f32; 2],
-    /// Whether the opacity change is applied before this frame.
-    pub edit: bool,
+    /// Change applied before this frame.
+    pub edit: Option<Edit>,
+}
+
+/// A change of the document during the camera path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Edit {
+    /// Opacity of [`EDITED_LAYER`] to 50 %.
+    Opacity,
+    /// Middle point of the master curve of [`CURVES_LAYER`] at step `n` of
+    /// a drag.
+    Curve(u32),
 }
 
 /// Value `t` (0..1) of the way from `a` to `b`.
@@ -102,7 +131,7 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
         phase,
         scale,
         center,
-        edit: false,
+        edit: None,
     };
     let mut path = vec![frame(Phase::FitCold, fit, middle)];
     path.extend((0..120).map(|_| frame(Phase::FitWarm, fit, middle)));
@@ -135,9 +164,19 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
     }));
     // Opacity change, then frames until the view is up to date and stable.
     path.extend((0..30).map(|i| CameraFrame {
-        edit: i == 0,
+        edit: (i == 0).then_some(Edit::Opacity),
         ..frame(Phase::Edit, 3.0, [width * 0.75, height * 0.75])
     }));
+    // A curve point dragged, one change per frame, at 300 % then at fit.
+    for (phase, scale, center) in [
+        (Phase::CurveDrag300, 3.0, [width * 0.75, height * 0.75]),
+        (Phase::CurveDragFit, fit, middle),
+    ] {
+        path.extend((0..DRAG_FRAMES).map(|i| CameraFrame {
+            edit: Some(Edit::Curve(i)),
+            ..frame(phase, scale, center)
+        }));
+    }
     path
 }
 
@@ -166,7 +205,7 @@ fn noise(layer: u64, x: u32, y: u32) -> f32 {
 }
 
 /// Commands writing layer `id` over the document, by strips.
-fn layer_commands(id: u64) -> Vec<PhotoCommand> {
+fn layer_commands(id: u64, pixel_index: u64) -> Vec<PhotoCommand> {
     let mut commands = vec![PhotoCommand::LayerCreate(LayerCreate {
         name: format!("layer {id}"),
         parent: None,
@@ -203,7 +242,7 @@ fn layer_commands(id: u64) -> Vec<PhotoCommand> {
         }));
     }
     // Opacities from 30 % (top) to 100 % (bottom layer).
-    let opacity = 1.0 - 0.7 * (id - 1) as f32 / (LAYERS - 1) as f32;
+    let opacity = 1.0 - 0.7 * pixel_index as f32 / (PIXEL_LAYERS - 1) as f32;
     commands.push(PhotoCommand::LayerUpdate(LayerUpdate {
         opacity: Some(opacity),
         ..LayerUpdate::new(NodeId(id))
@@ -236,20 +275,109 @@ pub fn build_document() -> Result<Document, ScriptError> {
         depth: Depth::U16,
         profile: Default::default(),
     }))?;
+    // Layers 1 to 10, bottom first: pixel layers, with curves (5), levels
+    // (8, masked) and hue/saturation (10); layer 9 is masked too.
+    let mut pixel_index = 0;
     for id in 1..=LAYERS {
-        for command in layer_commands(id) {
-            run(command)?;
+        let adjustment = match id {
+            5 => Some(curves(0)),
+            8 => Some(Adjustment::Levels(Levels {
+                master: LevelsChannel {
+                    input_black: 0.04,
+                    input_white: 0.93,
+                    gamma: 1.15,
+                    output_black: 0.0,
+                    output_white: 1.0,
+                },
+                ..Levels::default()
+            })),
+            10 => Some(Adjustment::HueSaturation(HueSaturation {
+                hue: 12.0,
+                saturation: 15.0,
+                lightness: 0.0,
+            })),
+            _ => None,
+        };
+        match adjustment {
+            Some(adjustment) => run(PhotoCommand::LayerCreate(LayerCreate {
+                name: format!("adjustment {id}"),
+                parent: None,
+                index: None,
+                kind: LayerKind::Adjustment { adjustment },
+            }))?,
+            None => {
+                for command in layer_commands(id, pixel_index) {
+                    run(command)?;
+                }
+                pixel_index += 1;
+            }
         }
+    }
+    // Gradient masks: mask 11 on the levels, mask 12 on pixel layer 9.
+    for (node, mask, start, end) in [
+        (8, 11, [0.0, 0.0], [WIDTH as f32, 0.0]),
+        (9, 12, [0.0, 0.0], [0.0, HEIGHT as f32]),
+    ] {
+        run(PhotoCommand::MaskCreate(MaskCreate {
+            node: NodeId(node),
+            fill: Default::default(),
+        }))?;
+        run(PhotoCommand::MaskGradient(MaskGradient {
+            mask: NodeId(mask),
+            start,
+            end,
+            start_value: 0.15,
+            end_value: 1.0,
+        }))?;
     }
     Ok(document)
 }
 
-/// The command of the last phase.
-pub fn edit_command() -> PhotoCommand {
-    PhotoCommand::LayerUpdate(LayerUpdate {
-        opacity: Some(0.5),
-        ..LayerUpdate::new(EDITED_LAYER)
+/// Curves of the curves adjustment at step `step` of the drag: an S curve
+/// whose middle point rises.
+fn curves(step: u32) -> Adjustment {
+    let y = 0.5 + 0.2 * step as f32 / DRAG_FRAMES as f32;
+    Adjustment::Curves(Curves {
+        master: Curve {
+            points: vec![[0.0, 0.0], [0.25, 0.2], [0.5, y], [0.75, 0.82], [1.0, 1.0]],
+        },
+        ..Curves::default()
     })
+}
+
+/// The command of a change of the camera path.
+pub fn edit_command(edit: Edit) -> PhotoCommand {
+    match edit {
+        Edit::Opacity => PhotoCommand::LayerUpdate(LayerUpdate {
+            opacity: Some(0.5),
+            ..LayerUpdate::new(EDITED_LAYER)
+        }),
+        Edit::Curve(step) => PhotoCommand::AdjustmentUpdate(AdjustmentUpdate {
+            id: CURVES_LAYER,
+            adjustment: curves(step),
+        }),
+    }
+}
+
+/// Time to compute the lookup tables of the dragged curve, alone on the
+/// CPU: the median and the largest over the steps of a drag, in ms.
+pub fn curve_table_time() -> (f64, f64) {
+    let mut times: Vec<f64> = (0..DRAG_FRAMES)
+        .map(|step| {
+            let start = std::time::Instant::now();
+            if let Adjustment::Curves(c) = curves(step) {
+                for curve in [&c.red, &c.green, &c.blue, &c.master] {
+                    std::hint::black_box(curve.lookup_table());
+                }
+            }
+            start.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
+    times.sort_by(f64::total_cmp);
+    (
+        percentile(&times, 0.5),
+        times.last().copied().unwrap_or(0.0),
+    )
 }
 
 /// Memory used by the pixels of `document`, in bytes.
@@ -356,8 +484,11 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "tiles_evicted": previous.evicted - start.evicted,
             "source_tiles_uploaded": previous_sources.uploads - start_sources.uploads,
             "source_tiles_evicted": previous_sources.evictions - start_sources.evictions,
+            "curve_tables_uploaded": previous_sources.curve_tables.uploads - start_sources.curve_tables.uploads,
+            "curve_table_bytes": previous_sources.curve_tables.bytes - start_sources.curve_tables.bytes,
         }));
     }
+    let curve_cpu = curve_table_time();
     serde_json::json!({
         "benchmark": "fluidity",
         "scenario": "docs/decisions/0014",
@@ -369,6 +500,9 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "height": HEIGHT,
             "depth_bits": 16,
             "layers": LAYERS,
+            "pixel_layers": PIXEL_LAYERS,
+            "adjustments": ["curves", "levels (masked)", "hue_saturation"],
+            "masks": 2,
             "pixel_memory_bytes": info.document_bytes,
         },
         "viewport": info.viewport,
@@ -376,6 +510,10 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         "machine": machine(),
         "canvas_cache_bytes": info.cache_bytes,
         "source_pool_slots": info.source_slots,
+        "curve_table_cpu_ms": {
+            "median": curve_cpu.0,
+            "max": curve_cpu.1,
+        },
         "phases": phases,
     })
 }
@@ -397,10 +535,21 @@ mod tests {
                 Phase::Pan100,
                 Phase::Zoom,
                 Phase::Pan300,
-                Phase::Edit
+                Phase::Edit,
+                Phase::CurveDrag300,
+                Phase::CurveDragFit
             ]
         );
-        assert_eq!(path.iter().filter(|frame| frame.edit).count(), 1);
+        let edits = |wanted: fn(&Edit) -> bool| {
+            path.iter()
+                .filter(|frame| frame.edit.as_ref().is_some_and(wanted))
+                .count()
+        };
+        assert_eq!(edits(|e| *e == Edit::Opacity), 1);
+        assert_eq!(
+            edits(|e| matches!(e, Edit::Curve(_))),
+            2 * DRAG_FRAMES as usize
+        );
         let zoom: Vec<f32> = path
             .iter()
             .filter(|frame| frame.phase == Phase::Zoom)

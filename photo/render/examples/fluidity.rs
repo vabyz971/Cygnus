@@ -100,9 +100,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut samples = Vec::new();
     for frame in bench::camera_path([rect[2], rect[3]]) {
         let start = Instant::now();
-        if frame.edit {
+        if let Some(edit) = frame.edit {
             let cursor = bus.revision();
-            bus.execute(&mut document, bench::edit_command(), Source::Test)?;
+            bus.execute(&mut document, bench::edit_command(edit), Source::Test)?;
             changes = bus.changes_since(cursor).changes;
         }
         let view = CanvasView {

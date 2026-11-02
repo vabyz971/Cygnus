@@ -95,8 +95,8 @@ impl BenchRun {
             self.write(session, render_state);
             return false;
         };
-        if frame.edit
-            && let Err(error) = session.execute(bench::edit_command(), Source::Test)
+        if let Some(edit) = frame.edit
+            && let Err(error) = session.execute(bench::edit_command(edit), Source::Test)
         {
             eprintln!("cygnus-photo: benchmark edit refused: {error}");
         }
