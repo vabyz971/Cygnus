@@ -306,20 +306,12 @@ impl Renderer {
     }
 
     fn storage_bytes(&self, label: &str, bytes: &[u8]) -> wgpu::Buffer {
-        // Bindings may not be empty, and must hold at least one structure
-        // even when there is no job (32 bytes: one composite operation). The buffer is written through
-        // the queue, not mapped at creation: wgpu's mapped initialization
-        // panics when the GPU is out of memory, while a queue write reports
-        // the error to the error scopes like any other.
-        const MIN_BYTES: usize = 32;
-        let mut padded;
-        let bytes = if bytes.len() < MIN_BYTES {
-            padded = bytes.to_vec();
-            padded.resize(MIN_BYTES, 0);
-            &padded[..]
-        } else {
-            bytes
-        };
+        // The buffer is written through the queue, not mapped at creation:
+        // wgpu's mapped initialization panics when the GPU is out of memory,
+        // while a queue write reports the error to the error scopes like any
+        // other.
+        let bytes = padded(bytes);
+        let bytes = bytes.as_ref();
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: bytes.len() as u64,
@@ -553,6 +545,23 @@ impl Renderer {
     }
 }
 
+/// Smallest storage buffer bound to a shader: bindings may not be empty,
+/// and must hold at least one structure even when there is no job (32
+/// bytes: one composite operation).
+const MIN_STORAGE_BYTES: usize = 32;
+
+/// `bytes` extended with zeros to [`MIN_STORAGE_BYTES`] when shorter; the
+/// content itself is always kept.
+fn padded(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if bytes.len() < MIN_STORAGE_BYTES {
+        let mut padded = bytes.to_vec();
+        padded.resize(MIN_STORAGE_BYTES, 0);
+        std::borrow::Cow::Owned(padded)
+    } else {
+        std::borrow::Cow::Borrowed(bytes)
+    }
+}
+
 /// Copies the exported words of the tile at `coord` into `image`, cropping
 /// what lies outside the document.
 fn unpack_tile(words: &[u32], coord: TileCoord, image: &mut Image) {
@@ -576,6 +585,37 @@ fn unpack_tile(words: &[u32], coord: TileCoord, image: &mut Image) {
             for (channel, value) in rgba.into_iter().enumerate() {
                 image.data[i + channel] = value as u16;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_storage_data_is_padded_not_replaced() {
+        // A single 16-byte job: its words must survive (regression of B3,
+        // where short data was replaced by zeros).
+        let job: Vec<u8> = (1..=16).collect();
+        let bytes = padded(&job);
+        assert_eq!(bytes.len(), MIN_STORAGE_BYTES);
+        assert_eq!(&bytes[..16], &job[..]);
+        assert!(bytes[16..].iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn empty_storage_data_gives_zeros() {
+        assert_eq!(padded(&[]).as_ref(), &[0u8; MIN_STORAGE_BYTES][..]);
+    }
+
+    #[test]
+    fn long_enough_storage_data_is_kept_as_is() {
+        for len in [MIN_STORAGE_BYTES, MIN_STORAGE_BYTES + 4, 4096] {
+            let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let bytes = padded(&data);
+            assert!(matches!(bytes, std::borrow::Cow::Borrowed(_)));
+            assert_eq!(bytes.as_ref(), &data[..]);
         }
     }
 }
