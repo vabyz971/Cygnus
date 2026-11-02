@@ -31,6 +31,7 @@ use crate::format::{
 
 const COLOR: &str = include_str!("shaders/color.wgsl");
 const BLEND: &str = include_str!("shaders/blend.wgsl");
+const ADJUST: &str = include_str!("shaders/adjust.wgsl");
 const COMPOSITE: &str = include_str!("shaders/composite.wgsl");
 const EXPORT: &str = include_str!("shaders/export.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
@@ -63,6 +64,9 @@ fn prelude() -> String {
             mode.code()
         ));
     }
+    for (name, code) in crate::adjust::KINDS {
+        prelude.push_str(&format!("const {name}: u32 = {code}u;\n"));
+    }
     prelude
 }
 
@@ -82,7 +86,7 @@ fn assemble(main: &str, modules: &[&str]) -> String {
 /// Composite pass: composition program of each tile, reading the source
 /// pools.
 pub fn composite() -> String {
-    assemble(COMPOSITE, &[COLOR, BLEND])
+    assemble(COMPOSITE, &[COLOR, BLEND, ADJUST])
 }
 
 /// Export pass: compute format to 8- or 16-bit sRGB.
@@ -143,6 +147,7 @@ mod tests {
         // The normal formula and the blend function are defined once.
         for (name, source) in [
             ("color", COLOR),
+            ("adjust", ADJUST),
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),
@@ -156,6 +161,7 @@ mod tests {
         // Color conversions are defined once too.
         for (name, source) in [
             ("blend", BLEND),
+            ("adjust", ADJUST),
             ("composite", COMPOSITE),
             ("export", EXPORT),
             ("display", DISPLAY),

@@ -49,6 +49,8 @@ pub struct SourceStats {
     pub evictions: u64,
     /// Slots of the layer pool and of the mask pool.
     pub capacity: (u32, u32),
+    /// Curve lookup tables computed and uploaded.
+    pub curve_tables: crate::adjust::CurveTableStats,
 }
 
 /// What a pool stores.

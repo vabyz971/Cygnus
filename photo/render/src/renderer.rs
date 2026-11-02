@@ -25,12 +25,13 @@
 //! converts the composites to integers for the readback. Every GPU error is
 //! caught by an error scope and returned, never turned into a crash.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
-use cygnus_photo_core::Document;
 use cygnus_photo_core::pixels::{TILE_SIZE, Tile, TileCoord, tiles_in};
+use cygnus_photo_core::{Document, NodeId, NodeKind};
 
+use crate::adjust::{self, CurveTables};
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
 use crate::program::{self, Op};
@@ -134,6 +135,7 @@ struct Sources {
     masks: TilePool,
     clock: u64,
     stats: SourceStats,
+    curves: CurveTables,
 }
 
 /// Tile renderer bound to one GPU device.
@@ -207,6 +209,7 @@ impl Renderer {
                 masks,
                 clock: 0,
                 stats,
+                curves: CurveTables::new(device, queue),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
@@ -219,12 +222,13 @@ impl Renderer {
         }
     }
 
-    /// Counters of the source pools.
+    /// Counters of the source pools and of the curve lookup tables.
     pub fn source_stats(&self) -> SourceStats {
-        self.sources
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stats
+        let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        SourceStats {
+            curve_tables: sources.curves.stats,
+            ..sources.stats
+        }
     }
 
     pub(crate) fn device(&self) -> &wgpu::Device {
@@ -399,6 +403,31 @@ impl Renderer {
             &mut sources.stats,
         )?;
 
+        // Adjustments of the batch: their curve tables made resident, then
+        // their parameters encoded once each, at a word offset.
+        let mut adjustments: Vec<(NodeId, &cygnus_photo_core::Adjustment)> = Vec::new();
+        for op in batch.outputs.iter().flat_map(|tile| &tile.ops) {
+            if let Some(id) = op.adjustment
+                && !adjustments.iter().any(|(seen, _)| *seen == id)
+                && let Some(NodeKind::Adjustment { adjustment }) =
+                    document.node(id).map(|node| &node.kind)
+            {
+                adjustments.push((id, adjustment));
+            }
+        }
+        let curves: Vec<_> = adjustments
+            .iter()
+            .flat_map(|(_, adjustment)| adjust::curves(adjustment))
+            .collect();
+        sources.curves.prepare(&curves);
+        let mut params: Vec<u32> = Vec::new();
+        let mut placed: HashMap<NodeId, (u32, u32)> = HashMap::new();
+        for (id, adjustment) in &adjustments {
+            let offset = params.len() as u32;
+            adjust::encode(adjustment, &sources.curves, &mut params)?;
+            placed.insert(*id, (offset, adjust::kind(adjustment)));
+        }
+
         // One job per output tile, eight words per operation.
         let mut ops: Vec<u32> = Vec::new();
         let mut jobs: Vec<u32> = Vec::new();
@@ -410,10 +439,19 @@ impl Renderer {
                 0,
             ]);
             for op in &tile.ops {
-                let slot = op
-                    .source
-                    .and_then(|key| layer_slots.get(&key).copied())
-                    .unwrap_or(0);
+                // An adjustment reads its parameters at `slot`, its kind in
+                // the flags.
+                let (slot, kind) = match op.adjustment {
+                    Some(id) => placed.get(&id).copied().ok_or(RenderError::Unsupported(
+                        "an adjustment operation without its layer",
+                    ))?,
+                    None => (
+                        op.source
+                            .and_then(|key| layer_slots.get(&key).copied())
+                            .unwrap_or(0),
+                        0,
+                    ),
+                };
                 let mask_slot = op
                     .mask
                     .tile
@@ -427,12 +465,13 @@ impl Renderer {
                     mask_slot,
                     op.mask.value.to_bits(),
                     op.mask.density.to_bits(),
-                    u32::from(op.mask.inverted),
+                    u32::from(op.mask.inverted) | kind << 8,
                 ]);
             }
         }
         let ops_buffer = self.storage("cygnus composite ops", &ops);
         let jobs_buffer = self.storage("cygnus composite jobs", &jobs);
+        let params_buffer = self.storage("cygnus adjustment parameters", &params);
         let group = self.bind(
             &self.composite,
             &[
@@ -441,6 +480,8 @@ impl Renderer {
                 ops_buffer.as_entire_binding(),
                 jobs_buffer.as_entire_binding(),
                 wgpu::BindingResource::TextureView(target),
+                params_buffer.as_entire_binding(),
+                sources.curves.buffer.as_entire_binding(),
             ],
         );
         Self::dispatch(encoder, &self.composite, &group, batch.outputs.len() as u32);

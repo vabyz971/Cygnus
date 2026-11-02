@@ -22,6 +22,7 @@
 //! and 0013). Software adapters such as lavapipe or WARP are drivers like
 //! any other: this crate has no CPU fallback.
 
+mod adjust;
 pub mod bench;
 pub mod canvas;
 pub mod format;
@@ -32,6 +33,7 @@ pub mod renderer;
 pub mod shaders;
 mod sources;
 
+pub use adjust::{COLOR_BALANCE_STRENGTH, CurveTableStats};
 pub use canvas::{Canvas, CanvasStats, CanvasView};
 pub use image::{ExportBits, Image};
 pub use renderer::{RenderError, Renderer};

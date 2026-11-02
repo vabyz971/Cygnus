@@ -56,6 +56,8 @@ pub(crate) enum Code {
     PopPassThrough = 5,
     /// Compose the group result in source-atop over the saved accumulator.
     PopClipped = 6,
+    /// Apply an adjustment to the accumulator (docs/decisions/0028).
+    Adjust = 7,
 }
 
 /// Mask of an operation, as the shader evaluates it: coverage `m` read in
@@ -88,6 +90,8 @@ pub(crate) struct Op {
     pub(crate) mode: BlendMode,
     pub(crate) opacity: f32,
     pub(crate) mask: MaskRef,
+    /// Adjustment layer applied by `Adjust`.
+    pub(crate) adjustment: Option<NodeId>,
 }
 
 impl Op {
@@ -98,6 +102,7 @@ impl Op {
             mode: BlendMode::Normal,
             opacity: 1.0,
             mask: MaskRef::NONE,
+            adjustment: None,
         }
     }
 
@@ -108,6 +113,7 @@ impl Op {
             mode,
             opacity,
             mask,
+            adjustment: None,
         }
     }
 }
@@ -140,7 +146,7 @@ pub(crate) fn tile_program(document: &Document, coord: TileCoord) -> Result<Vec<
                 }
             }
             Code::PopIsolated | Code::PopPassThrough | Code::PopClipped => depth -= 1,
-            Code::Layer | Code::Clipped => {}
+            Code::Layer | Code::Clipped | Code::Adjust => {}
         }
     }
     Ok(ops)
@@ -195,6 +201,15 @@ fn clipping_set(
     coord: TileCoord,
     out: &mut Vec<Op>,
 ) -> Result<(), RenderError> {
+    if document
+        .node(base)
+        .is_some_and(|node| node.kind.is_effect())
+    {
+        // Nothing can be clipped onto an adjustment or a filter, which have
+        // no pixels (docs/decisions/0028): the commands refuse it, and a
+        // document holding it anyway shows the clipped nodes nowhere.
+        return node(document, base, coord, Role::Normal, out);
+    }
     let mut base_ops = Vec::new();
     node(document, base, coord, Role::Base, &mut base_ops)?;
     if base_ops.is_empty() {
@@ -254,6 +269,7 @@ fn node(
                     mode,
                     opacity,
                     mask,
+                    adjustment: None,
                 });
             }
         }
@@ -275,7 +291,18 @@ fn node(
             out.push(Op::pop(pop, mode, opacity, mask));
         }
         NodeKind::Adjustment { .. } => {
-            return Err(RenderError::Unsupported("rendering an adjustment layer"));
+            // Applied to the accumulator in place: clipped, it acts inside
+            // the isolated accumulator of its clipping set, on the base and
+            // the layers below it only; the alpha never changes, so
+            // source-atop has nothing to add.
+            out.push(Op {
+                code: Code::Adjust,
+                source: None,
+                mode,
+                opacity,
+                mask,
+                adjustment: Some(id),
+            });
         }
         NodeKind::Filter { .. } => {
             return Err(RenderError::Unsupported("rendering a filter layer"));
