@@ -26,7 +26,7 @@ En J2, une passe de décodage écrivait les tuiles de calques en f16 avant la co
 - les tuiles sources (calques pixel, objets incorporés) sont envoyées telles quelles dans une **réserve de sources entières** `Rgba16Uint`, par `write_texture`, sans conversion ni passe de décodage. Les tuiles 8 bits sont étendues en multipliant par 257, ce qui est exact ;
 - les masques vont dans une réserve `R16Uint` ;
 - la passe de composition convertit les entiers en f32 et prémultiplie, sans fonction de transfert : la composition se fait en valeurs encodées sRGB (tableau plus bas, Q1) ;
-- seul le résultat composé est stocké, au format de calcul (f16) ;
+- seul le résultat composé est stocké, au format de calcul (entiers 16 bits depuis 0026) ;
 - **ces réserves restent sur le GPU d'une image à l'autre** (condition de validation : **résidence par tuile**) :
   - chaque tuile source (calque, objet incorporé ou masque, coordonnées de tuile) a son emplacement, attribué à la demande ;
   - le **budget mémoire GPU** de ces réserves est calculé comme celui du cache (0018) : couches de tableau de l'adaptateur et part de `gpu::cache_memory_budget` ;
@@ -63,7 +63,7 @@ Les formats `Rgba16Uint` et `R16Uint` sont dans le cœur de WebGPU : le GPU mini
 | Réglages | sRGB encodé, direct | Q5 |
 | Filtres (flou, netteté) | sRGB encodé, prémultiplié | même espace que le reste de la composition, comme Photoshop par défaut |
 | Résultats intermédiaires d'étape | f32, sRGB encodé, prémultiplié | 0026 |
-| Cache composé, pyramide stockée | f16, sRGB encodé, prémultiplié | 0026 ; le f16 est plus régulier en valeurs encodées qu'en linéaire |
+| Cache composé, pyramide stockée | entiers 16 bits (`Rgba16Uint`), sRGB encodé, prémultiplié | 0026 (choisi le 2026-11-01 au lieu du f16 : arrondi écrit dans le shader, export 16 bits exact des pixels opaques) |
 | **Réduction de la pyramide, filtrage bilinéaire de l'affichage, futurs rééchantillonnages (J5)** | **linéaire** (décodage, moyenne, réencodage) | **démonstration contraire proposée** : moyenner des valeurs encodées assombrit les détails fins contrastés (un damier noir et blanc réduit donne 0,5 encodé, soit 21 % de luminance au lieu de 50 %). Ces étapes ne servent qu'à l'affichage réduit et aux transformations ; elles ne touchent pas la composition à 100 % ni l'export |
 | Affichage et export | sRGB encodé, quantifié en 8 ou 16 bits | plus de conversion de transfert à la sortie |
 

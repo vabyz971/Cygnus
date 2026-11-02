@@ -58,8 +58,8 @@ Les valeurs W3C calculées à la main dans `photo/render/tests/render.rs` sont d
 | Comparaison | Pixels différents | Écart maximal | Écart moyen |
 | --- | --- | --- | --- |
 | les deux cas, RTX 3080 Ti contre lavapipe | 0 | 0 | 0 |
-| WARP (windows-2022) contre lavapipe | à mesurer au prochain passage de la CI | | |
-| Metal (macos-15) contre lavapipe | à mesurer au prochain passage de la CI | | |
+| les deux cas, WARP (Microsoft Basic Render Driver, windows-2022) contre lavapipe | 0 | 0 | 0 |
+| les deux cas, Metal (Apple Paravirtual device, macos-15) contre lavapipe | 0 | 0 | 0 |
 
-Le test des golden images publie ses mesures en annotations de la CI (`::notice`). Si WARP ou Metal dépassent 1 unité, la tolérance ne sera desserrée qu'avec ces mesures, consignées ici.
+Mesures de WARP et Metal relevées dans les annotations de la CI (exécution 41374718896, commit 9124d2b) ; la CI utilisait lavapipe de LLVM 20.1.2, la référence a été produite avec LLVM 21.1.8. Les quatre adaptateurs rendent les deux images **identiques au bit près** ; le test des 65 536 valeurs du format de calcul passe aussi sur les quatre. La tolérance de 1 unité reste une marge pour d'autres pilotes, jamais desserrée sans nouvelle mesure.
 
