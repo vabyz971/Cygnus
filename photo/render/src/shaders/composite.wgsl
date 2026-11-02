@@ -16,7 +16,7 @@
 
 // Composite pass: runs the composition program of each output tile
 // (docs/decisions/0012). Each operation blends one layer tile over the
-// accumulator, in f32; the result is rounded to the compute format once.
+// accumulator, in f32; the result is rounded to the compute format once (pack_compute).
 
 struct Op {
     // Slot of the layer tile in the layer pool.
@@ -38,7 +38,7 @@ struct CompositeJob {
     _pad: u32,
 }
 
-@group(0) @binding(0) var layers: texture_2d_array<f32>;
+@group(0) @binding(0) var layers: texture_2d_array<COMPUTE_SAMPLED>;
 @group(0) @binding(1) var<storage, read> ops: array<Op>;
 @group(0) @binding(2) var<storage, read> jobs: array<CompositeJob>;
 @group(0) @binding(3) var output: texture_storage_2d_array<COMPUTE_FORMAT, write>;
@@ -50,8 +50,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var accumulator = vec4<f32>(0.0);
     for (var i = 0u; i < job.count; i++) {
         let op = ops[job.first + i];
-        let source = textureLoad(layers, position, i32(op.slot), 0) * op.opacity;
+        let source = unpack_compute(textureLoad(layers, position, i32(op.slot), 0)) * op.opacity;
         accumulator = blend(op.mode, accumulator, source);
     }
-    textureStore(output, position, i32(job.slot), accumulator);
+    textureStore(output, position, i32(job.slot), pack_compute(accumulator));
 }

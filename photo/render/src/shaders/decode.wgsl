@@ -15,7 +15,7 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 // Decode pass: stored tiles (8 or 16 bits, straight sRGB) to the compute
-// format (linear, premultiplied). One invocation per pixel, one workgroup
+// format (sRGB-encoded, premultiplied: no transfer function, 0021). One invocation per pixel, one workgroup
 // layer (z) per tile job.
 
 struct DecodeJob {
@@ -44,5 +44,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let ba = unpack2x16unorm(raw[job.offset + 2u * pixel + 1u]);
         straight = vec4<f32>(rg, ba);
     }
-    textureStore(pool, vec2<i32>(id.xy), i32(job.slot), decode_srgb(straight));
+    textureStore(pool, vec2<i32>(id.xy), i32(job.slot), pack_compute(premultiply(straight)));
 }

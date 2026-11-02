@@ -31,7 +31,7 @@ struct DownsampleJob {
     _pad: u32,
 }
 
-@group(0) @binding(0) var source: texture_2d_array<f32>;
+@group(0) @binding(0) var source: texture_2d_array<COMPUTE_SAMPLED>;
 @group(0) @binding(1) var<storage, read> jobs: array<DownsampleJob>;
 @group(0) @binding(2) var scratch: texture_storage_2d_array<COMPUTE_FORMAT, write>;
 
@@ -46,12 +46,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var color = vec4<f32>(0.0);
     if job.child >= 0 {
         let p = vec2<i32>(id.xy * 2u);
-        color = 0.25 * (
-            textureLoad(source, p, job.child, 0)
-            + textureLoad(source, p + vec2<i32>(1, 0), job.child, 0)
-            + textureLoad(source, p + vec2<i32>(0, 1), job.child, 0)
-            + textureLoad(source, p + vec2<i32>(1, 1), job.child, 0)
-        );
+        // Averaged in linear light (0021), stored encoded like the rest.
+        color = linear_to_encoded(0.25 * (
+            encoded_to_linear(unpack_compute(textureLoad(source, p, job.child, 0)))
+            + encoded_to_linear(unpack_compute(textureLoad(source, p + vec2<i32>(1, 0), job.child, 0)))
+            + encoded_to_linear(unpack_compute(textureLoad(source, p + vec2<i32>(0, 1), job.child, 0)))
+            + encoded_to_linear(unpack_compute(textureLoad(source, p + vec2<i32>(1, 1), job.child, 0)))
+        ));
     }
-    textureStore(scratch, destination, i32(job.scratch), color);
+    textureStore(scratch, destination, i32(job.scratch), pack_compute(color));
 }

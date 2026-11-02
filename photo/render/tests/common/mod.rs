@@ -65,68 +65,39 @@ pub fn export16(renderer: &Renderer, document: &Document) -> Image {
     renderer.export(document, ExportBits::Sixteen).unwrap()
 }
 
-// Measuring distances needs the sRGB transfer function on the CPU. It is
-// used only to express the tolerance in linear light, never to produce an
-// expected image (docs/decisions/0013).
-fn srgb_to_linear(c: f64) -> f64 {
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
+/// Largest difference allowed between adapters on one channel of a 16-bit
+/// export, in 16-bit units (docs/decisions/0016). The export path has no
+/// transcendental function since 0021 (composition in encoded values); the
+/// f32 divisions of unpacking and unpremultiplying may still round a tie
+/// differently from one driver to another, by one unit.
+pub const TOLERANCE_UNITS: u16 = 1;
 
-/// Linear value of a 16-bit export channel (alpha is already linear).
-fn linear(value: u16, channel: usize) -> f64 {
-    let v = f64::from(value) / 65535.0;
-    if channel == 3 { v } else { srgb_to_linear(v) }
-}
-
-/// Distance between two consecutive f16 values around `x` (x >= 0).
-fn f16_step(x: f64) -> f64 {
-    let min_normal = 2f64.powi(-14);
-    if x < min_normal {
-        2f64.powi(-24)
-    } else {
-        2f64.powi(x.log2().floor() as i32 - 10)
-    }
-}
-
-/// Largest linear distance two 16-bit exports may have on one channel:
-/// one f16 step of the composite, plus one step of the 16-bit
-/// quantization of the export.
-fn tolerance(a: u16, b: u16, channel: usize) -> f64 {
-    let high = a.max(b);
-    let quantization = linear(high.saturating_add(1), channel) - linear(high, channel);
-    f16_step(linear(high, channel)) + quantization.abs()
-}
+/// Largest mean difference between adapters over all channels of an
+/// image, in 16-bit units (docs/decisions/0016).
+pub const MEAN_UNITS_BOUND: f64 = 0.01;
 
 /// Outcome of comparing two 16-bit exports.
 #[derive(Debug)]
 pub struct Comparison {
     /// Pixels with any difference.
     pub differing: usize,
-    /// Pixels with a channel beyond one f16 step.
+    /// Pixels with a channel beyond [`TOLERANCE_UNITS`].
     pub beyond_tolerance: usize,
-    /// Largest distance of a channel, as a share of its tolerance.
-    pub max_ratio: f64,
-    /// Mean distance over all channels, as a share of their tolerance.
-    pub mean_ratio: f64,
+    /// Largest difference of a channel, in 16-bit units.
+    pub max_units: u16,
+    /// Mean difference over all channels, in 16-bit units.
+    pub mean_units: f64,
     /// Total pixels.
     pub total: usize,
 }
 
-/// Largest mean distance between adapters, as a share of the per-channel
-/// tolerance (docs/decisions/0016).
-pub const MEAN_RATIO_BOUND: f64 = 0.01;
-
 impl Comparison {
-    /// Tolerance of docs/decisions/0013 as amended by 0016: no channel of
-    /// any pixel beyond one f16 step (plus one export quantization step),
-    /// and a bounded mean distance ([`MEAN_RATIO_BOUND`]). The share of differing pixels is reported, not limited: one color
-    /// off by one unit fills a whole flat area.
+    /// Tolerance of docs/decisions/0016: no channel of any pixel beyond
+    /// [`TOLERANCE_UNITS`], and a bounded mean difference
+    /// ([`MEAN_UNITS_BOUND`]). The share of differing pixels is reported,
+    /// not limited: one color off by one unit fills a whole flat area.
     pub fn passes(&self) -> bool {
-        self.beyond_tolerance == 0 && self.mean_ratio <= MEAN_RATIO_BOUND
+        self.beyond_tolerance == 0 && self.mean_units <= MEAN_UNITS_BOUND
     }
 }
 
@@ -140,11 +111,11 @@ pub fn compare(expected: &Image, actual: &Image) -> Comparison {
     let mut comparison = Comparison {
         differing: 0,
         beyond_tolerance: 0,
-        max_ratio: 0.0,
-        mean_ratio: 0.0,
+        max_units: 0,
+        mean_units: 0.0,
         total: (expected.width * expected.height) as usize,
     };
-    let mut ratio_sum = 0.0;
+    let mut sum = 0u64;
     for (a, b) in expected
         .data
         .as_chunks::<4>()
@@ -158,16 +129,16 @@ pub fn compare(expected: &Image, actual: &Image) -> Comparison {
         comparison.differing += 1;
         let mut beyond = false;
         for c in 0..4 {
-            let ratio = (linear(a[c], c) - linear(b[c], c)).abs() / tolerance(a[c], b[c], c);
-            ratio_sum += ratio;
-            comparison.max_ratio = comparison.max_ratio.max(ratio);
-            beyond |= ratio > 1.0;
+            let units = a[c].abs_diff(b[c]);
+            sum += u64::from(units);
+            comparison.max_units = comparison.max_units.max(units);
+            beyond |= units > TOLERANCE_UNITS;
         }
         if beyond {
             comparison.beyond_tolerance += 1;
         }
     }
-    comparison.mean_ratio = ratio_sum / (comparison.total * 4) as f64;
+    comparison.mean_units = sum as f64 / (comparison.total * 4) as f64;
     comparison
 }
 
@@ -192,15 +163,12 @@ pub fn difference(expected: &Image, actual: &Image) -> Image {
     }
 }
 
-/// Asserts that a 16-bit channel equals a hand-computed value within the
-/// tolerance (one f16 step plus quantization).
-pub fn assert_close(actual: u16, expected: f64, channel: usize, what: &str) {
-    let expected_value = expected.round().clamp(0.0, 65535.0) as u16;
-    let distance = (linear(actual, channel) - linear(expected_value, channel)).abs();
-    let allowed = tolerance(actual, expected_value, channel);
+/// Asserts that a 16-bit channel equals a hand-computed value within
+/// [`TOLERANCE_UNITS`].
+pub fn assert_close(actual: u16, expected: u16, what: &str) {
     assert!(
-        distance <= allowed,
-        "{what}: got {actual}, expected {expected} (linear distance {distance}, allowed {allowed})"
+        actual.abs_diff(expected) <= TOLERANCE_UNITS,
+        "{what}: got {actual}, expected {expected} (tolerance {TOLERANCE_UNITS})"
     );
 }
 

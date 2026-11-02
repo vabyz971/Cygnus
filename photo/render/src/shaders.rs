@@ -19,13 +19,13 @@
 //! WGSL has no imports: each shader is the concatenation of a generated
 //! prelude (constants shared with Rust), the common modules it uses
 //! (`color.wgsl`, `blend.wgsl`) and its own source. The compute format is
-//! substituted from [`crate::format`], blend mode codes from
+//! substituted from [`crate::format`], with its packing functions, blend mode codes from
 //! [`BlendMode`], so that Rust and WGSL cannot disagree.
 
 use cygnus_photo_core::BlendMode;
 use cygnus_photo_core::pixels::TILE_SIZE;
 
-use crate::format::COMPUTE_FORMAT_WGSL;
+use crate::format::{COMPUTE_CODEC_WGSL, COMPUTE_FORMAT_WGSL, COMPUTE_SAMPLED_WGSL};
 
 const COLOR: &str = include_str!("shaders/color.wgsl");
 const BLEND: &str = include_str!("shaders/blend.wgsl");
@@ -63,11 +63,14 @@ fn prelude() -> String {
 
 fn assemble(main: &str, modules: &[&str]) -> String {
     let mut source = prelude();
+    source.push_str(COMPUTE_CODEC_WGSL);
     for module in modules {
         source.push_str(module);
     }
     source.push_str(main);
-    source.replace("COMPUTE_FORMAT", COMPUTE_FORMAT_WGSL)
+    source
+        .replace("COMPUTE_FORMAT", COMPUTE_FORMAT_WGSL)
+        .replace("COMPUTE_SAMPLED", COMPUTE_SAMPLED_WGSL)
 }
 
 /// Decode pass: stored tiles to the compute format.
@@ -87,7 +90,7 @@ pub fn export() -> String {
 
 /// Downsample pass: pyramid level L from level L - 1.
 pub fn downsample() -> String {
-    assemble(DOWNSAMPLE, &[])
+    assemble(DOWNSAMPLE, &[COLOR])
 }
 
 /// Display pass: composite tiles to the screen.

@@ -93,42 +93,42 @@ fn normal_blend_matches_hand_computed_values() {
 
     // Source-over, W3C section 9.1.4 (simple alpha compositing):
     //   co = cs × αs + cb × αb × (1 − αs),  αo = αs + αb × (1 − αs),
-    // on linear colors, then encoded with the sRGB transfer function
-    // (IEC 61966-2-1) and quantized to 16 bits.
+    // applied to sRGB-encoded values (docs/decisions/0021, Q1), stored in
+    // the 16-bit integer cache (0026) and quantized to 16 bits.
     //
     // A fill alpha of 0.5 is stored as round(0.5 × 65535) = 32768, so
-    // αs = 32768 / 65535 = 0.500007630.
+    // αs = 32768 / 65535.
 
-    // Pixel 0: red (1, 0, 0), αs = 0.500007630, over opaque white.
-    //   R: 1 × αs + 1 × 1 × (1 − αs) = 1               -> 65535
-    //   G, B: 0 × αs + 1 × 1 × (1 − αs) = 0.499992370 (linear)
-    //         sRGB: 1.055 × 0.499992370^(1/2.4) − 0.055 = 0.735353
-    //         × 65535 = 48191.29
-    //   α: αs + 1 × (1 − αs) = 1                       -> 65535
+    // Pixel 0: red (1, 0, 0), αs = 32768 / 65535, over opaque white.
+    //   R: 1 × αs + 1 × 1 × (1 − αs) = 1                 -> 65535
+    //   G, B: 0 × αs + 1 × 1 × (1 − αs) = 32767 / 65535  -> 32767
+    //   α: αs + 1 × (1 − αs) = 1                         -> 65535
     let p = image.pixel(0, 0);
-    assert_close(p[0], 65535.0, 0, "red over white, R");
-    assert_close(p[1], 48191.29, 1, "red over white, G");
-    assert_close(p[2], 48191.29, 2, "red over white, B");
-    assert_close(p[3], 65535.0, 3, "red over white, alpha");
+    assert_close(p[0], 65535, "red over white, R");
+    assert_close(p[1], 32767, "red over white, G");
+    assert_close(p[2], 32767, "red over white, B");
+    assert_close(p[3], 65535, "red over white, alpha");
 
     // Pixel 1: the same red over a transparent backdrop (αb = 0):
-    //   αo = αs = 0.500007630 -> 32768 ; straight color co / αo = (1, 0, 0).
+    //   αo = αs -> 32768 ; straight color co / αo = (1, 0, 0).
     let p = image.pixel(1, 0);
-    assert_close(p[0], 65535.0, 0, "red over nothing, R");
-    assert_close(p[1], 0.0, 1, "red over nothing, G");
-    assert_close(p[3], 32768.0, 3, "red over nothing, alpha");
+    assert_close(p[0], 65535, "red over nothing, R");
+    assert_close(p[1], 0, "red over nothing, G");
+    assert_close(p[3], 32768, "red over nothing, alpha");
 
-    // Pixel 2: gray sRGB 0.5 (stored 32768, linear
-    //   ((32768/65535 + 0.055) / 1.055)^2.4 = 0.214048), opacity 0.5, over
-    //   opaque black: αs = 0.5,
-    //   co = 0.214048 × 0.5 + 0 = 0.107024 (linear)
-    //   sRGB: 1.055 × 0.107024^(1/2.4) − 0.055 = 0.360783 -> × 65535 = 23644.11
-    //   αo = 0.5 + 1 × 0.5 = 1
+    // Pixel 2: gray sRGB 0.5 (stored 32768), opacity 0.5, over opaque
+    //   black: αs = 0.5,
+    //   co = 32768 / 65535 × 0.5 + 0 = 16384 / 65535      -> 16384
+    //   αo = 0.5 + 1 × 0.5 = 1                            -> 65535
     let p = image.pixel(2, 0);
     for (channel, value) in p.iter().take(3).enumerate() {
-        assert_close(*value, 23644.11, channel, "half gray over black");
+        assert_close(
+            *value,
+            16384,
+            &format!("half gray over black, channel {channel}"),
+        );
     }
-    assert_close(p[3], 65535.0, 3, "half gray over black, alpha");
+    assert_close(p[3], 65535, "half gray over black, alpha");
 }
 
 #[test]

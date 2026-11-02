@@ -80,7 +80,13 @@ fn golden_images() {
             .unwrap_or_else(|_| panic!("{name}: missing {}", reference.display()));
         let expected = Image::read_png(&bytes).unwrap();
         let comparison = compare(&expected, &actual);
-        println!("{name} on {}: {comparison:?}", gpu.info.name);
+        let line = format!("{name} on {}: {comparison:?}", gpu.info.name);
+        println!("{line}");
+        // Read from the CI annotations to measure the gap between adapters
+        // (docs/decisions/0016).
+        if std::env::var("GITHUB_ACTIONS").is_ok() {
+            println!("::notice title=golden {name}::{line}");
+        }
         if !comparison.passes() {
             std::fs::create_dir_all(&failures).unwrap();
             write(&actual, &failures.join(format!("{name}-actual.png")));

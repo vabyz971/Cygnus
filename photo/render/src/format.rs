@@ -17,20 +17,40 @@
 //! The compute format: the pixel format of every intermediate result of the
 //! renderer (decoded layer tiles, composited tiles, filter outputs).
 //!
-//! It is defined here and nowhere else (docs/decisions/0011): linear light,
-//! premultiplied alpha, 16-bit floats. Switching to 32-bit floats must only
-//! require editing this file; a test enforces that no other source file names
-//! the format.
+//! It is defined here and nowhere else (docs/decisions/0011 and 0026):
+//! sRGB-encoded values, premultiplied alpha, 16-bit unsigned integers packed
+//! and unpacked by the shaders themselves. Rounding is therefore written in
+//! WGSL ([`COMPUTE_CODEC_WGSL`]) instead of being left to the driver's
+//! float conversion, which was measured to truncate (0026). Changing the
+//! format must only require editing this file; a test enforces that no
+//! other source file names it.
 
 /// Texture format of intermediate results.
-pub const COMPUTE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const COMPUTE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 
 /// Name of [`COMPUTE_FORMAT`] in WGSL, substituted into shaders when they
 /// are assembled.
-pub const COMPUTE_FORMAT_WGSL: &str = "rgba16float";
+pub const COMPUTE_FORMAT_WGSL: &str = "rgba16uint";
+
+/// Sampled type of [`COMPUTE_FORMAT`] in WGSL (`texture_2d_array<...>`).
+pub const COMPUTE_SAMPLED_WGSL: &str = "u32";
+
+/// WGSL functions converting between f32 colors (0..1) and texels of
+/// [`COMPUTE_FORMAT`]. Every shader reading or writing the format uses
+/// them: `pack_compute` rounds to the nearest of 65 536 levels (ties to
+/// even, `round` in WGSL), `unpack_compute` is exact.
+pub const COMPUTE_CODEC_WGSL: &str = "
+fn pack_compute(color: vec4<f32>) -> vec4<u32> {
+    return vec4<u32>(round(clamp(color, vec4<f32>(0.0), vec4<f32>(1.0)) * 65535.0));
+}
+
+fn unpack_compute(texel: vec4<u32>) -> vec4<f32> {
+    return vec4<f32>(texel) / 65535.0;
+}
+";
 
 /// One texel of [`COMPUTE_FORMAT`] on the CPU side (uploads, readbacks).
-pub type ComputeTexel = [half::f16; 4];
+pub type ComputeTexel = [u16; 4];
 
 /// Size in bytes of one [`ComputeTexel`].
 pub const COMPUTE_TEXEL_BYTES: u32 = size_of::<ComputeTexel>() as u32;
@@ -77,7 +97,7 @@ mod tests {
     #[test]
     fn compute_format_is_named_only_here() {
         // Built at run time so that this file does not match itself.
-        let names = [["Rgba16", "Float"].concat(), ["rgba16", "float"].concat()];
+        let names = [["Rgba16", "Uint"].concat(), ["rgba16", "uint"].concat()];
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
         for dir in ["src", "tests", "examples"] {

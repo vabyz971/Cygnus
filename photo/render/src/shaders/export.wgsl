@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
-// Export pass: composite tiles (linear, premultiplied) to straight sRGB
+// Export pass: composite tiles (sRGB-encoded, premultiplied) to straight sRGB
 // integers of 8 or 16 bits, packed in u32 words for the readback.
 
 struct ExportJob {
@@ -27,7 +27,7 @@ struct ExportJob {
     _pad: u32,
 }
 
-@group(0) @binding(0) var composites: texture_2d_array<f32>;
+@group(0) @binding(0) var composites: texture_2d_array<COMPUTE_SAMPLED>;
 @group(0) @binding(1) var<storage, read> jobs: array<ExportJob>;
 @group(0) @binding(2) var<storage, read_write> output: array<u32>;
 
@@ -35,7 +35,7 @@ struct ExportJob {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let job = jobs[id.z];
     let pixel = id.y * TILE_SIZE + id.x;
-    let color = encode_srgb(textureLoad(composites, vec2<i32>(id.xy), i32(job.slot), 0));
+    let color = unpremultiply(unpack_compute(textureLoad(composites, vec2<i32>(id.xy), i32(job.slot), 0)));
     if job.bits == 8u {
         let r = quantize(color.r, 255.0);
         let g = quantize(color.g, 255.0);

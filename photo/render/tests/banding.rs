@@ -15,7 +15,8 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 //! Banding test (docs/decisions/0011, condition of Q4): smooth 16-bit
-//! gradients go through the f16 composite and the 16-bit export. The output
+//! gradients go through the 16-bit integer cache (docs/decisions/0026) and
+//! the 16-bit export. The output
 //! must stay monotonic, and no step between neighbors may exceed a
 //! threshold, set from the first measurement and never loosened without
 //! evidence.
@@ -30,11 +31,11 @@ use cygnus_photo_core::{Depth, NodeId, PhotoCommand, Rect};
 
 /// Largest step allowed between two neighbors of a gradient whose input
 /// step is 16 (full range) or 1 (dark range), in 16-bit units. Measured on
-/// 2026-10-31, identical on lavapipe and an NVIDIA RTX 3080 Ti: 31 and 3.
-/// Near white, one f16 step is about 15 units of a 16-bit sRGB export, as
-/// expected in docs/decisions/0011.
-const FULL_RANGE_MAX_STEP: u16 = 31;
-const DARK_RANGE_MAX_STEP: u16 = 3;
+/// 2026-11-01 with the 16-bit integer cache, identical on lavapipe and an
+/// NVIDIA RTX 3080 Ti: 16 and 1, the input steps themselves (no banding
+/// added). With the f16 cache of J2 they were 31 and 3.
+const FULL_RANGE_MAX_STEP: u16 = 16;
+const DARK_RANGE_MAX_STEP: u16 = 1;
 
 const WIDTH: u32 = 4096;
 

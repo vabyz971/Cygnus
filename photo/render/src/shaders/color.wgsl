@@ -15,11 +15,13 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 // Color conversions: the only place where they are written
-// (docs/decisions/0011). Every shader that converts colors includes this
-// module.
+// (docs/decisions/0011 and 0021). Every shader that converts colors
+// includes this module.
 //
-// Conventions: intermediate results are linear light with premultiplied
-// alpha; stored and exported pixels are sRGB-encoded with straight alpha.
+// Conventions (0021, Q1): composition happens in sRGB-encoded values with
+// premultiplied alpha; stored and exported pixels are sRGB-encoded with
+// straight alpha. Only resampling (pyramid reduction, display filtering)
+// goes through linear light.
 
 // sRGB transfer function (IEC 61966-2-1), encoded value to linear light.
 fn srgb_to_linear(c: f32) -> f32 {
@@ -38,8 +40,25 @@ fn linear_to_srgb(c: f32) -> f32 {
     return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
 }
 
-// Straight sRGB-encoded RGBA (0..1) to linear premultiplied RGBA.
-fn decode_srgb(straight: vec4<f32>) -> vec4<f32> {
+// Straight RGBA to premultiplied RGBA, in the same color space.
+fn premultiply(straight: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(straight.rgb * straight.a, straight.a);
+}
+
+// Premultiplied RGBA to straight RGBA, in the same color space. A fully
+// transparent pixel has no color: it gives zero.
+fn unpremultiply(premultiplied: vec4<f32>) -> vec4<f32> {
+    let alpha = clamp(premultiplied.a, 0.0, 1.0);
+    if alpha <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(clamp(premultiplied.rgb / alpha, vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
+}
+
+// Premultiplied sRGB-encoded RGBA to premultiplied linear RGBA, for
+// resampling.
+fn encoded_to_linear(premultiplied: vec4<f32>) -> vec4<f32> {
+    let straight = unpremultiply(premultiplied);
     let linear = vec3<f32>(
         srgb_to_linear(straight.r),
         srgb_to_linear(straight.g),
@@ -48,20 +67,15 @@ fn decode_srgb(straight: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(linear * straight.a, straight.a);
 }
 
-// Linear premultiplied RGBA to straight sRGB-encoded RGBA (0..1). A fully
-// transparent pixel has no color: it encodes to zero.
-fn encode_srgb(premultiplied: vec4<f32>) -> vec4<f32> {
-    let alpha = clamp(premultiplied.a, 0.0, 1.0);
-    if alpha <= 0.0 {
-        return vec4<f32>(0.0);
-    }
-    let linear = premultiplied.rgb / alpha;
-    return vec4<f32>(
-        linear_to_srgb(linear.r),
-        linear_to_srgb(linear.g),
-        linear_to_srgb(linear.b),
-        alpha,
+// Premultiplied linear RGBA back to premultiplied sRGB-encoded RGBA.
+fn linear_to_encoded(premultiplied: vec4<f32>) -> vec4<f32> {
+    let straight = unpremultiply(premultiplied);
+    let encoded = vec3<f32>(
+        linear_to_srgb(straight.r),
+        linear_to_srgb(straight.g),
+        linear_to_srgb(straight.b),
     );
+    return vec4<f32>(encoded * straight.a, straight.a);
 }
 
 // Quantizes a 0..1 value to an integer from 0 to `max_value`.

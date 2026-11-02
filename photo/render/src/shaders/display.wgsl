@@ -18,8 +18,8 @@
 // and 0018). Each screen pixel looks up the composite tiles of the pyramid
 // level chosen for the zoom. At 100 % and above, sampling is nearest: each
 // screen pixel is exactly one document pixel at 100 %, and the shown value
-// is the 8-bit export value (same encoding and quantization). Below 100 %,
-// the level is sampled bilinearly, in linear premultiplied light.
+// is the 8-bit export value (same quantization). Below 100 %, the level is
+// sampled bilinearly in linear light, then encoded again (0021).
 
 struct Display {
     // Framebuffer position of the document origin, in pixels.
@@ -40,7 +40,7 @@ struct Display {
     checker_dark: vec4<f32>,
 }
 
-@group(0) @binding(0) var composites: texture_2d_array<f32>;
+@group(0) @binding(0) var composites: texture_2d_array<COMPUTE_SAMPLED>;
 @group(0) @binding(1) var<storage, read> pages: array<i32>;
 @group(0) @binding(2) var<uniform> display: Display;
 
@@ -64,7 +64,7 @@ fn fetch(p: vec2<i32>) -> vec4<f32> {
     if slot < 0 {
         return vec4<f32>(0.0);
     }
-    return textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0);
+    return unpack_compute(textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0));
 }
 
 @fragment
@@ -80,14 +80,24 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     if display.scale >= 1.0 {
         color = fetch(vec2<i32>(floor(level_point)));
     } else {
+        // Resampling in linear light (0021): the four neighbours are
+        // decoded, interpolated, then encoded again.
         let q = level_point - 0.5;
         let p = vec2<i32>(floor(q));
         let f = q - floor(q);
-        let top = mix(fetch(p), fetch(p + vec2<i32>(1, 0)), f.x);
-        let bottom = mix(fetch(p + vec2<i32>(0, 1)), fetch(p + vec2<i32>(1, 1)), f.x);
-        color = mix(top, bottom, f.y);
+        let top = mix(
+            encoded_to_linear(fetch(p)),
+            encoded_to_linear(fetch(p + vec2<i32>(1, 0))),
+            f.x,
+        );
+        let bottom = mix(
+            encoded_to_linear(fetch(p + vec2<i32>(0, 1))),
+            encoded_to_linear(fetch(p + vec2<i32>(1, 1))),
+            f.x,
+        );
+        color = linear_to_encoded(mix(top, bottom, f.y));
     }
-    let straight = encode_srgb(color);
+    let straight = unpremultiply(color);
     let shown = vec4<f32>(
         f32(quantize(straight.r, 255.0)),
         f32(quantize(straight.g, 255.0)),

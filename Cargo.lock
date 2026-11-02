@@ -768,7 +768,6 @@ dependencies = [
  "bytemuck",
  "cygnus-commands",
  "cygnus-photo-core",
- "half",
  "png",
  "pollster",
  "serde_json",
