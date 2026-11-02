@@ -31,6 +31,6 @@ pub use adjust::{Adjustment, Filter};
 pub use changes::PhotoChanges;
 pub use commands::{CoreError, PhotoCommand};
 pub use model::{
-    BlendMode, ColorProfile, Depth, Document, Isolation, Node, NodeId, NodeKind, Placement, Rect,
-    Source, SourceId,
+    BlendMode, ColorProfile, Depth, Document, Isolation, MAX_NESTING, Node, NodeId, NodeKind,
+    Placement, Rect, Source, SourceId,
 };

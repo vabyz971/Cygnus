@@ -189,6 +189,11 @@ impl Rect {
     }
 }
 
+/// Largest nesting of groups and clipping sets the renderer composes in
+/// one pass (its register stack, docs/decisions/0021). Commands refuse to
+/// go beyond until the filter stages of step B10 lift the limit.
+pub const MAX_NESTING: usize = 8;
+
 /// How a group composes its children (docs/decisions/0020).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -409,6 +414,42 @@ impl Document {
     /// The node `id`, if it exists.
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(&id)
+    }
+
+    /// Levels of groups and clipping sets nested in the document, as the
+    /// renderer composes them (docs/decisions/0021): each group is one
+    /// level, each clipping set (a base and the clipped layers above it)
+    /// one more around its members. Hidden or empty nodes are counted too:
+    /// this is the largest depth any tile can need.
+    pub fn nesting_depth(&self) -> usize {
+        self.inner_depth(self.root)
+    }
+
+    /// Largest nesting inside the children of `parent`.
+    fn inner_depth(&self, parent: NodeId) -> usize {
+        let layers: Vec<&Node> = self
+            .children(parent)
+            .iter()
+            .filter_map(|id| self.nodes.get(id))
+            .filter(|node| node.kind.is_layer())
+            .collect();
+        let node_depth = |node: &Node| match node.kind {
+            NodeKind::Group { .. } => 1 + self.inner_depth(node.id),
+            _ => 0,
+        };
+        let mut depth = 0;
+        let mut i = 0;
+        while i < layers.len() {
+            let mut end = i + 1;
+            while end < layers.len() && layers[end].clip {
+                end += 1;
+            }
+            let members = layers[i..end].iter().map(|node| node_depth(node)).max();
+            let set = usize::from(end > i + 1);
+            depth = depth.max(members.unwrap_or(0) + set);
+            i = end;
+        }
+        depth
     }
 
     /// Children of group `id`, bottom first; empty for other nodes.

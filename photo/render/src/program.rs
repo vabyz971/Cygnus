@@ -30,13 +30,14 @@
 //! empty groups) produce no operation.
 
 use cygnus_photo_core::pixels::TileCoord;
-use cygnus_photo_core::{BlendMode, Depth, Document, Isolation, NodeId, NodeKind};
+use cygnus_photo_core::{BlendMode, Depth, Document, Isolation, MAX_NESTING, NodeId, NodeKind};
 
 use crate::renderer::RenderError;
 use crate::sources::SourceKey;
 
-/// Registers of the composite shader (`STACK_DEPTH` in WGSL).
-pub(crate) const STACK_DEPTH: usize = 8;
+/// Registers of the composite shader (`STACK_DEPTH` in WGSL, generated):
+/// the nesting limit of the model.
+pub(crate) const STACK_DEPTH: usize = MAX_NESTING;
 
 /// Operation codes, as in the composite shader (`OP_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

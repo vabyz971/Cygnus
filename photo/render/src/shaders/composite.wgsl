@@ -29,7 +29,6 @@ const OP_POP_ISOLATED: u32 = 4u;
 const OP_POP_PASS_THROUGH: u32 = 5u;
 const OP_POP_CLIPPED: u32 = 6u;
 
-const STACK_DEPTH: u32 = 8u;
 const NO_SLOT: u32 = 0xffffffffu;
 const FLAG_INVERTED: u32 = 1u;
 

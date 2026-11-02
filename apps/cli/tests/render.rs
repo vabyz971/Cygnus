@@ -153,6 +153,35 @@ fn file_errors_are_reported_without_crash() {
 }
 
 #[test]
+fn a_script_nested_too_deep_is_refused_with_a_clear_message() {
+    // Nine nested groups: the ninth layer.create is refused by the command
+    // itself, before any rendering (docs/decisions/0021).
+    let mut commands = vec![
+        r#"{"command": "document.create", "params": {"width": 4, "height": 4, "depth": "u8"}}"#
+            .to_owned(),
+    ];
+    for depth in 0..9 {
+        let parent = if depth == 0 {
+            String::new()
+        } else {
+            format!(r#", "parent": {depth}"#)
+        };
+        commands.push(format!(
+            r#"{{"command": "layer.create", "params": {{"name": "g{depth}", "kind": {{"type": "group"}}{parent}}}}}"#
+        ));
+    }
+    let script = output_path("too-deep.json");
+    std::fs::write(
+        &script,
+        format!(r#"{{"version": 1, "commands": [{}]}}"#, commands.join(",")),
+    )
+    .unwrap();
+    let output = cygnus(&["render", script.to_str().unwrap(), "out.png"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(stderr(&output).contains("nested"), "{}", stderr(&output));
+}
+
+#[test]
 fn help_is_printed() {
     let output = cygnus(&["--help"]);
     assert!(output.status.success());

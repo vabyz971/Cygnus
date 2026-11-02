@@ -24,6 +24,7 @@
 mod common;
 
 use common::{TOLERANCE_UNITS, assert_close, build_json, compare, export16, setup};
+use cygnus_photo_core::{Isolation, MAX_NESTING, NodeId, NodeKind};
 use cygnus_photo_render::{Image, RenderError};
 
 /// Asserts that two exports of one adapter differ by at most
@@ -365,14 +366,17 @@ fn a_group_can_be_a_clipping_base_and_be_clipped() {
 }
 
 #[test]
-fn nesting_beyond_the_register_stack_is_reported() {
+fn a_document_nested_beyond_the_register_stack_is_reported() {
     let Some((_, renderer)) = setup() else { return };
-    // Nine nested groups, one layer at the bottom of the chain.
+    // Commands refuse to nest deeper than MAX_NESTING; a document read from
+    // elsewhere may still be: built here by hand. Eight nested groups, then
+    // the pixel layer at the bottom of the chain turned into a ninth group
+    // holding a new layer.
     let mut commands = vec![
         r#"{"command": "document.create", "params": {"width": 2, "height": 2, "depth": "u8"}}"#
             .to_owned(),
     ];
-    for depth in 0..9 {
+    for depth in 0..MAX_NESTING as u64 {
         let parent = if depth == 0 {
             String::new()
         } else {
@@ -382,13 +386,35 @@ fn nesting_beyond_the_register_stack_is_reported() {
             r#"{{"command": "layer.create", "params": {{"name": "g{depth}", "kind": {{"type": "group", "isolation": "isolated"}}{parent}}}}}"#
         ));
     }
-    commands
-        .push(r#"{"command": "layer.create", "params": {"name": "p", "parent": 9}}"#.to_owned());
-    commands.push(
-        r#"{"command": "pixels.fill", "params": {"layer": 10, "rect": {"x": 0, "y": 0, "width": 2, "height": 2}, "color": [1.0, 0.0, 0.0, 1.0]}}"#
-            .to_owned(),
-    );
-    let document = build_json(&format!("[{}]", commands.join(",\n")));
+    let last = MAX_NESTING as u64;
+    commands.push(format!(
+        r#"{{"command": "layer.create", "params": {{"name": "p", "parent": {last}}}}}"#
+    ));
+    commands.push(format!(
+        r#"{{"command": "pixels.fill", "params": {{"layer": {}, "rect": {{"x": 0, "y": 0, "width": 2, "height": 2}}, "color": [1.0, 0.0, 0.0, 1.0]}}}}"#,
+        last + 1
+    ));
+    let mut document = build_json(&format!("[{}]", commands.join(",\n")));
+    // Wrap the pixel layer in a ninth group, by hand.
+    let pixel = NodeId(last + 1);
+    let wrapper = NodeId(document.next_id);
+    document.next_id += 1;
+    let mut node = document.node(pixel).unwrap().clone();
+    node.id = wrapper;
+    node.name = "g9".to_owned();
+    node.kind = NodeKind::Group {
+        children: vec![pixel],
+        isolation: Isolation::Isolated,
+    };
+    if let Some(NodeKind::Group { children, .. }) =
+        document.nodes.get_mut(&NodeId(last)).map(|n| &mut n.kind)
+    {
+        *children = vec![wrapper];
+    }
+    document.nodes.get_mut(&pixel).unwrap().parent = Some(wrapper);
+    document.nodes.insert(wrapper, node);
+    document.validate().unwrap();
+    assert_eq!(document.nesting_depth(), MAX_NESTING + 1);
     let error = renderer
         .export(&document, cygnus_photo_render::ExportBits::Eight)
         .unwrap_err();

@@ -30,7 +30,8 @@ use cygnus_commands::{Applied, Catalog, Command, CommandInfo, Stability};
 use crate::adjust::{Adjustment, Filter};
 use crate::changes::PhotoChanges;
 use crate::model::{
-    BlendMode, ColorProfile, Depth, Document, Isolation, MAX_SIDE, Node, NodeId, NodeKind, Rect,
+    BlendMode, ColorProfile, Depth, Document, Isolation, MAX_NESTING, MAX_SIDE, Node, NodeId,
+    NodeKind, Rect,
 };
 use crate::pixels::{LayerTiles, TileBackup, TileFormat, backup_bytes};
 
@@ -89,6 +90,16 @@ pub enum CoreError {
     /// Moving a group into itself or one of its descendants.
     #[error("a group cannot be moved into itself")]
     Cycle,
+    /// The change would nest groups and clipping sets deeper than the
+    /// renderer composes (docs/decisions/0021).
+    #[error(
+        "groups and clipping sets would be nested {depth} levels deep, at most {max} are supported for now",
+        max = MAX_NESTING
+    )]
+    TooDeep {
+        /// Depth the change would reach.
+        depth: usize,
+    },
 }
 
 fn invalid(param: &'static str, reason: impl Into<String>) -> CoreError {
@@ -1368,6 +1379,32 @@ impl Command for PhotoCommand {
     }
 
     fn apply(self, document: &mut Document) -> Outcome {
+        // Commands that can add a level of nesting are checked after the
+        // fact on the real document, which is restored if the limit is
+        // passed: a refused command has no effect.
+        let may_nest = match &self {
+            Self::LayerCreate(params) => matches!(params.kind, LayerKind::Group { .. }),
+            Self::LayerUpdate(params) => params.clip == Some(true),
+            Self::LayerGroup(_) | Self::LayerMove(_) | Self::LayerDuplicate(_) => true,
+            _ => false,
+        };
+        if !may_nest {
+            return self.apply_unchecked(document);
+        }
+        let before = document.nesting_depth();
+        let backup = document.clone();
+        let applied = self.apply_unchecked(document)?;
+        let depth = document.nesting_depth();
+        if depth > MAX_NESTING && depth > before {
+            *document = backup;
+            return Err(CoreError::TooDeep { depth });
+        }
+        Ok(applied)
+    }
+}
+
+impl PhotoCommand {
+    fn apply_unchecked(self, document: &mut Document) -> Outcome {
         match self {
             Self::DocumentCreate(params) => create_document(document, params),
             Self::LayerCreate(params) => create_layer(document, params),
