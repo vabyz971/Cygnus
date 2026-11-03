@@ -1588,6 +1588,89 @@
     "stability": "stable"
   },
   {
+    "description": "Embeds a PNG or JPEG file as a new layer. The image is stored once in the document and never modified.",
+    "name": "source.import",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `source.import`.",
+      "properties": {
+        "index": {
+          "description": "Position in the parent, 0 being the bottom; the top when absent.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name of the layer; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Parent group; the root group when absent."
+        },
+        "path": {
+          "description": "PNG or JPEG file: an absolute path, or a path relative to the script\n(command line) or to the working folder.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "SourceImport",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
+    "description": "Merges a layer into the layer just below it, as one pixel layer showing exactly the same image. Refused when that is not possible (other blend mode than Normal, hidden layer, adjustment...).",
+    "name": "layer.merge_down",
+    "params": {
+      "$defs": {
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `layer.merge_down`.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The upper layer, merged with the layer just below it."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LayerMergeDown",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
     "description": "Undoes the last action, a whole gesture at once.",
     "name": "history.undo",
     "params": {

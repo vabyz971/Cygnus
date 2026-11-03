@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::{CoreError, PhotoCommand};
 use crate::model::Document;
+use crate::resolve::{Resolvers, resolve_and_execute};
 
 /// Version of the script format this program reads.
 pub const SCRIPT_VERSION: u32 = 1;
@@ -85,19 +86,39 @@ impl Script {
         document: &mut Document,
         source: Source,
     ) -> Result<(), ScriptError> {
+        self.run_with(bus, document, source, &Resolvers::NONE)
+    }
+
+    /// Runs the commands through [`resolve_and_execute`] with `resolvers`.
+    pub fn run_with(
+        &self,
+        bus: &mut CommandBus<PhotoCommand>,
+        document: &mut Document,
+        source: Source,
+        resolvers: &Resolvers<'_>,
+    ) -> Result<(), ScriptError> {
         for (index, command) in self.commands.iter().enumerate() {
             let name = cygnus_commands::Command::name(command);
-            bus.execute(document, command.clone(), source)
+            resolve_and_execute(bus, document, command.clone(), source, resolvers)
                 .map_err(|error| ScriptError::Command { index, name, error })?;
         }
         Ok(())
     }
 
-    /// Runs the script on a fresh document and bus.
     pub fn build(&self, source: Source) -> Result<Document, ScriptError> {
+        self.build_with(source, &Resolvers::NONE)
+    }
+
+    /// Builds the document with a reader and a renderer for the resolved
+    /// commands.
+    pub fn build_with(
+        &self,
+        source: Source,
+        resolvers: &Resolvers<'_>,
+    ) -> Result<Document, ScriptError> {
         let mut document = Document::default();
         let mut bus = CommandBus::new();
-        self.run(&mut bus, &mut document, source)?;
+        self.run_with(&mut bus, &mut document, source, resolvers)?;
         Ok(document)
     }
 }

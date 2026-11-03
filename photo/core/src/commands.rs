@@ -31,7 +31,7 @@ use crate::adjust::{Adjustment, Filter};
 use crate::changes::PhotoChanges;
 use crate::model::{
     BlendMode, ColorProfile, Depth, Document, Isolation, MAX_NESTING, MAX_SIDE, Node, NodeId,
-    NodeKind, Rect,
+    NodeKind, Placement, Rect, Source, SourceId,
 };
 use crate::pixels::{LayerTiles, TileBackup, TileFormat, backup_bytes};
 
@@ -109,6 +109,26 @@ pub enum CoreError {
     ClipOntoEffect {
         /// The clipped node whose base would be an adjustment or a filter.
         id: NodeId,
+    },
+    /// A command that needs a file or a render was applied without being
+    /// resolved first (docs/decisions/0020).
+    #[error("{0} needs a file or a render: send it through resolve_and_execute")]
+    Unresolved(&'static str),
+    /// Resolving a command failed (unreadable file, render error...).
+    #[error("{command} failed: {reason}")]
+    Resolution {
+        /// Name of the command.
+        command: &'static str,
+        /// Why.
+        reason: String,
+    },
+    /// `layer.merge_down` cannot reproduce the image exactly.
+    #[error("layer {} cannot be merged down: {reason}", id.0)]
+    CannotMerge {
+        /// The upper layer.
+        id: NodeId,
+        /// Why.
+        reason: &'static str,
     },
 }
 
@@ -401,6 +421,48 @@ pub struct NodesRestore {
     insert: Option<(NodeId, usize, NodeId)>,
 }
 
+/// Parameters of `source.import`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceImport {
+    /// PNG or JPEG file: an absolute path, or a path relative to the script
+    /// (command line) or to the working folder.
+    pub path: String,
+    /// Name of the layer; the file name when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Parent group; the root group when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<NodeId>,
+    /// Position in the parent, 0 being the bottom; the top when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<usize>,
+    /// The decoded file, set by the resolver (never serialized).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub resolved: Option<ImportedSource>,
+}
+
+/// A decoded file, identified by the SHA-256 of its decoded content.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedSource {
+    /// Identifier of the source.
+    pub id: SourceId,
+    /// The source.
+    pub source: Source,
+}
+
+/// Parameters of `layer.merge_down`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LayerMergeDown {
+    /// The upper layer, merged with the layer just below it.
+    pub id: NodeId,
+    /// Pixels of the two layers composed, set by the resolver (never
+    /// serialized).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub resolved: Option<LayerTiles>,
+}
+
 /// Restores overwritten tiles (inverse of the pixel and mask fills).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixelsRestore {
@@ -457,6 +519,12 @@ pub enum PhotoCommand {
     /// Fills a mask with a linear gradient.
     #[serde(rename = "mask.gradient")]
     MaskGradient(MaskGradient),
+    /// Embeds a PNG or JPEG file as a new layer (resolved: reads the file).
+    #[serde(rename = "source.import")]
+    SourceImport(SourceImport),
+    /// Merges a layer into the layer below it (resolved: renders them).
+    #[serde(rename = "layer.merge_down")]
+    LayerMergeDown(LayerMergeDown),
     /// Undoes the last action (a whole gesture at once).
     #[serde(rename = "history.undo")]
     HistoryUndo(HistoryParams),
@@ -1323,6 +1391,8 @@ impl Command for PhotoCommand {
             Self::MaskUpdate(_) => "mask.update",
             Self::MaskFill(_) => "mask.fill",
             Self::MaskGradient(_) => "mask.gradient",
+            Self::SourceImport(_) => "source.import",
+            Self::LayerMergeDown(_) => "layer.merge_down",
             Self::HistoryUndo(_) => "history.undo",
             Self::HistoryRedo(_) => "history.redo",
             Self::PixelsFill(_) => "pixels.fill",
@@ -1401,6 +1471,8 @@ impl Command for PhotoCommand {
         let may_clip = match &self {
             Self::LayerUpdate(params) => params.clip == Some(true),
             Self::LayerCreate(_)
+            | Self::SourceImport(_)
+            | Self::LayerMergeDown(_)
             | Self::LayerDelete(_)
             | Self::LayerDuplicate(_)
             | Self::LayerMove(_)
@@ -1432,6 +1504,118 @@ impl Command for PhotoCommand {
     }
 }
 
+fn import_source(document: &mut Document, params: SourceImport) -> Outcome {
+    let Some(imported) = params.resolved else {
+        return Err(CoreError::Unresolved("source.import"));
+    };
+    let parent = target_group(document, params.parent)?;
+    let len = document.children(parent).len();
+    let index = params.index.unwrap_or(len);
+    check_index(index, len)?;
+    let name = params.name.unwrap_or_else(|| {
+        std::path::Path::new(&params.path)
+            .file_name()
+            .map_or_else(|| params.path.clone(), |n| n.to_string_lossy().into_owned())
+    });
+    // The source is stored once, by content; undoing the import keeps it
+    // (docs/decisions/0020), redoing designates it again.
+    document
+        .sources
+        .entry(imported.id.clone())
+        .or_insert(imported.source);
+    let kind = NodeKind::Embedded {
+        source: imported.id,
+        placement: Placement::default(),
+    };
+    let node = new_node(document, parent, name, kind);
+    let id = node.id;
+    document.nodes.insert(id, node);
+    if let Some(children) = children_mut(document, parent) {
+        children.insert(index, id);
+    }
+    let mut changes = PhotoChanges::structure();
+    changes.created.push(id);
+    applied(PhotoCommand::LayerDelete(LayerDelete { id }), 0, changes)
+}
+
+/// The layer below `id` when `layer.merge_down` can reproduce exactly what
+/// the two layers show (docs/decisions/0020): two visible, unlocked pixel
+/// layers or embedded objects in Normal mode, whose clipping composes the
+/// same way once merged.
+pub fn merge_down_target(document: &Document, id: NodeId) -> Result<NodeId, CoreError> {
+    let refuse = |reason| Err(CoreError::CannotMerge { id, reason });
+    let upper = unlocked_layer(document, id)?;
+    let (parent, index) = position(document, id)?;
+    let siblings = document.children(parent);
+    let Some(&below_id) = index.checked_sub(1).and_then(|i| siblings.get(i)) else {
+        return refuse("there is no layer below it in its group");
+    };
+    let below = unlocked_layer(document, below_id)?;
+    let flat = |node: &Node| {
+        matches!(
+            node.kind,
+            NodeKind::Pixel { .. } | NodeKind::Embedded { .. }
+        )
+    };
+    if !flat(upper) || !flat(below) {
+        return refuse("only pixel layers and embedded objects can be merged");
+    }
+    if !upper.visible || !below.visible {
+        return refuse("both layers must be visible");
+    }
+    if upper.blend != BlendMode::Normal || below.blend != BlendMode::Normal {
+        return refuse("both layers must be in Normal mode to merge exactly");
+    }
+    if below.clip && !upper.clip {
+        return refuse(
+            "the layer below is clipped and this one is not: the result would be clipped",
+        );
+    }
+    let above_clipped = siblings
+        .get(index + 1)
+        .and_then(|above| document.node(*above))
+        .is_some_and(|above| above.clip);
+    if !upper.clip && above_clipped {
+        return refuse("it is the base of clipped layers above it, which would clip to the merge");
+    }
+    Ok(below_id)
+}
+
+fn merge_down(document: &mut Document, params: LayerMergeDown) -> Outcome {
+    let id = params.id;
+    let below_id = merge_down_target(document, id)?;
+    let Some(tiles) = params.resolved else {
+        return Err(CoreError::Unresolved("layer.merge_down"));
+    };
+    let (parent, _) = position(document, id)?;
+    let upper_mask = document.node(id).and_then(|node| node.mask);
+    let below_mask = document.node(below_id).and_then(|node| node.mask);
+    let mut ids = vec![parent, below_id, id];
+    ids.extend(upper_mask);
+    ids.extend(below_mask);
+    let saved = snapshot(document, ids);
+
+    if let Some(children) = children_mut(document, parent) {
+        children.retain(|child| *child != id);
+    }
+    for gone in [Some(id), upper_mask, below_mask].into_iter().flatten() {
+        document.nodes.remove(&gone);
+        document.pixels.take_layer(gone);
+    }
+    let bounds = document.bounds();
+    if let Some(below) = document.nodes.get_mut(&below_id) {
+        below.kind = NodeKind::Pixel { bounds };
+        below.opacity = 1.0;
+        below.blend = BlendMode::Normal;
+        below.mask = None;
+    }
+    document.pixels.take_layer(below_id);
+    if !tiles.is_empty() {
+        document.pixels.insert_layer(below_id, tiles);
+    }
+    restored(document, saved, PhotoChanges::structure())
+}
+
 impl PhotoCommand {
     fn apply_unchecked(self, document: &mut Document) -> Outcome {
         match self {
@@ -1443,6 +1627,8 @@ impl PhotoCommand {
             Self::LayerMove(params) => move_layer(document, params),
             Self::LayerGroup(params) => group_layers(document, params),
             Self::LayerUngroup(params) => ungroup_layer(document, params),
+            Self::SourceImport(params) => import_source(document, params),
+            Self::LayerMergeDown(params) => merge_down(document, params),
             Self::AdjustmentUpdate(params) => update_adjustment(document, params),
             Self::FilterUpdate(params) => update_filter(document, params),
             Self::MaskCreate(params) => create_mask(document, params),
@@ -1540,6 +1726,16 @@ impl Catalog for PhotoCommand {
             CommandInfo::new::<MaskGradient>(
                 "mask.gradient",
                 "Fills a mask with a linear gradient between two points.",
+                Stable,
+            ),
+            CommandInfo::new::<SourceImport>(
+                "source.import",
+                "Embeds a PNG or JPEG file as a new layer. The image is stored once in the document and never modified.",
+                Stable,
+            ),
+            CommandInfo::new::<LayerMergeDown>(
+                "layer.merge_down",
+                "Merges a layer into the layer just below it, as one pixel layer showing exactly the same image. Refused when that is not possible (other blend mode than Normal, hidden layer, adjustment...).",
                 Stable,
             ),
             CommandInfo::new::<HistoryParams>(

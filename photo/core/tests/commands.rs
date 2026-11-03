@@ -494,6 +494,8 @@ fn catalog_lists_public_commands_with_their_stability() {
             "mask.update",
             "mask.fill",
             "mask.gradient",
+            "source.import",
+            "layer.merge_down",
             "history.undo",
             "history.redo",
             "pixels.fill",

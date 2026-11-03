@@ -25,6 +25,7 @@ pub mod changes;
 pub mod commands;
 pub mod model;
 pub mod pixels;
+pub mod resolve;
 pub mod script;
 
 pub use adjust::{Adjustment, Filter};
