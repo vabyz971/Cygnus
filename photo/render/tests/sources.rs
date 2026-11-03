@@ -145,3 +145,72 @@ fn the_canvas_with_a_reduced_source_pool_equals_the_export() {
     assert!(shown == exported, "canvas differs from the 8-bit export");
     assert!(renderer.source_stats().evictions > 0);
 }
+
+/// Source pools sized from the memory budget (docs/decisions/0027, point
+/// 1): a view whose sources pass the former pool of 256 layer tiles keeps
+/// them resident, and an opacity change uploads none.
+#[test]
+fn pools_sized_from_the_budget_keep_a_whole_view_resident() {
+    let Some((gpu, _)) = setup() else { return };
+    // 2560 × 1280: 50 tiles; 7 opaque layers: 350 layer tiles.
+    let mut commands = vec![
+        r#"{"command": "document.create", "params": {"width": 2560, "height": 1280, "depth": "u16"}}"#.to_owned(),
+    ];
+    for id in 1..=7 {
+        commands.push(format!(
+            r#"{{"command": "layer.create", "params": {{"name": "l{id}"}}}}"#
+        ));
+        commands.push(format!(
+            r#"{{"command": "pixels.fill", "params": {{"layer": {id}, "rect": {{"x": 0, "y": 0, "width": 2560, "height": 1280}}, "color": [0.{id}, 0.3, 0.5, 0.9]}}}}"#
+        ));
+    }
+    let mut document = build_json(&format!("[{}]", commands.join(",")));
+    let renderer =
+        Renderer::with_memory_budget(&gpu.device, &gpu.queue, 512 * 1024 * 1024).unwrap();
+    let capacity = renderer.source_stats().capacity;
+    if capacity.0 < 350 {
+        println!("skipped: {} layer slots on this adapter", capacity.0);
+        return;
+    }
+    let mut canvas =
+        Canvas::with_capacity(&renderer, wgpu::TextureFormat::Rgba8Unorm, 128).unwrap();
+    let view = CanvasView {
+        origin: [0.0, 0.0],
+        scale: 1.0,
+        viewport: [0.0, 0.0, 2560.0, 1280.0],
+        background: [0.0; 3],
+        checker: [[0.5; 3], [0.4; 3]],
+        checker_size: 8.0,
+    };
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &PhotoChanges::everything(),
+        (2560, 1280),
+        view,
+    );
+    let before = renderer.source_stats().uploads;
+    assert_eq!(before, 350);
+    apply(
+        &mut document,
+        r#"{"command": "layer.update", "params": {"id": 4, "opacity": 0.5}}"#,
+    );
+    let mut changes = PhotoChanges::default();
+    changes.properties.insert(cygnus_photo_core::NodeId(4));
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &changes,
+        (2560, 1280),
+        view,
+    );
+    assert_eq!(
+        renderer.source_stats().uploads,
+        before,
+        "an opacity change uploaded sources"
+    );
+}

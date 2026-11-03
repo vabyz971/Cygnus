@@ -73,8 +73,13 @@ pub enum Coarse {
 
 /// Creates the canvas resources on eframe's device.
 pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError> {
-    let renderer = Renderer::new(&render_state.device, &render_state.queue)?;
-    let budget = gpu::cache_memory_budget(render_state.adapter.get_info().device_type);
+    let device_type = render_state.adapter.get_info().device_type;
+    let renderer = Renderer::with_memory_budget(
+        &render_state.device,
+        &render_state.queue,
+        gpu::source_memory_budget(device_type),
+    )?;
+    let budget = gpu::cache_memory_budget(device_type);
     let canvas = Canvas::new(&renderer, render_state.target_format, budget)?;
     let histogram = HistogramPass::new(&renderer);
     render_state

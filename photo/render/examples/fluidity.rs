@@ -68,7 +68,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let gpu = gpu::open_headless()?;
     eprintln!("adapter: {} ({:?})", gpu.info.name, gpu.info.backend);
-    let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
+    let renderer = Renderer::with_memory_budget(
+        &gpu.device,
+        &gpu.queue,
+        gpu::source_memory_budget(gpu.info.device_type),
+    )?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut canvas = match cache_slots {
         Some(slots) => Canvas::with_capacity(&renderer, format, slots)?,

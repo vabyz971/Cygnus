@@ -38,9 +38,29 @@ use crate::program::{self, Op};
 use crate::shaders;
 use crate::sources::{PoolKind, SourceKey, SourceStats, TilePool};
 
-/// Slots of each source pool by default, within the array layers of the
-/// device: 128 MiB of layer tiles and 32 MiB of mask tiles.
-const DEFAULT_SOURCE_SLOTS: u32 = 256;
+/// Source pool budget of [`Renderer::new`]: that of an integrated GPU.
+pub const DEFAULT_SOURCE_BUDGET: u64 = 256 * 1024 * 1024;
+
+/// Bytes of one layer tile and one mask tile in their pools.
+const LAYER_TILE_BYTES: u64 = (TILE_SIZE * TILE_SIZE * crate::format::SOURCE_TEXEL_BYTES) as u64;
+const MASK_TILE_BYTES: u64 = (TILE_SIZE * TILE_SIZE * crate::format::MASK_TEXEL_BYTES) as u64;
+
+/// Slots of the layer and mask pools for `budget` bytes: four fifths for
+/// layer tiles, one fifth for mask tiles, each pool within `max_layers`
+/// array layers and holding at least 16 tiles.
+pub fn source_slots(budget: u64, max_layers: u32) -> (u32, u32) {
+    let slots = |bytes: u64, tile: u64| -> u32 {
+        u32::try_from(bytes / tile)
+            .unwrap_or(u32::MAX)
+            .clamp(16, max_layers.max(16))
+            .min(max_layers)
+    };
+    (
+        slots(budget / 5 * 4, LAYER_TILE_BYTES),
+        slots(budget / 5, MASK_TILE_BYTES),
+    )
+}
+
 /// Words of one operation in the composite shader (`Op`).
 const OP_WORDS: usize = 8;
 /// Slot value meaning "no mask tile" (`NO_SLOT` in WGSL).
@@ -174,12 +194,21 @@ impl Batch {
 }
 
 impl Renderer {
-    /// Creates the pipelines and pools on `device`, with source pools of
-    /// [`DEFAULT_SOURCE_SLOTS`] tiles each (fewer if the device has fewer
-    /// array layers).
+    /// Creates the pipelines and pools on `device`, with source pools sized
+    /// from [`DEFAULT_SOURCE_BUDGET`] (see [`source_slots`]).
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RenderError> {
-        let slots = DEFAULT_SOURCE_SLOTS.min(device.limits().max_texture_array_layers);
-        Self::with_source_slots(device, queue, slots, slots)
+        Self::with_memory_budget(device, queue, DEFAULT_SOURCE_BUDGET)
+    }
+
+    /// Creates the renderer with source pools sized from `budget` bytes of
+    /// GPU memory (see [`crate::gpu::source_memory_budget`]).
+    pub fn with_memory_budget(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        budget: u64,
+    ) -> Result<Self, RenderError> {
+        let (layers, masks) = source_slots(budget, device.limits().max_texture_array_layers);
+        Self::with_source_slots(device, queue, layers, masks)
     }
 
     /// Creates the renderer with source pools of `layer_slots` layer tiles
@@ -628,6 +657,18 @@ fn unpack_tile(words: &[u32], coord: TileCoord, image: &mut Image) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_slots_follow_the_budget_and_the_array_layers() {
+        const MIB: u64 = 1024 * 1024;
+        // 512 MiB: 409.6 MiB of 512 KiB layer tiles, 102.4 MiB of 128 KiB
+        // mask tiles.
+        assert_eq!(source_slots(512 * MIB, 2048), (819, 819));
+        assert_eq!(source_slots(256 * MIB, 2048), (409, 409));
+        // The WebGPU default of 256 array layers bounds both pools.
+        assert_eq!(source_slots(512 * MIB, 256), (256, 256));
+        assert_eq!(source_slots(MIB, 2048), (16, 16));
+    }
 
     #[test]
     fn short_storage_data_is_padded_not_replaced() {

@@ -39,6 +39,17 @@ pub const ADAPTER_ENV: &str = "CYGNUS_ADAPTER";
 /// required.
 pub const PREFERRED_ARRAY_LAYERS: u32 = 2048;
 
+/// GPU memory the source pools may use, by kind of adapter: layer and mask
+/// tiles kept resident between renders (docs/decisions/0021 and 0027,
+/// point 1). Enough for the sources of a view at 100 % on a discrete GPU.
+pub fn source_memory_budget(device_type: wgpu::DeviceType) -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    match device_type {
+        wgpu::DeviceType::DiscreteGpu => 512 * MIB,
+        _ => 256 * MIB,
+    }
+}
+
 /// GPU memory the canvas cache may use, by kind of adapter. wgpu does not
 /// report the size of video memory; real out-of-memory errors from the
 /// driver are caught as well and shrink the cache (docs/decisions/0018).
