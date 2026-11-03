@@ -26,8 +26,11 @@ use egui::{Id, Ui, WidgetText};
 use egui_dock::{DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::keys;
-use crate::placeholder;
+use eframe::egui_wgpu::RenderState;
+
+use crate::canvas::{self, Session};
+use crate::view::ViewState;
+use crate::{adjustments, history, keys, layers};
 
 /// A dockable panel. The Channels and Paths tabs of the mockup are left out:
 /// they are not part of the beta.
@@ -126,10 +129,14 @@ pub fn save_layout(layout: &DockLayout<Panel>) {
     }
 }
 
-/// Draws the content of each panel.
+/// Draws the content of each panel, from the open document.
 pub struct PanelViewer<'a> {
-    /// Placeholder values shown until the document model exists (J3).
-    pub placeholder: &'a mut placeholder::State,
+    /// The open document and its bus.
+    pub session: &'a mut Session,
+    /// Selection and other view state.
+    pub view: &'a mut ViewState,
+    /// GPU of the window: renderer of the merges, histogram.
+    pub render_state: Option<&'a RenderState>,
 }
 
 impl TabViewer for PanelViewer<'_> {
@@ -145,10 +152,13 @@ impl TabViewer for PanelViewer<'_> {
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Panel) {
         match tab {
-            Panel::Histogram => placeholder::histogram(ui),
-            Panel::Adjustments => placeholder::adjustments(ui, self.placeholder),
-            Panel::Layers => placeholder::layers(ui, self.placeholder),
-            Panel::History => placeholder::history(ui),
+            Panel::Histogram => {
+                let histogram = self.render_state.and_then(canvas::histogram);
+                history::histogram_panel(ui, histogram.as_ref());
+            }
+            Panel::Adjustments => adjustments::panel(ui, self.session, self.view),
+            Panel::Layers => layers::panel(ui, self.session, self.view, self.render_state),
+            Panel::History => history::panel(ui, self.session),
         }
     }
 }

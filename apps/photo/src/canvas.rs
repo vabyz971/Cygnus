@@ -27,11 +27,14 @@
 use cygnus_photo_core::resolve::{Resolvers, resolve_and_execute};
 use cygnus_photo_io::FileImporter;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use cygnus_commands::{ChangeSet, CommandBus, Revision, Source};
 use cygnus_photo_core::script::{SCRIPT_VERSION, Script};
 use cygnus_photo_core::{CoreError, Document, PhotoChanges, PhotoCommand};
-use cygnus_photo_render::{Canvas, CanvasView, RenderError, Renderer, gpu};
+use cygnus_photo_render::{
+    Canvas, CanvasView, Histogram, HistogramPass, RenderError, Renderer, gpu,
+};
 use cygnus_ui_kit::theme::palette;
 use eframe::egui_wgpu;
 use egui::{PointerButton, Rect, Sense, Ui};
@@ -45,6 +48,8 @@ const ZOOM_STEP: f32 = 1.25;
 const FIT_MARGIN: f32 = 0.92;
 /// Side of a transparency checker square, in screen pixels.
 const CHECKER_SIZE: f32 = 8.0;
+/// Shortest interval between two histograms (0025: ten per second).
+const HISTOGRAM_INTERVAL: Duration = Duration::from_millis(100);
 
 /// GPU resources of the canvas, stored in egui-wgpu's callback resources.
 pub struct CanvasResources {
@@ -52,6 +57,18 @@ pub struct CanvasResources {
     canvas: Canvas,
     shown: Option<Revision>,
     error: Option<String>,
+    histogram: HistogramPass,
+    /// Last histogram read back, and when the next one may be recorded.
+    last_histogram: Option<Histogram>,
+    histogram_due: Option<Revision>,
+    histogram_at: Option<Instant>,
+}
+
+/// Why the canvas shows a coarser image than the zoom asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coarse {
+    /// The cache cannot hold the visible tiles of the wanted level.
+    Memory,
 }
 
 /// Creates the canvas resources on eframe's device.
@@ -59,6 +76,7 @@ pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError>
     let renderer = Renderer::new(&render_state.device, &render_state.queue)?;
     let budget = gpu::cache_memory_budget(render_state.adapter.get_info().device_type);
     let canvas = Canvas::new(&renderer, render_state.target_format, budget)?;
+    let histogram = HistogramPass::new(&renderer);
     render_state
         .renderer
         .write()
@@ -68,6 +86,10 @@ pub fn install(render_state: &egui_wgpu::RenderState) -> Result<(), RenderError>
             canvas,
             shown: None,
             error: None,
+            histogram,
+            last_histogram: None,
+            histogram_due: None,
+            histogram_at: None,
         });
     Ok(())
 }
@@ -92,6 +114,39 @@ pub fn stats(
                 resources.renderer.source_stats(),
             )
         })
+}
+
+/// Last histogram of the image shown (REG-4).
+pub fn histogram(render_state: &egui_wgpu::RenderState) -> Option<Histogram> {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .and_then(|resources| resources.last_histogram.clone())
+}
+
+/// Why the canvas shows a coarser image than asked, if it does.
+pub fn coarse(render_state: &egui_wgpu::RenderState) -> Option<Coarse> {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .and_then(|resources| resources.canvas.is_coarse().then_some(Coarse::Memory))
+}
+
+/// Runs `f` with the renderer of the canvas (to merge layers down).
+pub fn with_renderer<R>(
+    render_state: &egui_wgpu::RenderState,
+    f: impl FnOnce(&Renderer) -> R,
+) -> Option<R> {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .map(|resources| f(&resources.renderer))
 }
 
 /// Last canvas error, if the canvas could not be drawn.
@@ -119,10 +174,10 @@ struct CanvasCallback {
 impl egui_wgpu::CallbackTrait for CanvasCallback {
     fn prepare(
         &self,
-        _device: &eframe::wgpu::Device,
+        device: &eframe::wgpu::Device,
         _queue: &eframe::wgpu::Queue,
         _screen: &egui_wgpu::ScreenDescriptor,
-        _encoder: &mut eframe::wgpu::CommandEncoder,
+        encoder: &mut eframe::wgpu::CommandEncoder,
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
         let Some(resources) = resources.get_mut::<CanvasResources>() else {
@@ -141,6 +196,22 @@ impl egui_wgpu::CallbackTrait for CanvasCallback {
             Ok(()) => {
                 resources.shown = Some(self.revision);
                 resources.error = None;
+                // Histogram of what is shown: after a change, at most ten
+                // per second, read back without blocking.
+                if let Some(histogram) = resources.histogram.poll(device) {
+                    resources.last_histogram = Some(histogram);
+                }
+                let due = resources.histogram_due != Some(self.revision);
+                let rested = resources
+                    .histogram_at
+                    .is_none_or(|at| at.elapsed() >= HISTOGRAM_INTERVAL);
+                if due && rested && resources.histogram.is_idle() {
+                    resources
+                        .histogram
+                        .record(&resources.renderer, &resources.canvas, encoder);
+                    resources.histogram_due = Some(self.revision);
+                    resources.histogram_at = Some(Instant::now());
+                }
             }
             Err(error) => {
                 if resources.error.is_none() {
@@ -179,6 +250,10 @@ pub struct Session {
     center: [f32; 2],
     /// Fit the document on the next frame (size of the canvas unknown yet).
     fit_pending: bool,
+    /// A gesture is open on the bus.
+    gesture: bool,
+    /// Why the last action of the user was refused.
+    message: Option<String>,
 }
 
 impl Session {
@@ -201,6 +276,8 @@ impl Session {
             zoom: 1.0,
             center: [0.0, 0.0],
             fit_pending: true,
+            gesture: false,
+            message: None,
         }
     }
 
@@ -214,6 +291,8 @@ impl Session {
             zoom: 1.0,
             center: [0.0, 0.0],
             fit_pending: true,
+            gesture: false,
+            message: None,
         }
     }
 
@@ -228,6 +307,75 @@ impl Session {
             merge: None,
         };
         self.execute_with(command, source, &resolvers)
+    }
+
+    /// The command bus of the document, for the history.
+    pub fn bus(&self) -> &CommandBus<PhotoCommand> {
+        &self.bus
+    }
+
+    /// Applies a command of the user; a refused command is reported in the
+    /// status bar ([`Self::message`]).
+    pub fn user(&mut self, command: PhotoCommand) {
+        self.user_with(command, &Resolvers::NONE);
+    }
+
+    /// Like [`Self::user`], with a renderer for `layer.merge_down`.
+    pub fn user_with(&mut self, command: PhotoCommand, resolvers: &Resolvers<'_>) {
+        let importer = FileImporter::new(".");
+        let resolvers = Resolvers {
+            import: Some(&importer),
+            merge: resolvers.merge,
+        };
+        self.message = self
+            .execute_with(command, Source::User, &resolvers)
+            .err()
+            .map(|error| error.to_string());
+    }
+
+    /// Undoes the last entry, as the user.
+    pub fn undo(&mut self) {
+        self.message = self
+            .bus
+            .undo(&mut self.document, Source::User)
+            .err()
+            .map(|error| error.to_string());
+    }
+
+    /// Redoes the last undone entry, as the user.
+    pub fn redo(&mut self) {
+        self.message = self
+            .bus
+            .redo(&mut self.document, Source::User)
+            .err()
+            .map(|error| error.to_string());
+    }
+
+    /// Opens a gesture: the commands until [`Self::end_gesture`] form one
+    /// history entry (a slider drag).
+    pub fn begin_gesture(&mut self) {
+        if !self.gesture {
+            self.bus.begin_gesture();
+            self.gesture = true;
+        }
+    }
+
+    /// Closes the open gesture.
+    pub fn end_gesture(&mut self) {
+        if self.gesture {
+            self.bus.end_gesture();
+            self.gesture = false;
+        }
+    }
+
+    /// Whether a gesture is open (a parameter is being dragged).
+    pub fn in_gesture(&self) -> bool {
+        self.gesture
+    }
+
+    /// Why the last action of the user was refused, if it was.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
     }
 
     /// Applies `command` with the given reader and renderer.

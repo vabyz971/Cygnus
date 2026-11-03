@@ -38,3 +38,16 @@ Chaque panneau est un **consommateur** des changements (curseur propre, 0010). T
 ## Risques
 
 - Le glisser-déposer dans un arbre, avec egui, demande un widget maison : à prévoir dans `crates/ui-kit` (arbre générique, sans notion de calque).
+
+## Mise en œuvre (B8, 2026-11-03)
+
+Fait : les panneaux Calques, Réglages, Histogramme et Historique lisent le document et n'agissent que par des commandes passées par `resolve_and_execute`, avec la source « utilisateur ». Le module `placeholder` est supprimé. Les menus Édition et Calque sont actifs, avec Ctrl+Z, Ctrl+Maj+Z et Ctrl+Y. Un glissement de curseur forme une seule entrée d'historique. Chaque entrée montre son heure locale et sa source, marquée par une icône et un texte (utilisateur, agent, ligne de commande, script). Une action refusée s'affiche dans la barre d'état.
+
+Écarts :
+
+1. **Vignettes** : chaque ligne montre l'icône du genre de calque. Les vignettes devaient venir de la pyramide réduite des sources (0024), reportée avec B7.
+2. **Glisser-déposer** : fait avec le glisser-déposer natif d'egui. Déposer sur un calque place au-dessus de lui ; déposer sur un groupe place dans le groupe, en haut. Il n'y a pas encore de widget d'arbre générique dans `crates/ui-kit`.
+3. **Histogramme** : compté sur GPU (passe `histogram.wgsl`, lecture sans blocage, dix fois par seconde au plus), mais sur **la zone affichée**, au niveau de pyramide affiché, et non sur l'image entière réduite à environ 1 Mpx. L'image entière obligerait à composer tout le niveau 0 après chaque changement (170 ms au banc). Le panneau l'indique (« Zone affichée »).
+4. **Bouton Nouveau filtre** : désactivé, avec une bulle d'aide, jusqu'à B10 (après J4), car le rendu des filtres n'existe pas encore.
+5. **Message de repli grossier** : « Affichage simplifié : mémoire GPU limitée » quand le cache ne peut pas contenir les tuiles visibles du niveau voulu (`Canvas::is_coarse`). « Affichage simplifié, calcul en cours » s'affiche pendant un glissement de paramètre, où B7-lite montre l'aperçu réduit.
+6. **Captures** : `CYGNUS_SCREENSHOT=<fichier.png> cygnus-photo` enregistre une capture de la fenêtre après 40 images, puis ferme l'application.

@@ -18,14 +18,18 @@
 //! `photo` crates and the MCP server, and holds the Photo-specific panels
 //! (Layers, Adjustments).
 
+mod adjustments;
 mod app;
 mod bench;
 mod canvas;
 mod demo;
+mod history;
 mod i18n;
 mod keys;
+mod layers;
 mod panels;
-mod placeholder;
+mod tools;
+mod view;
 
 use std::process::ExitCode;
 use std::sync::Arc;

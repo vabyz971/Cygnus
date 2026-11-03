@@ -62,6 +62,8 @@ pub mod palette {
     pub const CHECKER_DARK: Color32 = Color32::from_rgb(0x3A, 0x3E, 0x47);
     /// Success marks (saved state, GPU ready).
     pub const SUCCESS: Color32 = Color32::from_rgb(0x8F, 0xD1, 0x9E);
+    /// Refused actions and warnings in the status bar.
+    pub const WARNING: Color32 = Color32::from_rgb(0xE8, 0xB8, 0x6B);
     /// Red, green and blue channels in plots.
     pub const CHANNELS: [Color32; 3] = [
         Color32::from_rgb(0xC0, 0x6C, 0x84),

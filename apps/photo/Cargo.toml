@@ -12,6 +12,7 @@ name = "cygnus-photo"
 path = "src/main.rs"
 
 [dependencies]
+jiff.workspace = true
 cygnus-ui-kit.workspace = true
 cygnus-commands.workspace = true
 cygnus-mcp-server.workspace = true

@@ -29,8 +29,10 @@ use crate::bench::BenchRun;
 use crate::canvas::{self, Session};
 use crate::demo;
 use crate::keys;
+use crate::layers;
 use crate::panels::{self, PanelViewer};
-use crate::placeholder;
+use crate::tools::{self, ToolSettings};
+use crate::view::ViewState;
 
 /// Tools of the beta (spec, section 3). Text, pen and shape tools of the
 /// mockup are left out.
@@ -62,7 +64,23 @@ const PERSONAS: [(&str, Key, bool); 5] = [
     (icons::PAPER_PLANE_TILT, keys::PERSONA_EXPORT, true),
 ];
 
-/// Inert menu entries, per menu. They come alive with their features.
+/// Help text of each tool of [`TOOLS`], shown in the status bar.
+const TOOL_HELP: [Key; 11] = [
+    keys::TOOL_HELP_MOVE,
+    keys::TOOL_HELP_CROP,
+    keys::TOOL_HELP_RECT_SELECT,
+    keys::TOOL_HELP_LASSO,
+    keys::TOOL_HELP_MAGIC_WAND,
+    keys::TOOL_HELP_BRUSH,
+    keys::TOOL_HELP_CLONE,
+    keys::TOOL_HELP_ERASER,
+    keys::TOOL_HELP_EYEDROPPER,
+    keys::TOOL_HELP_PAN,
+    keys::TOOL_HELP_ZOOM,
+];
+
+/// Inert menu entries, per menu. They come alive with their features; the
+/// Edit and Layer menus are built by the application.
 const MENUS: [(Key, &[Key]); 7] = [
     (
         keys::MENU_FILE,
@@ -125,9 +143,21 @@ pub struct PhotoApp {
     tool: usize,
     document: usize,
     session: Session,
-    placeholder: placeholder::State,
+    view: ViewState,
+    tools: ToolSettings,
     bench: Option<BenchRun>,
+    /// Development: frames drawn, and where to write a screenshot of the
+    /// window (`CYGNUS_SCREENSHOT`) before closing.
+    frames: u32,
+    screenshot: Option<std::path::PathBuf>,
 }
+
+/// Development: writes a screenshot of the window to this PNG file after a
+/// few frames, then closes (reviews of the interface, docs/tasks).
+pub const SCREENSHOT_ENV: &str = "CYGNUS_SCREENSHOT";
+/// Frames drawn before the screenshot, so that the canvas and the
+/// histogram are up to date.
+const SCREENSHOT_FRAME: u32 = 40;
 
 impl PhotoApp {
     /// Creates the main screen with the saved workspace, or the default one.
@@ -147,8 +177,11 @@ impl PhotoApp {
                 ]),
                 Source::Test,
             ),
-            placeholder: placeholder::State::default(),
+            view: ViewState::default(),
+            tools: ToolSettings::default(),
             bench: None,
+            frames: 0,
+            screenshot: std::env::var_os(SCREENSHOT_ENV).map(Into::into),
         }
     }
 
@@ -162,8 +195,16 @@ impl PhotoApp {
         })
     }
 
-    fn menus(&mut self, ui: &mut Ui) {
+    fn menus(&mut self, ui: &mut Ui, render_state: Option<&eframe::egui_wgpu::RenderState>) {
         for (menu, entries) in MENUS {
+            if menu == keys::MENU_EDIT {
+                ui.menu_button(tr(menu), |ui| self.edit_menu(ui));
+                continue;
+            }
+            if menu == keys::MENU_LAYER {
+                ui.menu_button(tr(menu), |ui| self.layer_menu(ui, render_state));
+                continue;
+            }
             // View and Window go before Help, as in the mockup.
             if menu == keys::MENU_HELP {
                 ui.menu_button(tr(keys::MENU_VIEW), |ui| self.view_menu(ui));
@@ -180,6 +221,144 @@ impl PhotoApp {
                     }
                 }
             });
+        }
+    }
+
+    fn edit_menu(&mut self, ui: &mut Ui) {
+        let (undo, redo) = (self.session.bus().can_undo(), self.session.bus().can_redo());
+        if ui
+            .add_enabled(
+                undo,
+                egui::Button::new(tr(keys::EDIT_UNDO)).shortcut_text("Ctrl+Z"),
+            )
+            .clicked()
+        {
+            self.session.undo();
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                redo,
+                egui::Button::new(tr(keys::EDIT_REDO)).shortcut_text("Ctrl+Maj+Z"),
+            )
+            .clicked()
+        {
+            self.session.redo();
+            ui.close();
+        }
+        ui.add_enabled(false, egui::Button::new(tr(keys::EDIT_PREFERENCES)));
+    }
+
+    fn layer_menu(&mut self, ui: &mut Ui, render_state: Option<&eframe::egui_wgpu::RenderState>) {
+        if ui.button(tr(keys::LAYER_NEW)).clicked() {
+            let number = self.session.document().nodes.len().to_string();
+            let name = tr_format(keys::LAYER_DEFAULT_NAME, &[("number", &number)]);
+            let (parent, index) = match self
+                .view
+                .selected
+                .and_then(|id| self.session.document().node(id))
+            {
+                Some(node) => (
+                    node.parent,
+                    node.parent.and_then(|p| {
+                        self.session
+                            .document()
+                            .children(p)
+                            .iter()
+                            .position(|c| *c == node.id)
+                            .map(|i| i + 1)
+                    }),
+                ),
+                None => (None, None),
+            };
+            self.session
+                .user(cygnus_photo_core::PhotoCommand::LayerCreate(
+                    cygnus_photo_core::commands::LayerCreate {
+                        name,
+                        parent,
+                        index,
+                        kind: Default::default(),
+                    },
+                ));
+            ui.close();
+        }
+        let Some(id) = self.view.selected else {
+            return;
+        };
+        ui.separator();
+        let mut picked = None;
+        layers::menu_entries(
+            ui,
+            self.session.document(),
+            &mut self.view,
+            id,
+            &mut |command| {
+                picked = Some(command);
+            },
+        );
+        if let Some(command) = picked {
+            layers::run(&mut self.session, render_state, command);
+        }
+    }
+
+    /// Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y).
+    fn shortcuts(&mut self, ui: &Ui) {
+        let (undo, redo) = ui.input_mut(|input| {
+            let redo_shift = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            );
+            let redo_y = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
+            let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            let redo = input.consume_shortcut(&redo_shift) || input.consume_shortcut(&redo_y);
+            (input.consume_shortcut(&undo), redo)
+        });
+        if undo {
+            self.session.undo();
+        }
+        if redo {
+            self.session.redo();
+        }
+    }
+
+    /// Development screenshot (`CYGNUS_SCREENSHOT`).
+    fn screenshot(&mut self, ui: &Ui) {
+        let Some(path) = self.screenshot.clone() else {
+            return;
+        };
+        self.frames += 1;
+        ui.ctx().request_repaint();
+        if self.frames == SCREENSHOT_FRAME {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+        }
+        let image = ui.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let data = image
+                .pixels
+                .iter()
+                .flat_map(|c| c.to_srgba_unmultiplied().map(u16::from))
+                .collect();
+            let image = cygnus_photo_render::Image {
+                width: image.size[0] as u32,
+                height: image.size[1] as u32,
+                bits: cygnus_photo_render::ExportBits::Eight,
+                data,
+            };
+            let mut bytes = Vec::new();
+            let written = image
+                .write_png(&mut bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|()| std::fs::write(&path, bytes).map_err(|error| error.to_string()));
+            if let Err(error) = written {
+                eprintln!("cygnus-photo: screenshot {}: {error}", path.display());
+            }
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -237,11 +416,13 @@ impl PhotoApp {
             ui.add_space(metrics::SPACING);
             widgets::vertical_separator(ui, 24.0);
             ui.add_space(metrics::SPACING);
-            for (icon, hint) in [
-                (icons::ARROW_CLOCKWISE, keys::EDIT_REDO),
-                (icons::ARROW_COUNTER_CLOCKWISE, keys::EDIT_UNDO),
-            ] {
-                widgets::icon_button(ui, icon, tr(hint));
+            if widgets::icon_button(ui, icons::ARROW_CLOCKWISE, tr(keys::EDIT_REDO)).clicked() {
+                self.session.redo();
+            }
+            if widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, tr(keys::EDIT_UNDO))
+                .clicked()
+            {
+                self.session.undo();
             }
         });
     }
@@ -251,7 +432,10 @@ impl PhotoApp {
             icon,
             name: tr(name),
         });
-        widgets::tool_rail(ui, &tools, &mut self.tool, placeholder::color_swatches);
+        let settings = &mut self.tools;
+        widgets::tool_rail(ui, &tools, &mut self.tool, |ui| {
+            tools::color_swatches(ui, settings);
+        });
     }
 
     fn canvas(
@@ -304,7 +488,28 @@ impl PhotoApp {
                     .inner_margin(Margin::symmetric(metrics::PADDING as i8 * 4, 0)),
             )
             .show(ui, |ui| {
-                ui.horizontal_centered(placeholder::exif_line);
+                // Camera settings (AFF-3) come with the metadata of J6;
+                // until then only the mask target is shown.
+                let target = self
+                    .view
+                    .selected
+                    .filter(|_| self.view.mask)
+                    .and_then(|id| self.session.document().node(id))
+                    .map(|node| node.name.clone());
+                ui.horizontal_centered(|ui| {
+                    if let Some(name) = target {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(tr_format(keys::MASK_TARGET, &[("name", &name)]))
+                                    .color(palette::TEXT_MUTED),
+                            );
+                            ui.label(
+                                widgets::icon(icons::PAINT_BRUSH, metrics::ICON - 4.0)
+                                    .color(palette::TEXT_MUTED),
+                            );
+                        });
+                    }
+                });
             });
 
         let pan_tool = self.tool == PAN;
@@ -333,11 +538,23 @@ impl PhotoApp {
             });
     }
 
-    fn status_bar(ui: &mut Ui) {
+    fn status_bar(&self, ui: &mut Ui, render_state: Option<&eframe::egui_wgpu::RenderState>) {
+        let coarse = render_state.and_then(canvas::coarse);
+        let preview = self.session.in_gesture();
         widgets::status_bar(ui, |ui| {
             ui.label(widgets::icon(icons::CURSOR, metrics::ICON - 4.0).color(palette::TEXT_MUTED));
-            ui.label(RichText::new(placeholder::status_action()).color(palette::TEXT));
-            ui.label(RichText::new(tr(keys::STATUS_SHORTCUTS)).color(palette::TEXT_MUTED));
+            match self.session.message() {
+                Some(error) => {
+                    ui.label(
+                        RichText::new(tr_format(keys::STATUS_REFUSED, &[("error", error)]))
+                            .color(palette::WARNING),
+                    );
+                }
+                None => {
+                    ui.label(RichText::new(tr(TOOL_HELP[self.tool])).color(palette::TEXT));
+                    ui.label(RichText::new(tr(keys::STATUS_SHORTCUTS)).color(palette::TEXT_MUTED));
+                }
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(
@@ -349,6 +566,17 @@ impl PhotoApp {
                 ui.label(
                     widgets::icon(icons::CHECK_CIRCLE, metrics::ICON - 4.0).color(palette::SUCCESS),
                 );
+                // Coarse fallback (0025): a preview during a drag, or a
+                // cache too small for the visible tiles.
+                let coarse_text = if preview {
+                    Some(keys::STATUS_COARSE_COMPUTING)
+                } else {
+                    coarse.map(|_| keys::STATUS_COARSE_MEMORY)
+                };
+                if let Some(key) = coarse_text {
+                    ui.add_space(metrics::SPACING);
+                    ui.label(RichText::new(tr(key)).color(palette::TEXT_MUTED));
+                }
             });
         });
     }
@@ -358,15 +586,19 @@ impl eframe::App for PhotoApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let render_state = frame.wgpu_render_state().cloned();
         let canvas_error = render_state.as_ref().and_then(canvas::last_error);
-        widgets::menu_bar(ui, tr(keys::APP_NAME), |ui| self.menus(ui));
-        self.persona_bar(ui);
-        widgets::options_bar(ui, |ui| {
-            placeholder::brush_options(ui, &mut self.placeholder)
+        self.shortcuts(ui);
+        self.screenshot(ui);
+        widgets::menu_bar(ui, tr(keys::APP_NAME), |ui| {
+            self.menus(ui, render_state.as_ref())
         });
-        Self::status_bar(ui);
+        self.persona_bar(ui);
+        widgets::options_bar(ui, |ui| tools::brush_options(ui, &mut self.tools));
+        self.status_bar(ui, render_state.as_ref());
         self.tool_rail(ui);
         let mut viewer = PanelViewer {
-            placeholder: &mut self.placeholder,
+            session: &mut self.session,
+            view: &mut self.view,
+            render_state: render_state.as_ref(),
         };
         self.dock.show(ui, &mut viewer);
         self.canvas(ui, canvas_error, render_state.as_ref());
