@@ -50,6 +50,8 @@ L(C) = ob + t' × (ow − ob)
 
 Ordre (confirmé le 2026-11-02) : les niveaux du canal (rouge, vert ou bleu), **puis** les niveaux maîtres sur les trois. Même ordre pour les courbes. Documenté sur `Levels` et `Curves` dans `photo/core/src/adjust.rs`, donc dans le schéma des commandes, et vérifié par un test (« levels, channel then master »).
 
+**Zone morte au point noir** (ajoutée le 2026-11-02 après la CI sur Metal) : `t^(1/g)` a une pente infinie en 0. L'arrondi f32 d'un pilote, environ 1,5 × 10⁻⁸ après la dé-prémultiplication d'un pixel semi-transparent sur Metal, y devenait 10 unités 16 bits avec g = 2, et deviendrait 0,16 avec g = 10. Une entrée à moins de 2⁻²⁰ (1/16 d'unité 16 bits) au-dessus du point noir donne `t = 0`. Ce seuil vaut environ 60 fois le bruit mesuré et reste 16 fois plus petit que l'écart entre deux niveaux 16 bits : une entrée exactement sur un niveau n'est jamais touchée. Test : `levels_gamma_is_stable_at_input_black`.
+
 Exemple calculé à la main : maître `ib = 0,2, iw = 0,8, g = 2`, A = (0,2 ; 0,6 ; 0,8) : `t = (0 ; 0,6667 ; 1)`, `t' = √t = (0 ; 0,8165 ; 1)`.
 
 ### Courbes

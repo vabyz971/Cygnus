@@ -28,16 +28,30 @@ fn word(offset: u32) -> f32 {
     return bitcast<f32>(params[offset]);
 }
 
+// Dead zone above input black, 2^-20: a sixteenth of a 16-bit unit, much
+// larger than the f32 rounding of the drivers (about 1.5e-8 measured on
+// Metal) and smaller than the step between two 16-bit levels.
+const BLACK_DEAD_ZONE: f32 = 9.5367431640625e-7;
+
 // Levels of one channel at `o`: input black, input white, gamma, output
 // black, output white. Input black equal to input white (refused by the
 // commands) gives a threshold, never a division by zero.
+//
+// The gamma curve has an infinite slope at input black: the f32 rounding
+// of the GPU (about 1e-8 after unpremultiplying, depending on the driver)
+// would become (1e-8)^(1/gamma), 0.16 for gamma 10. Inputs less than
+// BLACK_DEAD_ZONE above input black give 0 (docs/decisions/0028).
 fn levels_channel(c: f32, o: u32) -> f32 {
     let input_black = word(o);
     let input_white = word(o + 1u);
     let gamma = word(o + 2u);
     let output_black = word(o + 3u);
     let output_white = word(o + 4u);
-    var t = clamp((c - input_black) / max(input_white - input_black, 1e-7), 0.0, 1.0);
+    let above = c - input_black;
+    var t = clamp(above / max(input_white - input_black, 1e-7), 0.0, 1.0);
+    if above < BLACK_DEAD_ZONE {
+        t = 0.0;
+    }
     if gamma != 1.0 && t > 0.0 {
         t = pow(t, 1.0 / gamma);
     }

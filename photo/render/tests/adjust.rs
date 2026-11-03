@@ -1009,3 +1009,34 @@ fn a_layer_clipped_onto_an_adjustment_shows_nowhere() {
         );
     }
 }
+
+/// The gamma of levels has an infinite slope at input black: the f32
+/// rounding of unpremultiplying a semi-transparent pixel (about 1e-8, its
+/// size depends on the driver) would become 0.16 with gamma 10. Inputs
+/// less than a sixteenth of a 16-bit unit above input black give 0
+/// (docs/decisions/0028).
+#[test]
+fn levels_gamma_is_stable_at_input_black() {
+    let Some((_, renderer)) = setup() else { return };
+    let levels = Adjustment::Levels(Levels {
+        master: channel(0.2, 0.8, 10.0, 0.0, 1.0),
+        ..Levels::default()
+    });
+    let script = format!(
+        "[{}]",
+        [
+            r#"{"command": "document.create", "params": {"width": 3, "height": 1, "depth": "u16"}}"#.to_owned(),
+            r#"{"command": "layer.create", "params": {"name": "fond"}}"#.to_owned(),
+            fill(1, 0, A, 1.0),
+            fill(1, 1, A, 0.6),
+            fill(1, 2, A, 0.37),
+            create_adjustment(&levels, None),
+        ]
+        .join(",\n")
+    );
+    let image = export16(&renderer, &build_json(&script));
+    for x in 0..3 {
+        let p = image.pixel(x, 0);
+        assert_eq!(p[0], 0, "pixel {x}: red at input black gives 0, got {p:?}");
+    }
+}
