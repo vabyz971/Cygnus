@@ -52,6 +52,18 @@ Ordre (confirmé le 2026-11-02) : les niveaux du canal (rouge, vert ou bleu), **
 
 **Zone morte au point noir** (ajoutée le 2026-11-02 après la CI sur Metal) : `t^(1/g)` a une pente infinie en 0. L'arrondi f32 d'un pilote, environ 1,5 × 10⁻⁸ après la dé-prémultiplication d'un pixel semi-transparent sur Metal, y devenait 10 unités 16 bits avec g = 2, et deviendrait 0,16 avec g = 10. Une entrée à moins de 2⁻²⁰ (1/16 d'unité 16 bits) au-dessus du point noir donne `t = 0`. Ce seuil vaut environ 60 fois le bruit mesuré et reste 16 fois plus petit que l'écart entre deux niveaux 16 bits : une entrée exactement sur un niveau n'est jamais touchée. Test : `levels_gamma_is_stable_at_input_black`.
 
+**Écart maximal introduit par la zone morte** (2026-11-02). Une entrée `c` dans la zone donne 0 au lieu de `(Δ / span)^(1/g) × |ow − ob|`, avec `Δ = c − ib < 2⁻²⁰` et `span = iw − ib`. L'écart est donc au plus `(2⁻²⁰ / span)^(1/g) × |ow − ob|` : la montée de la courbe elle-même sur 1/16 d'unité d'entrée. Le bruit f32 des pilotes produit des écarts du même ordre, puisqu'il tombe au même endroit.
+
+| span, gamma | écart maximal (unités 16 bits) |
+| --- | --- |
+| 1, g = 1 | 0,06 |
+| 0,1 (étirement ×10), g = 1 | 0,63 |
+| 1, g = 2 | 64 |
+| 0,1, g = 2 | 202 |
+| 1, g = 10 | 16 384 |
+
+Un niveau 16 bits n'entre dans la zone que si le point noir se trouve à moins de 1/16 d'unité sous lui, ce qui arrive pour environ une valeur de point noir sur seize. Sinon, seules les valeurs intermédiaires issues d'un mélange sont touchées, là où la courbe est presque verticale. Test : `the_dead_zone_of_levels_moves_values_by_at_most_the_rise_of_the_curve_over_it` (niveau 16 bits placé 5 × 10⁻⁷ au-dessus du point noir, γ = 1 et γ = 2).
+
 Exemple calculé à la main : maître `ib = 0,2, iw = 0,8, g = 2`, A = (0,2 ; 0,6 ; 0,8) : `t = (0 ; 0,6667 ; 1)`, `t' = √t = (0 ; 0,8165 ; 1)`.
 
 ### Courbes

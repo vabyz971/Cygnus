@@ -1040,3 +1040,67 @@ fn levels_gamma_is_stable_at_input_black() {
         assert_eq!(p[0], 0, "pixel {x}: red at input black gives 0, got {p:?}");
     }
 }
+
+/// Largest change of the dead zone of levels (docs/decisions/0028): an
+/// input less than 2^-20 above input black gives 0 instead of
+/// f(c) = (Δ / span)^(1/g) × range, at most f(ib + 2^-20) − f(ib) =
+/// (2^-20 / span)^(1/g) × range: the rise of the curve itself over a
+/// sixteenth of a 16-bit unit. A 16-bit level is placed 5e-7 above input
+/// black to fall in the zone.
+#[test]
+fn the_dead_zone_of_levels_moves_values_by_at_most_the_rise_of_the_curve_over_it() {
+    let Some((_, renderer)) = setup() else { return };
+    const ZONE: f64 = 1.0 / 1_048_576.0;
+    let level = 32768u16;
+    let input = f64::from(level) / 65535.0;
+    let input_black = (input - 5e-7) as f32;
+    // (span, gamma): ×10 stretch at gamma 1 (bound 0.63 unit), half range
+    // at gamma 2 (bound 90 units).
+    for (input_white, gamma) in [(input_black + 0.1, 1.0f32), (1.0, 2.0)] {
+        let span = f64::from(input_white - input_black);
+        let exact =
+            ((input - f64::from(input_black)) / span).powf(1.0 / f64::from(gamma)) * 65535.0;
+        let bound = (ZONE / span).powf(1.0 / f64::from(gamma)) * 65535.0;
+        let levels = Adjustment::Levels(Levels {
+            master: channel(input_black, input_white, gamma, 0.0, 1.0),
+            ..Levels::default()
+        });
+        let document = build(vec![
+            PhotoCommand::DocumentCreate(DocumentCreate {
+                width: 1,
+                height: 1,
+                resolution: 72.0,
+                depth: Depth::U16,
+                profile: Default::default(),
+            }),
+            PhotoCommand::LayerCreate(LayerCreate {
+                name: "gris".to_owned(),
+                parent: None,
+                index: None,
+                kind: LayerKind::Pixel,
+            }),
+            PhotoCommand::PixelsWrite(PixelsWrite {
+                layer: NodeId(1),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+                samples: vec![level, level, level, u16::MAX],
+            }),
+            PhotoCommand::LayerCreate(LayerCreate {
+                name: "niveaux".to_owned(),
+                parent: None,
+                index: None,
+                kind: LayerKind::Adjustment { adjustment: levels },
+            }),
+        ]);
+        let actual = f64::from(export16(&renderer, &document).pixel(0, 0)[0]);
+        let gap = (actual - exact).abs();
+        assert!(
+            gap <= bound + 1.0,
+            "gamma {gamma}, span {span}: got {actual}, exact {exact:.2}, gap {gap:.2} > bound {bound:.2}"
+        );
+    }
+}
