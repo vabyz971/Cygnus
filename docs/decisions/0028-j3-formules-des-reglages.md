@@ -1,7 +1,7 @@
 # 0028 — Formules des réglages et évaluation des courbes (J3, B5)
 
 - **Date** : 2026-11-02
-- **Statut** : acceptée avec conditions le 2026-11-02 (Q1 tranchée ci-dessous ; force de l'équilibre colorimétrique en attente des planches, Q2)
+- **Statut** : acceptée le 2026-11-02 avec simplifications : Q1 tranchée ci-dessous ; force de l'équilibre colorimétrique gardée à 0,7, **à ajuster à l'œil** plus tard (Q2, sans planche pour l'instant) ; tableau des poids donné à titre indicatif
 - **Exigences concernées** : REG-1, REG-2, REG-3, CAL-3, CAL-5, MAS-1 ; spec section 5 (couleur)
 
 ## Contexte
@@ -116,7 +116,7 @@ C1 = clamp01(C + Δ)
 C' = SetLum(C1, Lum(C))   si « conserver la luminosité », sinon C1
 ```
 
-Le facteur 0,7 limite l'effet maximal à ±0,7 sur un canal. **Q2 (en attente)** : la force n'est pas fixée avant que l'utilisateur ait jugé à l'œil les planches à ±25, ±50 et ±100 (équilibre colorimétrique et teinte/saturation, sur un dégradé et une image de test générée). La valeur 0,7 est provisoire, en une seule constante (`COLOR_BALANCE_STRENGTH`, `photo/render/src/adjust.rs`). `SetLum` est celui de `blend.wgsl` (W3C), réutilisé et non recopié.
+Le facteur 0,7 limite l'effet maximal à ±0,7 sur un canal. **Q2 (2026-11-02)** : la force est gardée à 0,7, **à ajuster à l'œil** plus tard. Elle est en une seule constante (`COLOR_BALANCE_STRENGTH`, `photo/render/src/adjust.rs`). `SetLum` est celui de `blend.wgsl` (W3C), réutilisé et non recopié.
 
 Poids des trois plages selon la clarté TSL (ombres, tons moyens, hautes lumières). Ils somment à 1 partout, et chaque plage est pleine sur un tiers de l'axe :
 
