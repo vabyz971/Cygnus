@@ -141,6 +141,35 @@ Document du banc changé (0027, 0028) : 24 Mpx, 16 bits, **10 calques dont 7 cal
 - **À la vue ajustée, la cible de 33 ms n'est pas tenue (177 ms)** : un changement de propriété invalide tout le cache, et l'image réduite se recalcule depuis les 384 tuiles du niveau 0 ; la réserve de 256 tuiles sources sature et renvoie 3 456 tuiles par image. Ce coût est celui de la première vue : il revient à B7 (aperçu grossier depuis les pyramides de sources, budget de temps par image, réserve dimensionnée ; points suivis de 0027).
 - Panoramique officiel (cache de 128 tuiles) : p95 de 3,9 ms, sous la cible de 16,7 ms ; le maximum (157 ms) reste la première image du panoramique, pour B7.
 
+## Mesure après B7-lite (2026-11-03, sans fenêtre, 2126 × 1086)
+
+B7-lite (0027, plan accéléré ; l'ordonnanceur complet reste reporté après J4) :
+
+- **réserves de sources dimensionnées d'après le budget** : 512 Mio sur GPU dédié, 256 Mio sinon, soit 819 tuiles de calques et 819 de masques ici, contre 256 ;
+- **préchargement au repos** : quand une image n'a rien à composer à pleine taille, les sources des tuiles visibles reviennent dans la réserve, 16 envois par image au plus ;
+- **aperçu réduit pendant un glissement** : le niveau affiché, jusqu'au niveau 2, est composé depuis des sources réduites construites sur GPU une fois, puis gardées tant que les pixels ne changent pas ; les tuiles d'aperçu sont recalculées exactement au relâchement.
+
+**La machine était nettement plus lente ce jour-là** pour les phases limitées par le processeur (préparation et envoi des tuiles). Le code de B5 (commit 40b3e6e), mesuré à 196 ms de première vue le 2026-11-02, en donnait 1 005 à 1 034 ms le 2026-11-03. Les comparaisons ci-dessous opposent donc les deux codes **le même jour**, en mesures alternées. Rapports : `docs/bench/2026-11-03-*`.
+
+| Phase (cache calculé) | Code de B5, même jour | B7-lite |
+| --- | --- | --- |
+| Glissement d'un point de courbe, vue ajustée : médiane / p95 | 1 050 / 1 075 ms | **0,9 / 1,0 ms** |
+| idem, première image du glissement | 1 082 ms | 842 à 870 ms (construction des sources réduites, une fois) |
+| Relâchement (affinage exact, une image) | — | 973 ms |
+| Changement d'opacité : sources renvoyées | 88 | **0** |
+| Panoramique 100 % : p95 | 0,13 ms | 6,5 ms (préchargement) |
+| Première vue | 1 005 à 1 034 ms | 1 024 à 1 041 ms |
+
+Avec le cache limité à 128 tuiles (mesure officielle du panoramique), le p95 du panoramique à 100 % vaut 19,0 ms, contre 19,6 ms pour le code de B5 le même jour (3,9 ms la veille, sur une machine plus rapide). Le préchargement ne le dégrade donc pas.
+
+Restent pour B7 :
+
+- la première image d'un glissement (construction des sources réduites) ;
+- l'image d'affinage qui suit le relâchement ;
+- la première vue.
+
+Ces trois coûts sont faits d'une traite, en une image : c'est le rôle du budget de temps par image et des pyramides de sources construites à l'avance.
+
 ## Cibles décidées (utilisateur, 2026-11-01)
 
 1. **60 images/s** (p95 ≤ 16,7 ms) pour la vue stable, le zoom et le panoramique : confirmé.
