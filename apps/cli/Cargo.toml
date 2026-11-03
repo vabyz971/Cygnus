@@ -19,5 +19,8 @@ cygnus-photo-render.workspace = true
 cygnus-photo-io.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

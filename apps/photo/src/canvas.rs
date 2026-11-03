@@ -24,6 +24,8 @@
 //! composited again. If the canvas missed a revision, it is told that
 //! everything changed.
 
+use cygnus_photo_core::resolve::{Resolvers, resolve_and_execute};
+use cygnus_photo_io::FileImporter;
 use std::sync::Arc;
 
 use cygnus_commands::{ChangeSet, CommandBus, Revision, Source};
@@ -215,11 +217,34 @@ impl Session {
         }
     }
 
-    /// Applies `command` to the document.
+    /// Applies `command` to the document, through the single path of the
+    /// resolved commands (docs/decisions/0020). Files are read relative to
+    /// the working folder; merging layers needs the renderer of the window
+    /// ([`Self::execute_with`]).
     pub fn execute(&mut self, command: PhotoCommand, source: Source) -> Result<(), CoreError> {
-        self.bus
-            .execute(&mut self.document, command, source)
-            .map(|_| ())
+        let importer = FileImporter::new(".");
+        let resolvers = Resolvers {
+            import: Some(&importer),
+            merge: None,
+        };
+        self.execute_with(command, source, &resolvers)
+    }
+
+    /// Applies `command` with the given reader and renderer.
+    pub fn execute_with(
+        &mut self,
+        command: PhotoCommand,
+        source: Source,
+        resolvers: &Resolvers<'_>,
+    ) -> Result<(), CoreError> {
+        resolve_and_execute(
+            &mut self.bus,
+            &mut self.document,
+            command,
+            source,
+            resolvers,
+        )
+        .map(|_| ())
     }
 
     /// Places the view: `zoom` screen pixels per document pixel, `center`

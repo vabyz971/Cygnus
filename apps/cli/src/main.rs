@@ -26,7 +26,9 @@ use std::process::ExitCode;
 
 use cygnus_commands::Source;
 use cygnus_photo_core::Depth;
+use cygnus_photo_core::resolve::Resolvers;
 use cygnus_photo_core::script::{Script, ScriptError};
+use cygnus_photo_io::FileImporter;
 use cygnus_photo_render::gpu::{self, GpuError};
 use cygnus_photo_render::{ExportBits, RenderError, Renderer};
 
@@ -113,13 +115,25 @@ fn render(args: RenderArgs) -> Result<(), CliError> {
         path: args.script.clone(),
         source,
     };
-    let document = Script::parse(&text)
-        .map_err(script_error)?
-        .build(Source::Cli)
-        .map_err(script_error)?;
+    let script = Script::parse(&text).map_err(script_error)?;
 
     let gpu = gpu::open_headless()?;
     let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
+    // Resolved commands go through the single path of photo/core: files
+    // are read relative to the script, merges are rendered by the renderer
+    // (docs/decisions/0020).
+    let folder = args
+        .script
+        .parent()
+        .map_or_else(|| Path::new(".").to_owned(), Path::to_owned);
+    let importer = FileImporter::new(folder);
+    let resolvers = Resolvers {
+        import: Some(&importer),
+        merge: Some(&renderer),
+    };
+    let document = script
+        .build_with(Source::Cli, &resolvers)
+        .map_err(script_error)?;
     let bits = args.bits.unwrap_or(match document.depth {
         Depth::U8 => ExportBits::Eight,
         Depth::U16 => ExportBits::Sixteen,

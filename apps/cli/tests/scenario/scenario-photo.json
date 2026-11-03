@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "commands": [
+    {"command": "document.create", "params": {"width": 480, "height": 320, "depth": "u16"}},
+    {"command": "source.import", "params": {"path": "../fixtures/paysage-16.png", "name": "paysage"}},
+    {"command": "layer.create", "params": {"name": "courbe", "kind": {"type": "adjustment", "adjustment": {"kind": "curves", "master": {"points": [[0, 0], [0.27, 0.2], [0.74, 0.83], [1, 1]]}, "red": {"points": [[0, 0], [1, 1]]}, "green": {"points": [[0, 0], [1, 1]]}, "blue": {"points": [[0, 0.03], [1, 0.96]]}}}}},
+    {"command": "mask.create", "params": {"node": 2}},
+    {"command": "mask.gradient", "params": {"mask": 3, "start": [0, 0], "end": [0, 320], "start_value": 1.0, "end_value": 0.2}},
+    {"command": "layer.create", "params": {"name": "groupe", "kind": {"type": "group", "isolation": "isolated"}}},
+    {"command": "layer.create", "params": {"name": "teinte", "parent": 4}},
+    {"command": "pixels.fill", "params": {"layer": 5, "rect": {"x": 60, "y": 40, "width": 260, "height": 200}, "color": [0.93, 0.71, 0.47, 1.0]}},
+    {"command": "layer.update", "params": {"id": 5, "blend": "multiply"}},
+    {"command": "layer.create", "params": {"name": "teinte et saturation", "parent": 4, "kind": {"type": "adjustment", "adjustment": {"kind": "hue_saturation", "hue": -23, "saturation": 31, "lightness": 0}}}},
+    {"command": "layer.update", "params": {"id": 6, "clip": true}},
+    {"command": "source.import", "params": {"path": "../fixtures/texture-8.jpg", "name": "texture"}},
+    {"command": "layer.update", "params": {"id": 7, "blend": "screen", "opacity": 0.6}},
+    {"command": "layer.create", "params": {"name": "niveaux", "kind": {"type": "adjustment", "adjustment": {"kind": "levels", "master": {"input_black": 0.04, "input_white": 0.95, "gamma": 1.1, "output_black": 0, "output_white": 1}, "red": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 1}, "green": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 1}, "blue": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 1}}}}},
+    {"command": "history.undo", "params": {}},
+    {"command": "history.undo", "params": {}},
+    {"command": "history.undo", "params": {}},
+    {"command": "history.redo", "params": {}},
+    {"command": "history.redo", "params": {}},
+    {"command": "layer.create", "params": {"name": "niveaux", "kind": {"type": "adjustment", "adjustment": {"kind": "levels", "master": {"input_black": 0.06, "input_white": 0.93, "gamma": 1.15, "output_black": 0, "output_white": 1}, "red": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 1}, "green": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 1}, "blue": {"input_black": 0, "input_white": 1, "gamma": 1, "output_black": 0, "output_white": 0.97}}}}}
+  ]
+}
