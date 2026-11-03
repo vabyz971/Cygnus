@@ -27,6 +27,7 @@ pub mod bench;
 pub mod canvas;
 pub mod format;
 pub mod gpu;
+pub mod histogram;
 pub mod image;
 mod merge;
 mod program;
@@ -36,6 +37,7 @@ mod sources;
 
 pub use adjust::{COLOR_BALANCE_STRENGTH, CurveTableStats};
 pub use canvas::{Canvas, CanvasStats, CanvasView};
+pub use histogram::{Histogram, HistogramPass};
 pub use image::{ExportBits, Image};
 pub use renderer::{RenderError, Renderer};
 pub use sources::SourceStats;

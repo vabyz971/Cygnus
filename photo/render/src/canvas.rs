@@ -199,6 +199,8 @@ pub struct Canvas {
     clock: u64,
     size: (u32, u32),
     level: u32,
+    /// The last prepare showed a coarser level than the zoom asks for.
+    coarse: bool,
     stats: CanvasStats,
 }
 
@@ -303,6 +305,7 @@ impl Canvas {
             clock: 0,
             size: (0, 0),
             level: 0,
+            coarse: false,
             stats: CanvasStats::default(),
         })
     }
@@ -383,6 +386,25 @@ impl Canvas {
     /// Number of tiles the cache holds.
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Whether the last [`Self::prepare`] showed a coarser level than the
+    /// zoom asks for, the cache being too small for the visible tiles.
+    pub fn is_coarse(&self) -> bool {
+        self.coarse
+    }
+
+    /// Cache slots of the tiles shown by the last [`Self::prepare`].
+    pub fn shown_slots(&self) -> Vec<u32> {
+        self.entries
+            .iter()
+            .filter(|(key, entry)| key.level == self.level && entry.valid)
+            .map(|(_, entry)| entry.slot)
+            .collect()
+    }
+
+    pub(crate) fn cache_view(&self) -> &wgpu::TextureView {
+        &self.cache.view
     }
 
     /// Pyramid level shown by the last [`Self::prepare`] (0 is full size).
@@ -716,6 +738,7 @@ impl Canvas {
         while level < top && view.scale * ((2u32 << level) as f32) <= 1.0 {
             level += 1;
         }
+        let wanted = level;
         let ops = loop {
             match self.plan_level(level, view) {
                 Ok(ops) => break ops,
@@ -736,6 +759,7 @@ impl Canvas {
                 }
             }
         };
+        self.coarse = level > wanted;
         self.level = level;
 
         let device = renderer.device();
