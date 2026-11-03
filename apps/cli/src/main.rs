@@ -21,13 +21,15 @@
 //! exports it with the renderer of the application: there is no other
 //! rendering path. Exit codes: 0 success, 1 failure, 2 usage error.
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cygnus_commands::Source;
-use cygnus_photo_core::Depth;
-use cygnus_photo_core::resolve::Resolvers;
+use cygnus_photo_core::pixels::LayerTiles;
+use cygnus_photo_core::resolve::{Merge, Resolvers};
 use cygnus_photo_core::script::{Script, ScriptError};
+use cygnus_photo_core::{Depth, Document, NodeId};
 use cygnus_photo_io::FileImporter;
 use cygnus_photo_render::gpu::{self, GpuError};
 use cygnus_photo_render::{ExportBits, RenderError, Renderer};
@@ -106,6 +108,36 @@ fn parse_render(args: &[String]) -> Result<RenderArgs, CliError> {
     }
 }
 
+/// The GPU renderer, opened on first use.
+#[derive(Default)]
+struct LazyRenderer {
+    opened: OnceCell<(gpu::Gpu, Renderer)>,
+}
+
+impl LazyRenderer {
+    fn get(&self) -> Result<&Renderer, CliError> {
+        if self.opened.get().is_none() {
+            let gpu = gpu::open_headless()?;
+            let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
+            let _ = self.opened.set((gpu, renderer));
+        }
+        self.opened
+            .get()
+            .map(|(_, renderer)| renderer)
+            .ok_or(CliError::Render(RenderError::Unsupported(
+                "opening the GPU",
+            )))
+    }
+}
+
+impl Merge for LazyRenderer {
+    fn merge(&self, document: &Document, upper: NodeId) -> Result<LayerTiles, String> {
+        self.get()
+            .map_err(|error| error.to_string())?
+            .merge(document, upper)
+    }
+}
+
 fn render(args: RenderArgs) -> Result<(), CliError> {
     let text = std::fs::read_to_string(&args.script).map_err(|source| CliError::Read {
         path: args.script.clone(),
@@ -117,16 +149,16 @@ fn render(args: RenderArgs) -> Result<(), CliError> {
     };
     let script = Script::parse(&text).map_err(script_error)?;
 
-    let gpu = gpu::open_headless()?;
-    let renderer = Renderer::new(&gpu.device, &gpu.queue)?;
     // Resolved commands go through the single path of photo/core: files
     // are read relative to the script, merges are rendered by the renderer
-    // (docs/decisions/0020).
+    // (docs/decisions/0020). The GPU is opened on first use, so that a
+    // script refused by its commands is reported as such without a GPU.
     let folder = args
         .script
         .parent()
         .map_or_else(|| Path::new(".").to_owned(), Path::to_owned);
     let importer = FileImporter::new(folder);
+    let renderer = LazyRenderer::default();
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: Some(&renderer),
@@ -134,6 +166,7 @@ fn render(args: RenderArgs) -> Result<(), CliError> {
     let document = script
         .build_with(Source::Cli, &resolvers)
         .map_err(script_error)?;
+    let renderer = renderer.get()?;
     let bits = args.bits.unwrap_or(match document.depth {
         Depth::U8 => ExportBits::Eight,
         Depth::U16 => ExportBits::Sixteen,
