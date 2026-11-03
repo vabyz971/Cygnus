@@ -76,6 +76,8 @@ pub enum Phase {
     CurveDrag300,
     /// A curve point dragged, one change per frame, at fit.
     CurveDragFit,
+    /// The frame after the drag at fit: the preview is refined exactly.
+    CurveRelease,
 }
 
 impl Phase {
@@ -90,6 +92,7 @@ impl Phase {
             Self::Edit => "edit_opacity",
             Self::CurveDrag300 => "curve_drag_300",
             Self::CurveDragFit => "curve_drag_fit",
+            Self::CurveRelease => "curve_release",
         }
     }
 }
@@ -105,6 +108,8 @@ pub struct CameraFrame {
     pub center: [f32; 2],
     /// Change applied before this frame.
     pub edit: Option<Edit>,
+    /// A parameter is being dragged: the canvas previews (0027, B7-lite).
+    pub preview: bool,
 }
 
 /// A change of the document during the camera path.
@@ -132,6 +137,7 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
         scale,
         center,
         edit: None,
+        preview: false,
     };
     let mut path = vec![frame(Phase::FitCold, fit, middle)];
     path.extend((0..120).map(|_| frame(Phase::FitWarm, fit, middle)));
@@ -174,9 +180,11 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
     ] {
         path.extend((0..DRAG_FRAMES).map(|i| CameraFrame {
             edit: Some(Edit::Curve(i)),
+            preview: true,
             ..frame(phase, scale, center)
         }));
     }
+    path.push(frame(Phase::CurveRelease, fit, middle));
     path
 }
 
@@ -486,6 +494,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "source_tiles_evicted": previous_sources.evictions - start_sources.evictions,
             "curve_tables_uploaded": previous_sources.curve_tables.uploads - start_sources.curve_tables.uploads,
             "curve_table_bytes": previous_sources.curve_tables.bytes - start_sources.curve_tables.bytes,
+            "reduced_tiles_built": previous_sources.reduced - start_sources.reduced,
         }));
     }
     let curve_cpu = curve_table_time();
@@ -537,7 +546,8 @@ mod tests {
                 Phase::Pan300,
                 Phase::Edit,
                 Phase::CurveDrag300,
-                Phase::CurveDragFit
+                Phase::CurveDragFit,
+                Phase::CurveRelease
             ]
         );
         let edits = |wanted: fn(&Edit) -> bool| {

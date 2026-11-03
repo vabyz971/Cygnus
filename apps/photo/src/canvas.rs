@@ -174,6 +174,8 @@ struct CanvasCallback {
     base: Revision,
     changes: PhotoChanges,
     view: CanvasView,
+    /// A parameter is being dragged: preview from reduced sources.
+    preview: bool,
 }
 
 impl egui_wgpu::CallbackTrait for CanvasCallback {
@@ -194,6 +196,7 @@ impl egui_wgpu::CallbackTrait for CanvasCallback {
         } else {
             &everything
         };
+        resources.canvas.set_preview(self.preview);
         match resources
             .canvas
             .prepare(&resources.renderer, &self.document, changes, &self.view)
@@ -498,6 +501,7 @@ impl Session {
             revision,
             base: self.sent,
             changes: self.bus.changes_since(self.sent).changes,
+            preview: self.gesture,
             view: CanvasView {
                 origin,
                 scale: self.zoom,

@@ -95,6 +95,12 @@ impl BenchRun {
             self.write(session, render_state);
             return false;
         };
+        // The drag phases hold a gesture open, as a slider does.
+        if frame.preview {
+            session.begin_gesture();
+        } else {
+            session.end_gesture();
+        }
         if let Some(edit) = frame.edit
             && let Err(error) = session.execute(bench::edit_command(edit), Source::Test)
         {

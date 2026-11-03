@@ -117,6 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             checker: [[0.29, 0.31, 0.35], [0.23, 0.24, 0.28]],
             checker_size: 8.0,
         };
+        canvas.set_preview(frame.preview);
         canvas.prepare(&renderer, &document, &changes, &view)?;
         changes = PhotoChanges::default();
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
