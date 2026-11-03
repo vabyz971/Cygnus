@@ -29,7 +29,7 @@
 //! Nodes that contribute nothing to the tile (hidden, no pixels there,
 //! empty groups) produce no operation.
 
-use cygnus_photo_core::pixels::TileCoord;
+use cygnus_photo_core::pixels::{Tile, TileCoord};
 use cygnus_photo_core::{BlendMode, Depth, Document, Isolation, MAX_NESTING, NodeId, NodeKind};
 
 use crate::renderer::RenderError;
@@ -258,7 +258,7 @@ fn node(
     };
     match &node.kind {
         NodeKind::Pixel { .. } => {
-            if document.pixels.tile(id, coord).is_some() {
+            if layer_tile(document, id, coord).is_some() {
                 out.push(Op {
                     code: if role == Role::Clipped {
                         Code::Clipped
@@ -307,12 +307,48 @@ fn node(
         NodeKind::Filter { .. } => {
             return Err(RenderError::Unsupported("rendering a filter layer"));
         }
-        NodeKind::Embedded { .. } => {
-            return Err(RenderError::Unsupported("rendering an embedded object"));
+        NodeKind::Embedded { placement, .. } => {
+            // Placed at the document origin in J3 (no command moves it):
+            // its tiles line up with the output tiles.
+            if placement.x != 0 || placement.y != 0 {
+                return Err(RenderError::Unsupported(
+                    "an embedded object moved away from the document origin",
+                ));
+            }
+            if layer_tile(document, id, coord).is_some() {
+                out.push(Op {
+                    code: if role == Role::Clipped {
+                        Code::Clipped
+                    } else {
+                        Code::Layer
+                    },
+                    source: Some((id, coord)),
+                    mode,
+                    opacity,
+                    mask,
+                    adjustment: None,
+                });
+            }
         }
         NodeKind::Mask { .. } => {}
     }
     Ok(())
+}
+
+/// Tile `coord` of layer `id`: in the pixel store for a pixel layer and a
+/// mask, in its source for an embedded object (placed at the origin).
+pub(crate) fn layer_tile(
+    document: &Document,
+    id: NodeId,
+    coord: TileCoord,
+) -> Option<&std::sync::Arc<Tile>> {
+    match document.node(id).map(|node| &node.kind) {
+        Some(NodeKind::Embedded { source, .. }) => document
+            .sources
+            .get(source)
+            .and_then(|source| source.tiles.get(&coord)),
+        _ => document.pixels.tile(id, coord),
+    }
 }
 
 fn mask(document: &Document, mask: Option<NodeId>, coord: TileCoord) -> MaskRef {

@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use common::{compare, difference, export16, setup};
 use cygnus_commands::Source;
+use cygnus_photo_core::resolve::Resolvers;
 use cygnus_photo_core::script::Script;
 use cygnus_photo_render::Image;
 
@@ -68,7 +69,13 @@ fn golden_images() {
     for case in cases() {
         let name = case.file_stem().unwrap().to_string_lossy().into_owned();
         let script = Script::parse(&std::fs::read_to_string(&case).unwrap()).unwrap();
-        let document = script.build(Source::Test).unwrap();
+        // Resolved through the single path, the renderer merging layers
+        // (layer.merge_down).
+        let resolvers = Resolvers {
+            import: None,
+            merge: Some(&renderer),
+        };
+        let document = script.build_with(Source::Test, &resolvers).unwrap();
         let actual = export16(&renderer, &document);
         let reference = case.with_extension("png");
         if update {

@@ -380,9 +380,7 @@ impl Renderer {
             |keys: &BTreeSet<SourceKey>| -> Result<Vec<(SourceKey, &Arc<Tile>)>, RenderError> {
                 keys.iter()
                     .map(|key| {
-                        document
-                            .pixels
-                            .tile(key.0, key.1)
+                        program::layer_tile(document, key.0, key.1)
                             .map(|tile| (*key, tile))
                             .ok_or(RenderError::Unsupported(
                                 "a source tile missing from its document",

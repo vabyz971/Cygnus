@@ -28,6 +28,7 @@ pub mod canvas;
 pub mod format;
 pub mod gpu;
 pub mod image;
+mod merge;
 mod program;
 pub mod renderer;
 pub mod shaders;
