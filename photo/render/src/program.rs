@@ -130,10 +130,19 @@ enum Role {
     Clipped,
 }
 
-/// Program of the output tile at `coord`.
-pub(crate) fn tile_program(document: &Document, coord: TileCoord) -> Result<Vec<Op>, RenderError> {
+/// An output tile: its coordinates at a pyramid level (0 is full size).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct At {
+    pub(crate) coord: TileCoord,
+    pub(crate) level: u32,
+}
+
+/// Program of the output tile `at`. Above level 0 its sources are the
+/// reduced tiles of that level (docs/decisions/0027, preview during a
+/// drag), keyed by their coordinates at that level.
+pub(crate) fn tile_program_at(document: &Document, at: At) -> Result<Vec<Op>, RenderError> {
     let mut ops = Vec::new();
-    children(document, document.root, coord, &mut ops)?;
+    children(document, document.root, at, &mut ops)?;
     let mut depth = 0usize;
     for op in &ops {
         match op.code {
@@ -166,7 +175,7 @@ pub(crate) fn sources(ops: &[Op]) -> (Vec<SourceKey>, Vec<SourceKey>) {
 fn children(
     document: &Document,
     parent: NodeId,
-    coord: TileCoord,
+    at: At,
     out: &mut Vec<Op>,
 ) -> Result<(), RenderError> {
     let ids: Vec<NodeId> = document
@@ -185,9 +194,9 @@ fn children(
             end += 1;
         }
         if end == i + 1 {
-            node(document, base, coord, Role::Normal, out)?;
+            node(document, base, at, Role::Normal, out)?;
         } else {
-            clipping_set(document, base, &ids[i + 1..end], coord, out)?;
+            clipping_set(document, base, &ids[i + 1..end], at, out)?;
         }
         i = end;
     }
@@ -198,7 +207,7 @@ fn clipping_set(
     document: &Document,
     base: NodeId,
     clipped: &[NodeId],
-    coord: TileCoord,
+    at: At,
     out: &mut Vec<Op>,
 ) -> Result<(), RenderError> {
     if document
@@ -208,20 +217,20 @@ fn clipping_set(
         // Nothing can be clipped onto an adjustment or a filter, which have
         // no pixels (docs/decisions/0028): the commands refuse it, and a
         // document holding it anyway shows the clipped nodes nowhere.
-        return node(document, base, coord, Role::Normal, out);
+        return node(document, base, at, Role::Normal, out);
     }
     let mut base_ops = Vec::new();
-    node(document, base, coord, Role::Base, &mut base_ops)?;
+    node(document, base, at, Role::Base, &mut base_ops)?;
     if base_ops.is_empty() {
         // Nothing to clip to: the clipped layers show nowhere.
         return Ok(());
     }
     let mut clipped_ops = Vec::new();
     for id in clipped {
-        node(document, *id, coord, Role::Clipped, &mut clipped_ops)?;
+        node(document, *id, at, Role::Clipped, &mut clipped_ops)?;
     }
     if clipped_ops.is_empty() {
-        return node(document, base, coord, Role::Normal, out);
+        return node(document, base, at, Role::Normal, out);
     }
     let Some(base_node) = document.node(base) else {
         return Ok(());
@@ -241,7 +250,7 @@ fn clipping_set(
 fn node(
     document: &Document,
     id: NodeId,
-    coord: TileCoord,
+    at: At,
     role: Role,
     out: &mut Vec<Op>,
 ) -> Result<(), RenderError> {
@@ -251,21 +260,21 @@ fn node(
     if !node.visible {
         return Ok(());
     }
-    let mask = mask(document, node.mask, coord);
+    let mask = mask(document, node.mask, at);
     let (mode, opacity) = match role {
         Role::Base => (BlendMode::Normal, 1.0),
         Role::Normal | Role::Clipped => (node.blend, node.opacity),
     };
     match &node.kind {
         NodeKind::Pixel { .. } => {
-            if layer_tile(document, id, coord).is_some() {
+            if exists(document, id, at) {
                 out.push(Op {
                     code: if role == Role::Clipped {
                         Code::Clipped
                     } else {
                         Code::Layer
                     },
-                    source: Some((id, coord)),
+                    source: Some((id, at.coord)),
                     mode,
                     opacity,
                     mask,
@@ -275,7 +284,7 @@ fn node(
         }
         NodeKind::Group { isolation, .. } => {
             let mut inner = Vec::new();
-            children(document, id, coord, &mut inner)?;
+            children(document, id, at, &mut inner)?;
             if inner.is_empty() {
                 return Ok(());
             }
@@ -315,14 +324,14 @@ fn node(
                     "an embedded object moved away from the document origin",
                 ));
             }
-            if layer_tile(document, id, coord).is_some() {
+            if exists(document, id, at) {
                 out.push(Op {
                     code: if role == Role::Clipped {
                         Code::Clipped
                     } else {
                         Code::Layer
                     },
-                    source: Some((id, coord)),
+                    source: Some((id, at.coord)),
                     mode,
                     opacity,
                     mask,
@@ -351,7 +360,22 @@ pub(crate) fn layer_tile(
     }
 }
 
-fn mask(document: &Document, mask: Option<NodeId>, coord: TileCoord) -> MaskRef {
+/// Whether layer or mask `id` has pixels under `at`: its tile at level 0,
+/// any of the tiles it reduces above.
+pub(crate) fn exists(document: &Document, id: NodeId, at: At) -> bool {
+    let factor = 1u32 << at.level;
+    (0..factor).any(|dy| {
+        (0..factor).any(|dx| {
+            let coord = TileCoord {
+                tx: at.coord.tx * factor + dx,
+                ty: at.coord.ty * factor + dy,
+            };
+            layer_tile(document, id, coord).is_some()
+        })
+    })
+}
+
+fn mask(document: &Document, mask: Option<NodeId>, at: At) -> MaskRef {
     let Some(id) = mask else {
         return MaskRef::NONE;
     };
@@ -373,7 +397,7 @@ fn mask(document: &Document, mask: Option<NodeId>, coord: TileCoord) -> MaskRef 
         Depth::U16 => 65535.0,
     };
     MaskRef {
-        tile: document.pixels.tile(id, coord).map(|_| (id, coord)),
+        tile: exists(document, id, at).then_some((id, at.coord)),
         value: f32::from(*empty) / max,
         density: *density,
         inverted: *inverted,

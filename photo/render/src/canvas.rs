@@ -78,19 +78,28 @@ struct Entry {
     slot: u32,
     valid: bool,
     used: u64,
+    /// Built from reduced sources during a preview: valid only while the
+    /// preview lasts, then recomputed exactly.
+    preview: bool,
 }
 
 /// GPU work of one update, in dependency order.
 enum Op {
+    /// Composition of a tile of `level`: 0, or the preview level (from
+    /// reduced sources).
     Composite {
         coord: TileCoord,
         slot: u32,
+        level: u32,
     },
     Downsample {
         parent: u32,
         children: [Option<u32>; 4],
     },
 }
+
+/// Source tiles uploaded at most per idle frame by the prefetch.
+const PREFETCH_UPLOADS: usize = 16;
 
 /// The tiles needed do not fit in the cache.
 #[derive(Debug)]
@@ -201,6 +210,10 @@ pub struct Canvas {
     level: u32,
     /// The last prepare showed a coarser level than the zoom asks for.
     coarse: bool,
+    /// A parameter is being dragged: compose from reduced sources.
+    preview: bool,
+    /// Level composed from reduced sources by the current prepare (0: none).
+    preview_level: u32,
     stats: CanvasStats,
 }
 
@@ -306,6 +319,8 @@ impl Canvas {
             size: (0, 0),
             level: 0,
             coarse: false,
+            preview: false,
+            preview_level: 0,
             stats: CanvasStats::default(),
         })
     }
@@ -386,6 +401,14 @@ impl Canvas {
     /// Number of tiles the cache holds.
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Turns the preview on while a parameter is dragged (docs/decisions/
+    /// 0027, B7-lite): the displayed level, up to level 2, is composed from
+    /// reduced sources; the tiles made so are recomputed exactly once the
+    /// preview is turned off.
+    pub fn set_preview(&mut self, on: bool) {
+        self.preview = on;
     }
 
     /// Whether the last [`Self::prepare`] showed a coarser level than the
@@ -517,6 +540,7 @@ impl Canvas {
                 slot,
                 valid: false,
                 used: self.clock,
+                preview: false,
             },
         );
         Ok(slot)
@@ -530,8 +554,10 @@ impl Canvas {
         pinned: &mut HashSet<TileKey>,
         ops: &mut Vec<Op>,
     ) -> Result<u32, OverBudget> {
+        let previewing = self.preview_level > 0;
         if let Some(entry) = self.entries.get_mut(&key)
             && entry.valid
+            && (previewing || !entry.preview)
         {
             entry.used = self.clock;
             return Ok(entry.slot);
@@ -540,14 +566,17 @@ impl Canvas {
         // Pinned while its children are built, so that they cannot take
         // its slot; the caller releases it.
         pinned.insert(key);
-        if key.level == 0 {
+        let mut preview = false;
+        if key.level == 0 || (previewing && key.level == self.preview_level) {
             ops.push(Op::Composite {
                 coord: TileCoord {
                     tx: key.tx,
                     ty: key.ty,
                 },
                 slot,
+                level: key.level,
             });
+            preview = key.level > 0;
             self.stats.composited += 1;
         } else {
             let (tiles_x, tiles_y) = self.level_tiles(key.level - 1);
@@ -564,6 +593,7 @@ impl Canvas {
                     };
                     let child_was_pinned = pinned.contains(&child_key);
                     *child = Some(self.ensure(child_key, pinned, ops)?);
+                    preview |= self.entries.get(&child_key).is_some_and(|e| e.preview);
                     if !child_was_pinned {
                         held.push(child_key);
                     }
@@ -580,6 +610,7 @@ impl Canvas {
         }
         if let Some(entry) = self.entries.get_mut(&key) {
             entry.valid = true;
+            entry.preview = preview;
         }
         Ok(slot)
     }
@@ -612,17 +643,28 @@ impl Canvas {
         let mut index = 0;
         while index < ops.len() {
             match &ops[index] {
-                Op::Composite { .. } => {
+                Op::Composite { level, .. } => {
+                    let level = *level;
                     let mut targets = HashMap::new();
-                    while let Some(Op::Composite { coord, slot }) = ops.get(index) {
+                    while let Some(Op::Composite {
+                        coord,
+                        slot,
+                        level: same,
+                    }) = ops.get(index)
+                        && *same == level
+                    {
                         targets.insert(*coord, *slot);
                         index += 1;
                     }
                     let mut coords: Vec<TileCoord> = targets.keys().copied().collect();
                     coords.sort();
-                    let batches = renderer.plan(document, coords, usize::MAX, |_, coord| {
-                        targets.get(&coord).copied().unwrap_or(0)
-                    })?;
+                    let batches = renderer.plan_at(
+                        document,
+                        coords,
+                        usize::MAX,
+                        |_, coord| targets.get(&coord).copied().unwrap_or(0),
+                        level,
+                    )?;
                     for batch in &batches {
                         queue.submit([std::mem::replace(&mut encoder, new_encoder()).finish()]);
                         renderer.record_composite(
@@ -740,6 +782,11 @@ impl Canvas {
         }
         let wanted = level;
         let ops = loop {
+            self.preview_level = if self.preview {
+                level.min(crate::preview::MAX_PREVIEW_LEVEL)
+            } else {
+                0
+            };
             match self.plan_level(level, view) {
                 Ok(ops) => break ops,
                 Err(OverBudget { partial }) if level < top => {
@@ -769,6 +816,18 @@ impl Canvas {
 
         if !ops.is_empty() {
             self.run(renderer, document, &ops)?;
+        } else if level == 0 && !self.preview {
+            // Idle at full size: bring back the sources of the visible
+            // tiles, so that a property change uploads none (0027).
+            let coords: Vec<TileCoord> = self
+                .visible(0, view)
+                .into_iter()
+                .map(|key| TileCoord {
+                    tx: key.tx,
+                    ty: key.ty,
+                })
+                .collect();
+            renderer.prefetch(document, &coords, PREFETCH_UPLOADS)?;
         }
 
         let (tiles_x, tiles_y) = self.level_tiles(level);

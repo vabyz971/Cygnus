@@ -34,6 +34,7 @@ use cygnus_photo_core::{Document, NodeId, NodeKind};
 use crate::adjust::{self, CurveTables};
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
+use crate::preview::{Build, ReducedPool, Reducer, ensure_reduced};
 use crate::program::{self, Op};
 use crate::shaders;
 use crate::sources::{PoolKind, SourceKey, SourceStats, TilePool};
@@ -156,6 +157,10 @@ struct Sources {
     clock: u64,
     stats: SourceStats,
     curves: CurveTables,
+    /// Reduced tiles of the previews (docs/decisions/0027, B7-lite).
+    reduced_layers: ReducedPool,
+    reduced_masks: ReducedPool,
+    reducer: Reducer,
 }
 
 /// Tile renderer bound to one GPU device.
@@ -178,14 +183,18 @@ pub(crate) struct OutputTile {
 /// Output tiles whose layer and mask tiles fit in the source pools
 /// together.
 pub(crate) struct Batch {
+    /// Pyramid level of the outputs: 0, or a preview level read from
+    /// reduced sources.
+    pub(crate) level: u32,
     pub(crate) outputs: Vec<OutputTile>,
     layers: BTreeSet<SourceKey>,
     masks: BTreeSet<SourceKey>,
 }
 
 impl Batch {
-    fn new() -> Self {
+    fn new(level: u32) -> Self {
         Self {
+            level,
             outputs: Vec::new(),
             layers: BTreeSet::new(),
             masks: BTreeSet::new(),
@@ -239,6 +248,13 @@ impl Renderer {
                 clock: 0,
                 stats,
                 curves: CurveTables::new(device, queue),
+                reduced_layers: ReducedPool::new(
+                    device,
+                    PoolKind::Layers,
+                    (layer_slots / 4).max(16),
+                ),
+                reduced_masks: ReducedPool::new(device, PoolKind::Masks, (mask_slots / 4).max(16)),
+                reducer: Reducer::new(device),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
@@ -277,14 +293,39 @@ impl Renderer {
         document: &Document,
         outputs: impl IntoIterator<Item = TileCoord>,
         max_outputs: usize,
-        mut target: impl FnMut(usize, TileCoord) -> u32,
+        target: impl FnMut(usize, TileCoord) -> u32,
     ) -> Result<Vec<Batch>, RenderError> {
-        let capacity = self.source_stats().capacity;
-        let (layer_slots, mask_slots) = (capacity.0 as usize, capacity.1 as usize);
+        self.plan_at(document, outputs, max_outputs, target, 0)
+    }
+
+    /// Like [`Self::plan`] for output tiles of pyramid `level`, composed
+    /// from reduced sources when `level` is above 0.
+    pub(crate) fn plan_at(
+        &self,
+        document: &Document,
+        outputs: impl IntoIterator<Item = TileCoord>,
+        max_outputs: usize,
+        mut target: impl FnMut(usize, TileCoord) -> u32,
+        level: u32,
+    ) -> Result<Vec<Batch>, RenderError> {
+        let (layer_slots, mask_slots) = {
+            let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+            if level == 0 {
+                (
+                    sources.layers.capacity() as usize,
+                    sources.masks.capacity() as usize,
+                )
+            } else {
+                (
+                    sources.reduced_layers.capacity() as usize,
+                    sources.reduced_masks.capacity() as usize,
+                )
+            }
+        };
         let mut batches = Vec::new();
-        let mut batch = Batch::new();
+        let mut batch = Batch::new(level);
         for coord in outputs {
-            let ops = program::tile_program(document, coord)?;
+            let ops = program::tile_program_at(document, program::At { coord, level })?;
             let (layers, masks) = program::sources(&ops);
             for (count, slots) in [(layers.len(), layer_slots), (masks.len(), mask_slots)] {
                 if count > slots {
@@ -297,7 +338,7 @@ impl Renderer {
                 || batch.layers.len() + new_layers > layer_slots
                 || batch.masks.len() + new_masks > mask_slots;
             if full {
-                batches.push(std::mem::replace(&mut batch, Batch::new()));
+                batches.push(std::mem::replace(&mut batch, Batch::new(level)));
             }
             batch.layers.extend(layers);
             batch.masks.extend(masks);
@@ -312,6 +353,56 @@ impl Renderer {
             batches.push(batch);
         }
         Ok(batches)
+    }
+
+    /// Makes the sources of the output tiles `coords` resident while the
+    /// canvas is idle (docs/decisions/0027, point 1): resident ones are
+    /// marked used, at most `max_uploads` missing ones are uploaded. Does
+    /// nothing if they do not fit in the pools. Returns the uploads.
+    pub(crate) fn prefetch(
+        &self,
+        document: &Document,
+        coords: &[TileCoord],
+        max_uploads: usize,
+    ) -> Result<usize, RenderError> {
+        let mut layers = BTreeSet::new();
+        let mut masks = BTreeSet::new();
+        for coord in coords {
+            let ops = program::tile_program_at(
+                document,
+                program::At {
+                    coord: *coord,
+                    level: 0,
+                },
+            )?;
+            let (l, m) = program::sources(&ops);
+            layers.extend(l);
+            masks.extend(m);
+        }
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        let sources = &mut *sources;
+        if layers.len() > sources.layers.capacity() as usize
+            || masks.len() > sources.masks.capacity() as usize
+        {
+            return Ok(0);
+        }
+        sources.clock += 1;
+        let clock = sources.clock;
+        let mut uploads = 0;
+        for (keys, pool) in [(&layers, &mut sources.layers), (&masks, &mut sources.masks)] {
+            let mut wanted = Vec::new();
+            for key in keys {
+                if let Some(tile) = program::layer_tile(document, key.0, key.1) {
+                    let resident = pool.is_resident(key, tile);
+                    if resident || uploads < max_uploads {
+                        uploads += usize::from(!resident);
+                        wanted.push((*key, tile));
+                    }
+                }
+            }
+            pool.ensure(&self.queue, &wanted, clock, &mut sources.stats)?;
+        }
+        Ok(uploads)
     }
 
     /// Renders the whole document and returns it as an image: the export
@@ -417,18 +508,56 @@ impl Renderer {
                     })
                     .collect()
             };
-        let layer_slots = sources.layers.ensure(
-            &self.queue,
-            &tiles(&batch.layers)?,
-            sources.clock,
-            &mut sources.stats,
-        )?;
-        let mask_slots = sources.masks.ensure(
-            &self.queue,
-            &tiles(&batch.masks)?,
-            sources.clock,
-            &mut sources.stats,
-        )?;
+        let (layer_slots, mask_slots) = if batch.level == 0 {
+            (
+                sources.layers.ensure(
+                    &self.queue,
+                    &tiles(&batch.layers)?,
+                    sources.clock,
+                    &mut sources.stats,
+                )?,
+                sources.masks.ensure(
+                    &self.queue,
+                    &tiles(&batch.masks)?,
+                    sources.clock,
+                    &mut sources.stats,
+                )?,
+            )
+        } else {
+            let build = Build {
+                device: &self.device,
+                queue: &self.queue,
+                reducer: &sources.reducer,
+                clock: sources.clock,
+            };
+            let layers: Vec<SourceKey> = batch.layers.iter().copied().collect();
+            let masks: Vec<SourceKey> = batch.masks.iter().copied().collect();
+            (
+                ensure_reduced(
+                    &build,
+                    document,
+                    batch.level,
+                    &layers,
+                    &mut sources.reduced_layers,
+                    &mut sources.layers,
+                    &mut sources.stats,
+                )?,
+                ensure_reduced(
+                    &build,
+                    document,
+                    batch.level,
+                    &masks,
+                    &mut sources.reduced_masks,
+                    &mut sources.masks,
+                    &mut sources.stats,
+                )?,
+            )
+        };
+        let (layers_view, masks_view) = if batch.level == 0 {
+            (&sources.layers.view, &sources.masks.view)
+        } else {
+            (&sources.reduced_layers.view, &sources.reduced_masks.view)
+        };
 
         // Adjustments of the batch: their curve tables made resident, then
         // their parameters encoded once each, at a word offset.
@@ -502,8 +631,8 @@ impl Renderer {
         let group = self.bind(
             &self.composite,
             &[
-                wgpu::BindingResource::TextureView(&sources.layers.view),
-                wgpu::BindingResource::TextureView(&sources.masks.view),
+                wgpu::BindingResource::TextureView(layers_view),
+                wgpu::BindingResource::TextureView(masks_view),
                 ops_buffer.as_entire_binding(),
                 jobs_buffer.as_entire_binding(),
                 wgpu::BindingResource::TextureView(target),

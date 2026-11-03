@@ -214,3 +214,90 @@ fn pools_sized_from_the_budget_keep_a_whole_view_resident() {
         "an opacity change uploaded sources"
     );
 }
+
+/// A view shown from the canvas cache, whose sources were evicted, gets
+/// them back while idle (at most 16 per frame): the opacity change that
+/// follows uploads none (docs/decisions/0027, point 1).
+#[test]
+fn idle_frames_bring_back_the_sources_of_the_view() {
+    let Some((gpu, _)) = setup() else { return };
+    let mut document = document();
+    // Pools of 16 layer tiles: the 2 × 2 tiles of the view (with its
+    // margin) need 16, the whole document 24.
+    let renderer = Renderer::with_source_slots(&gpu.device, &gpu.queue, 16, 16).unwrap();
+    let mut canvas = Canvas::with_capacity(&renderer, wgpu::TextureFormat::Rgba8Unorm, 64).unwrap();
+    let view = |x: f32| CanvasView {
+        origin: [x, 0.0],
+        scale: 1.0,
+        viewport: [0.0, 0.0, 200.0, 200.0],
+        background: [0.0; 3],
+        checker: [[0.5; 3], [0.4; 3]],
+        checker_size: 8.0,
+    };
+    let size = (200, 200);
+    let still = PhotoChanges::default();
+    // The left view, then the right one (its sources evict some of the
+    // left ones), then back to the left view, shown from the cache.
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &PhotoChanges::everything(),
+        size,
+        view(0.0),
+    );
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &still,
+        size,
+        view(-512.0),
+    );
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &still,
+        size,
+        view(0.0),
+    );
+    let evicted = renderer.source_stats().evictions;
+    assert!(evicted > 0, "the test needs evicted sources");
+    // Idle frames on the left view.
+    for _ in 0..3 {
+        draw_on(
+            &gpu,
+            &renderer,
+            &mut canvas,
+            &document,
+            &still,
+            size,
+            view(0.0),
+        );
+    }
+    let uploads = renderer.source_stats().uploads;
+    apply(
+        &mut document,
+        r#"{"command": "layer.update", "params": {"id": 2, "opacity": 0.4}}"#,
+    );
+    let mut changes = PhotoChanges::default();
+    changes.properties.insert(cygnus_photo_core::NodeId(2));
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &changes,
+        size,
+        view(0.0),
+    );
+    assert_eq!(
+        renderer.source_stats().uploads,
+        uploads,
+        "the opacity change uploaded sources"
+    );
+}

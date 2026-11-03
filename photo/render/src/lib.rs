@@ -30,6 +30,7 @@ pub mod gpu;
 pub mod histogram;
 pub mod image;
 mod merge;
+mod preview;
 mod program;
 pub mod renderer;
 pub mod shaders;

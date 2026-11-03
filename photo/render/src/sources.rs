@@ -51,6 +51,8 @@ pub struct SourceStats {
     pub capacity: (u32, u32),
     /// Curve lookup tables computed and uploaded.
     pub curve_tables: crate::adjust::CurveTableStats,
+    /// Reduced tiles built for previews (layers and masks).
+    pub reduced: u64,
 }
 
 /// What a pool stores.
@@ -171,6 +173,13 @@ impl TilePool {
             slots.insert(*key, slot);
         }
         Ok(slots)
+    }
+
+    /// Whether `tile` is resident under `key`.
+    pub(crate) fn is_resident(&self, key: &SourceKey, tile: &Arc<Tile>) -> bool {
+        self.entries
+            .get(key)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.tile, tile))
     }
 
     /// Frees the slot of the least recently used tile outside `pinned`.
