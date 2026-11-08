@@ -51,8 +51,12 @@ pub struct SourceStats {
     pub capacity: (u32, u32),
     /// Curve lookup tables computed and uploaded.
     pub curve_tables: crate::adjust::CurveTableStats,
-    /// Reduced tiles built for previews (layers and masks).
+    /// Reduced tiles computed for approximate tiles (layers and masks).
     pub reduced: u64,
+    /// Reduced tiles uploaded to their pools.
+    pub reduced_uploads: u64,
+    /// Memory held by the reduced tiles on the processor, in bytes.
+    pub reduced_bytes: u64,
 }
 
 /// What a pool stores.

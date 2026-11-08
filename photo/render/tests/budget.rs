@@ -116,14 +116,20 @@ fn a_frame_budget_spreads_the_work_without_changing_the_image() {
     assert_eq!(canvas.stats().composited, 2, "the budget was not kept");
     let mut frames = 1;
     while canvas.is_pending() {
+        let before = canvas.stats().composited;
         canvas
             .prepare(&renderer, &document, &PhotoChanges::default(), &view(1.0))
             .unwrap();
+        assert!(
+            canvas.stats().composited - before <= 2,
+            "the budget was not kept"
+        );
         frames += 1;
         assert!(frames < 100, "the work never ends");
     }
-    // 4 × 4 visible tiles at 100 % (one of margin), two per frame.
-    assert_eq!(frames, 8);
+    // 4 × 4 visible tiles at 100 % (one of margin), two per frame, after
+    // the approximate first view.
+    assert!(frames >= 8, "{frames} frames");
     assert_eq!(read_canvas(&gpu, &canvas, SIZE), expected);
 }
 
@@ -218,4 +224,114 @@ fn stale_tiles_stay_shown_until_they_are_rebuilt() {
     );
     assert_ne!(after, before);
     assert!(!has_hole(&after));
+}
+
+/// Mean of each channel over an RGBA image, in 8-bit levels.
+fn mean(image: &[u8]) -> [f64; 3] {
+    let pixels = image.as_chunks::<4>().0;
+    let mut sum = [0f64; 3];
+    for pixel in pixels {
+        for c in 0..3 {
+            sum[c] += f64::from(pixel[c]);
+        }
+    }
+    sum.map(|v| v / pixels.len() as f64)
+}
+
+/// A detailed 1536 × 1536 document: thin stripes that only a reduction in
+/// linear light averages to the right brightness.
+fn stripes() -> Document {
+    let mut commands = vec![
+        r#"{"command": "document.create", "params": {"width": 1536, "height": 1536, "depth": "u16"}}"#.to_owned(),
+        r#"{"command": "layer.create", "params": {"name": "fond"}}"#.to_owned(),
+        r#"{"command": "pixels.fill", "params": {"layer": 1, "rect": {"x": 0, "y": 0, "width": 1536, "height": 1536}, "color": [0.05, 0.1, 0.2, 1.0]}}"#.to_owned(),
+    ];
+    for x in (0..1536).step_by(4) {
+        commands.push(format!(
+            r#"{{"command": "pixels.fill", "params": {{"layer": 1, "rect": {{"x": {x}, "y": 0, "width": 2, "height": 1536}}, "color": [0.95, 0.85, 0.6, 1.0]}}}}"#
+        ));
+    }
+    build_json(&format!("[{}]", commands.join(",")))
+}
+
+#[test]
+fn a_first_view_shows_reduced_sources_first_then_the_exact_image() {
+    let Some((gpu, renderer)) = setup() else {
+        return;
+    };
+    let document = stripes();
+    // The whole document at a quarter: level 2, 2 × 2 tiles from 36 tiles
+    // of level 0.
+    let quarter = view(0.25);
+    let mut reference = Canvas::with_capacity(&renderer, FORMAT, 256).unwrap();
+    let exact = draw_on(
+        &gpu,
+        &renderer,
+        &mut reference,
+        &document,
+        &PhotoChanges::everything(),
+        SIZE,
+        quarter,
+    );
+
+    // The reduced sources are computed by worker threads, slowly in a debug
+    // build: a previewing canvas computes them first, so that the first
+    // frame below finds them ready, as a fast build would.
+    let reduced = renderer.source_stats().reduced;
+    let mut warm = Canvas::with_capacity(&renderer, FORMAT, 256).unwrap();
+    warm.set_preview(true);
+    draw_on(
+        &gpu,
+        &renderer,
+        &mut warm,
+        &document,
+        &PhotoChanges::everything(),
+        SIZE,
+        quarter,
+    );
+    assert!(renderer.source_stats().reduced > reduced, "no reduced tile");
+
+    let mut canvas = Canvas::with_capacity(&renderer, FORMAT, 256).unwrap();
+    canvas.set_frame_budget(budget(4));
+    let mut changes = PhotoChanges::everything();
+    let mut frames = 0;
+    let approximate = loop {
+        canvas
+            .prepare(&renderer, &document, &changes, &quarter)
+            .unwrap();
+        changes = PhotoChanges::default();
+        let image = read_canvas(&gpu, &canvas, SIZE);
+        if !has_hole(&image) {
+            break image;
+        }
+        frames += 1;
+        assert!(frames < 10_000, "nothing shown");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert!(
+        canvas.is_pending(),
+        "the exact image came before any approximation"
+    );
+    assert_eq!(frames, 0, "the reduced sources were not reused");
+    // Same mean brightness as the exact image (0021): within a level.
+    let (a, b) = (mean(&approximate), mean(&exact));
+    for c in 0..3 {
+        assert!(
+            (a[c] - b[c]).abs() < 1.0,
+            "channel {c}: approximate {:.2}, exact {:.2}",
+            a[c],
+            b[c]
+        );
+    }
+    // Then the exact image, identical to a canvas without budget.
+    let refined = draw_on(
+        &gpu,
+        &renderer,
+        &mut canvas,
+        &document,
+        &PhotoChanges::default(),
+        SIZE,
+        quarter,
+    );
+    assert_eq!(refined, exact);
 }

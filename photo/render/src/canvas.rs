@@ -60,9 +60,10 @@ pub struct CanvasView {
 /// Work counters, for tests and the benchmark.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CanvasStats {
-    /// Tiles composited from layers: level 0, or a coarser level from
-    /// reduced sources.
+    /// Tiles of level 0 composited from layers.
     pub composited: u64,
+    /// Approximate tiles composited from reduced sources.
+    pub approximated: u64,
     /// Tiles of levels above 0 built from their children.
     pub downsampled: u64,
     /// Tiles evicted to make room.
@@ -811,6 +812,65 @@ impl Canvas {
         Ok(Some((slot, approx)))
     }
 
+    /// Whether every visible tile of `level` shows something: its own tile
+    /// or a coarser one.
+    fn covered(&self, level: u32, top: u32, view: &CanvasView) -> bool {
+        self.visible(level, view).into_iter().all(|key| {
+            (level..=top).any(|coarser| {
+                let shift = coarser - level;
+                let key = TileKey {
+                    level: coarser,
+                    tx: key.tx >> shift,
+                    ty: key.ty >> shift,
+                };
+                self.entries.get(&key).is_some_and(|entry| entry.shown)
+            })
+        })
+    }
+
+    /// Level composed from reduced sources this frame (0: none), docs/
+    /// decisions/0024 and 0034. While a parameter is dragged, the displayed
+    /// level (from level 1); otherwise, within a frame budget, when part of
+    /// the view shows nothing yet (a coarse first view). The level is the
+    /// finest, from the displayed one, whose reduced sources fit in their
+    /// memory budget, and at most [`crate::preview::MAX_PREVIEW_LEVEL`]
+    /// (coarser levels are built from it).
+    fn approx_level(
+        &self,
+        renderer: &Renderer,
+        document: &Document,
+        level: u32,
+        top: u32,
+        view: &CanvasView,
+    ) -> u32 {
+        use crate::preview::{MAX_PREVIEW_LEVEL, REDUCED_TILE_BYTES};
+        let wanted = if self.preview {
+            level >= 1
+        } else {
+            self.budget.is_some() && !self.covered(level, top, view)
+        };
+        if !wanted {
+            return 0;
+        }
+        if level >= MAX_PREVIEW_LEVEL {
+            return MAX_PREVIEW_LEVEL;
+        }
+        // Tiles with pixels per output tile, at most.
+        let sources = document.pixels.layers().count() as u64
+            + document
+                .nodes
+                .values()
+                .filter(|node| matches!(node.kind, cygnus_photo_core::NodeKind::Embedded { .. }))
+                .count() as u64;
+        let budget = renderer.reduced_budget();
+        (level.max(1)..=MAX_PREVIEW_LEVEL.min(top.max(1)))
+            .find(|approx| {
+                self.visible(*approx, view).len() as u64 * sources.max(1) * REDUCED_TILE_BYTES
+                    <= budget
+            })
+            .unwrap_or(0)
+    }
+
     /// Plans the work to show `level`: visible tiles pinned, then planned,
     /// approximate ones first when `approx_level` is set. Returns the work
     /// and whether some tile could not be planned this frame.
@@ -824,16 +884,33 @@ impl Canvas {
     ) -> Result<(Vec<Op>, bool), OverBudget> {
         let visible = self.visible(level, view);
         // Building a coarse tile keeps one chain of children per level.
-        if visible.len() as u64 + 4 * u64::from(level) + 1 > u64::from(self.capacity) {
+        let chain = 4 * u64::from(level) + 1;
+        if visible.len() as u64 + chain > u64::from(self.capacity) {
             return Err(OverBudget { partial: false });
         }
+        // Approximate tiles: those of the visible tiles when the level is
+        // coarser than the approximate one, else the visible tiles of the
+        // approximate level, shown enlarged meanwhile.
+        let mut approx_level = approx_level;
+        let approx_keys = if approx_level > level {
+            self.visible(approx_level, view)
+        } else {
+            visible.clone()
+        };
+        if approx_level > level
+            && (visible.len() + approx_keys.len()) as u64 + chain > u64::from(self.capacity)
+        {
+            approx_level = 0;
+        }
+        let exact = exact || approx_level == 0;
         self.planned.clear();
         // Visible tiles, resident or not, are never evicted.
         let mut pinned: HashSet<TileKey> = visible.iter().copied().collect();
         let mut ops = Vec::new();
         let mut waiting = false;
         if approx_level > 0 {
-            for key in &visible {
+            pinned.extend(approx_keys.iter().copied());
+            for key in &approx_keys {
                 waiting |= self
                     .ensure(*key, approx_level, ready, &mut pinned, &mut ops)?
                     .is_none();
@@ -915,7 +992,11 @@ impl Canvas {
                             &self.cache.view,
                         )?;
                     }
-                    self.stats.composited += targets.len() as u64;
+                    if level == 0 {
+                        self.stats.composited += targets.len() as u64;
+                    } else {
+                        self.stats.approximated += targets.len() as u64;
+                    }
                     spending.spend(targets.len() as f64);
                 }
                 Op::Downsample { .. } => {
@@ -1020,6 +1101,7 @@ impl Canvas {
         view: &CanvasView,
     ) -> Result<(), RenderError> {
         let resized = self.invalidate(changes, document);
+        renderer.begin_frame(document);
         self.fit_capacity(
             renderer.device(),
             (view.viewport[2], view.viewport[3]),
@@ -1047,11 +1129,7 @@ impl Canvas {
             )
         };
         let (ops, waiting) = loop {
-            let approx_level = if self.preview {
-                level.min(crate::preview::MAX_PREVIEW_LEVEL)
-            } else {
-                0
-            };
+            let approx_level = self.approx_level(renderer, document, level, top, view);
             match self.plan_level(level, view, approx_level, !self.preview, &mut ready) {
                 Ok(plan) => break plan,
                 Err(OverBudget { partial }) if level < top => {

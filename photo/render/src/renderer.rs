@@ -34,7 +34,7 @@ use cygnus_photo_core::{Document, NodeId, NodeKind};
 use crate::adjust::{self, CurveTables};
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
-use crate::preview::{Build, ReducedPool, Reducer, ensure_reduced};
+use crate::preview::ReducedCache;
 use crate::program::{self, Op};
 use crate::shaders;
 use crate::sources::{PoolKind, SourceKey, SourceStats, TilePool};
@@ -157,10 +157,11 @@ struct Sources {
     clock: u64,
     stats: SourceStats,
     curves: CurveTables,
-    /// Reduced tiles of the previews (docs/decisions/0027, B7-lite).
-    reduced_layers: ReducedPool,
-    reduced_masks: ReducedPool,
-    reducer: Reducer,
+    /// Reduced tiles of the approximate tiles (docs/decisions/0034, T3):
+    /// computed on the processor, uploaded to their own pools.
+    reduced: ReducedCache,
+    reduced_layers: TilePool,
+    reduced_masks: TilePool,
 }
 
 /// Tile renderer bound to one GPU device.
@@ -248,13 +249,9 @@ impl Renderer {
                 clock: 0,
                 stats,
                 curves: CurveTables::new(device, queue),
-                reduced_layers: ReducedPool::new(
-                    device,
-                    PoolKind::Layers,
-                    (layer_slots / 4).max(16),
-                ),
-                reduced_masks: ReducedPool::new(device, PoolKind::Masks, (mask_slots / 4).max(16)),
-                reducer: Reducer::new(device),
+                reduced: ReducedCache::new(),
+                reduced_layers: TilePool::new(device, PoolKind::Layers, (layer_slots / 4).max(16)),
+                reduced_masks: TilePool::new(device, PoolKind::Masks, (mask_slots / 4).max(16)),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
@@ -272,6 +269,8 @@ impl Renderer {
         let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
         SourceStats {
             curve_tables: sources.curves.stats,
+            reduced: sources.reduced.stats.built,
+            reduced_bytes: sources.reduced.stats.bytes,
             ..sources.stats
         }
     }
@@ -355,17 +354,40 @@ impl Renderer {
         Ok(batches)
     }
 
+    /// Starts a frame of the canvas: takes in the reduced tiles computed
+    /// since the previous one.
+    pub(crate) fn begin_frame(&self, document: &Document) {
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        sources.reduced.begin_frame(document);
+    }
+
+    /// Memory budget of the reduced sources, in bytes.
+    pub(crate) fn reduced_budget(&self) -> u64 {
+        let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        sources.reduced.budget()
+    }
+
     /// Whether the reduced sources of the output tile `coord` of `level`
-    /// are ready to be composed. Reduced tiles are built on demand by the
-    /// composition itself for now.
+    /// are computed; requests the missing ones. With `wait`, waits for
+    /// them. A tile whose program fails counts as ready: the composition
+    /// reports the error.
     pub(crate) fn reduced_ready(
         &self,
-        _document: &Document,
-        _coord: TileCoord,
-        _level: u32,
-        _blocking: bool,
+        document: &Document,
+        coord: TileCoord,
+        level: u32,
+        wait: bool,
     ) -> bool {
-        true
+        let Ok(ops) = program::tile_program_at(document, program::At { coord, level }) else {
+            return true;
+        };
+        let (layers, masks) = program::sources(&ops);
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        let layers_ready = sources
+            .reduced
+            .ready_or_wait(document, &layers, level, wait);
+        let masks_ready = sources.reduced.ready_or_wait(document, &masks, level, wait);
+        layers_ready && masks_ready
     }
 
     /// Makes the sources of the output tiles `coords` resident while the
@@ -537,34 +559,44 @@ impl Renderer {
                 )?,
             )
         } else {
-            let build = Build {
-                device: &self.device,
-                queue: &self.queue,
-                reducer: &sources.reducer,
-                clock: sources.clock,
+            // Reduced tiles, current since the canvas checked them.
+            let reduced = |cache: &mut ReducedCache,
+                           keys: &BTreeSet<SourceKey>|
+             -> Result<Vec<(SourceKey, Arc<Tile>)>, RenderError> {
+                keys.iter()
+                    .map(|key| {
+                        cache
+                            .get(document, *key, batch.level)
+                            .map(|tile| (*key, tile))
+                            .ok_or(RenderError::Unsupported(
+                                "composing before its reduced sources are computed",
+                            ))
+                    })
+                    .collect()
             };
-            let layers: Vec<SourceKey> = batch.layers.iter().copied().collect();
-            let masks: Vec<SourceKey> = batch.masks.iter().copied().collect();
-            (
-                ensure_reduced(
-                    &build,
-                    document,
-                    batch.level,
-                    &layers,
-                    &mut sources.reduced_layers,
-                    &mut sources.layers,
-                    &mut sources.stats,
+            let layers = reduced(&mut sources.reduced, &batch.layers)?;
+            let masks = reduced(&mut sources.reduced, &batch.masks)?;
+            let layer_refs: Vec<(SourceKey, &Arc<Tile>)> =
+                layers.iter().map(|(key, tile)| (*key, tile)).collect();
+            let mask_refs: Vec<(SourceKey, &Arc<Tile>)> =
+                masks.iter().map(|(key, tile)| (*key, tile)).collect();
+            let mut uploads = SourceStats::default();
+            let slots = (
+                sources.reduced_layers.ensure(
+                    &self.queue,
+                    &layer_refs,
+                    sources.clock,
+                    &mut uploads,
                 )?,
-                ensure_reduced(
-                    &build,
-                    document,
-                    batch.level,
-                    &masks,
-                    &mut sources.reduced_masks,
-                    &mut sources.masks,
-                    &mut sources.stats,
+                sources.reduced_masks.ensure(
+                    &self.queue,
+                    &mask_refs,
+                    sources.clock,
+                    &mut uploads,
                 )?,
-            )
+            );
+            sources.stats.reduced_uploads += uploads.uploads;
+            slots
         };
         let (layers_view, masks_view) = if batch.level == 0 {
             (&sources.layers.view, &sources.masks.view)

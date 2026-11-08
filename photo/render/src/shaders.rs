@@ -37,7 +37,6 @@ const EXPORT: &str = include_str!("shaders/export.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
 const DOWNSAMPLE: &str = include_str!("shaders/downsample.wgsl");
 const HISTOGRAM: &str = include_str!("shaders/histogram.wgsl");
-const REDUCE: &str = include_str!("shaders/reduce.wgsl");
 
 /// Name of the WGSL constant holding the code of `mode`, such as
 /// `BLEND_SOFT_LIGHT`.
@@ -106,11 +105,6 @@ pub fn histogram() -> String {
     assemble(HISTOGRAM, &[COLOR])
 }
 
-/// Reduction of source tiles for previews.
-pub fn reduce() -> String {
-    assemble(REDUCE, &[])
-}
-
 /// Display pass: composite tiles to the screen.
 pub fn display() -> String {
     assemble(DISPLAY, &[COLOR])
@@ -139,7 +133,6 @@ mod tests {
         validate("display", &display());
         validate("downsample", &downsample());
         validate("histogram", &histogram());
-        validate("reduce", &reduce());
     }
 
     #[test]

@@ -109,6 +109,7 @@ fn a_drag_previews_from_reduced_sources_then_refines_exactly() {
     canvas.set_preview(true);
     let changes = curve(&mut document, 0.62);
     let composited = canvas.stats().composited;
+    let approximated = canvas.stats().approximated;
     let reduced = renderer.source_stats().reduced;
     let preview = draw_on(
         &gpu,
@@ -120,7 +121,8 @@ fn a_drag_previews_from_reduced_sources_then_refines_exactly() {
         view(),
     );
     // 2 × 2 tiles of level 2, each a single composition.
-    assert_eq!(canvas.stats().composited - composited, 4);
+    assert_eq!(canvas.stats().approximated - approximated, 4);
+    assert_eq!(canvas.stats().composited, composited);
     assert!(
         renderer.source_stats().reduced > reduced,
         "no reduced tile built"

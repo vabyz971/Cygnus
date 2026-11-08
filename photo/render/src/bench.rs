@@ -505,6 +505,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "fps_at_median": if median > 0.0 { 1000.0 / median } else { 0.0 },
             "p95_within_16_7_ms": percentile(&sorted, 0.95) <= 1000.0 / 60.0,
             "tiles_composited": previous.composited - start.composited,
+            "tiles_approximated": previous.approximated - start.approximated,
             "tiles_downsampled": previous.downsampled - start.downsampled,
             "tiles_evicted": previous.evicted - start.evicted,
             "source_tiles_uploaded": previous_sources.uploads - start_sources.uploads,
@@ -512,6 +513,8 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "curve_tables_uploaded": previous_sources.curve_tables.uploads - start_sources.curve_tables.uploads,
             "curve_table_bytes": previous_sources.curve_tables.bytes - start_sources.curve_tables.bytes,
             "reduced_tiles_built": previous_sources.reduced - start_sources.reduced,
+            "reduced_tiles_uploaded": previous_sources.reduced_uploads - start_sources.reduced_uploads,
+            "reduced_bytes_held": previous_sources.reduced_bytes,
         }));
     }
     let curve_cpu = curve_table_time();
