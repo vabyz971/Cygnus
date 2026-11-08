@@ -76,6 +76,15 @@ pub const TOLERANCE_UNITS: u16 = 1;
 /// image, in 16-bit units (docs/decisions/0016).
 pub const MEAN_UNITS_BOUND: f64 = 0.01;
 
+/// Largest difference allowed between adapters for images with filters
+/// (docs/decisions/0023 and 0040, cases named `filter-*`): the blur rounds
+/// its two passes to 16 bits, where a tie may round differently from one
+/// adapter to another (2 units measured with the blur alone), and the
+/// unsharp mask amplifies that gap by 1 + its amount (3 units measured at
+/// 150 % between the RTX 3080 Ti and lavapipe).
+#[allow(dead_code)]
+pub const FILTER_TOLERANCE_UNITS: u16 = 4;
+
 /// Outcome of comparing two 16-bit exports.
 #[derive(Debug)]
 pub struct Comparison {
@@ -98,6 +107,13 @@ impl Comparison {
     /// not limited: one color off by one unit fills a whole flat area.
     pub fn passes(&self) -> bool {
         self.beyond_tolerance == 0 && self.mean_units <= MEAN_UNITS_BOUND
+    }
+
+    /// Tolerance of the images with filters: [`FILTER_TOLERANCE_UNITS`],
+    /// the same mean bound.
+    #[allow(dead_code)]
+    pub fn passes_with_filters(&self) -> bool {
+        self.max_units <= FILTER_TOLERANCE_UNITS && self.mean_units <= MEAN_UNITS_BOUND
     }
 }
 

@@ -186,7 +186,7 @@ impl Rect {
 
 /// Largest nesting of groups and clipping sets the renderer composes in
 /// one pass (its register stack, docs/decisions/0021). Commands refuse to
-/// go beyond until the filter stages of step B10 lift the limit.
+/// go beyond: the filter stages of B10 (0040) do not lift this limit.
 pub const MAX_NESTING: usize = 8;
 
 /// How a group composes its children (docs/decisions/0020).

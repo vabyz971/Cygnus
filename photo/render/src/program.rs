@@ -26,6 +26,11 @@
 //!   group: the base at full opacity, the clipped layers in source-atop,
 //!   then the whole blended with the opacity and mode of the base.
 //!
+//! - A filter layer is one `Filter` operation (docs/decisions/0023): its
+//!   input is the accumulator at that point, over a neighbourhood, so the
+//!   renderer first composes the program cut before it (a stage) on the
+//!   tiles around, filters that stage, and the operation reads the result.
+//!
 //! Nodes that contribute nothing to the tile (hidden, no pixels there,
 //! empty groups) produce no operation.
 
@@ -58,6 +63,9 @@ pub(crate) enum Code {
     PopClipped = 6,
     /// Apply an adjustment to the accumulator (docs/decisions/0028).
     Adjust = 7,
+    /// Mix the filtered accumulator, computed by the filter passes, into
+    /// the accumulator (docs/decisions/0023).
+    Filter = 8,
 }
 
 /// Mask of an operation, as the shader evaluates it: coverage `m` read in
@@ -90,7 +98,7 @@ pub(crate) struct Op {
     pub(crate) mode: BlendMode,
     pub(crate) opacity: f32,
     pub(crate) mask: MaskRef,
-    /// Adjustment layer applied by `Adjust`.
+    /// Adjustment layer applied by `Adjust`, filter layer of `Filter`.
     pub(crate) adjustment: Option<NodeId>,
 }
 
@@ -155,10 +163,55 @@ pub(crate) fn tile_program_at(document: &Document, at: At) -> Result<Vec<Op>, Re
                 }
             }
             Code::PopIsolated | Code::PopPassThrough | Code::PopClipped => depth -= 1,
-            Code::Layer | Code::Clipped | Code::Adjust => {}
+            Code::Layer | Code::Clipped | Code::Adjust | Code::Filter => {}
         }
     }
     Ok(ops)
+}
+
+/// Filter layers of a program, in order.
+pub(crate) fn filters(ops: &[Op]) -> Vec<NodeId> {
+    ops.iter()
+        .filter(|op| op.code == Code::Filter)
+        .filter_map(|op| op.adjustment)
+        .collect()
+}
+
+/// The program cut just before the operation of filter `id`: the stage
+/// whose result the filter reads. `None` if the program has no such
+/// filter.
+pub(crate) fn stage(ops: &[Op], id: NodeId) -> Option<&[Op]> {
+    ops.iter()
+        .position(|op| op.code == Code::Filter && op.adjustment == Some(id))
+        .map(|end| &ops[..end])
+}
+
+/// Pixels of neighbourhood a filter reads on each side at pyramid `level`
+/// (its radius divided by 2^level, docs/decisions/0023): three standard
+/// deviations, rounded up.
+pub(crate) fn filter_margin(filter: &cygnus_photo_core::Filter, level: u32) -> u32 {
+    let sigma = match *filter {
+        cygnus_photo_core::Filter::GaussianBlur { radius }
+        | cygnus_photo_core::Filter::UnsharpMask { radius, .. } => f64::from(radius),
+    };
+    (3.0 * sigma / f64::from(1u32 << level)).ceil().max(1.0) as u32
+}
+
+/// Tiles of neighbourhood on each side that a change of one tile reaches
+/// through the visible filters of `document`, at level 0: the sum of their
+/// margins, in tiles.
+pub(crate) fn filter_reach(document: &Document) -> u32 {
+    document
+        .nodes
+        .values()
+        .filter(|node| node.visible)
+        .filter_map(|node| match &node.kind {
+            NodeKind::Filter { filter } => {
+                Some(filter_margin(filter, 0).div_ceil(cygnus_photo_core::pixels::TILE_SIZE))
+            }
+            _ => None,
+        })
+        .sum()
 }
 
 /// Layer tiles and mask tiles a program reads.
@@ -314,7 +367,15 @@ fn node(
             });
         }
         NodeKind::Filter { .. } => {
-            return Err(RenderError::Unsupported("rendering a filter layer"));
+            // Like an adjustment, applied to the accumulator in place.
+            out.push(Op {
+                code: Code::Filter,
+                source: None,
+                mode,
+                opacity,
+                mask,
+                adjustment: Some(id),
+            });
         }
         NodeKind::Embedded { placement, .. } => {
             // Placed at the document origin in J3 (no command moves it):

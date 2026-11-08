@@ -32,6 +32,7 @@ use cygnus_photo_core::pixels::{TILE_SIZE, Tile, TileCoord, tiles_in};
 use cygnus_photo_core::{Document, NodeId, NodeKind};
 
 use crate::adjust::{self, CurveTables};
+use crate::filter::{self, FilterPasses};
 use crate::format::COMPUTE_FORMAT;
 use crate::image::{ExportBits, Image};
 use crate::preview::ReducedCache;
@@ -162,6 +163,8 @@ struct Sources {
     reduced: ReducedCache,
     reduced_layers: TilePool,
     reduced_masks: TilePool,
+    /// Pools and pipelines of the filter stages.
+    filters: FilterPasses,
 }
 
 /// Tile renderer bound to one GPU device.
@@ -190,6 +193,8 @@ pub(crate) struct Batch {
     pub(crate) outputs: Vec<OutputTile>,
     layers: BTreeSet<SourceKey>,
     masks: BTreeSet<SourceKey>,
+    /// Filter stages to run before the outputs (docs/decisions/0023).
+    stages: Vec<filter::FilterStage>,
 }
 
 impl Batch {
@@ -199,6 +204,7 @@ impl Batch {
             outputs: Vec::new(),
             layers: BTreeSet::new(),
             masks: BTreeSet::new(),
+            stages: Vec::new(),
         }
     }
 }
@@ -252,6 +258,7 @@ impl Renderer {
                 reduced: ReducedCache::new(),
                 reduced_layers: TilePool::new(device, PoolKind::Layers, (layer_slots / 4).max(16)),
                 reduced_masks: TilePool::new(device, PoolKind::Masks, (mask_slots / 4).max(16)),
+                filters: FilterPasses::new(device),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
@@ -321,10 +328,40 @@ impl Renderer {
                 )
             }
         };
+        let outputs: Vec<TileCoord> = outputs.into_iter().collect();
+        let mut programs: HashMap<TileCoord, Vec<Op>> = HashMap::new();
+        for coord in &outputs {
+            programs.insert(
+                *coord,
+                program::tile_program_at(
+                    document,
+                    program::At {
+                        coord: *coord,
+                        level,
+                    },
+                )?,
+            );
+        }
+        let filtered = outputs.iter().any(|coord| {
+            programs
+                .get(coord)
+                .is_some_and(|ops| !program::filters(ops).is_empty())
+        });
+        if filtered {
+            return self.plan_filtered(
+                document,
+                &outputs,
+                max_outputs,
+                target,
+                level,
+                (layer_slots, mask_slots),
+                &mut programs,
+            );
+        }
         let mut batches = Vec::new();
         let mut batch = Batch::new(level);
         for coord in outputs {
-            let ops = program::tile_program_at(document, program::At { coord, level })?;
+            let ops = programs.remove(&coord).unwrap_or_default();
             let (layers, masks) = program::sources(&ops);
             for (count, slots) in [(layers.len(), layer_slots), (masks.len(), mask_slots)] {
                 if count > slots {
@@ -349,6 +386,84 @@ impl Renderer {
             });
         }
         if !batch.outputs.is_empty() {
+            batches.push(batch);
+        }
+        Ok(batches)
+    }
+
+    /// [`Self::plan_at`] for programs with filters: each batch also holds
+    /// its filter stages, whose tiles around the outputs must fit in the
+    /// filter pools, and whose sources must fit in the source pools with
+    /// those of the outputs.
+    #[allow(clippy::too_many_arguments)]
+    fn plan_filtered(
+        &self,
+        document: &Document,
+        outputs: &[TileCoord],
+        max_outputs: usize,
+        mut target: impl FnMut(usize, TileCoord) -> u32,
+        level: u32,
+        (layer_slots, mask_slots): (usize, usize),
+        programs: &mut HashMap<TileCoord, Vec<Op>>,
+    ) -> Result<Vec<Batch>, RenderError> {
+        let fits = |plan: &filter::StagePlan| {
+            plan.fits() && plan.layers.len() <= layer_slots && plan.masks.len() <= mask_slots
+        };
+        let too_far = |plan: &filter::StagePlan| {
+            if plan.fits() {
+                RenderError::TooManyLayers {
+                    count: plan.layers.len().max(plan.masks.len()),
+                }
+            } else {
+                RenderError::Unsupported("filters reaching further than their GPU pools hold")
+            }
+        };
+        let mut groups: Vec<(Vec<TileCoord>, filter::StagePlan)> = Vec::new();
+        let mut current: Vec<TileCoord> = Vec::new();
+        let mut current_plan: Option<filter::StagePlan> = None;
+        for coord in outputs {
+            let mut candidate = current.clone();
+            candidate.push(*coord);
+            let plan = filter::plan(document, &candidate, level, programs)?;
+            let accepted = candidate.len() <= max_outputs && plan.as_ref().is_none_or(fits);
+            if accepted {
+                current = candidate;
+                current_plan = plan;
+                continue;
+            }
+            if let Some(plan) = plan.as_ref()
+                && current.is_empty()
+            {
+                return Err(too_far(plan));
+            }
+            if let Some(plan) = current_plan.take() {
+                groups.push((std::mem::take(&mut current), plan));
+            }
+            let alone = filter::plan(document, &[*coord], level, programs)?;
+            if let Some(plan) = alone.as_ref()
+                && !fits(plan)
+            {
+                return Err(too_far(plan));
+            }
+            current = vec![*coord];
+            current_plan = alone;
+        }
+        if let Some(plan) = current_plan.take() {
+            groups.push((current, plan));
+        }
+        let mut batches = Vec::with_capacity(groups.len());
+        for (coords, plan) in groups {
+            let mut batch = Batch::new(level);
+            for (index, coord) in coords.into_iter().enumerate() {
+                batch.outputs.push(OutputTile {
+                    coord,
+                    target: target(index, coord),
+                    ops: programs.get(&coord).cloned().unwrap_or_default(),
+                });
+            }
+            batch.layers = plan.layers;
+            batch.masks = plan.masks;
+            batch.stages = plan.stages;
             batches.push(batch);
         }
         Ok(batches)
@@ -387,7 +502,19 @@ impl Renderer {
         let Ok(ops) = program::tile_program_at(document, program::At { coord, level }) else {
             return true;
         };
-        let (layers, masks) = program::sources(&ops);
+        let (mut layers, mut masks) = program::sources(&ops);
+        if !program::filters(&ops).is_empty() {
+            // Filter stages read the sources of the tiles around too.
+            let mut programs = HashMap::from([(coord, ops)]);
+            match filter::plan(document, &[coord], level, &mut programs) {
+                Ok(Some(plan)) => {
+                    layers = plan.layers.into_iter().collect();
+                    masks = plan.masks.into_iter().collect();
+                }
+                Ok(None) => {}
+                Err(_) => return true,
+            }
+        }
         let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
         let layers_ready = sources
             .reduced
@@ -610,11 +737,19 @@ impl Renderer {
             (&sources.reduced_layers.view, &sources.reduced_masks.view)
         };
 
-        // Adjustments of the batch: their curve tables made resident, then
-        // their parameters encoded once each, at a word offset.
+        // Adjustments of the batch, stages included: their curve tables
+        // made resident, then their parameters encoded once each, at a word
+        // offset.
+        let programs = batch.outputs.iter().map(|tile| tile.ops.as_slice()).chain(
+            batch
+                .stages
+                .iter()
+                .flat_map(|stage| stage.region.iter().map(|(_, ops)| ops.as_slice())),
+        );
         let mut adjustments: Vec<(NodeId, &cygnus_photo_core::Adjustment)> = Vec::new();
-        for op in batch.outputs.iter().flat_map(|tile| &tile.ops) {
-            if let Some(id) = op.adjustment
+        for op in programs.flatten() {
+            if op.code == program::Code::Adjust
+                && let Some(id) = op.adjustment
                 && !adjustments.iter().any(|(seen, _)| *seen == id)
                 && let Some(NodeKind::Adjustment { adjustment }) =
                     document.node(id).map(|node| &node.kind)
@@ -634,65 +769,191 @@ impl Renderer {
             adjust::encode(adjustment, &sources.curves, &mut params)?;
             placed.insert(*id, (offset, adjust::kind(adjustment)));
         }
+        if !batch.stages.is_empty() {
+            let (stage_tiles, rows, filtered) = (
+                batch
+                    .stages
+                    .iter()
+                    .map(|s| s.region.len())
+                    .max()
+                    .unwrap_or(0),
+                batch.stages.iter().map(|s| s.rows.len()).max().unwrap_or(0),
+                batch.stages.iter().map(|s| s.need.len()).sum(),
+            );
+            sources.filters.stage.reserve(&self.device, stage_tiles);
+            sources.filters.rows.reserve(&self.device, rows);
+            sources.filters.filtered.reserve(&self.device, filtered);
+        }
+        let params_buffer = self.storage("cygnus adjustment parameters", &params);
 
-        // One job per output tile, eight words per operation.
-        let mut ops: Vec<u32> = Vec::new();
-        let mut jobs: Vec<u32> = Vec::new();
-        for tile in &batch.outputs {
-            jobs.extend([
-                (ops.len() / OP_WORDS) as u32,
-                tile.ops.len() as u32,
-                tile.target,
-                0,
-            ]);
-            for op in &tile.ops {
-                // An adjustment reads its parameters at `slot`, its kind in
-                // the flags.
-                let (slot, kind) = match op.adjustment {
-                    Some(id) => placed.get(&id).copied().ok_or(RenderError::Unsupported(
-                        "an adjustment operation without its layer",
-                    ))?,
-                    None => (
-                        op.source
-                            .and_then(|key| layer_slots.get(&key).copied())
-                            .unwrap_or(0),
-                        0,
-                    ),
-                };
-                let mask_slot = op
-                    .mask
-                    .tile
-                    .and_then(|key| mask_slots.get(&key).copied())
-                    .unwrap_or(NO_SLOT);
-                ops.extend([
-                    op.code as u32,
-                    slot,
-                    op.mode.code(),
-                    op.opacity.to_bits(),
-                    mask_slot,
-                    op.mask.value.to_bits(),
-                    op.mask.density.to_bits(),
-                    u32::from(op.mask.inverted) | kind << 8,
+        // One job per tile, eight words per operation. A filter operation
+        // reads the filtered tile of its filter at the same place.
+        let encode = |tiles: &[(u32, &[Op], TileCoord)],
+                      filtered: &HashMap<(NodeId, TileCoord), u32>|
+         -> Result<(Vec<u32>, Vec<u32>), RenderError> {
+            let mut ops: Vec<u32> = Vec::new();
+            let mut jobs: Vec<u32> = Vec::new();
+            for (target, program, coord) in tiles {
+                jobs.extend([
+                    (ops.len() / OP_WORDS) as u32,
+                    program.len() as u32,
+                    *target,
+                    0,
                 ]);
+                for op in *program {
+                    // An adjustment reads its parameters at `slot`, its kind
+                    // in the flags.
+                    let (slot, kind) = match (op.code, op.adjustment) {
+                        (program::Code::Filter, Some(id)) => (
+                            filtered.get(&(id, *coord)).copied().ok_or(
+                                RenderError::Unsupported("a filter operation without its result"),
+                            )?,
+                            0,
+                        ),
+                        (_, Some(id)) => placed.get(&id).copied().ok_or(
+                            RenderError::Unsupported("an adjustment operation without its layer"),
+                        )?,
+                        (_, None) => (
+                            op.source
+                                .and_then(|key| layer_slots.get(&key).copied())
+                                .unwrap_or(0),
+                            0,
+                        ),
+                    };
+                    let mask_slot = op
+                        .mask
+                        .tile
+                        .and_then(|key| mask_slots.get(&key).copied())
+                        .unwrap_or(NO_SLOT);
+                    ops.extend([
+                        op.code as u32,
+                        slot,
+                        op.mode.code(),
+                        op.opacity.to_bits(),
+                        mask_slot,
+                        op.mask.value.to_bits(),
+                        op.mask.density.to_bits(),
+                        u32::from(op.mask.inverted) | kind << 8,
+                    ]);
+                }
+            }
+            Ok((ops, jobs))
+        };
+        let filtered_view = &sources.filters.filtered.pool.view;
+        let composite = |encoder: &mut wgpu::CommandEncoder,
+                         tiles: &[(u32, &[Op], TileCoord)],
+                         filtered: &HashMap<(NodeId, TileCoord), u32>,
+                         target: &wgpu::TextureView|
+         -> Result<(), RenderError> {
+            let (ops, jobs) = encode(tiles, filtered)?;
+            let ops_buffer = self.storage("cygnus composite ops", &ops);
+            let jobs_buffer = self.storage("cygnus composite jobs", &jobs);
+            let group = self.bind(
+                &self.composite,
+                &[
+                    wgpu::BindingResource::TextureView(layers_view),
+                    wgpu::BindingResource::TextureView(masks_view),
+                    ops_buffer.as_entire_binding(),
+                    jobs_buffer.as_entire_binding(),
+                    wgpu::BindingResource::TextureView(target),
+                    params_buffer.as_entire_binding(),
+                    sources.curves.buffer.as_entire_binding(),
+                    wgpu::BindingResource::TextureView(filtered_view),
+                ],
+            );
+            Self::dispatch(encoder, &self.composite, &group, tiles.len() as u32);
+            Ok(())
+        };
+
+        // Filter stages, in program order (docs/decisions/0023).
+        let mut filtered: HashMap<(NodeId, TileCoord), u32> = HashMap::new();
+        let passes = &sources.filters;
+        for stage in &batch.stages {
+            let region: Vec<(u32, &[Op], TileCoord)> = stage
+                .region
+                .iter()
+                .enumerate()
+                .map(|(slot, (coord, ops))| (slot as u32, ops.as_slice(), *coord))
+                .collect();
+            composite(encoder, &region, &filtered, &passes.stage.pool.view)?;
+            let stage_pages = filter::page_table(
+                &region
+                    .iter()
+                    .map(|(slot, _, coord)| (*coord, *slot))
+                    .collect::<Vec<_>>(),
+            );
+            let rows: Vec<(TileCoord, u32)> = stage
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(slot, coord)| (*coord, slot as u32))
+                .collect();
+            let first = filtered.len() as u32;
+            let need: Vec<(TileCoord, u32)> = stage
+                .need
+                .iter()
+                .enumerate()
+                .map(|(index, coord)| (*coord, first + index as u32))
+                .collect();
+            let words = filter::params(document, stage, batch.level);
+            let weights = filter::kernel(filter::sigma(&stage.filter, batch.level), stage.margin);
+            let params_buffer = self.storage("cygnus filter parameters", &words);
+            let weights_buffer =
+                self.storage_bytes("cygnus filter weights", bytemuck::cast_slice(&weights));
+            let jobs = |tiles: &[(TileCoord, u32)]| -> wgpu::Buffer {
+                let words: Vec<u32> = tiles
+                    .iter()
+                    .flat_map(|(coord, slot)| [*slot, coord.tx, coord.ty, 0])
+                    .collect();
+                self.storage("cygnus filter jobs", &words)
+            };
+            let stage_pages_buffer = self.storage_bytes(
+                "cygnus filter stage pages",
+                bytemuck::cast_slice(&stage_pages),
+            );
+            let rows_jobs = jobs(&rows);
+            let horizontal = self.bind(
+                &passes.blur_h,
+                &[
+                    wgpu::BindingResource::TextureView(&passes.stage.pool.view),
+                    stage_pages_buffer.as_entire_binding(),
+                    weights_buffer.as_entire_binding(),
+                    rows_jobs.as_entire_binding(),
+                    wgpu::BindingResource::TextureView(&passes.rows.pool.view),
+                    params_buffer.as_entire_binding(),
+                ],
+            );
+            Self::dispatch(encoder, &passes.blur_h, &horizontal, rows.len() as u32);
+            let rows_pages = self.storage_bytes(
+                "cygnus filter rows pages",
+                bytemuck::cast_slice(&filter::page_table(&rows)),
+            );
+            let need_jobs = jobs(&need);
+            let vertical = self.bind(
+                &passes.blur_v,
+                &[
+                    wgpu::BindingResource::TextureView(&passes.rows.pool.view),
+                    rows_pages.as_entire_binding(),
+                    weights_buffer.as_entire_binding(),
+                    need_jobs.as_entire_binding(),
+                    wgpu::BindingResource::TextureView(&passes.filtered.pool.view),
+                    params_buffer.as_entire_binding(),
+                    wgpu::BindingResource::TextureView(&passes.stage.pool.view),
+                    stage_pages_buffer.as_entire_binding(),
+                ],
+            );
+            Self::dispatch(encoder, &passes.blur_v, &vertical, need.len() as u32);
+            for (coord, slot) in need {
+                filtered.insert((stage.id, coord), slot);
             }
         }
-        let ops_buffer = self.storage("cygnus composite ops", &ops);
-        let jobs_buffer = self.storage("cygnus composite jobs", &jobs);
-        let params_buffer = self.storage("cygnus adjustment parameters", &params);
-        let group = self.bind(
-            &self.composite,
-            &[
-                wgpu::BindingResource::TextureView(layers_view),
-                wgpu::BindingResource::TextureView(masks_view),
-                ops_buffer.as_entire_binding(),
-                jobs_buffer.as_entire_binding(),
-                wgpu::BindingResource::TextureView(target),
-                params_buffer.as_entire_binding(),
-                sources.curves.buffer.as_entire_binding(),
-            ],
-        );
-        Self::dispatch(encoder, &self.composite, &group, batch.outputs.len() as u32);
-        Ok(())
+
+        let outputs: Vec<(u32, &[Op], TileCoord)> = batch
+            .outputs
+            .iter()
+            .map(|tile| (tile.target, tile.ops.as_slice(), tile.coord))
+            .collect();
+        composite(encoder, &outputs, &filtered, target)
     }
 
     fn export_batch(

@@ -682,11 +682,18 @@ impl Canvas {
             }
             return false;
         }
+        // A filter spreads a change over its margin (docs/decisions/0023).
+        let reach = crate::program::filter_reach(document);
         for coord in changes.pixels.values().flatten() {
             // A level 0 tile changes every tile above it.
             for entry in self.entries.iter_mut() {
                 let (key, entry) = entry;
-                if key.tx == coord.tx >> key.level && key.ty == coord.ty >> key.level {
+                let near = |changed: u32, tile: u32| {
+                    let first = tile << key.level;
+                    let last = first + (1 << key.level) - 1;
+                    changed + reach >= first && changed <= last + reach
+                };
+                if near(coord.tx, key.tx) && near(coord.ty, key.ty) {
                     entry.valid = false;
                 }
             }

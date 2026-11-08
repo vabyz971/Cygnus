@@ -29,14 +29,16 @@ const OP_POP_ISOLATED: u32 = 4u;
 const OP_POP_PASS_THROUGH: u32 = 5u;
 const OP_POP_CLIPPED: u32 = 6u;
 const OP_ADJUST: u32 = 7u;
+const OP_FILTER: u32 = 8u;
 
 const NO_SLOT: u32 = 0xffffffffu;
 const FLAG_INVERTED: u32 = 1u;
 
 struct Op {
     code: u32,
-    // Slot of the layer tile in the layer pool (OP_LAYER, OP_CLIPPED), or
-    // first word of the adjustment parameters in `params` (OP_ADJUST).
+    // Slot of the layer tile in the layer pool (OP_LAYER, OP_CLIPPED), first
+    // word of the adjustment parameters in `params` (OP_ADJUST), or slot of
+    // the filtered tile in `filtered` (OP_FILTER).
     slot: u32,
     // Blend mode code (BLEND_*).
     mode: u32,
@@ -70,6 +72,8 @@ struct CompositeJob {
 // Read by adjust.wgsl.
 @group(0) @binding(5) var<storage, read> params: array<u32>;
 @group(0) @binding(6) var<storage, read> curve_tables: array<f32>;
+// Filtered tiles of the filter stages (docs/decisions/0023).
+@group(0) @binding(7) var filtered: texture_2d_array<COMPUTE_SAMPLED>;
 
 // Coverage of the mask of `op` at `position`.
 fn coverage(op: Op, position: vec2<i32>) -> f32 {
@@ -130,6 +134,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                     let mixed = blend(op.mode, vec4<f32>(straight, 1.0), vec4<f32>(adjusted * weight, weight));
                     accumulator = vec4<f32>(mixed.rgb * accumulator.a, accumulator.a);
                 }
+            }
+            case OP_FILTER: {
+                // The filtered accumulator replaces the accumulator, mixed
+                // by opacity and mask; in another mode than Normal, it is
+                // first blended over the accumulator with that mode.
+                let result = unpack_compute(textureLoad(filtered, position, i32(op.slot), 0));
+                var mixed = result;
+                if op.mode != BLEND_NORMAL {
+                    mixed = blend(op.mode, accumulator, result);
+                }
+                accumulator = accumulator + (mixed - accumulator) * weight;
             }
             case OP_POP_PASS_THROUGH: {
                 depth = max(depth, 1u) - 1u;

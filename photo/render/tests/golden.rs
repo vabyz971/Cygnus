@@ -94,7 +94,12 @@ fn golden_images() {
         if std::env::var("GITHUB_ACTIONS").is_ok() {
             println!("::notice title=golden {name}::{line}");
         }
-        if !comparison.passes() {
+        let passes = if name.starts_with("filter-") {
+            comparison.passes_with_filters()
+        } else {
+            comparison.passes()
+        };
+        if !passes {
             std::fs::create_dir_all(&failures).unwrap();
             write(&actual, &failures.join(format!("{name}-actual.png")));
             write(

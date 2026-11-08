@@ -25,6 +25,7 @@
 mod adjust;
 pub mod bench;
 pub mod canvas;
+mod filter;
 pub mod format;
 pub mod gpu;
 pub mod histogram;

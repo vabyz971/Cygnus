@@ -37,6 +37,7 @@ const EXPORT: &str = include_str!("shaders/export.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
 const DOWNSAMPLE: &str = include_str!("shaders/downsample.wgsl");
 const HISTOGRAM: &str = include_str!("shaders/histogram.wgsl");
+const FILTER: &str = include_str!("shaders/filter.wgsl");
 
 /// Name of the WGSL constant holding the code of `mode`, such as
 /// `BLEND_SOFT_LIGHT`.
@@ -105,6 +106,11 @@ pub fn histogram() -> String {
     assemble(HISTOGRAM, &[COLOR])
 }
 
+/// Filter passes: blur and unsharp mask of the filter stages.
+pub fn filter() -> String {
+    assemble(FILTER, &[COLOR])
+}
+
 /// Display pass: composite tiles to the screen.
 pub fn display() -> String {
     assemble(DISPLAY, &[COLOR])
@@ -133,6 +139,7 @@ mod tests {
         validate("display", &display());
         validate("downsample", &downsample());
         validate("histogram", &histogram());
+        validate("filter", &filter());
     }
 
     #[test]
@@ -159,6 +166,7 @@ mod tests {
             ("export", EXPORT),
             ("display", DISPLAY),
             ("downsample", DOWNSAMPLE),
+            ("filter", FILTER),
         ] {
             assert!(
                 !source.contains("fn blend"),

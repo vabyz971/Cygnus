@@ -18,13 +18,14 @@
 //!
 //! cargo run --release -p cygnus-photo-render --example fluidity -- \
 //!     [--out report.json] [--viewport 2560x1440] [--cache-slots N]
-//!     [--no-frame-budget] [--large-layers 40]
+//!     [--no-frame-budget] [--large-layers 40] [--blur SIGMA]
 //!
 //! `--cache-slots` fixes the canvas cache instead of the computed budget,
 //! to measure panning over tiles that are not in the cache.
 //! `--no-frame-budget` finishes every frame, as before docs/decisions/0034,
 //! for comparisons. `--large-layers N` plays the path on the 8 GiB scenario
 //! of docs/decisions/0024 (N pixel layers of 24 Mpx, 16 bits) instead.
+//! `--blur SIGMA` adds a Gaussian blur filter layer on top (0023).
 //!
 //! Each frame updates the canvas and draws it on an offscreen target, then
 //! waits for the GPU: the frame time includes all GPU work, but neither the
@@ -48,6 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cache_slots: Option<u32> = None;
     let mut frame_budget = Some(FrameBudget::DEFAULT);
     let mut large: Option<u64> = None;
+    let mut blur: Option<f32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -67,6 +69,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             "--no-frame-budget" => frame_budget = None,
+            "--blur" => {
+                blur = Some(args.next().ok_or("--blur expects a radius")?.parse()?);
+            }
             "--large-layers" => {
                 large = Some(
                     args.next()
@@ -89,6 +94,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             bench::build_document()?
         }
     };
+    if let Some(radius) = blur {
+        use cygnus_photo_core::commands::{LayerCreate, LayerKind};
+        let mut bus = CommandBus::new();
+        bus.execute(
+            &mut document,
+            cygnus_photo_core::PhotoCommand::LayerCreate(LayerCreate {
+                name: "blur".to_owned(),
+                parent: None,
+                index: None,
+                kind: LayerKind::Filter {
+                    filter: cygnus_photo_core::Filter::GaussianBlur { radius },
+                },
+            }),
+            Source::Test,
+        )?;
+    }
     eprintln!("built in {:.1} s", started.elapsed().as_secs_f64());
 
     let gpu = gpu::open_headless()?;
