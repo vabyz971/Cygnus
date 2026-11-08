@@ -170,6 +170,54 @@ Restent pour B7 :
 
 Ces trois coûts sont faits d'une traite, en une image : c'est le rôle du budget de temps par image et des pyramides de sources construites à l'avance.
 
+## Mesure après B7 (2026-11-08, sans fenêtre, 2126 × 1086)
+
+B7 complet (0034, étapes T1 à T4) :
+
+- **budget de temps par image** : chaque image compose des lots de tuiles tant que 6 ms de processeur, 6 ms de GPU estimé et 64 tuiles ne sont pas dépassés. Un lot compte au plus 8 tuiles, borné par le coût mesuré d'une tuile (processeur et GPU) ;
+- **affichage grossier d'abord** : les tuiles périmées restent affichées jusqu'à leur remplacement, et une tuile manquante emprunte le premier niveau plus grossier présent ;
+- **sources réduites sur le processeur**, en linéaire, sur 4 fils de travail, bornées à 10 % de la mémoire des pixels ;
+- **envoi des tuiles 16 bits sans copie intermédiaire**.
+
+Le banc répète désormais les images d'une phase « à stabiliser » (première vue, changement d'opacité, relâchement) jusqu'à ce que le canevas n'ait plus de travail. Il note le temps jusqu'à la première vue sans trou et jusqu'à l'image finale. Le code d'avant B7 (commit 4662abc) a été mesuré **le même jour**, en mesures alternées.
+
+Rapports : `docs/bench/2026-11-08-*`.
+
+| Phase (cache calculé) | Avant B7, même jour | B7 |
+| --- | --- | --- |
+| Première vue : image la plus longue | 206 à 214 ms (une image) | **29 à 34 ms** |
+| Première vue : vue sans trou, puis image finale | 206 à 214 ms | 187 à 215 ms |
+| Glissement de courbe, vue ajustée : première image | 432 à 443 ms | **3,3 à 3,7 ms** |
+| idem, médiane / p95 | 0,85 / 0,92 à 1,05 ms | 0,78 / 0,96 à 1,01 ms |
+| Relâchement : image la plus longue | 184 à 193 ms (une image) | **6,7 à 7,7 ms** |
+| Relâchement : image finale | 184 à 193 ms | 152 à 157 ms |
+| Glissement à 300 % : image la plus longue | 2,1 à 2,2 ms | 2,1 à 2,3 ms |
+| Panoramique 100 % : p95 | 1,7 à 1,8 ms | 1,4 ms |
+| Images au-delà de 100 ms, toutes phases | 3 | **0** |
+
+**Cache limité à 128 tuiles** (mesure officielle du panoramique) :
+
+- panoramique à 100 % : p95 de 3,3 ms, maximum de 8,7 ms, contre 4,4 et 124 ms avant B7 ;
+- zoom de 5 à 800 % : maximum de 8,2 ms, contre 155 ms.
+
+**Fenêtre 4K** (3840 × 2160) : aucune image au-delà de 29 ms, image finale de la première vue en 197 ms.
+
+**Scénario de 8 Gio** (0024 : 40 calques de 24 Mpx en 16 bits, 7,5 Gio de pixels, option `--large-layers 40`) :
+
+- aucune image au-delà de 100 ms (la plus longue : 42 ms, la première) ;
+- première vue finale en 1,07 s ;
+- mémoire résidente maximale de 8,1 Gio, soit 0,4 Gio au-dessus des pixels ;
+- sources réduites : 0,26 Gio au plus, sous leur budget de 0,75 Gio.
+
+Les phases de courbe n'y modifient rien : ce document n'a pas de réglage.
+
+**Cibles décidées :**
+
+- interface jamais bloquée plus de 100 ms : **tenue**, dans tous les scénarios ;
+- aperçu en moins de 33 ms pendant un glissement, première image comprise : **tenue** (3,7 ms au plus) ;
+- image finale en moins de 150 ms : **pas tout à fait** (152 à 157 ms au relâchement, 187 à 215 ms pour la première vue). Elle est bornée par l'envoi des sources : 384 tuiles de 7 calques et 2 masques, soit 1,4 Gio, au rythme d'environ 7 Gio/s ;
+- première vue grossière en moins de 100 ms : **non tenue sur cette machine**. La vue sans trou arrive avec l'image finale. Pour une vue grossière, les fils de travail doivent lire les mêmes 1,4 Gio de pixels, ce que le GPU fait déjà aussi vite par le chemin exact. Avec 8 fils, la bande passante mémoire est partagée avec le fil de l'interface et l'image finale ralentit (248 ms) : on garde 4 fils. Les sources réduites gardent leur intérêt sur un GPU lent ou un envoi lent, ce qui reste à mesurer sur une machine modeste.
+
 ## Cibles décidées (utilisateur, 2026-11-01)
 
 1. **60 images/s** (p95 ≤ 16,7 ms) pour la vue stable, le zoom et le panoramique : confirmé.

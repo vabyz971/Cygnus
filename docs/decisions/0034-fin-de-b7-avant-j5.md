@@ -1,7 +1,7 @@
 # 0034 — Fin de B7 avant J5 : budget de temps par image et affichage grossier d'abord
 
 - **Date** : 2026-11-08
-- **Statut** : proposée (préalable de la phase A de J5)
+- **Statut** : acceptée le 2026-11-08 (« tu peux poursuivre B7 et B10 ») ; mise en œuvre le 2026-11-08, écarts ci-dessous
 - **Exigences concernées** : spec 5 (fluidité), 7.3 ; décisions 0019, 0021, 0024, 0027
 
 ## Contexte : état de B7 au 2026-11-08
@@ -64,3 +64,38 @@ Un trait de pinceau ajoute des tuiles à recomposer à chaque image. Sans budget
 
 - **Synchronisation du fil de travail** avec l'instantané du document : les tuiles sont des `Arc` immuables, donc en lecture seule, mais il faut annuler les travaux périmés à chaque révision.
 - **Estimation du coût GPU** : une mesure trop optimiste fait dépasser le budget ; il faut une marge et une borne dure sur le nombre de tuiles par image.
+
+## Mise en œuvre (2026-11-08)
+
+Commits 120d075 (T1, T2), db2dfe1 (T3) et 70ddc3c (T4). Mesures dans 0019, section « Mesure après B7 ».
+
+**Ce qui est fait comme proposé :**
+
+- **T1** :
+  - le canevas planifie son travail comme avant, puis n'en exécute qu'un préfixe par image : un plan est en ordre de dépendance, donc tout préfixe est cohérent ;
+  - le budget par défaut est de 6 ms de processeur, 6 ms de GPU estimé et 64 tuiles. Le coût GPU d'une tuile est une moyenne glissante mesurée par `on_submitted_work_done`, et le coût processeur, une moyenne mesurée lot par lot ;
+  - un lot compte au plus 8 tuiles, et une image fait toujours au moins un lot ;
+  - l'application demande une nouvelle image tant que du travail reste.
+- **T2** :
+  - la table des pages couvre tous les niveaux ;
+  - le shader d'affichage prend la tuile du niveau voulu, sinon celle du premier niveau plus grossier présent, sinon le damier ;
+  - une tuile invalidée reste affichée jusqu'à son remplacement : après un changement, l'ancienne image reste visible au lieu d'un trou.
+- **T3** :
+  - les sources réduites sont calculées sur 4 fils de travail, depuis les tuiles du document, en linéaire et prémultipliées, puis réencodées en 16 bits. Les tests les comparent à un calcul à la main en f64 ;
+  - le GPU ne reçoit que des tuiles réduites ;
+  - une entrée garde des références faibles vers les tuiles d'origine : elle est périmée dès que l'une change, sans risque de réemploi d'une adresse ;
+  - la mémoire est bornée à 10 % des pixels, avec au moins 32 Mio pour les petits documents. Les entrées les plus anciennes sont évincées, jamais celles de l'image en cours ;
+  - les réductions devenues inutiles sont annulées ;
+  - l'aperçu d'un glissement s'écarte maintenant de l'image exacte d'au plus un niveau 8 bits, pour un écart moyen de 0,001 (test `drag_preview`).
+- **T4** : un scénario de 8 Gio et une fenêtre 4K ont été mesurés, ainsi qu'une référence du code précédent le même jour.
+
+**Écarts :**
+
+1. **Niveau des tuiles approximatives** : ce n'est pas toujours le niveau de la vue entière. C'est le plus fin, à partir du niveau affiché, dont les sources réduites des tuiles visibles tiennent dans leur budget mémoire, avec 4 au plus. En vue ajustée sur 2126 × 1086, c'est le niveau 2 pour un affichage au niveau 1 : le niveau 1 demanderait plus de 10 % de la mémoire des pixels. L'aperçu est donc plus flou, mais tenu dans le budget.
+2. **Première vue grossière en moins de 100 ms : non tenue** sur la machine de référence (187 à 215 ms, avec l'image finale). Voir 0019 : il faut lire les 1,4 Gio de pixels, et le GPU le fait aussi vite par le chemin exact. Les images restent sous 34 ms : l'interface ne se fige plus.
+3. **Image finale en moins de 150 ms : manquée de peu** (152 à 157 ms au relâchement), bornée par l'envoi des sources.
+4. **Préparation des envois hors du fil de l'interface (T4) : faite en partie seulement** :
+   - la copie de conversion des tuiles 16 bits est supprimée : elles sont envoyées depuis leur propre mémoire ;
+   - la copie restante, faite par `write_texture`, reste sur le fil de l'interface, dans le budget de 6 ms. La déplacer sur un fil de travail obligerait à réserver des emplacements de la réserve d'une image à l'autre, pour qu'un envoi ne remplace pas une tuile encore lue par un travail non soumis ;
+   - en régime, les images restent sous 9 ms : le gain ne justifie pas cette complexité pour l'instant. À revoir si une machine modeste le demande.
+5. **Les canevas de test sans budget (`with_capacity`)** finissent chaque image et attendent les sources réduites. Seul le canevas de l'application, et le banc, travaillent par images. Les tests du budget l'activent explicitement.
