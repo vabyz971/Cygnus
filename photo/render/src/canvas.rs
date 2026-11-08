@@ -183,6 +183,12 @@ const HEADER_WORDS: usize = 1 + 4 * MAX_LEVELS as usize;
 const INITIAL_TILE_COST_MS: f64 = 0.5;
 /// Weight of a new measure in the running average of the tile cost.
 const COST_SMOOTHING: f64 = 0.25;
+/// Processor time of a composite tile assumed before any measure, in ms:
+/// mostly the upload of its sources.
+const INITIAL_TILE_CPU_MS: f64 = 1.0;
+/// Composite tiles of one batch at most within a frame budget: the budget
+/// is checked between batches.
+const MAX_BATCH_TILES: f64 = 8.0;
 
 /// Number of tiles of all pyramid levels of a document of `size` pixels.
 fn pyramid_tiles(size: (u32, u32)) -> (u64, u32) {
@@ -308,6 +314,7 @@ struct Spending {
     gpu_ms: f64,
     tiles: f64,
     per_tile_ms: f64,
+    cpu_per_tile_ms: f64,
 }
 
 impl Spending {
@@ -322,7 +329,12 @@ impl Spending {
         let tiles_left = f64::from(budget.max_tiles) - self.tiles;
         let gpu_left = (budget.gpu.as_secs_f64() * 1000.0 - self.gpu_ms) / self.per_tile_ms;
         let cpu_left = budget.cpu.saturating_sub(self.start.elapsed());
-        let allowed = tiles_left.min(gpu_left).floor();
+        let cpu_tiles = cpu_left.as_secs_f64() * 1000.0 / self.cpu_per_tile_ms;
+        let allowed = tiles_left
+            .min(gpu_left)
+            .min(cpu_tiles)
+            .min(MAX_BATCH_TILES)
+            .floor();
         if first {
             // Some progress every frame.
             return allowed.max(1.0) as usize;
@@ -372,7 +384,11 @@ pub struct Canvas {
     budget: Option<FrameBudget>,
     /// The last prepare left work for the next frames.
     pending: bool,
+    /// After the last prepare, every visible tile showed something.
+    covered: bool,
     gpu_cost: GpuCost,
+    /// Running estimate of the processor time of a composite tile, in ms.
+    cpu_per_tile_ms: f64,
     stats: CanvasStats,
 }
 
@@ -484,7 +500,9 @@ impl Canvas {
             preview: false,
             budget: None,
             pending: false,
+            covered: false,
             gpu_cost: GpuCost::new(),
+            cpu_per_tile_ms: INITIAL_TILE_CPU_MS,
             stats: CanvasStats::default(),
         })
     }
@@ -576,6 +594,12 @@ impl Canvas {
     /// the caller should draw another frame soon.
     pub fn is_pending(&self) -> bool {
         self.pending
+    }
+
+    /// Whether, after the last [`Self::prepare`], every visible tile shows
+    /// something: its own tile or a coarser one (no checker hole).
+    pub fn is_covered(&self) -> bool {
+        self.covered
     }
 
     /// Turns the preview on while a parameter is dragged (docs/decisions/
@@ -947,6 +971,7 @@ impl Canvas {
             gpu_ms: 0.0,
             tiles: 0.0,
             per_tile_ms: self.gpu_cost.per_tile_ms.max(0.01),
+            cpu_per_tile_ms: self.cpu_per_tile_ms.max(0.01),
         };
         let new_encoder =
             || device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -959,6 +984,7 @@ impl Canvas {
             }
             match ops[index] {
                 Op::Composite { key, .. } => {
+                    let started = Instant::now();
                     let level = key.level;
                     let mut targets = HashMap::new();
                     while targets.len() < allowed
@@ -998,6 +1024,10 @@ impl Canvas {
                         self.stats.approximated += targets.len() as u64;
                     }
                     spending.spend(targets.len() as f64);
+                    let measured =
+                        started.elapsed().as_secs_f64() * 1000.0 / targets.len().max(1) as f64;
+                    self.cpu_per_tile_ms += COST_SMOOTHING * (measured - self.cpu_per_tile_ms);
+                    spending.cpu_per_tile_ms = self.cpu_per_tile_ms.max(0.01);
                 }
                 Op::Downsample { .. } => {
                     // Parents built in one dispatch must not read each other.
@@ -1130,6 +1160,9 @@ impl Canvas {
         };
         let (ops, waiting) = loop {
             let approx_level = self.approx_level(renderer, document, level, top, view);
+            if approx_level == 0 {
+                renderer.cancel_reductions();
+            }
             match self.plan_level(level, view, approx_level, !self.preview, &mut ready) {
                 Ok(plan) => break plan,
                 Err(OverBudget { partial }) if level < top => {
@@ -1174,6 +1207,7 @@ impl Canvas {
         }
         self.planned.clear();
         self.pending = done < ops.len() || waiting;
+        self.covered = self.covered(level, top, view);
         if ops.is_empty() && !waiting && level == 0 && !self.preview {
             // Idle at full size: bring back the sources of the visible
             // tiles, so that a property change uploads none (0027).

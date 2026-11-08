@@ -89,6 +89,7 @@ impl BenchRun {
                 time: now - start,
                 stats,
                 sources,
+                covered: render_state.is_some_and(canvas::covered),
             });
             // A settling frame is repeated while the canvas has work left.
             let pending = render_state.is_some_and(canvas::pending);
@@ -147,6 +148,7 @@ impl BenchRun {
             cache_bytes: u64::from(capacity) * 256 * 256 * 8,
             document_bytes: bench::document_bytes(session.document()),
             source_slots,
+            layers: None,
         };
         let report = bench::report(&info, &self.samples);
         let path =

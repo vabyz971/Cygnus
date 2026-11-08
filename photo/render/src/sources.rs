@@ -213,10 +213,13 @@ impl TilePool {
             (PoolKind::Layers, Tile::U8(values)) | (PoolKind::Masks, Tile::Gray8(values)) => {
                 // 8-bit values extended exactly to 16 bits (v × 257).
                 let wide: Vec<u16> = values.iter().map(|v| u16::from(*v) * 257).collect();
-                (texel_bytes(self.kind), le_bytes(&wide))
+                (
+                    texel_bytes(self.kind),
+                    std::borrow::Cow::Owned(le_bytes(&wide)),
+                )
             }
             (PoolKind::Layers, Tile::U16(values)) | (PoolKind::Masks, Tile::Gray16(values)) => {
-                (texel_bytes(self.kind), le_bytes(values))
+                (texel_bytes(self.kind), le_view(values))
             }
             _ => {
                 return Err(RenderError::Unsupported(
@@ -255,6 +258,16 @@ fn texel_bytes(kind: PoolKind) -> u32 {
     match kind {
         PoolKind::Layers => SOURCE_TEXEL_BYTES,
         PoolKind::Masks => MASK_TEXEL_BYTES,
+    }
+}
+
+/// Little-endian bytes of 16-bit values, as the GPU reads them: the values
+/// themselves on a little-endian processor, without a copy.
+fn le_view(values: &[u16]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(target_endian = "little") {
+        std::borrow::Cow::Borrowed(bytemuck::cast_slice(values))
+    } else {
+        std::borrow::Cow::Owned(le_bytes(values))
     }
 }
 

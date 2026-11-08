@@ -141,6 +141,16 @@ pub fn coarse(render_state: &egui_wgpu::RenderState) -> Option<Coarse> {
         .and_then(|resources| resources.canvas.is_coarse().then_some(Coarse::Memory))
 }
 
+/// Whether every visible tile of the canvas shows something.
+pub fn covered(render_state: &egui_wgpu::RenderState) -> bool {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .is_some_and(|resources| resources.canvas.is_covered())
+}
+
 /// Whether the canvas has work left within its frame budget.
 pub fn pending(render_state: &egui_wgpu::RenderState) -> bool {
     render_state

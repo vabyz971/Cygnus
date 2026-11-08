@@ -226,8 +226,9 @@ fn noise(layer: u64, x: u32, y: u32) -> f32 {
     (h & 0xFFFF) as f32 / 65535.0
 }
 
-/// Commands writing layer `id` over the document, by strips.
-fn layer_commands(id: u64, pixel_index: u64) -> Vec<PhotoCommand> {
+/// Commands writing layer `id` over the document, by strips: pixel layer
+/// `pixel_index` of `pixel_layers`.
+fn layer_commands(id: u64, pixel_index: u64, pixel_layers: u64) -> Vec<PhotoCommand> {
     let mut commands = vec![PhotoCommand::LayerCreate(LayerCreate {
         name: format!("layer {id}"),
         parent: None,
@@ -264,7 +265,7 @@ fn layer_commands(id: u64, pixel_index: u64) -> Vec<PhotoCommand> {
         }));
     }
     // Opacities from 30 % (top) to 100 % (bottom layer).
-    let opacity = 1.0 - 0.7 * pixel_index as f32 / (PIXEL_LAYERS - 1) as f32;
+    let opacity = 1.0 - 0.7 * pixel_index as f32 / (pixel_layers.max(2) - 1) as f32;
     commands.push(PhotoCommand::LayerUpdate(LayerUpdate {
         opacity: Some(opacity),
         ..LayerUpdate::new(NodeId(id))
@@ -328,7 +329,7 @@ pub fn build_document() -> Result<Document, ScriptError> {
                 kind: LayerKind::Adjustment { adjustment },
             }))?,
             None => {
-                for command in layer_commands(id, pixel_index) {
+                for command in layer_commands(id, pixel_index, PIXEL_LAYERS) {
                     run(command)?;
                 }
                 pixel_index += 1;
@@ -353,6 +354,43 @@ pub fn build_document() -> Result<Document, ScriptError> {
         }))?;
     }
     Ok(document)
+}
+
+/// The 8 GiB scenario of docs/decisions/0024: `pixel_layers` (40) fully
+/// covered pixel layers of 24 Mpx in 16 bits, without adjustments.
+pub fn build_large_document(pixel_layers: u64) -> Result<Document, ScriptError> {
+    let mut bus = CommandBus::with_limits(BusLimits {
+        retained_bytes: 0,
+        ..BusLimits::default()
+    });
+    let mut document = Document::default();
+    let mut commands = vec![PhotoCommand::DocumentCreate(DocumentCreate {
+        width: WIDTH,
+        height: HEIGHT,
+        resolution: 300.0,
+        depth: Depth::U16,
+        profile: Default::default(),
+    })];
+    for index in 0..pixel_layers {
+        commands.extend(layer_commands(index + 1, index, pixel_layers));
+    }
+    for command in commands {
+        let name = cygnus_commands::Command::name(&command);
+        bus.execute(&mut document, command, Source::Test)
+            .map_err(|error| ScriptError::Command {
+                index: 0,
+                name,
+                error,
+            })?;
+    }
+    Ok(document)
+}
+
+/// Peak resident memory of the process, in bytes (Linux; 0 elsewhere).
+pub fn peak_resident_bytes() -> u64 {
+    read_first("/proc/self/status", "VmHWM")
+        .and_then(|value| value.trim_end_matches("kB").trim().parse::<u64>().ok())
+        .map_or(0, |kib| kib * 1024)
 }
 
 /// Curves of the curves adjustment at step `step` of the drag: an S curve
@@ -423,6 +461,8 @@ pub struct FrameSample {
     pub stats: CanvasStats,
     /// Source pool counters after the frame.
     pub sources: SourceStats,
+    /// Every visible tile showed something after the frame.
+    pub covered: bool,
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -450,6 +490,9 @@ pub struct RunInfo {
     pub document_bytes: u64,
     /// Slots of the layer and mask source pools.
     pub source_slots: (u32, u32),
+    /// Layers and pixel layers of the document, when not the standard
+    /// scenario (the 8 GiB one).
+    pub layers: Option<(u64, u64)>,
 }
 
 fn read_first(path: &str, prefix: &str) -> Option<String> {
@@ -483,8 +526,12 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         let start = previous;
         let start_sources = previous_sources;
         let mut times = Vec::new();
+        let mut first_view: Option<f64> = None;
         while index < samples.len() && samples[index].phase == phase {
             times.push(samples[index].time.as_secs_f64() * 1000.0);
+            if first_view.is_none() && samples[index].covered {
+                first_view = Some(times.iter().sum());
+            }
             previous = samples[index].stats;
             previous_sources = samples[index].sources;
             index += 1;
@@ -501,6 +548,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "max_ms": sorted.last().copied().unwrap_or(0.0),
             "first_frame_ms": times.first().copied().unwrap_or(0.0),
             "total_ms": times.iter().sum::<f64>(),
+            "first_view_ms": first_view,
             "frames_over_100_ms": times.iter().filter(|t| **t > 100.0).count(),
             "fps_at_median": if median > 0.0 { 1000.0 / median } else { 0.0 },
             "p95_within_16_7_ms": percentile(&sorted, 0.95) <= 1000.0 / 60.0,
@@ -528,8 +576,8 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "width": WIDTH,
             "height": HEIGHT,
             "depth_bits": 16,
-            "layers": LAYERS,
-            "pixel_layers": PIXEL_LAYERS,
+            "layers": info.layers.map_or(LAYERS, |(layers, _)| layers),
+            "pixel_layers": info.layers.map_or(PIXEL_LAYERS, |(_, pixels)| pixels),
             "adjustments": ["curves", "levels (masked)", "hue_saturation"],
             "masks": 2,
             "pixel_memory_bytes": info.document_bytes,
@@ -538,6 +586,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         "adapter": info.adapter,
         "machine": machine(),
         "canvas_cache_bytes": info.cache_bytes,
+        "peak_resident_bytes": peak_resident_bytes(),
         "source_pool_slots": info.source_slots,
         "curve_table_cpu_ms": {
             "median": curve_cpu.0,

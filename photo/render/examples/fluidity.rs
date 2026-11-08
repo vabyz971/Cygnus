@@ -18,12 +18,13 @@
 //!
 //! cargo run --release -p cygnus-photo-render --example fluidity -- \
 //!     [--out report.json] [--viewport 2560x1440] [--cache-slots N]
-//!     [--no-frame-budget]
+//!     [--no-frame-budget] [--large-layers 40]
 //!
 //! `--cache-slots` fixes the canvas cache instead of the computed budget,
 //! to measure panning over tiles that are not in the cache.
 //! `--no-frame-budget` finishes every frame, as before docs/decisions/0034,
-//! for comparisons.
+//! for comparisons. `--large-layers N` plays the path on the 8 GiB scenario
+//! of docs/decisions/0024 (N pixel layers of 24 Mpx, 16 bits) instead.
 //!
 //! Each frame updates the canvas and draws it on an offscreen target, then
 //! waits for the GPU: the frame time includes all GPU work, but neither the
@@ -46,6 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut viewport = [2560u32, 1440];
     let mut cache_slots: Option<u32> = None;
     let mut frame_budget = Some(FrameBudget::DEFAULT);
+    let mut large: Option<u64> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -65,13 +67,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             "--no-frame-budget" => frame_budget = None,
+            "--large-layers" => {
+                large = Some(
+                    args.next()
+                        .ok_or("--large-layers expects a number")?
+                        .parse()?,
+                );
+            }
             other => return Err(format!("unknown argument {other:?}").into()),
         }
     }
 
-    eprintln!("building the 24 Mpx, 10-layer document...");
     let started = Instant::now();
-    let mut document = bench::build_document()?;
+    let mut document = match large {
+        Some(layers) => {
+            eprintln!("building the 24 Mpx, {layers}-layer document...");
+            bench::build_large_document(layers)?
+        }
+        None => {
+            eprintln!("building the 24 Mpx, 10-layer document...");
+            bench::build_document()?
+        }
+    };
     eprintln!("built in {:.1} s", started.elapsed().as_secs_f64());
 
     let gpu = gpu::open_headless()?;
@@ -116,7 +133,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut repeats = 0;
     while let Some(frame) = path.get(index).copied() {
         let start = Instant::now();
-        if let Some(edit) = frame.edit.filter(|_| repeats == 0) {
+        // The 8 GiB document has no curves adjustment: no curve edit.
+        let curve = |edit: &bench::Edit| matches!(edit, bench::Edit::Curve(_));
+        if let Some(edit) = frame
+            .edit
+            .filter(|edit| repeats == 0 && !(large.is_some() && curve(edit)))
+        {
             let cursor = bus.revision();
             bus.execute(&mut document, bench::edit_command(edit), Source::Test)?;
             changes = bus.changes_since(cursor).changes;
@@ -156,6 +178,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             time: start.elapsed(),
             stats: canvas.stats(),
             sources: renderer.source_stats(),
+            covered: canvas.is_covered(),
         });
         if frame.settle && canvas.is_pending() && repeats < MAX_REPEATS {
             repeats += 1;
@@ -173,6 +196,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         cache_bytes: u64::from(canvas.capacity()) * 256 * 256 * 8,
         document_bytes: bench::document_bytes(&document),
         source_slots: renderer.source_stats().capacity,
+        layers: large.map(|layers| (layers, layers)),
     };
     let report = bench::report(&info, &samples);
     std::fs::write(&out, serde_json::to_string_pretty(&report)? + "\n")?;

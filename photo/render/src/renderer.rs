@@ -361,6 +361,12 @@ impl Renderer {
         sources.reduced.begin_frame(document);
     }
 
+    /// Cancels the reductions requested and not computed yet.
+    pub(crate) fn cancel_reductions(&self) {
+        let mut sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);
+        sources.reduced.cancel();
+    }
+
     /// Memory budget of the reduced sources, in bytes.
     pub(crate) fn reduced_budget(&self) -> u64 {
         let sources = self.sources.lock().unwrap_or_else(PoisonError::into_inner);

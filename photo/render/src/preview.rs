@@ -30,6 +30,7 @@
 //! the document and evicts the least recently used entries first.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
@@ -246,16 +247,17 @@ fn mask_empty(document: &Document, id: NodeId) -> Option<u16> {
 
 /// One reduction for a worker.
 struct Job {
+    /// Skipped when the cache cancels the requests made before it.
+    generation: u64,
     key: (SourceKey, u32),
     children: Vec<Option<Arc<Tile>>>,
     mask_empty: Option<u16>,
 }
 
-/// A reduction done.
+/// A reduction done, or skipped (`None`) because it was cancelled.
 struct Done {
     key: (SourceKey, u32),
-    stamp: Stamp,
-    tile: Arc<Tile>,
+    result: Option<(Stamp, Arc<Tile>)>,
 }
 
 struct Entry {
@@ -280,6 +282,8 @@ pub(crate) struct ReducedCache {
     pending: HashSet<(SourceKey, u32)>,
     jobs: Option<Sender<Job>>,
     results: Receiver<Done>,
+    /// Requests of older generations are skipped by the workers.
+    generation: Arc<AtomicU64>,
     budget: u64,
     frame: u64,
     pub(crate) stats: ReducedStats,
@@ -290,23 +294,26 @@ impl ReducedCache {
         let (jobs, inbox) = channel::<Job>();
         let (outbox, results) = channel::<Done>();
         let inbox = Arc::new(Mutex::new(inbox));
+        let generation = Arc::new(AtomicU64::new(0));
         let workers = std::thread::available_parallelism()
             .map_or(1, |n| n.get().saturating_sub(1))
             .clamp(1, MAX_WORKERS);
         for index in 0..workers {
             let inbox = Arc::clone(&inbox);
             let outbox = outbox.clone();
+            let current = Arc::clone(&generation);
             // A worker that cannot start leaves the others; with none, the
             // reductions are computed when waited for.
             let _ = std::thread::Builder::new()
                 .name(format!("cygnus reduce {index}"))
-                .spawn(move || worker(&inbox, &outbox));
+                .spawn(move || worker(&inbox, &outbox, &current));
         }
         Self {
             entries: HashMap::new(),
             pending: HashSet::new(),
             jobs: Some(jobs),
             results,
+            generation,
             budget: MIN_REDUCED_BUDGET,
             frame: 0,
             stats: ReducedStats::default(),
@@ -327,15 +334,26 @@ impl ReducedCache {
         self.budget
     }
 
+    /// Cancels the requests not computed yet: no approximate tile is
+    /// wanted any more.
+    pub(crate) fn cancel(&mut self) {
+        if !self.pending.is_empty() {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     fn insert(&mut self, done: Done) {
         self.pending.remove(&done.key);
+        let Some((stamp, tile)) = done.result else {
+            return;
+        };
         self.stats.built += 1;
-        self.stats.bytes += done.tile.bytes() as u64;
+        self.stats.bytes += tile.bytes() as u64;
         if let Some(old) = self.entries.insert(
             done.key,
             Entry {
-                stamp: done.stamp,
-                tile: done.tile,
+                stamp,
+                tile,
                 used: self.frame,
             },
         ) {
@@ -400,6 +418,7 @@ impl ReducedCache {
                 continue;
             }
             let job = Job {
+                generation: self.generation.load(Ordering::Relaxed),
                 key: entry_key,
                 children: children(document, *key, level)
                     .into_iter()
@@ -457,12 +476,11 @@ fn run(job: Job) -> Done {
     };
     Done {
         key: job.key,
-        stamp,
-        tile: Arc::new(tile),
+        result: Some((stamp, Arc::new(tile))),
     }
 }
 
-fn worker(inbox: &Mutex<Receiver<Job>>, outbox: &Sender<Done>) {
+fn worker(inbox: &Mutex<Receiver<Job>>, outbox: &Sender<Done>, current: &AtomicU64) {
     loop {
         let job = {
             let inbox = inbox.lock().unwrap_or_else(PoisonError::into_inner);
@@ -471,7 +489,15 @@ fn worker(inbox: &Mutex<Receiver<Job>>, outbox: &Sender<Done>) {
         let Ok(job) = job else {
             return;
         };
-        if outbox.send(run(job)).is_err() {
+        let done = if job.generation < current.load(Ordering::Relaxed) {
+            Done {
+                key: job.key,
+                result: None,
+            }
+        } else {
+            run(job)
+        };
+        if outbox.send(done).is_err() {
             return;
         }
     }
@@ -614,8 +640,7 @@ mod tests {
     fn done(layer: u64, tx: u32) -> Done {
         Done {
             key: ((NodeId(layer), TileCoord { tx, ty: 0 }), 1),
-            stamp: Vec::new(),
-            tile: rgba16(|_, _| [0; 4]),
+            result: Some((Vec::new(), rgba16(|_, _| [0; 4]))),
         }
     }
 
