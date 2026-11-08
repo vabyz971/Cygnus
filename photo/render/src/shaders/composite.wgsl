@@ -32,6 +32,12 @@ const OP_ADJUST: u32 = 7u;
 const OP_FILTER: u32 = 8u;
 
 const NO_SLOT: u32 = 0xffffffffu;
+
+// What the blend result becomes: the accumulator, the adjusted color under
+// the unchanged alpha, or a mix by the weight.
+const POST_REPLACE: u32 = 0u;
+const POST_ADJUST: u32 = 1u;
+const POST_MIX: u32 = 2u;
 const FLAG_INVERTED: u32 = 1u;
 
 struct Op {
@@ -95,15 +101,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var i = 0u; i < job.count; i++) {
         let op = ops[job.first + i];
         let weight = op.opacity * coverage(op, position);
+        // The operations that blend only prepare the blend here; it is
+        // called once, after the switch, so that the shader inlines the
+        // blend functions once each (WARP loses its device on a larger
+        // shader, docs/decisions/0040).
+        var blending = false;
+        var atop = false;
+        var post = POST_REPLACE;
+        var backdrop = vec4<f32>(0.0);
+        var source = vec4<f32>(0.0);
         switch op.code {
             case OP_LAYER, OP_CLIPPED: {
                 let straight = unpack_source(textureLoad(layers, position, i32(op.slot), 0));
-                let source = premultiply(straight) * weight;
-                if op.code == OP_LAYER {
-                    accumulator = blend(op.mode, accumulator, source);
-                } else {
-                    accumulator = blend_atop(op.mode, accumulator, source);
-                }
+                backdrop = accumulator;
+                source = premultiply(straight) * weight;
+                atop = op.code == OP_CLIPPED;
+                blending = true;
             }
             case OP_PUSH_ISOLATED, OP_PUSH_PASS_THROUGH: {
                 stack[min(depth, STACK_DEPTH - 1u)] = accumulator;
@@ -114,12 +127,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             case OP_POP_ISOLATED, OP_POP_CLIPPED: {
                 depth = max(depth, 1u) - 1u;
-                let below = stack[min(depth, STACK_DEPTH - 1u)];
-                if op.code == OP_POP_ISOLATED {
-                    accumulator = blend(op.mode, below, accumulator * weight);
-                } else {
-                    accumulator = blend_atop(op.mode, below, accumulator * weight);
-                }
+                backdrop = stack[min(depth, STACK_DEPTH - 1u)];
+                source = accumulator * weight;
+                atop = op.code == OP_POP_CLIPPED;
+                blending = true;
             }
             case OP_ADJUST: {
                 // docs/decisions/0028: the straight color is adjusted, mixed
@@ -129,21 +140,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 if accumulator.a > 0.0 {
                     let straight = unpremultiply(accumulator).rgb;
                     let adjusted = adjust(op.flags >> 8u, op.slot, straight);
-                    let mixed = blend(op.mode, vec4<f32>(straight, 1.0), vec4<f32>(adjusted * weight, weight));
-                    accumulator = vec4<f32>(mixed.rgb * accumulator.a, accumulator.a);
+                    backdrop = vec4<f32>(straight, 1.0);
+                    source = vec4<f32>(adjusted * weight, weight);
+                    post = POST_ADJUST;
+                    blending = true;
                 }
             }
             case OP_FILTER: {
-                // The filtered accumulator replaces the accumulator, mixed
-                // by opacity and mask; in another mode than Normal, it is
-                // first blended over the accumulator with that mode.
-                // Premultiplied, in the compute format, unlike layer tiles.
+                // The filtered accumulator, read from the slots reserved at
+                // the end of the layer pool (premultiplied, in the compute
+                // format, unlike layer tiles), replaces the accumulator,
+                // mixed by opacity and mask; in another mode than Normal, it
+                // is first blended over the accumulator with that mode.
                 let result = unpack_compute(textureLoad(layers, position, i32(op.slot), 0));
-                var mixed = result;
-                if op.mode != BLEND_NORMAL {
-                    mixed = blend(op.mode, accumulator, result);
+                if op.mode == BLEND_NORMAL {
+                    accumulator = accumulator + (result - accumulator) * weight;
+                } else {
+                    backdrop = accumulator;
+                    source = result;
+                    post = POST_MIX;
+                    blending = true;
                 }
-                accumulator = accumulator + (mixed - accumulator) * weight;
             }
             case OP_POP_PASS_THROUGH: {
                 depth = max(depth, 1u) - 1u;
@@ -151,6 +168,25 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 accumulator = below + (accumulator - below) * weight;
             }
             default: {}
+        }
+        if blending {
+            var mixed: vec4<f32>;
+            if atop {
+                mixed = blend_atop(op.mode, backdrop, source);
+            } else {
+                mixed = blend(op.mode, backdrop, source);
+            }
+            switch post {
+                case POST_ADJUST: {
+                    accumulator = vec4<f32>(mixed.rgb * accumulator.a, accumulator.a);
+                }
+                case POST_MIX: {
+                    accumulator = accumulator + (mixed - accumulator) * weight;
+                }
+                default: {
+                    accumulator = mixed;
+                }
+            }
         }
     }
     textureStore(output, position, i32(job.slot), pack_compute(accumulator));
