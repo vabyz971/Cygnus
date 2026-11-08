@@ -205,6 +205,10 @@ impl PhotoApp {
                 ui.menu_button(tr(menu), |ui| self.layer_menu(ui, render_state));
                 continue;
             }
+            if menu == keys::MENU_FILTERS {
+                ui.menu_button(tr(menu), |ui| self.filters_menu(ui));
+                continue;
+            }
             // View and Window go before Help, as in the mockup.
             if menu == keys::MENU_HELP {
                 ui.menu_button(tr(keys::MENU_VIEW), |ui| self.view_menu(ui));
@@ -247,6 +251,18 @@ impl PhotoApp {
             ui.close();
         }
         ui.add_enabled(false, egui::Button::new(tr(keys::EDIT_PREFERENCES)));
+    }
+
+    /// Filters: each entry adds a filter layer above the selection, whose
+    /// parameters show in the Adjustments panel (docs/decisions/0023).
+    fn filters_menu(&mut self, ui: &mut Ui) {
+        for filter in layers::new_filters() {
+            if ui.button(tr(layers::filter_menu_key(&filter))).clicked() {
+                let command = layers::new_filter_layer(self.session.document(), &self.view, filter);
+                self.session.user(command);
+                ui.close();
+            }
+        }
     }
 
     fn layer_menu(&mut self, ui: &mut Ui, render_state: Option<&eframe::egui_wgpu::RenderState>) {

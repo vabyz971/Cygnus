@@ -18,9 +18,11 @@
 //! the selected adjustment layer, its intensity and the density of its
 //! mask. Every drag is one gesture, so one history entry.
 
-use cygnus_photo_core::adjust::{Adjustment, ColorShift, Curve, LevelsChannel, MAX_CURVE_POINTS};
-use cygnus_photo_core::commands::{AdjustmentUpdate, LayerUpdate, MaskUpdate};
-use cygnus_photo_core::{NodeId, NodeKind, PhotoCommand};
+use cygnus_photo_core::adjust::{
+    Adjustment, ColorShift, Curve, LevelsChannel, MAX_CURVE_POINTS, MAX_FILTER_RADIUS,
+};
+use cygnus_photo_core::commands::{AdjustmentUpdate, FilterUpdate, LayerUpdate, MaskUpdate};
+use cygnus_photo_core::{Filter, Node, NodeId, NodeKind, PhotoCommand};
 use cygnus_ui_kit::i18n::{Key, tr};
 use cygnus_ui_kit::theme::{metrics, palette};
 use cygnus_ui_kit::{icons, widgets};
@@ -30,7 +32,7 @@ use egui::{
 
 use crate::canvas::Session;
 use crate::keys;
-use crate::layers::adjustment_key;
+use crate::layers::{adjustment_key, filter_key};
 use crate::tools::percent;
 use crate::view::ViewState;
 
@@ -96,9 +98,16 @@ pub fn panel(ui: &mut Ui, session: &mut Session, view: &mut ViewState) {
         none(ui);
         return;
     };
-    let NodeKind::Adjustment { adjustment } = &node.kind else {
-        none(ui);
-        return;
+    let adjustment = match &node.kind {
+        NodeKind::Adjustment { adjustment } => adjustment,
+        NodeKind::Filter { filter } => {
+            filter_panel(ui, session, &node, *filter);
+            return;
+        }
+        _ => {
+            none(ui);
+            return;
+        }
     };
     let id = node.id;
     let mut edited = adjustment.clone();
@@ -190,21 +199,68 @@ pub fn panel(ui: &mut Ui, session: &mut Session, view: &mut ViewState) {
     }
 
     ui.add_space(metrics::SPACING);
+    strength(ui, session, &node, keys::ADJUSTMENT_STRENGTH);
+    mask_density(ui, session, node.mask);
+}
+
+/// Opacity of the layer `node`, as a strength in percent.
+fn strength(ui: &mut Ui, session: &mut Session, node: &Node, label: Key) {
     let mut strength = node.opacity * 100.0;
     let text = percent(strength.round() as u32);
-    let response = slider(
-        ui,
-        keys::ADJUSTMENT_STRENGTH,
-        &mut strength,
-        0.0..=100.0,
-        text,
-    );
+    let response = slider(ui, label, &mut strength, 0.0..=100.0, text);
     gesture(session, &response);
     if response.changed() {
-        let mut params = LayerUpdate::new(id);
+        let mut params = LayerUpdate::new(node.id);
         params.opacity = Some(strength / 100.0);
         session.user(PhotoCommand::LayerUpdate(params));
     }
+}
+
+/// Parameters of a filter layer (docs/decisions/0023).
+fn filter_panel(ui: &mut Ui, session: &mut Session, node: &Node, filter: Filter) {
+    widgets::icon_label(ui, icons::SPARKLE, tr(filter_key(&filter)), palette::TEXT);
+    let mut edited = filter;
+    let mut changed = false;
+    let (radius, rest) = match &mut edited {
+        Filter::GaussianBlur { radius } => (radius, None),
+        Filter::UnsharpMask {
+            radius,
+            amount,
+            threshold,
+        } => (radius, Some((amount, threshold))),
+    };
+    let text = format!("{:.1} px", *radius);
+    let response = slider(
+        ui,
+        keys::FILTER_RADIUS,
+        radius,
+        0.1..=MAX_FILTER_RADIUS,
+        text,
+    );
+    gesture(session, &response);
+    changed |= response.changed();
+    if let Some((amount, threshold)) = rest {
+        let mut value = *amount * 100.0;
+        let text = percent(value.round() as u32);
+        let response = slider(ui, keys::FILTER_AMOUNT, &mut value, 0.0..=500.0, text);
+        gesture(session, &response);
+        if response.changed() {
+            *amount = value / 100.0;
+            changed = true;
+        }
+        let text = format!("{:.0}", *threshold);
+        let response = slider(ui, keys::FILTER_THRESHOLD, threshold, 0.0..=255.0, text);
+        gesture(session, &response);
+        changed |= response.changed();
+    }
+    if changed {
+        session.user(PhotoCommand::FilterUpdate(FilterUpdate {
+            id: node.id,
+            filter: edited,
+        }));
+    }
+    ui.add_space(metrics::SPACING);
+    strength(ui, session, node, keys::FILTER_STRENGTH);
     mask_density(ui, session, node.mask);
 }
 

@@ -47,6 +47,12 @@ cygnus_ui_kit::define_keys! {
     SELECT_INVERT = "select.invert";
     FILTERS_GAUSSIAN_BLUR = "filters.gaussian_blur";
     FILTERS_UNSHARP_MASK = "filters.unsharp_mask";
+    FILTER_GAUSSIAN_BLUR = "filter.gaussian_blur";
+    FILTER_UNSHARP_MASK = "filter.unsharp_mask";
+    FILTER_RADIUS = "filter.radius";
+    FILTER_AMOUNT = "filter.amount";
+    FILTER_THRESHOLD = "filter.threshold";
+    FILTER_STRENGTH = "filter.strength";
     VIEW_ZOOM_IN = "view.zoom_in";
     VIEW_ZOOM_OUT = "view.zoom_out";
     VIEW_FIT = "view.fit";
@@ -157,7 +163,6 @@ cygnus_ui_kit::define_keys! {
     MASK_DELETE = "mask.delete";
     MASK_TARGET = "mask.target";
     LAYERS_EMPTY = "layers.empty";
-    LAYERS_FILTERS_LATER = "layers.filters_later";
     LAYERS_LOCK = "layers.lock";
     LAYERS_GROUP_TOGGLE = "layers.group_toggle";
     LAYERS_BLEND = "layers.blend";

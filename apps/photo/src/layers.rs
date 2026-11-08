@@ -70,10 +70,7 @@ fn kind_key(node: &Node) -> Key {
         NodeKind::Group { .. } => keys::LAYER_KIND_PASS_THROUGH,
         NodeKind::Embedded { .. } => keys::LAYER_KIND_EMBEDDED,
         NodeKind::Adjustment { adjustment } => adjustment_key(adjustment),
-        NodeKind::Filter {
-            filter: Filter::GaussianBlur { .. },
-        } => keys::FILTERS_GAUSSIAN_BLUR,
-        NodeKind::Filter { .. } => keys::FILTERS_UNSHARP_MASK,
+        NodeKind::Filter { filter } => filter_key(filter),
         NodeKind::Mask { .. } => keys::LAYERS_MASK,
     }
 }
@@ -90,6 +87,41 @@ fn kind_icon(node: &Node) -> &'static str {
         NodeKind::Filter { .. } => icons::SPARKLE,
         NodeKind::Mask { .. } => icons::SQUARE_HALF_BOTTOM,
     }
+}
+
+/// The filters offered for a new filter layer, with their default
+/// parameters (docs/decisions/0023).
+pub fn new_filters() -> [Filter; 2] {
+    [
+        Filter::GaussianBlur { radius: 2.0 },
+        Filter::UnsharpMask {
+            radius: 1.0,
+            amount: 1.0,
+            threshold: 0.0,
+        },
+    ]
+}
+
+/// Name of a filter.
+pub fn filter_key(filter: &Filter) -> Key {
+    match filter {
+        Filter::GaussianBlur { .. } => keys::FILTER_GAUSSIAN_BLUR,
+        Filter::UnsharpMask { .. } => keys::FILTER_UNSHARP_MASK,
+    }
+}
+
+/// Menu entry of a filter (it opens its parameters).
+pub fn filter_menu_key(filter: &Filter) -> Key {
+    match filter {
+        Filter::GaussianBlur { .. } => keys::FILTERS_GAUSSIAN_BLUR,
+        Filter::UnsharpMask { .. } => keys::FILTERS_UNSHARP_MASK,
+    }
+}
+
+/// The command creating a filter layer above the selection.
+pub fn new_filter_layer(document: &Document, view: &ViewState, filter: Filter) -> PhotoCommand {
+    let name = tr(filter_key(&filter)).to_owned();
+    create(document, view, name, LayerKind::Filter { filter })
 }
 
 fn update(id: NodeId, change: impl FnOnce(&mut LayerUpdate)) -> PhotoCommand {
@@ -592,12 +624,16 @@ fn buttons(ui: &mut Ui, session: &mut Session, view: &mut ViewState) {
                     fill: Default::default(),
                 }));
             }
-            // Filters render from B10, after J4.
-            ui.add_enabled(
-                false,
-                egui::Button::new(widgets::icon(icons::SPARKLE, metrics::ICON)).frame(false),
-            )
-            .on_disabled_hover_text(tr(keys::LAYERS_FILTERS_LATER));
+            let filter = widgets::icon_button(ui, icons::SPARKLE, tr(keys::LAYERS_ADD_FILTER));
+            egui::Popup::menu(&filter).show(|ui| {
+                for filter in new_filters() {
+                    if ui.button(tr(filter_menu_key(&filter))).clicked() {
+                        let command = new_filter_layer(session.document(), view, filter);
+                        session.user(command);
+                        ui.close();
+                    }
+                }
+            });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, icons::TRASH, tr(keys::LAYERS_DELETE)).clicked()
                     && let Some(id) = view.selected
