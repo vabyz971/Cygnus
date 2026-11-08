@@ -49,19 +49,22 @@ const MASK_TILE_BYTES: u64 = (TILE_SIZE * TILE_SIZE * crate::format::MASK_TEXEL_
 
 /// Slots of the layer and mask pools for `budget` bytes: four fifths for
 /// layer tiles, one fifth for mask tiles, each pool within `max_layers`
-/// array layers and holding at least 16 tiles.
+/// array layers (the layer pool keeps [`filter::MAX_FILTERED_TILES`] of
+/// them for filtered tiles) and holding at least 16 tiles.
 pub fn source_slots(budget: u64, max_layers: u32) -> (u32, u32) {
+    let reserve = FILTERED_RESERVE;
     let slots = |bytes: u64, tile: u64| -> u32 {
         u32::try_from(bytes / tile)
             .unwrap_or(u32::MAX)
             .clamp(16, max_layers.max(16))
             .min(max_layers)
     };
-    (
-        slots(budget / 5 * 4, LAYER_TILE_BYTES),
-        slots(budget / 5, MASK_TILE_BYTES),
-    )
+    let layers = slots(budget / 5 * 4, LAYER_TILE_BYTES).min(max_layers.saturating_sub(reserve));
+    (layers.max(16), slots(budget / 5, MASK_TILE_BYTES))
 }
+
+/// Slots reserved at the end of the layer pools for filtered tiles.
+const FILTERED_RESERVE: u32 = filter::MAX_FILTERED_TILES as u32;
 
 /// Words of one operation in the composite shader (`Op`).
 const OP_WORDS: usize = 8;
@@ -238,7 +241,12 @@ impl Renderer {
     ) -> Result<Self, RenderError> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-        let layers = TilePool::new(device, PoolKind::Layers, layer_slots.max(1));
+        let layers = TilePool::with_reserved(
+            device,
+            PoolKind::Layers,
+            layer_slots.max(1),
+            FILTERED_RESERVE,
+        );
         let masks = TilePool::new(device, PoolKind::Masks, mask_slots.max(1));
         let stats = SourceStats {
             capacity: (layers.capacity(), masks.capacity()),
@@ -256,9 +264,14 @@ impl Renderer {
                 stats,
                 curves: CurveTables::new(device, queue),
                 reduced: ReducedCache::new(),
-                reduced_layers: TilePool::new(device, PoolKind::Layers, (layer_slots / 4).max(16)),
+                reduced_layers: TilePool::with_reserved(
+                    device,
+                    PoolKind::Layers,
+                    (layer_slots / 4).max(16),
+                    FILTERED_RESERVE,
+                ),
                 reduced_masks: TilePool::new(device, PoolKind::Masks, (mask_slots / 4).max(16)),
-                filters: FilterPasses::new(device),
+                filters: FilterPasses::new(),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
         };
@@ -736,6 +749,9 @@ impl Renderer {
         } else {
             (&sources.reduced_layers.view, &sources.reduced_masks.view)
         };
+        // Filtered tiles go to the reserved slots of the layer pool read by
+        // the composite pass: no extra binding (WARP loses its device with
+        // one more texture in that pass, docs/decisions/0040).
 
         // Adjustments of the batch, stages included: their curve tables
         // made resident, then their parameters encoded once each, at a word
@@ -780,6 +796,7 @@ impl Renderer {
                 batch.stages.iter().map(|s| s.rows.len()).max().unwrap_or(0),
                 batch.stages.iter().map(|s| s.need.len()).sum(),
             );
+            sources.filters.prepare(&self.device);
             sources.filters.stage.reserve(&self.device, stage_tiles);
             sources.filters.rows.reserve(&self.device, rows);
             sources.filters.filtered.reserve(&self.device, filtered);
@@ -839,7 +856,6 @@ impl Renderer {
             }
             Ok((ops, jobs))
         };
-        let filtered_view = &sources.filters.filtered.pool.view;
         let composite = |encoder: &mut wgpu::CommandEncoder,
                          tiles: &[(u32, &[Op], TileCoord)],
                          filtered: &HashMap<(NodeId, TileCoord), u32>,
@@ -858,7 +874,6 @@ impl Renderer {
                     wgpu::BindingResource::TextureView(target),
                     params_buffer.as_entire_binding(),
                     sources.curves.buffer.as_entire_binding(),
-                    wgpu::BindingResource::TextureView(filtered_view),
                 ],
             );
             Self::dispatch(encoder, &self.composite, &group, tiles.len() as u32);
@@ -869,13 +884,21 @@ impl Renderer {
         let mut filtered: HashMap<(NodeId, TileCoord), u32> = HashMap::new();
         let passes = &sources.filters;
         for stage in &batch.stages {
+            let blur = passes
+                .blur()
+                .ok_or(RenderError::Unsupported("filter passes not compiled"))?;
+            let (stage_pool, rows_pool, filtered_pool) = (
+                passes.stage.pool()?,
+                passes.rows.pool()?,
+                passes.filtered.pool()?,
+            );
             let region: Vec<(u32, &[Op], TileCoord)> = stage
                 .region
                 .iter()
                 .enumerate()
                 .map(|(slot, (coord, ops))| (slot as u32, ops.as_slice(), *coord))
                 .collect();
-            composite(encoder, &region, &filtered, &passes.stage.pool.view)?;
+            composite(encoder, &region, &filtered, &stage_pool.view)?;
             let stage_pages = filter::page_table(
                 &region
                     .iter()
@@ -913,38 +936,71 @@ impl Renderer {
             );
             let rows_jobs = jobs(&rows);
             let horizontal = self.bind(
-                &passes.blur_h,
+                &blur.h,
                 &[
-                    wgpu::BindingResource::TextureView(&passes.stage.pool.view),
+                    wgpu::BindingResource::TextureView(&stage_pool.view),
                     stage_pages_buffer.as_entire_binding(),
                     weights_buffer.as_entire_binding(),
                     rows_jobs.as_entire_binding(),
-                    wgpu::BindingResource::TextureView(&passes.rows.pool.view),
+                    wgpu::BindingResource::TextureView(&rows_pool.view),
                     params_buffer.as_entire_binding(),
                 ],
             );
-            Self::dispatch(encoder, &passes.blur_h, &horizontal, rows.len() as u32);
+            Self::dispatch(encoder, &blur.h, &horizontal, rows.len() as u32);
             let rows_pages = self.storage_bytes(
                 "cygnus filter rows pages",
                 bytemuck::cast_slice(&filter::page_table(&rows)),
             );
             let need_jobs = jobs(&need);
             let vertical = self.bind(
-                &passes.blur_v,
+                &blur.v,
                 &[
-                    wgpu::BindingResource::TextureView(&passes.rows.pool.view),
+                    wgpu::BindingResource::TextureView(&rows_pool.view),
                     rows_pages.as_entire_binding(),
                     weights_buffer.as_entire_binding(),
                     need_jobs.as_entire_binding(),
-                    wgpu::BindingResource::TextureView(&passes.filtered.pool.view),
+                    wgpu::BindingResource::TextureView(&filtered_pool.view),
                     params_buffer.as_entire_binding(),
-                    wgpu::BindingResource::TextureView(&passes.stage.pool.view),
+                    wgpu::BindingResource::TextureView(&stage_pool.view),
                     stage_pages_buffer.as_entire_binding(),
                 ],
             );
-            Self::dispatch(encoder, &passes.blur_v, &vertical, need.len() as u32);
+            Self::dispatch(encoder, &blur.v, &vertical, need.len() as u32);
+            let layer_pool = if batch.level == 0 {
+                &sources.layers
+            } else {
+                &sources.reduced_layers
+            };
             for (coord, slot) in need {
-                filtered.insert((stage.id, coord), slot);
+                let reserved = layer_pool.reserved_slot(slot);
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &filtered_pool.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: slot,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: layer_pool.texture(),
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: reserved,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: TILE_SIZE,
+                        height: TILE_SIZE,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                filtered.insert((stage.id, coord), reserved);
             }
         }
 
@@ -1107,7 +1163,9 @@ mod tests {
         assert_eq!(source_slots(512 * MIB, 2048), (819, 819));
         assert_eq!(source_slots(256 * MIB, 2048), (409, 409));
         // The WebGPU default of 256 array layers bounds both pools.
-        assert_eq!(source_slots(512 * MIB, 256), (256, 256));
+        // The WebGPU default of 256 array layers bounds both pools, the
+        // layer pool keeping 64 for filtered tiles.
+        assert_eq!(source_slots(512 * MIB, 256), (192, 256));
         assert_eq!(source_slots(MIB, 2048), (16, 16));
     }
 

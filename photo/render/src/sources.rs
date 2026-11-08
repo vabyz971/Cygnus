@@ -86,6 +86,18 @@ pub(crate) struct TilePool {
 
 impl TilePool {
     pub(crate) fn new(device: &wgpu::Device, kind: PoolKind, capacity: u32) -> Self {
+        Self::with_reserved(device, kind, capacity, 0)
+    }
+
+    /// A pool of `capacity` managed slots followed by `reserved` slots that
+    /// the pool never assigns, written by copies (the filtered tiles of
+    /// docs/decisions/0040).
+    pub(crate) fn with_reserved(
+        device: &wgpu::Device,
+        kind: PoolKind,
+        capacity: u32,
+        reserved: u32,
+    ) -> Self {
         let (label, format) = match kind {
             PoolKind::Layers => ("cygnus layer source pool", SOURCE_FORMAT),
             PoolKind::Masks => ("cygnus mask source pool", MASK_FORMAT),
@@ -95,7 +107,7 @@ impl TilePool {
             size: wgpu::Extent3d {
                 width: TILE_SIZE,
                 height: TILE_SIZE,
-                depth_or_array_layers: capacity,
+                depth_or_array_layers: capacity + reserved,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -120,6 +132,15 @@ impl TilePool {
 
     pub(crate) fn capacity(&self) -> u32 {
         self.capacity
+    }
+
+    /// Slot of reserved tile `index`.
+    pub(crate) fn reserved_slot(&self, index: u32) -> u32 {
+        self.capacity + index
+    }
+
+    pub(crate) fn texture(&self) -> &wgpu::Texture {
+        &self.texture
     }
 
     /// Makes every tile of `wanted` resident and returns its slot. Tiles

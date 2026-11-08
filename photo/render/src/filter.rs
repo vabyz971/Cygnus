@@ -46,6 +46,10 @@ use crate::sources::SourceKey;
 /// split.
 pub(crate) const MAX_FILTER_TILES: usize = 256;
 
+/// Filtered tiles of one batch at most: they are copied to slots reserved
+/// at the end of the layer pools, which the composite pass reads (0040).
+pub(crate) const MAX_FILTERED_TILES: usize = 64;
+
 /// One filter of a batch and the tiles it works on.
 pub(crate) struct FilterStage {
     pub(crate) id: NodeId,
@@ -87,7 +91,7 @@ impl StagePlan {
 
     pub(crate) fn fits(&self) -> bool {
         let (stage, rows, filtered) = self.pool_tiles();
-        stage <= MAX_FILTER_TILES && rows <= MAX_FILTER_TILES && filtered <= MAX_FILTER_TILES
+        stage <= MAX_FILTER_TILES && rows <= MAX_FILTER_TILES && filtered <= MAX_FILTERED_TILES
     }
 }
 
@@ -259,41 +263,74 @@ pub(crate) fn page_table(slots: &[(TileCoord, u32)]) -> Vec<i32> {
 /// up to [`MAX_FILTER_TILES`] tiles; the filtered pool is always bound by
 /// the composite pass, so it starts with one tile.
 pub(crate) struct FilterPasses {
-    pub(crate) blur_h: wgpu::ComputePipeline,
-    pub(crate) blur_v: wgpu::ComputePipeline,
+    /// Compiled on the first filter met: a document without filters never
+    /// builds them.
+    blur: Option<Blur>,
     pub(crate) stage: Grown,
     pub(crate) rows: Grown,
     pub(crate) filtered: Grown,
 }
 
+/// The two passes of the blur.
+pub(crate) struct Blur {
+    pub(crate) h: wgpu::ComputePipeline,
+    pub(crate) v: wgpu::ComputePipeline,
+}
+
 /// A pool and its number of slots.
 pub(crate) struct Grown {
-    pub(crate) pool: Pool,
-    pub(crate) slots: usize,
+    /// Allocated on the first filter met, with 16 tiles at least.
+    pool: Option<Pool>,
+    slots: usize,
     label: &'static str,
 }
 
 impl Grown {
-    fn new(device: &wgpu::Device, label: &'static str, slots: usize) -> Self {
+    fn new(label: &'static str) -> Self {
         Self {
-            pool: Pool::new(device, label, slots as u32),
-            slots,
+            pool: None,
+            slots: 0,
             label,
         }
     }
 
     /// Makes room for `wanted` tiles, dropping the content.
     pub(crate) fn reserve(&mut self, device: &wgpu::Device, wanted: usize) {
-        if wanted > self.slots {
+        if self.pool.is_none() || wanted > self.slots {
             let slots = wanted.next_power_of_two().clamp(16, MAX_FILTER_TILES);
-            self.pool = Pool::new(device, self.label, slots as u32);
+            self.pool = Some(Pool::with_usage(
+                device,
+                self.label,
+                slots as u32,
+                wgpu::TextureUsages::COPY_SRC,
+            ));
             self.slots = slots;
         }
+    }
+
+    /// The pool, once [`Self::reserve`] has run.
+    pub(crate) fn pool(&self) -> Result<&Pool, RenderError> {
+        self.pool.as_ref().ok_or(RenderError::Unsupported(
+            "a filter pool used before it is made",
+        ))
     }
 }
 
 impl FilterPasses {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new() -> Self {
+        Self {
+            blur: None,
+            stage: Grown::new("cygnus filter stage pool"),
+            rows: Grown::new("cygnus filter rows pool"),
+            filtered: Grown::new("cygnus filtered pool"),
+        }
+    }
+
+    /// Compiles the blur passes if needed.
+    pub(crate) fn prepare(&mut self, device: &wgpu::Device) {
+        if self.blur.is_some() {
+            return;
+        }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cygnus filter"),
             source: wgpu::ShaderSource::Wgsl(crate::shaders::filter().into()),
@@ -308,13 +345,15 @@ impl FilterPasses {
                 cache: None,
             })
         };
-        Self {
-            blur_h: pipeline("blur_h"),
-            blur_v: pipeline("blur_v"),
-            stage: Grown::new(device, "cygnus filter stage pool", 1),
-            rows: Grown::new(device, "cygnus filter rows pool", 1),
-            filtered: Grown::new(device, "cygnus filtered pool", 1),
-        }
+        self.blur = Some(Blur {
+            h: pipeline("blur_h"),
+            v: pipeline("blur_v"),
+        });
+    }
+
+    /// The blur passes, once [`Self::prepare`] has run.
+    pub(crate) fn blur(&self) -> Option<&Blur> {
+        self.blur.as_ref()
     }
 }
 
