@@ -53,10 +53,30 @@ B10 était reporté après J4 (0027), puis placé en étape P6 de J5 (0039). L'u
    - le seuil s'applique canal par canal, sur les valeurs prémultipliées, l'alpha compris ;
    - la couleur est ensuite bornée par l'alpha.
 7. **Limites** :
-   - les zones d'un lot doivent tenir dans des réserves de 256 tuiles, et leurs sources dans les réserves de sources. Les lots sont découpés en conséquence ;
+   - les zones d'un lot doivent tenir dans des réserves de 256 tuiles (64 pour les tuiles filtrées, voir le correctif ci-dessous), et leurs sources dans les réserves de sources. Les lots sont découpés en conséquence ;
    - si une seule tuile dépasse, le rendu échoue avec un message. C'est le cas pour plus de trois flous de 100 px empilés, ou pour un très grand nombre de calques sous un grand flou avec un GPU intégré (réserves de 409 tuiles) ;
    - la limite de 8 niveaux d'imbrication n'est pas levée.
 8. **Calque de filtre détouré sur une base vide** : là où la base n'a pas de pixels, l'étape est transparente.
+
+## Correctif après la CI du 2026-11-08 : WARP
+
+**Constat.** Sous WARP (Windows), le premier envoi de B10 faisait perdre le périphérique (`DXGI_ERROR_DEVICE_REMOVED`) dès le premier export, même sans filtre dans le document. Une bissection sur une branche de diagnostic l'a localisé. Le shader de composition d'avant B10 passe ; tout ajout le fait tomber :
+- un cas de plus dans le `switch` ;
+- ou une texture de plus.
+
+Le shader inlinait déjà `blend()` quatre fois et `blend_atop()` deux fois. Les autres pistes ont été écartées par l'essai :
+- les passes de filtre compilées au démarrage ;
+- les réserves d'une seule tuile ;
+- l'initialisation des textures.
+
+**Correctif** (même résultat au bit près sur lavapipe et la RTX ; toute la suite GPU passe sous WARP, avec la golden image des filtres identique à celle de lavapipe) :
+
+1. **Composition** : les opérations qui fusionnent préparent leurs arguments dans le `switch`. `blend()` et `blend_atop()` sont appelées une seule fois, après lui. Le shader inline ces fonctions une fois chacune au lieu de six.
+2. **Tuiles filtrées** :
+   - elles sont recopiées dans 64 emplacements réservés à la fin des réserves de calques (pleine taille et réduite), que l'opération `Filter` lit par la liaison existante. La composition garde ses liaisons d'avant B10 ;
+   - une tuile de sortie peut donc dépendre de 64 tuiles filtrées au plus, toutes étapes comprises. Par exemple, deux flous de 100 px empilés passent (1 + 25 tuiles), mais pas trois ;
+   - avec la limite par défaut de WebGPU (256 couches de tableau), la réserve de calques passe de 256 à 192 tuiles.
+3. **Passes et réserves de filtres** : elles sont créées au premier filtre rencontré. Un document sans filtre ne les alloue pas.
 
 ## Tests
 
