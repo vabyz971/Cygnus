@@ -140,7 +140,7 @@ Les cibles de fluidité ont été confirmées au jalon J2 par une mesure sur une
 | --- | --- | --- |
 | Fluidité | Sur une photo de 24 Mpx en 16 bits avec une dizaine de calques : 60 images/s en vue stable et en zoom, 30 images/s en panoramique sur des tuiles non calculées. L'interface ne reste jamais bloquée plus de 100 ms (affichage grossier d'abord, puis affinage). Un changement de propriété produit l'image finale en moins de 150 ms, avec un aperçu réduit en moins de 33 ms pendant un glissement. | Banc d'essai automatisé |
 | Mémoire | Canevas découpé en tuiles, texture GPU éparse : un document n'est jamais chargé en entier si ce n'est pas nécessaire. | Test sur très grande image |
-| Couleur | Calcul interne en virgule flottante 16 bits (f16) linéaire sur GPU, conversion vers l'écran à l'affichage (écran supposé sRGB en J2). Le choix du f16 est à revoir après J3, d'après le test de bandes. | Images de référence |
+| Couleur | Composition en valeurs sRGB encodées, comme les logiciels de référence : f32 dans les passes, entiers 16 bits pour le cache. Les rééchantillonnages (réduction de l'affichage, transformations) se font en linéaire. Écran supposé sRGB en J2. Le format du cache a été choisi d'après un test de bandes et de précision d'export (décisions 0021 et 0026). | Images de référence |
 | Cohérence | L'aperçu à 100 % et l'export sont identiques (section 2.1). | Tests golden en intégration continue |
 | Plateformes | Linux, Windows, macOS ; rendu via wgpu (Vulkan, Metal, DirectX 12). Le GPU minimal supporté reste à définir. | Intégration continue sur les trois systèmes |
 | Fiabilité | Aucun `unwrap()` ni `expect()` hors tests ; erreurs affichées clairement ; fichier corrompu = message, jamais un plantage. | Revue automatique, tests de fichiers invalides |
@@ -201,7 +201,7 @@ Les vues lisent le modèle ; l'application, le serveur MCP et la ligne de comman
 ### 7.3 Rendu
 
 - L'arbre est compilé en graphe de rendu GPU (wgpu). Les passes sont écrites en WGSL et les formules de fusion n'existent qu'en un seul exemplaire.
-- Le canevas est découpé en tuiles (texture éparse). Le calcul se fait en f16 linéaire, converti à l'affichage.
+- Le canevas est découpé en tuiles (texture éparse). La composition se fait en valeurs sRGB encodées (f32 dans les passes, entiers 16 bits en cache) ; les rééchantillonnages se font en linéaire.
 - Un cache par tuile est invalidé uniquement par les commandes qui touchent la zone. Le budget de tuiles en mémoire GPU est calculé d'après la taille de la fenêtre et la mémoire disponible, et le calcul des tuiles obéit à un budget de temps par image : les tuiles manquantes s'affichent d'abord en niveau grossier.
 - Le canevas est dessiné directement par wgpu dans la fenêtre `egui`, hors de la boucle de widgets.
 
