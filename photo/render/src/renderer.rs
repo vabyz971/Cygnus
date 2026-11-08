@@ -355,6 +355,19 @@ impl Renderer {
         Ok(batches)
     }
 
+    /// Whether the reduced sources of the output tile `coord` of `level`
+    /// are ready to be composed. Reduced tiles are built on demand by the
+    /// composition itself for now.
+    pub(crate) fn reduced_ready(
+        &self,
+        _document: &Document,
+        _coord: TileCoord,
+        _level: u32,
+        _blocking: bool,
+    ) -> bool {
+        true
+    }
+
     /// Makes the sources of the output tiles `coords` resident while the
     /// canvas is idle (docs/decisions/0027, point 1): resident ones are
     /// marked used, at most `max_uploads` missing ones are uploaded. Does

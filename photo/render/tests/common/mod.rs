@@ -183,8 +183,27 @@ pub fn draw_on(
     (width, height): (u32, u32),
     view: CanvasView,
 ) -> Vec<u8> {
-    let format = wgpu::TextureFormat::Rgba8Unorm;
     canvas.prepare(renderer, document, changes, &view).unwrap();
+    // Frames until the work left by a frame budget is done.
+    let mut frames = 0;
+    while canvas.is_pending() {
+        frames += 1;
+        assert!(frames < 100_000, "the canvas never finishes its work");
+        if frames % 64 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        canvas
+            .prepare(renderer, document, &PhotoChanges::default(), &view)
+            .unwrap();
+    }
+    read_canvas(gpu, canvas, (width, height))
+}
+
+/// Draws what the canvas shows now, without preparing it, on an offscreen
+/// 8-bit target and reads it back as RGBA bytes, row by row.
+#[allow(dead_code)]
+pub fn read_canvas(gpu: &Gpu, canvas: &Canvas, (width, height): (u32, u32)) -> Vec<u8> {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {

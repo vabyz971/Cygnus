@@ -141,6 +141,16 @@ pub fn coarse(render_state: &egui_wgpu::RenderState) -> Option<Coarse> {
         .and_then(|resources| resources.canvas.is_coarse().then_some(Coarse::Memory))
 }
 
+/// Whether the canvas has work left within its frame budget.
+pub fn pending(render_state: &egui_wgpu::RenderState) -> bool {
+    render_state
+        .renderer
+        .read()
+        .callback_resources
+        .get::<CanvasResources>()
+        .is_some_and(|resources| resources.canvas.is_pending())
+}
+
 /// Runs `f` with the renderer of the canvas (to merge layers down).
 pub fn with_renderer<R>(
     render_state: &egui_wgpu::RenderState,
@@ -176,6 +186,9 @@ struct CanvasCallback {
     view: CanvasView,
     /// A parameter is being dragged: preview from reduced sources.
     preview: bool,
+    /// To ask for another frame while the canvas has work left within its
+    /// frame budget (docs/decisions/0034).
+    context: egui::Context,
 }
 
 impl egui_wgpu::CallbackTrait for CanvasCallback {
@@ -204,6 +217,9 @@ impl egui_wgpu::CallbackTrait for CanvasCallback {
             Ok(()) => {
                 resources.shown = Some(self.revision);
                 resources.error = None;
+                if resources.canvas.is_pending() {
+                    self.context.request_repaint();
+                }
                 // Histogram of what is shown: after a change, at most ten
                 // per second, read back without blocking.
                 if let Some(histogram) = resources.histogram.poll(device) {
@@ -502,6 +518,7 @@ impl Session {
             base: self.sent,
             changes: self.bus.changes_since(self.sent).changes,
             preview: self.gesture,
+            context: ui.ctx().clone(),
             view: CanvasView {
                 origin,
                 scale: self.zoom,

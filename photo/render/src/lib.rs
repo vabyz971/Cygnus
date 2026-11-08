@@ -37,7 +37,7 @@ pub mod shaders;
 mod sources;
 
 pub use adjust::{COLOR_BALANCE_STRENGTH, CurveTableStats};
-pub use canvas::{Canvas, CanvasStats, CanvasView};
+pub use canvas::{Canvas, CanvasStats, CanvasView, FrameBudget};
 pub use histogram::{Histogram, HistogramPass};
 pub use image::{ExportBits, Image};
 pub use renderer::{RenderError, Renderer};

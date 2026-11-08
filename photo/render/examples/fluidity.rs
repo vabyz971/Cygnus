@@ -18,9 +18,12 @@
 //!
 //! cargo run --release -p cygnus-photo-render --example fluidity -- \
 //!     [--out report.json] [--viewport 2560x1440] [--cache-slots N]
+//!     [--no-frame-budget]
 //!
 //! `--cache-slots` fixes the canvas cache instead of the computed budget,
 //! to measure panning over tiles that are not in the cache.
+//! `--no-frame-budget` finishes every frame, as before docs/decisions/0034,
+//! for comparisons.
 //!
 //! Each frame updates the canvas and draws it on an offscreen target, then
 //! waits for the GPU: the frame time includes all GPU work, but neither the
@@ -33,12 +36,16 @@ use std::time::Instant;
 use cygnus_commands::{ChangeSet, CommandBus, Source};
 use cygnus_photo_core::PhotoChanges;
 use cygnus_photo_render::bench::{self, FrameSample, RunInfo};
-use cygnus_photo_render::{Canvas, CanvasView, Renderer, gpu};
+use cygnus_photo_render::{Canvas, CanvasView, FrameBudget, Renderer, gpu};
+
+/// Repetitions of a settling frame at most.
+const MAX_REPEATS: u32 = 10_000;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut out = String::from("fluidity-headless.json");
     let mut viewport = [2560u32, 1440];
     let mut cache_slots: Option<u32> = None;
+    let mut frame_budget = Some(FrameBudget::DEFAULT);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -57,6 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .parse()?,
                 );
             }
+            "--no-frame-budget" => frame_budget = None,
             other => return Err(format!("unknown argument {other:?}").into()),
         }
     }
@@ -82,6 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             gpu::cache_memory_budget(gpu.info.device_type),
         )?,
     };
+    canvas.set_frame_budget(frame_budget);
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("benchmark target"),
         size: wgpu::Extent3d {
@@ -102,9 +111,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut bus = CommandBus::new();
     let mut changes = PhotoChanges::everything();
     let mut samples = Vec::new();
-    for frame in bench::camera_path([rect[2], rect[3]]) {
+    let path = bench::camera_path([rect[2], rect[3]]);
+    let mut index = 0;
+    let mut repeats = 0;
+    while let Some(frame) = path.get(index).copied() {
         let start = Instant::now();
-        if let Some(edit) = frame.edit {
+        if let Some(edit) = frame.edit.filter(|_| repeats == 0) {
             let cursor = bus.revision();
             bus.execute(&mut document, bench::edit_command(edit), Source::Test)?;
             changes = bus.changes_since(cursor).changes;
@@ -145,6 +157,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             stats: canvas.stats(),
             sources: renderer.source_stats(),
         });
+        if frame.settle && canvas.is_pending() && repeats < MAX_REPEATS {
+            repeats += 1;
+        } else {
+            index += 1;
+            repeats = 0;
+        }
     }
 
     let info = RunInfo {

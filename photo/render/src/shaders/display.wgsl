@@ -14,12 +14,14 @@
 // You should have received a copy of the GNU General Public License along
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
-// Display pass: draws the canvas into egui's frame (docs/decisions/0012
-// and 0018). Each screen pixel looks up the composite tiles of the pyramid
-// level chosen for the zoom. At 100 % and above, sampling is nearest: each
-// screen pixel is exactly one document pixel at 100 %, and the shown value
-// is the 8-bit export value (same quantization). Below 100 %, the level is
-// sampled bilinearly in linear light, then encoded again (0021).
+// Display pass: draws the canvas into egui's frame (docs/decisions/0012,
+// 0018 and 0034). Each screen pixel looks up the composite tiles of the
+// pyramid level chosen for the zoom; where that level has no tile shown
+// yet, the first coarser level that has one is shown enlarged (nearest),
+// else the pixel is transparent. At 100 % and above, sampling is nearest:
+// each screen pixel is exactly one document pixel at 100 %, and the shown
+// value is the 8-bit export value (same quantization). Below 100 %, the
+// level is sampled bilinearly in linear light, then encoded again (0021).
 
 struct Display {
     // Framebuffer position of the document origin, in pixels.
@@ -30,8 +32,8 @@ struct Display {
     level_scale: f32,
     // Size of the displayed level, in its pixels.
     level_size: vec2<u32>,
-    // Tiles per row of the displayed level.
-    tiles_x: u32,
+    // Displayed level.
+    level: u32,
     // Side of a transparency checker square, in framebuffer pixels.
     checker: f32,
     // sRGB colors: around the document, and the two checker squares.
@@ -40,6 +42,9 @@ struct Display {
     checker_dark: vec4<f32>,
 }
 
+// Page tables of every level: word 0 is the number of levels; then for
+// each level, the offset of its table, its tiles per row, its width and
+// its height; then the tables, one slot (or -1) per tile.
 @group(0) @binding(0) var composites: texture_2d_array<COMPUTE_SAMPLED>;
 @group(0) @binding(1) var<storage, read> pages: array<i32>;
 @group(0) @binding(2) var<uniform> display: Display;
@@ -51,20 +56,31 @@ fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
 }
 
-// Composite value of one pixel of the displayed level; transparent outside
-// the level or where no tile is resident.
+// Composite value of pixel `p` of the displayed level; where its tile is
+// not shown, the pixel covering it in the first coarser level shown;
+// transparent outside the level or where no level has a tile.
 fn fetch(p: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(display.level_size);
     if p.x < 0 || p.y < 0 || p.x >= size.x || p.y >= size.y {
         return vec4<f32>(0.0);
     }
-    let pixel = vec2<u32>(p);
-    let tile = pixel / TILE_SIZE;
-    let slot = pages[tile.y * display.tiles_x + tile.x];
-    if slot < 0 {
-        return vec4<f32>(0.0);
+    let levels = u32(pages[0]);
+    for (var level = display.level; level < levels; level++) {
+        let header = 1u + 4u * level;
+        // Pixel of `level` covering the center of `p`.
+        let shift = level - display.level;
+        let pixel = vec2<u32>(p) >> vec2<u32>(shift);
+        let level_size = vec2<u32>(u32(pages[header + 2u]), u32(pages[header + 3u]));
+        if pixel.x >= level_size.x || pixel.y >= level_size.y {
+            return vec4<f32>(0.0);
+        }
+        let tile = pixel / TILE_SIZE;
+        let slot = pages[u32(pages[header]) + tile.y * u32(pages[header + 1u]) + tile.x];
+        if slot >= 0 {
+            return unpack_compute(textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0));
+        }
     }
-    return unpack_compute(textureLoad(composites, vec2<i32>(pixel % TILE_SIZE), slot, 0));
+    return vec4<f32>(0.0);
 }
 
 @fragment

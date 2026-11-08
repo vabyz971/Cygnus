@@ -25,6 +25,10 @@
 //! Camera path: fit (cold, then warm), pan at 100 %, continuous zoom from
 //! 5 to 800 %, diagonal pan at 300 %, an opacity change, then a curve point
 //! dragged at 300 % and at fit.
+//!
+//! Within a frame budget (docs/decisions/0034), the canvas may need several
+//! frames to show the final image: a frame marked `settle` is repeated, in
+//! the same phase, until the canvas has no work left.
 
 use std::time::Duration;
 
@@ -110,6 +114,8 @@ pub struct CameraFrame {
     pub edit: Option<Edit>,
     /// A parameter is being dragged: the canvas previews (0027, B7-lite).
     pub preview: bool,
+    /// Repeated, without its edit, until the canvas has no work left.
+    pub settle: bool,
 }
 
 /// A change of the document during the camera path.
@@ -138,8 +144,12 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
         center,
         edit: None,
         preview: false,
+        settle: false,
     };
-    let mut path = vec![frame(Phase::FitCold, fit, middle)];
+    let mut path = vec![CameraFrame {
+        settle: true,
+        ..frame(Phase::FitCold, fit, middle)
+    }];
     path.extend((0..120).map(|_| frame(Phase::FitWarm, fit, middle)));
     // Pan at 100 % from the left edge to the right edge, mid-height.
     let half = viewport[0] / 2.0;
@@ -171,6 +181,7 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
     // Opacity change, then frames until the view is up to date and stable.
     path.extend((0..30).map(|i| CameraFrame {
         edit: (i == 0).then_some(Edit::Opacity),
+        settle: i == 0,
         ..frame(Phase::Edit, 3.0, [width * 0.75, height * 0.75])
     }));
     // A curve point dragged, one change per frame, at 300 % then at fit.
@@ -184,7 +195,10 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
             ..frame(phase, scale, center)
         }));
     }
-    path.push(frame(Phase::CurveRelease, fit, middle));
+    path.push(CameraFrame {
+        settle: true,
+        ..frame(Phase::CurveRelease, fit, middle)
+    });
     path
 }
 
@@ -485,6 +499,9 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "p95_ms": percentile(&sorted, 0.95),
             "p99_ms": percentile(&sorted, 0.99),
             "max_ms": sorted.last().copied().unwrap_or(0.0),
+            "first_frame_ms": times.first().copied().unwrap_or(0.0),
+            "total_ms": times.iter().sum::<f64>(),
+            "frames_over_100_ms": times.iter().filter(|t| **t > 100.0).count(),
             "fps_at_median": if median > 0.0 { 1000.0 / median } else { 0.0 },
             "p95_within_16_7_ms": percentile(&sorted, 0.95) <= 1000.0 / 60.0,
             "tiles_composited": previous.composited - start.composited,

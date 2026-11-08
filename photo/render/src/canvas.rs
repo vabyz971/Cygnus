@@ -29,6 +29,8 @@
 //! cache, [`Canvas::paint`] draws into any render pass.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use cygnus_photo_core::pixels::{TILE_SIZE, TileCoord};
 use cygnus_photo_core::{Document, PhotoChanges};
@@ -58,12 +60,39 @@ pub struct CanvasView {
 /// Work counters, for tests and the benchmark.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CanvasStats {
-    /// Level 0 tiles composited from layers.
+    /// Tiles composited from layers: level 0, or a coarser level from
+    /// reduced sources.
     pub composited: u64,
     /// Tiles of levels above 0 built from their children.
     pub downsampled: u64,
     /// Tiles evicted to make room.
     pub evicted: u64,
+}
+
+/// Work allowed per frame (docs/decisions/0024 and 0034, T1). The canvas
+/// processes its queue of tiles while the processor time spent stays under
+/// `cpu`, the estimated GPU time under `gpu` and the tiles under
+/// `max_tiles`; the rest waits for the next frame. At least one batch is
+/// processed per frame unless `max_tiles` is 0, which pauses the work (for
+/// tests).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameBudget {
+    /// Processor time spent recording and uploading.
+    pub cpu: Duration,
+    /// GPU time estimated from the measured cost of a tile.
+    pub gpu: Duration,
+    /// Hard bound on the tiles composited per frame.
+    pub max_tiles: u32,
+}
+
+impl FrameBudget {
+    /// Budget of the interactive canvas: 6 ms of processor time, 6 ms of
+    /// estimated GPU time, 64 tiles.
+    pub const DEFAULT: Self = Self {
+        cpu: Duration::from_millis(6),
+        gpu: Duration::from_millis(6),
+        max_tiles: 64,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -76,26 +105,52 @@ struct TileKey {
 #[derive(Debug, Clone, Copy)]
 struct Entry {
     slot: u32,
+    /// The content is that of the current document.
     valid: bool,
+    /// The content is a complete image of the tile, possibly of an older
+    /// document or approximate: it may be shown until it is replaced.
+    shown: bool,
     used: u64,
-    /// Built from reduced sources during a preview: valid only while the
-    /// preview lasts, then recomputed exactly.
-    preview: bool,
+    /// Built from reduced sources: approximate, replaced by the exact tile
+    /// once no preview asks for it.
+    approx: bool,
 }
 
-/// GPU work of one update, in dependency order.
+/// GPU work of one update, in dependency order: any prefix of a plan can
+/// be run alone.
+#[derive(Debug, Clone, Copy)]
 enum Op {
-    /// Composition of a tile of `level`: 0, or the preview level (from
-    /// reduced sources).
-    Composite {
-        coord: TileCoord,
-        slot: u32,
-        level: u32,
-    },
+    /// Composition of a tile: at level 0, or at a coarser level from
+    /// reduced sources (approximate).
+    Composite { key: TileKey, slot: u32 },
     Downsample {
+        key: TileKey,
         parent: u32,
         children: [Option<u32>; 4],
+        approx: bool,
     },
+}
+
+impl Op {
+    fn key(&self) -> TileKey {
+        match self {
+            Self::Composite { key, .. } | Self::Downsample { key, .. } => *key,
+        }
+    }
+
+    fn slot(&self) -> u32 {
+        match self {
+            Self::Composite { slot, .. } => *slot,
+            Self::Downsample { parent, .. } => *parent,
+        }
+    }
+
+    fn approx(&self) -> bool {
+        match self {
+            Self::Composite { key, .. } => key.level > 0,
+            Self::Downsample { approx, .. } => *approx,
+        }
+    }
 }
 
 /// Source tiles uploaded at most per idle frame by the prefetch.
@@ -117,6 +172,16 @@ const SCRATCH_SLOTS: u32 = 16;
 const MIN_SLOTS: u32 = 16;
 /// Cache of a new canvas, before the document and the window are known.
 const INITIAL_SLOTS: u32 = 64;
+/// Levels described by the page table header (a 65 535-pixel document has
+/// 9 levels).
+const MAX_LEVELS: u32 = 16;
+/// Words of the page table header: the number of levels, then for each
+/// level the offset of its table, its tiles per row and its size.
+const HEADER_WORDS: usize = 1 + 4 * MAX_LEVELS as usize;
+/// GPU cost of a composite tile assumed before any measure, in ms.
+const INITIAL_TILE_COST_MS: f64 = 0.5;
+/// Weight of a new measure in the running average of the tile cost.
+const COST_SMOOTHING: f64 = 0.25;
 
 /// Number of tiles of all pyramid levels of a document of `size` pixels.
 fn pyramid_tiles(size: (u32, u32)) -> (u64, u32) {
@@ -187,6 +252,93 @@ pub(crate) fn allocate_with_retry<T, E>(
     }
 }
 
+/// Running estimate of the GPU time of one composite tile, measured from
+/// the end of the submitted work (`on_submitted_work_done`).
+struct GpuCost {
+    per_tile_ms: f64,
+    pending: Option<Measure>,
+}
+
+/// A measure in flight: when the work was submitted, how many tiles it
+/// held, and when the GPU finished it.
+type Measure = (Instant, f64, Arc<Mutex<Option<Instant>>>);
+
+impl GpuCost {
+    fn new() -> Self {
+        Self {
+            per_tile_ms: INITIAL_TILE_COST_MS,
+            pending: None,
+        }
+    }
+
+    /// Takes in the measure in flight if the GPU has finished it.
+    fn update(&mut self, device: &wgpu::Device) {
+        let Some((submitted, tiles, done)) = &self.pending else {
+            return;
+        };
+        // Non-blocking: only runs the callbacks of finished work.
+        let _ = device.poll(wgpu::PollType::Poll);
+        let finished = *done.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(finished) = finished {
+            let measured = finished.duration_since(*submitted).as_secs_f64() * 1000.0 / tiles;
+            self.per_tile_ms += COST_SMOOTHING * (measured - self.per_tile_ms);
+            self.pending = None;
+        }
+    }
+
+    /// Starts a measure of the work submitted so far, holding `tiles`.
+    fn measure(&mut self, queue: &wgpu::Queue, tiles: f64) {
+        if self.pending.is_some() || tiles < 1.0 {
+            return;
+        }
+        let done = Arc::new(Mutex::new(None));
+        let flag = Arc::clone(&done);
+        queue.on_submitted_work_done(move || {
+            *flag.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+        });
+        self.pending = Some((Instant::now(), tiles, done));
+    }
+}
+
+/// What one frame may still spend.
+struct Spending {
+    budget: Option<FrameBudget>,
+    start: Instant,
+    gpu_ms: f64,
+    tiles: f64,
+    per_tile_ms: f64,
+}
+
+impl Spending {
+    /// Composite tiles the next batch may hold (0: stop).
+    fn allowance(&self, first: bool) -> usize {
+        let Some(budget) = self.budget else {
+            return usize::MAX;
+        };
+        if budget.max_tiles == 0 {
+            return 0;
+        }
+        let tiles_left = f64::from(budget.max_tiles) - self.tiles;
+        let gpu_left = (budget.gpu.as_secs_f64() * 1000.0 - self.gpu_ms) / self.per_tile_ms;
+        let cpu_left = budget.cpu.saturating_sub(self.start.elapsed());
+        let allowed = tiles_left.min(gpu_left).floor();
+        if first {
+            // Some progress every frame.
+            return allowed.max(1.0) as usize;
+        }
+        if cpu_left.is_zero() || allowed < 1.0 {
+            0
+        } else {
+            allowed as usize
+        }
+    }
+
+    fn spend(&mut self, tiles: f64) {
+        self.tiles += tiles;
+        self.gpu_ms += tiles * self.per_tile_ms;
+    }
+}
+
 /// Composite tile cache and display pipeline.
 pub struct Canvas {
     display: wgpu::RenderPipeline,
@@ -205,6 +357,9 @@ pub struct Canvas {
     group: wgpu::BindGroup,
     entries: HashMap<TileKey, Entry>,
     slots: Vec<Option<TileKey>>,
+    /// Tiles planned by the current prepare, and whether they are
+    /// approximate.
+    planned: HashMap<TileKey, bool>,
     clock: u64,
     size: (u32, u32),
     level: u32,
@@ -212,8 +367,11 @@ pub struct Canvas {
     coarse: bool,
     /// A parameter is being dragged: compose from reduced sources.
     preview: bool,
-    /// Level composed from reduced sources by the current prepare (0: none).
-    preview_level: u32,
+    /// Work allowed per frame; `None` finishes every prepare.
+    budget: Option<FrameBudget>,
+    /// The last prepare left work for the next frames.
+    pending: bool,
+    gpu_cost: GpuCost,
     stats: CanvasStats,
 }
 
@@ -221,7 +379,8 @@ impl Canvas {
     /// Creates the canvas for targets of `format` (egui's frame format).
     /// Its cache size follows the document and the window
     /// ([`desired_slots`]), within the array layers of the GPU and
-    /// `memory_budget` bytes (see [`crate::gpu::cache_memory_budget`]).
+    /// `memory_budget` bytes (see [`crate::gpu::cache_memory_budget`]). It
+    /// works within [`FrameBudget::DEFAULT`] per frame.
     pub fn new(
         renderer: &Renderer,
         format: wgpu::TextureFormat,
@@ -229,6 +388,7 @@ impl Canvas {
     ) -> Result<Self, RenderError> {
         let mut canvas = Self::build(renderer, format, INITIAL_SLOTS)?;
         canvas.automatic = true;
+        canvas.budget = Some(FrameBudget::DEFAULT);
         let by_memory = memory_budget / u64::from(TILE_SIZE * TILE_SIZE * COMPUTE_TEXEL_BYTES);
         canvas.ceiling = canvas
             .ceiling
@@ -238,8 +398,8 @@ impl Canvas {
     }
 
     /// Creates the canvas with a fixed cache of at most `slots` tiles (16
-    /// at least), for tests. If the GPU is out of memory, the cache is
-    /// halved until the allocation succeeds.
+    /// at least) and no frame budget, for tests. If the GPU is out of
+    /// memory, the cache is halved until the allocation succeeds.
     pub fn with_capacity(
         renderer: &Renderer,
         format: wgpu::TextureFormat,
@@ -295,7 +455,7 @@ impl Canvas {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let pages_capacity = 64;
+        let pages_capacity = (HEADER_WORDS as u64 + 64).next_power_of_two();
         let pages = Self::pages_buffer(device, pages_capacity);
         let group = Self::bind_group(device, &display, &cache, &pages, &uniform);
         if let Some(error) = pollster::block_on(scope.pop()) {
@@ -315,12 +475,15 @@ impl Canvas {
             group,
             entries: HashMap::new(),
             slots: vec![None; capacity as usize],
+            planned: HashMap::new(),
             clock: 0,
             size: (0, 0),
             level: 0,
             coarse: false,
             preview: false,
-            preview_level: 0,
+            budget: None,
+            pending: false,
+            gpu_cost: GpuCost::new(),
             stats: CanvasStats::default(),
         })
     }
@@ -403,10 +566,22 @@ impl Canvas {
         self.capacity
     }
 
+    /// Sets the work allowed per frame; `None` finishes every prepare.
+    pub fn set_frame_budget(&mut self, budget: Option<FrameBudget>) {
+        self.budget = budget;
+    }
+
+    /// Whether the last [`Self::prepare`] left work for the next frames:
+    /// the caller should draw another frame soon.
+    pub fn is_pending(&self) -> bool {
+        self.pending
+    }
+
     /// Turns the preview on while a parameter is dragged (docs/decisions/
-    /// 0027, B7-lite): the displayed level, up to level 2, is composed from
-    /// reduced sources; the tiles made so are recomputed exactly once the
-    /// preview is turned off.
+    /// 0027 and 0034): the displayed level, up to
+    /// [`crate::preview::MAX_PREVIEW_LEVEL`], is composed from reduced
+    /// sources; the tiles made so are recomputed exactly once the preview
+    /// is turned off.
     pub fn set_preview(&mut self, on: bool) {
         self.preview = on;
     }
@@ -417,11 +592,12 @@ impl Canvas {
         self.coarse
     }
 
-    /// Cache slots of the tiles shown by the last [`Self::prepare`].
+    /// Cache slots of the tiles of the displayed level shown by the last
+    /// [`Self::prepare`].
     pub fn shown_slots(&self) -> Vec<u32> {
         self.entries
             .iter()
-            .filter(|(key, entry)| key.level == self.level && entry.valid)
+            .filter(|(key, entry)| key.level == self.level && entry.shown)
             .map(|(_, entry)| entry.slot)
             .collect()
     }
@@ -462,20 +638,24 @@ impl Canvas {
     }
 
     /// Invalidates what `changes` touched; returns whether the document size
-    /// changed.
+    /// changed. Invalid tiles stay shown until they are rebuilt.
     fn invalidate(&mut self, changes: &PhotoChanges, document: &Document) -> bool {
         let resized = self.size != (document.width, document.height);
-        if resized
-            || changes.everything
+        if resized {
+            self.size = (document.width, document.height);
+            self.entries.clear();
+            self.slots.iter_mut().for_each(|slot| *slot = None);
+            return true;
+        }
+        if changes.everything
             || changes.document
             || changes.structure
             || !changes.properties.is_empty()
         {
-            self.size = (document.width, document.height);
             for entry in self.entries.values_mut() {
                 entry.valid = false;
             }
-            return resized;
+            return false;
         }
         for coord in changes.pixels.values().flatten() {
             // A level 0 tile changes every tile above it.
@@ -529,6 +709,9 @@ impl Canvas {
                     .map(|(key, entry)| (*key, entry.slot))
                     .ok_or(PARTIAL)?;
                 self.entries.remove(&victim.0);
+                // A planned tile evicted after its parent used it: its slot
+                // is rewritten later in the same plan.
+                self.planned.remove(&victim.0);
                 self.stats.evicted += 1;
                 victim.1
             }
@@ -539,49 +722,55 @@ impl Canvas {
             Entry {
                 slot,
                 valid: false,
+                shown: false,
                 used: self.clock,
-                preview: false,
+                approx: false,
             },
         );
         Ok(slot)
     }
 
-    /// Makes `key` resident and valid, appending the work to `ops`. Children
-    /// are pinned only while their parent is built.
+    /// Plans what makes `key` valid, appending the work to `ops`, and
+    /// returns its slot and whether it is approximate; `None` when it
+    /// cannot be built this frame (reduced sources not ready). Tiles of
+    /// `approx_level` (0: none) are composed from reduced sources, and
+    /// approximate tiles are accepted. Children are pinned only while their
+    /// parent is planned.
     fn ensure(
         &mut self,
         key: TileKey,
+        approx_level: u32,
+        ready: &mut dyn FnMut(TileKey) -> bool,
         pinned: &mut HashSet<TileKey>,
         ops: &mut Vec<Op>,
-    ) -> Result<u32, OverBudget> {
-        let previewing = self.preview_level > 0;
+    ) -> Result<Option<(u32, bool)>, OverBudget> {
+        if let Some(approx) = self.planned.get(&key).copied() {
+            return Ok(self.entries.get(&key).map(|entry| (entry.slot, approx)));
+        }
         if let Some(entry) = self.entries.get_mut(&key)
             && entry.valid
-            && (previewing || !entry.preview)
+            && (approx_level > 0 || !entry.approx)
         {
             entry.used = self.clock;
-            return Ok(entry.slot);
+            return Ok(Some((entry.slot, entry.approx)));
+        }
+        let composite = key.level == 0 || (approx_level > 0 && key.level == approx_level);
+        if composite && key.level > 0 && !ready(key) {
+            return Ok(None);
         }
         let slot = self.allocate(key, pinned)?;
-        // Pinned while its children are built, so that they cannot take
+        // Pinned while its children are planned, so that they cannot take
         // its slot; the caller releases it.
         pinned.insert(key);
-        let mut preview = false;
-        if key.level == 0 || (previewing && key.level == self.preview_level) {
-            ops.push(Op::Composite {
-                coord: TileCoord {
-                    tx: key.tx,
-                    ty: key.ty,
-                },
-                slot,
-                level: key.level,
-            });
-            preview = key.level > 0;
-            self.stats.composited += 1;
+        let approx = if composite {
+            ops.push(Op::Composite { key, slot });
+            key.level > 0
         } else {
             let (tiles_x, tiles_y) = self.level_tiles(key.level - 1);
             let mut children = [None; 4];
             let mut held = Vec::new();
+            let mut any_approx = false;
+            let mut complete = true;
             for (quadrant, child) in children.iter_mut().enumerate() {
                 let tx = key.tx * 2 + (quadrant as u32 % 2);
                 let ty = key.ty * 2 + (quadrant as u32 / 2);
@@ -592,68 +781,120 @@ impl Canvas {
                         ty,
                     };
                     let child_was_pinned = pinned.contains(&child_key);
-                    *child = Some(self.ensure(child_key, pinned, ops)?);
-                    preview |= self.entries.get(&child_key).is_some_and(|e| e.preview);
+                    match self.ensure(child_key, approx_level, ready, pinned, ops)? {
+                        Some((child_slot, child_approx)) => {
+                            *child = Some(child_slot);
+                            any_approx |= child_approx;
+                        }
+                        None => complete = false,
+                    }
                     if !child_was_pinned {
                         held.push(child_key);
                     }
                 }
             }
-            ops.push(Op::Downsample {
-                parent: slot,
-                children,
-            });
-            self.stats.downsampled += 1;
             for child in held {
                 pinned.remove(&child);
             }
-        }
-        if let Some(entry) = self.entries.get_mut(&key) {
-            entry.valid = true;
-            entry.preview = preview;
-        }
-        Ok(slot)
+            if !complete {
+                return Ok(None);
+            }
+            ops.push(Op::Downsample {
+                key,
+                parent: slot,
+                children,
+                approx: any_approx,
+            });
+            any_approx
+        };
+        self.planned.insert(key, approx);
+        Ok(Some((slot, approx)))
     }
 
-    /// Plans the work to show `level`: visible tiles pinned, then built.
-    fn plan_level(&mut self, level: u32, view: &CanvasView) -> Result<Vec<Op>, OverBudget> {
+    /// Plans the work to show `level`: visible tiles pinned, then planned,
+    /// approximate ones first when `approx_level` is set. Returns the work
+    /// and whether some tile could not be planned this frame.
+    fn plan_level(
+        &mut self,
+        level: u32,
+        view: &CanvasView,
+        approx_level: u32,
+        exact: bool,
+        ready: &mut dyn FnMut(TileKey) -> bool,
+    ) -> Result<(Vec<Op>, bool), OverBudget> {
         let visible = self.visible(level, view);
         // Building a coarse tile keeps one chain of children per level.
         if visible.len() as u64 + 4 * u64::from(level) + 1 > u64::from(self.capacity) {
             return Err(OverBudget { partial: false });
         }
+        self.planned.clear();
         // Visible tiles, resident or not, are never evicted.
         let mut pinned: HashSet<TileKey> = visible.iter().copied().collect();
         let mut ops = Vec::new();
-        for key in visible {
-            self.ensure(key, &mut pinned, &mut ops)?;
+        let mut waiting = false;
+        if approx_level > 0 {
+            for key in &visible {
+                waiting |= self
+                    .ensure(*key, approx_level, ready, &mut pinned, &mut ops)?
+                    .is_none();
+            }
         }
-        Ok(ops)
+        if exact {
+            // Approximate tiles planned above are rebuilt exactly.
+            self.planned.retain(|_, approx| !*approx);
+            for key in &visible {
+                waiting |= self
+                    .ensure(*key, 0, ready, &mut pinned, &mut ops)?
+                    .is_none();
+            }
+        }
+        Ok((ops, waiting))
     }
 
-    /// Records and submits the work of `ops`. Each composite batch is
-    /// submitted before the next one makes its sources resident, so that
-    /// a reused source slot is never read by older work.
-    fn run(&self, renderer: &Renderer, document: &Document, ops: &[Op]) -> Result<(), RenderError> {
+    /// Records and submits a prefix of `ops` within the frame budget and
+    /// returns its length. Each composite batch is submitted before the
+    /// next one makes its sources resident, so that a reused source slot is
+    /// never read by older work.
+    fn run(
+        &mut self,
+        renderer: &Renderer,
+        document: &Document,
+        ops: &[Op],
+    ) -> Result<usize, RenderError> {
         let device = renderer.device();
         let queue = renderer.queue();
+        self.gpu_cost.update(device);
+        let mut spending = Spending {
+            budget: self.budget,
+            start: Instant::now(),
+            gpu_ms: 0.0,
+            tiles: 0.0,
+            per_tile_ms: self.gpu_cost.per_tile_ms.max(0.01),
+        };
         let new_encoder =
             || device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let mut encoder = new_encoder();
         let mut index = 0;
         while index < ops.len() {
-            match &ops[index] {
-                Op::Composite { level, .. } => {
-                    let level = *level;
+            let allowed = spending.allowance(index == 0);
+            if allowed == 0 {
+                break;
+            }
+            match ops[index] {
+                Op::Composite { key, .. } => {
+                    let level = key.level;
                     let mut targets = HashMap::new();
-                    while let Some(Op::Composite {
-                        coord,
-                        slot,
-                        level: same,
-                    }) = ops.get(index)
-                        && *same == level
+                    while targets.len() < allowed
+                        && let Some(Op::Composite { key, slot }) = ops.get(index)
+                        && key.level == level
                     {
-                        targets.insert(*coord, *slot);
+                        targets.insert(
+                            TileCoord {
+                                tx: key.tx,
+                                ty: key.ty,
+                            },
+                            *slot,
+                        );
                         index += 1;
                     }
                     let mut coords: Vec<TileCoord> = targets.keys().copied().collect();
@@ -674,11 +915,16 @@ impl Canvas {
                             &self.cache.view,
                         )?;
                     }
+                    self.stats.composited += targets.len() as u64;
+                    spending.spend(targets.len() as f64);
                 }
                 Op::Downsample { .. } => {
                     // Parents built in one dispatch must not read each other.
                     let mut group: Vec<(u32, [Option<u32>; 4])> = Vec::new();
-                    while let Some(Op::Downsample { parent, children }) = ops.get(index) {
+                    while let Some(Op::Downsample {
+                        parent, children, ..
+                    }) = ops.get(index)
+                    {
                         let depends = children
                             .iter()
                             .flatten()
@@ -690,11 +936,16 @@ impl Canvas {
                         index += 1;
                     }
                     self.record_downsample(renderer, &mut encoder, &group);
+                    self.stats.downsampled += group.len() as u64;
+                    // A downsample reads four tiles and writes one: about a
+                    // quarter of a composition.
+                    spending.spend(group.len() as f64 / 4.0);
                 }
             }
         }
         queue.submit([encoder.finish()]);
-        Ok(())
+        self.gpu_cost.measure(queue, spending.tiles);
+        Ok(index)
     }
 
     fn record_downsample(
@@ -758,7 +1009,9 @@ impl Canvas {
     }
 
     /// Brings the cache up to date with `document`, given what changed
-    /// since the previous call, and sets the view.
+    /// since the previous call, and sets the view. Within a frame budget,
+    /// part of the work may be left for the next calls
+    /// ([`Self::is_pending`]); meanwhile, older or coarser tiles are shown.
     pub fn prepare(
         &mut self,
         renderer: &Renderer,
@@ -781,14 +1034,26 @@ impl Canvas {
             level += 1;
         }
         let wanted = level;
-        let ops = loop {
-            self.preview_level = if self.preview {
+        let blocking = self.budget.is_none();
+        let mut ready = |key: TileKey| {
+            renderer.reduced_ready(
+                document,
+                TileCoord {
+                    tx: key.tx,
+                    ty: key.ty,
+                },
+                key.level,
+                blocking,
+            )
+        };
+        let (ops, waiting) = loop {
+            let approx_level = if self.preview {
                 level.min(crate::preview::MAX_PREVIEW_LEVEL)
             } else {
                 0
             };
-            match self.plan_level(level, view) {
-                Ok(ops) => break ops,
+            match self.plan_level(level, view, approx_level, !self.preview, &mut ready) {
+                Ok(plan) => break plan,
                 Err(OverBudget { partial }) if level < top => {
                     // Not enough room: go coarser. Only a plan that failed
                     // halfway leaves the cache to be dropped; the usual case
@@ -814,9 +1079,24 @@ impl Canvas {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
 
-        if !ops.is_empty() {
-            self.run(renderer, document, &ops)?;
-        } else if level == 0 && !self.preview {
+        let done = if ops.is_empty() {
+            0
+        } else {
+            self.run(renderer, document, &ops)?
+        };
+        for op in &ops[..done] {
+            // A tile evicted later in the plan has lost its slot.
+            if let Some(entry) = self.entries.get_mut(&op.key())
+                && entry.slot == op.slot()
+            {
+                entry.valid = true;
+                entry.shown = true;
+                entry.approx = op.approx();
+            }
+        }
+        self.planned.clear();
+        self.pending = done < ops.len() || waiting;
+        if ops.is_empty() && !waiting && level == 0 && !self.preview {
             // Idle at full size: bring back the sources of the visible
             // tiles, so that a property change uploads none (0027).
             let coords: Vec<TileCoord> = self
@@ -830,26 +1110,7 @@ impl Canvas {
             renderer.prefetch(document, &coords, PREFETCH_UPLOADS)?;
         }
 
-        let (tiles_x, tiles_y) = self.level_tiles(level);
-        let count = u64::from(tiles_x) * u64::from(tiles_y);
-        if count > self.pages_capacity {
-            self.pages_capacity = count.next_power_of_two();
-            self.pages = Self::pages_buffer(device, self.pages_capacity);
-            self.group = Self::bind_group(
-                device,
-                &self.display,
-                &self.cache,
-                &self.pages,
-                &self.uniform,
-            );
-        }
-        let mut pages = vec![-1i32; count as usize];
-        for (key, entry) in &self.entries {
-            if key.level == level && entry.valid {
-                pages[(key.ty * tiles_x + key.tx) as usize] = entry.slot as i32;
-            }
-        }
-        queue.write_buffer(&self.pages, 0, bytemuck::cast_slice(&pages));
+        self.write_pages(device, queue, top);
         queue.write_buffer(&self.uniform, 0, &self.uniform_bytes(view, level));
 
         if let Some(error) = pollster::block_on(memory.pop()) {
@@ -861,6 +1122,48 @@ impl Canvas {
         Ok(())
     }
 
+    /// Writes the page tables of every level (docs/decisions/0034, T2): the
+    /// display falls back on a coarser level where a tile is not shown.
+    fn write_pages(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, top: u32) {
+        let levels = (top + 1).min(MAX_LEVELS);
+        let mut words = vec![0i32; HEADER_WORDS];
+        words[0] = levels as i32;
+        let mut offset = HEADER_WORDS;
+        for level in 0..levels {
+            let (tiles_x, tiles_y) = self.level_tiles(level);
+            let (width, height) = self.level_size(level);
+            let base = 1 + 4 * level as usize;
+            words[base] = offset as i32;
+            words[base + 1] = tiles_x as i32;
+            words[base + 2] = width as i32;
+            words[base + 3] = height as i32;
+            offset += (tiles_x * tiles_y) as usize;
+        }
+        words.resize(offset, -1);
+        for (key, entry) in &self.entries {
+            if key.level < levels && entry.shown {
+                let base = 1 + 4 * key.level as usize;
+                let index =
+                    words[base] as usize + (key.ty * words[base + 1] as u32 + key.tx) as usize;
+                if let Some(word) = words.get_mut(index) {
+                    *word = entry.slot as i32;
+                }
+            }
+        }
+        if words.len() as u64 > self.pages_capacity {
+            self.pages_capacity = (words.len() as u64).next_power_of_two();
+            self.pages = Self::pages_buffer(device, self.pages_capacity);
+            self.group = Self::bind_group(
+                device,
+                &self.display,
+                &self.cache,
+                &self.pages,
+                &self.uniform,
+            );
+        }
+        queue.write_buffer(&self.pages, 0, bytemuck::cast_slice(&words));
+    }
+
     fn uniform_bytes(&self, view: &CanvasView, level: u32) -> Vec<u8> {
         let (width, height) = self.level_size(level);
         let mut words: Vec<u32> = vec![
@@ -870,7 +1173,7 @@ impl Canvas {
             ((1u32 << level) as f32).to_bits(),
             width,
             height,
-            self.level_tiles(level).0,
+            level,
             view.checker_size.max(1.0).to_bits(),
         ];
         for color in [view.background, view.checker[0], view.checker[1]] {

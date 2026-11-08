@@ -33,6 +33,9 @@ pub const ENV: &str = "CYGNUS_BENCH";
 /// Environment variable giving the report path.
 pub const OUT_ENV: &str = "CYGNUS_BENCH_OUT";
 
+/// Repetitions of a settling frame at most.
+const MAX_REPEATS: u32 = 10_000;
+
 /// Progress of the run.
 pub struct BenchRun {
     path: Vec<CameraFrame>,
@@ -41,6 +44,8 @@ pub struct BenchRun {
     samples: Vec<FrameSample>,
     viewport: [u32; 2],
     finished: bool,
+    /// Repetitions of the current settling frame.
+    repeats: u32,
 }
 
 impl BenchRun {
@@ -56,6 +61,7 @@ impl BenchRun {
                 samples: Vec::new(),
                 viewport: [0, 0],
                 finished: false,
+                repeats: 0,
             },
             Session::from_document(document),
         ))
@@ -84,6 +90,14 @@ impl BenchRun {
                 stats,
                 sources,
             });
+            // A settling frame is repeated while the canvas has work left.
+            let pending = render_state.is_some_and(canvas::pending);
+            if self.path[index].settle && pending && self.repeats < MAX_REPEATS {
+                self.repeats += 1;
+                self.next = index;
+            } else {
+                self.repeats = 0;
+            }
         }
         if self.path.is_empty() {
             // The camera path depends on the canvas size, known now.
@@ -101,7 +115,7 @@ impl BenchRun {
         } else {
             session.end_gesture();
         }
-        if let Some(edit) = frame.edit
+        if let Some(edit) = frame.edit.filter(|_| self.repeats == 0)
             && let Err(error) = session.execute(bench::edit_command(edit), Source::Test)
         {
             eprintln!("cygnus-photo: benchmark edit refused: {error}");
