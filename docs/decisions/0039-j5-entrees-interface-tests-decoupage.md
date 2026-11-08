@@ -79,7 +79,7 @@ Fiche de design : `docs/views/outils-et-barre-d-options.md`.
 | **P7** | Transformations : matrice des objets incorporés, `layer.transform`, recadrage, aperçu | Valeurs à la main ; source intacte |
 | **P8** | Entrées tablette (selon Q1), barre d'options par outil, règles, fiche finale ; essai à la main par l'utilisateur | Retouche complète à la souris ; tablette notée |
 
-B10 est placé en **P6**, avant l'adoucissement qui en dépend, et non en toute dernière étape. Il peut glisser vers J6 sur décision, mais l'adoucissement de la sélection (SEL-2) glisserait avec lui.
+B10 est placé en **P6**, avant l'adoucissement qui en dépend, et non en toute dernière étape. **Mise à jour du 2026-11-08** : B10 est fait avant J5, à la demande de l'utilisateur (0040) ; P6 se réduit à l'adoucissement de la sélection. B7 (T1 à T4) est fait aussi (0034). Il peut glisser vers J6 sur décision, mais l'adoucissement de la sélection (SEL-2) glisserait avec lui.
 
 **Dépendance avec J4** : la consigne J5 dit que le serveur MCP existe. **Sa phase B n'a pas commencé** : la phase A (0030 à 0033) attend ta validation, avec les questions Q1 et Q2 de J4. `brush.stroke` sera exposée à l'agent automatiquement dès que le serveur existera (outils générés depuis le catalogue). L'ordre entre la phase B de J4 et celle de J5 est la **question Q2**.
 

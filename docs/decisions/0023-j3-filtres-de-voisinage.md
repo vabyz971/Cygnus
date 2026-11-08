@@ -1,7 +1,7 @@
 # 0023 — Filtres de voisinage : flou gaussien, netteté par masque flou (J3)
 
 - **Date** : 2026-11-01
-- **Statut** : acceptée avec conditions le 2026-11-01 (phase A du jalon J3) ; conditions intégrées ci-dessous
+- **Statut** : acceptée avec conditions le 2026-11-01 (phase A du jalon J3) ; conditions intégrées ci-dessous ; mise en œuvre le 2026-11-08 (B10), écarts dans 0040
 - **Exigences concernées** : spec section 3 (filtres) ; applique 0012, point 3
 
 ## Proposition
