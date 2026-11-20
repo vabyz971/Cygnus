@@ -19,7 +19,8 @@
 // in order, by source-over (t = t + c × flow × (1 − t)); the stroke, a
 // flat color of alpha t × opacity, is then blended over the pixel by
 // blend() and written once, rounded to the depth of the document. A pixel
-// no dab covers keeps its exact value.
+// no dab covers keeps its exact value; a pixel whose alpha rounds to 0 is
+// written as zeros.
 
 struct Params {
     // Straight sRGB-encoded color of the brush.
@@ -129,12 +130,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let alpha = t * params.opacity * params.color.a;
     let source = vec4<f32>(params.color.rgb * alpha, alpha);
     let result = unpremultiply(blend(params.mode, premultiply(straight), source));
-    let q = vec4<u32>(
+    var q = vec4<u32>(
         quantize(result.r, params.max_value),
         quantize(result.g, params.max_value),
         quantize(result.b, params.max_value),
         quantize(result.a, params.max_value),
     );
+    // A transparent pixel has no color (0021): a coverage that rounds to
+    // no alpha leaves zeros, whatever the last bits of f32 gave.
+    if q.a == 0u {
+        q = vec4<u32>(0u);
+    }
     output[word] = q.r | (q.g << 16u);
     output[word + 1u] = q.b | (q.a << 16u);
 }

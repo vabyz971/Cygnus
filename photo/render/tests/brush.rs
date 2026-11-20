@@ -149,6 +149,10 @@ fn reference(t: f64, brush: &Brush, before: [u16; 4], max: f64) -> [u16; 4] {
     let out: Vec<f64> = (0..4).map(|c| src[c] + dst[c] * (1.0 - alpha)).collect();
     let a = out[3].clamp(0.0, 1.0);
     let mut result = [0u16; 4];
+    if (a * max).round() == 0.0 {
+        // A transparent pixel has no color.
+        return result;
+    }
     if a > 0.0 {
         for c in 0..3 {
             result[c] = ((out[c] / a).clamp(0.0, 1.0) * max).round() as u16;
