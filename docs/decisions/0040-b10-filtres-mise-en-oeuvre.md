@@ -1,7 +1,7 @@
 # 0040 — B10 : mise en œuvre des filtres de voisinage, écarts à 0023
 
 - **Date** : 2026-11-08
-- **Statut** : proposée (écarts à valider par l'utilisateur ; le code est livré)
+- **Statut** : acceptée le 2026-11-19 : la tolérance de 4 unités est réservée aux filtres ; origine de l'écart de Metal et mesure du flou de 100 px ci-dessous
 - **Exigences concernées** : spec section 3 (filtres) ; décisions 0016, 0023, 0026, 0034, 0039
 
 ## Contexte
@@ -98,3 +98,41 @@ Le shader inlinait déjà `blend()` quatre fois et `blend_atop()` deux fois. Les
   - la tolérance des golden images de filtres (point 2) ;
   - le noyau exact au lieu de l'approximation au-delà de 32 px (point 1) ;
   - la règle de mélange en mode autre que Normal (point 4).
+
+## Origine de l'écart de Metal (2026-11-19)
+
+Écarts mesurés par la CI sur la golden image `filter-blur-sharpen` :
+
+| Adaptateur | Pixels différents | Au-delà de 1 unité | Écart max | Écart moyen |
+| --- | --- | --- | --- | --- |
+| lavapipe (référence) | 0 | 0 | 0 | 0 |
+| WARP | 0 | 0 | 0 | 0 |
+| RTX 3080 Ti (local) | 764 | 73 | 3 | 0,0036 |
+| Metal (Apple Paravirtual) | 768 | 75 | 3 | 0,0036 |
+
+**Ce que les mesures établissent :**
+
+- l'écart ne vient pas de Metal en particulier : la RTX donne le même, sur un nombre de pixels presque identique ;
+- les deux rastériseurs logiciels (lavapipe et WARP) sont identiques au bit près ;
+- le flou seul, sans netteté, donne au plus 2 unités entre la RTX et lavapipe ;
+- avec la netteté à 150 %, l'écart monte à 3 unités.
+
+**Mécanisme** : chaque passe du flou somme jusqu'à 601 produits en f32, puis arrondit à 16 bits. Une somme qui tombe à moins d'un ulp f32 d'un demi-niveau bascule d'une unité selon l'ordre ou la fusion des opérations. La passe verticale hérite de cet écart et peut ajouter le sien, d'où 2 unités au plus. La netteté amplifie ensuite l'écart d'un facteur 1 + quantité (2,5 ici), d'où 3 unités.
+
+**Cause probable, non isolée** : les compilateurs des GPU matériels (NVIDIA et Apple) fusionnent les multiplications-additions (FMA, un seul arrondi), ce que les rastériseurs logiciels ne font pas. C'est une hypothèse cohérente avec les mesures ; je ne l'ai pas isolée par un test. La tolérance de 4 unités, réservée aux images `filter-*`, couvre ce mécanisme jusqu'à une quantité de netteté de 150 %.
+
+## Flou de 100 px en pleine résolution (2026-11-19)
+
+Banc sans fenêtre : RTX 3080 Ti, vue de 2126 × 1086, document de 24 Mpx en 16 bits avec 10 calques, plus un flou gaussien au-dessus. Options `--blur 100 --drag-blur --export` : le rayon du flou est glissé de 100 à 70 px, une valeur par image. Rapports : `docs/bench/2026-11-19-*`.
+
+| Mesure | Sans flou | σ = 30 | σ = 100 |
+| --- | --- | --- | --- |
+| Export 16 bits du document entier (pleine résolution) | 603 ms | 642 ms | 704 ms |
+| Glissement du rayon à 300 %, en pleine résolution : image la plus longue | — | 7,1 ms | 7,1 ms |
+| Glissement du rayon en vue ajustée, aperçu réduit : image la plus longue | — | 12,0 ms | 7,0 ms |
+| Première vue : vue sans trou, puis image finale | 189 ms | 360 ms | 411 ms, puis 704 ms |
+| Relâchement : image finale | 151 ms | 251 ms | 294 ms |
+
+- **L'aperçu réduit reste sous 33 ms**, avec 7 ms au plus à σ = 100. Les tuiles approximatives sont composées depuis les sources réduites, avec un rayon divisé par 2^L.
+- **En pleine résolution**, aucune image ne dépasse 7,1 ms pendant le glissement. Le budget étale le travail : 544 tuiles composées en 60 images à σ = 100, contre 1 200 sans flou. La vue n'est donc entièrement à jour qu'après 2 à 3 images environ, et les tuiles en attente montrent l'état précédent.
+- **Le flou de 100 px coûte 100 ms de plus à l'export** de 24 Mpx.

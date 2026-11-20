@@ -1,7 +1,7 @@
 # 0036 — J5 : commande de trait, cibles et tampon de clonage
 
 - **Date** : 2026-11-08
-- **Statut** : proposée (phase A du jalon J5)
+- **Statut** : proposition 2 acceptée pour l'étape P1 le 2026-11-19 (`brush.stroke` résolue, une entrée par trait, annulation par copies de tuiles ; mise en œuvre dans 0035) ; propositions 3 et 4 (cibles masque, tampon de clonage) à valider avec l'étape P3
 - **Exigences concernées** : PIN-3, PIN-4, MAS-1, HIS-2 ; spec 7.2, 8 (`brush.stroke`) ; décisions 0010, 0020, 0022, 0029, 0035
 
 Cette décision traite les points 2 (trait et commandes), 3 (cibles) et 4 (tampon de clonage) de la consigne.

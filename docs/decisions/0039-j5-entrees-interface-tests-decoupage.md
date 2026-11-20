@@ -100,3 +100,19 @@ B10 est placé en **P6**, avant l'adoucissement qui en dépend, et non en toute 
    - **Q4** : échantillon par défaut du clonage (calque courant ou image composée) ;
    - **Q5** : la latence visée (33 ms au p95) ;
    - **Q6** : la sélection est-elle enregistrée dans le fichier `.cygnus` (J6) ?
+
+## Réponses de l'utilisateur (2026-11-19)
+
+- **Feu vert pour P1 seulement**. Les sélections, les transformations et les autres outils seront validés avec les étapes suivantes.
+- **Q1, tablette** : l'entrée stylet est isolée derrière une interface dans `ui-kit`, destinée à être remplacée par winit 0.31. Ordre :
+  - d'abord Wayland, la plateforme de l'utilisateur ;
+  - ensuite Windows, si le coût le permet ;
+  - macOS et X11 sans pression, noté comme limite.
+
+  Il faut d'abord examiner comment les bibliothèques existantes contournent winit 0.30 : c'est fait dans 0041 (proposée).
+- **Q2** : P1 maintenant. J4 attend la validation de 0030 à 0033.
+- **Q3 à Q6** : les recommandations sont retenues :
+  - recadrage droit en J5, rotation en J6 ;
+  - le tampon de clonage échantillonne le calque courant par défaut ;
+  - latence de 33 ms au p95 ;
+  - la sélection est enregistrée dans le `.cygnus`.

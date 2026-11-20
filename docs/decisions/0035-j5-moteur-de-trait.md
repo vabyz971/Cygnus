@@ -1,7 +1,7 @@
 # 0035 — J5 : moteur de trait sur GPU
 
 - **Date** : 2026-11-08
-- **Statut** : proposée (phase A du jalon J5)
+- **Statut** : acceptée pour l'étape P1 le 2026-11-19, avec quatre conditions ; mise en œuvre de P1 ci-dessous
 - **Exigences concernées** : PIN-1, PIN-2, PIN-4, MAS-1 ; spec 5 (fluidité), 7.3 ; décisions 0021, 0026, 0028, 0034
 
 Cette décision traite les points 1 (moteur), 10 (performance) et 11 (ouverture) de la consigne.
@@ -55,3 +55,42 @@ Les pinceaux sensibles à la lumière et les textures générées ne sont pas da
 
 - Le recalcul du trait à la validation doit donner exactement l'aperçu. Le même shader, sur le même adaptateur, avec les mêmes positions d'empreintes calculées en f64, le garantit à l'arrondi f32 près.
 - Les empreintes très nombreuses (petit espacement, long trait) coûtent cher. Une empreinte touche peu de tuiles, et les empreintes sont regroupées par tuile dans un même lot.
+
+## Mise en œuvre de l'étape P1 (2026-11-19)
+
+**Conditions de validation** (utilisateur, 2026-11-19), et ce qui y répond :
+
+1. **Traits rejoués comparés à des golden images sur les adaptateurs de la CI, tolérance mesurée** : deux golden images de traits, `brush-strokes` (16 bits, modes Normal, Produit et Superposition, pression variable, trait fin, tache douce) et `brush-transparent-8bit`. Les écarts mesurés par adaptateur sont consignés dans la section suivante, après la CI.
+2. **Une entrée d'historique par trait, annulation par copies de tuiles à mémoire bornée** :
+   - le trait remplace les tuiles qu'il touche, et son inverse est `pixels.restore`, comme pour `pixels.write` ;
+   - test d'un trait de 2000 points, dans le cœur et sur le GPU : une seule entrée, annulation et rétablissement exacts ;
+   - les données d'annulation valent 3,3 Mo : les copies des 6 tuiles touchées et les points.
+3. **Accumulation en f32, une seule écriture en entiers** :
+   - la couverture de toutes les empreintes d'une tuile s'accumule en f32, dans un registre du shader ;
+   - le trait est fusionné par `blend()`, puis arrondi une seule fois à la profondeur du document. Un pixel non touché garde exactement sa valeur ;
+   - test : un trait à 1 % d'opacité, répété 100 fois, donne un alpha de 41 548. C'est exactement la récurrence arrondie une fois par trait, et la valeur analytique sans arrondi est 41 547,07 ;
+   - contre une référence f64 qui suit les mêmes règles, l'écart est d'au plus 1 unité, en 16 et en 8 bits, sur un calque opaque comme sur un calque vide.
+4. **Cas limites** :
+   - un seul point donne une seule empreinte ;
+   - hors du document, seules les tuiles du calque sont peintes, et les pixels hors du document dans une tuile de bord restent intacts ;
+   - un trait entièrement hors du document, ou sans couverture (pression nulle avec la pression sur le flux), est refusé avant tout rendu (`EmptyStroke`), sans entrée d'historique ;
+   - un calque verrouillé est refusé avant tout rendu.
+
+**Choix faits pendant la mise en œuvre :**
+
+- **Trajet** : spline de Catmull-Rom centripète, avec des voisins en miroir aux extrémités, pour qu'un segment droit reste droit. La longueur d'arc est mesurée sur 4 morceaux par pixel de corde. L'espacement se reporte d'un segment au suivant. Deux empreintes sont toujours séparées d'au moins 0,25 px, quel que soit l'espacement.
+- **Bord d'une empreinte** : la décroissance couvre au moins un pixel, même à dureté 1, pour lisser le bord. Les empreintes de moins de 4 px de diamètre sont moyennées sur 4 × 4 points par pixel.
+- **Pas encore de tampon de trait sur le GPU** : la commande recalcule toutes les empreintes d'une tuile en une passe. Le tampon de trait persistant servira à l'aperçu pendant le geste, à l'étape P2.
+- **Limites** : 100 000 points et 1 000 000 d'empreintes par trait.
+- **Hors P1** :
+  - l'inclinaison et l'horodatage sont enregistrés dans les points, mais pas encore utilisés ;
+  - la vitesse n'est pas prise en compte ;
+  - l'outil ne connaît que `brush` (gomme et tampon de clonage en P3).
+
+**Tolérance entre adaptateurs** :
+
+- **16 bits** : celle de 0016, 1 unité.
+- **8 bits** :
+  - la valeur stockée est arrondie une seule fois à 255 niveaux. Une valeur proche d'un demi-niveau peut donc basculer d'un niveau d'un adaptateur à l'autre, soit 257 unités de l'export 16 bits ;
+  - les golden images de traits `brush-*` d'un document 8 bits ont donc une tolérance de 273 unités (un niveau plus la marge de dé-prémultiplication de 0026), et la même borne moyenne de 0,01 ;
+  - les couleurs des scripts sont des valeurs 8 bits exactes, comme les donnera le sélecteur de couleur. Une couleur posée sur un demi-niveau exact (par exemple 0,9 × 255 = 229,5) faisait basculer tout un trait sur la RTX : 5 177 pixels au lieu d'un seul.
