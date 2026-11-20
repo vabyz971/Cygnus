@@ -18,14 +18,18 @@
 //!
 //! cargo run --release -p cygnus-photo-render --example fluidity -- \
 //!     [--out report.json] [--viewport 2560x1440] [--cache-slots N]
-//!     [--no-frame-budget] [--large-layers 40] [--blur SIGMA]
+//!     [--no-frame-budget] [--large-layers 40] [--blur SIGMA [--drag-blur]]
+//!     [--export]
 //!
 //! `--cache-slots` fixes the canvas cache instead of the computed budget,
 //! to measure panning over tiles that are not in the cache.
 //! `--no-frame-budget` finishes every frame, as before docs/decisions/0034,
 //! for comparisons. `--large-layers N` plays the path on the 8 GiB scenario
 //! of docs/decisions/0024 (N pixel layers of 24 Mpx, 16 bits) instead.
-//! `--blur SIGMA` adds a Gaussian blur filter layer on top (0023).
+//! `--blur SIGMA` adds a Gaussian blur filter layer on top (0023);
+//! `--drag-blur` then drags its radius, from SIGMA down to 70 % of it,
+//! instead of the curve point. `--export` times a 16-bit export of the
+//! whole document after the path (`export_ms` in the report).
 //!
 //! Each frame updates the canvas and draws it on an offscreen target, then
 //! waits for the GPU: the frame time includes all GPU work, but neither the
@@ -50,6 +54,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_budget = Some(FrameBudget::DEFAULT);
     let mut large: Option<u64> = None;
     let mut blur: Option<f32> = None;
+    let mut drag_blur = false;
+    let mut export = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -69,6 +75,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             "--no-frame-budget" => frame_budget = None,
+            "--drag-blur" => drag_blur = true,
+            "--export" => export = true,
             "--blur" => {
                 blur = Some(args.next().ok_or("--blur expects a radius")?.parse()?);
             }
@@ -94,8 +102,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             bench::build_document()?
         }
     };
+    let mut blur_layer = None;
     if let Some(radius) = blur {
         use cygnus_photo_core::commands::{LayerCreate, LayerKind};
+        blur_layer = Some(cygnus_photo_core::NodeId(
+            document.nodes.keys().map(|id| id.0).max().unwrap_or(0) + 1,
+        ));
         let mut bus = CommandBus::new();
         bus.execute(
             &mut document,
@@ -161,7 +173,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             .filter(|edit| repeats == 0 && !(large.is_some() && curve(edit)))
         {
             let cursor = bus.revision();
-            bus.execute(&mut document, bench::edit_command(edit), Source::Test)?;
+            let command = match (edit, blur_layer, blur) {
+                (bench::Edit::Curve(step), Some(id), Some(radius)) if drag_blur => {
+                    cygnus_photo_core::PhotoCommand::FilterUpdate(
+                        cygnus_photo_core::commands::FilterUpdate {
+                            id,
+                            filter: cygnus_photo_core::Filter::GaussianBlur {
+                                radius: radius * (1.0 - 0.3 * step as f32 / 60.0),
+                            },
+                        },
+                    )
+                }
+                _ => bench::edit_command(edit),
+            };
+            bus.execute(&mut document, command, Source::Test)?;
             changes = bus.changes_since(cursor).changes;
         }
         let view = CanvasView {
@@ -219,7 +244,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         source_slots: renderer.source_stats().capacity,
         layers: large.map(|layers| (layers, layers)),
     };
-    let report = bench::report(&info, &samples);
+    let mut report = bench::report(&info, &samples);
+    if export {
+        let started = Instant::now();
+        renderer.export(&document, cygnus_photo_render::ExportBits::Sixteen)?;
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("export: {ms:.0} ms");
+        report["export_ms"] = serde_json::json!(ms);
+    }
     std::fs::write(&out, serde_json::to_string_pretty(&report)? + "\n")?;
     eprintln!("report written to {out}");
     Ok(())
