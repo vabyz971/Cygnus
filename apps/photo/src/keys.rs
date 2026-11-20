@@ -217,6 +217,7 @@ cygnus_ui_kit::define_keys! {
     COMMAND_SOURCE_IMPORT = "command.source_import";
     COMMAND_LAYER_MERGE_DOWN = "command.layer_merge_down";
     COMMAND_BRUSH_STROKE = "command.brush_stroke";
+    CANVAS_NO_PAINT_TARGET = "canvas.no_paint_target";
     COMMAND_PIXELS = "command.pixels";
     COMMAND_OTHER = "command.other";
     STATUS_COARSE_COMPUTING = "status.coarse_computing";

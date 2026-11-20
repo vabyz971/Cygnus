@@ -30,12 +30,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cygnus_commands::{ChangeSet, CommandBus, Revision, Source};
+use cygnus_photo_core::NodeId;
+use cygnus_photo_core::brush::StrokePoint;
 use cygnus_photo_core::script::{SCRIPT_VERSION, Script};
 use cygnus_photo_core::{CoreError, Document, PhotoChanges, PhotoCommand};
+use cygnus_photo_render::stroke::StrokePreview;
 use cygnus_photo_render::{
     Canvas, CanvasView, Histogram, HistogramPass, RenderError, Renderer, gpu,
 };
+use cygnus_ui_kit::i18n::tr;
 use cygnus_ui_kit::theme::palette;
+
+use crate::keys;
 use eframe::egui_wgpu;
 use egui::{PointerButton, Rect, Sense, Ui};
 
@@ -288,6 +294,39 @@ pub struct Session {
     gesture: bool,
     /// Why the last action of the user was refused.
     message: Option<String>,
+    /// The stroke being drawn (docs/decisions/0036, P2).
+    painting: Option<Painting>,
+    /// The canvas shows a stroke preview instead of the document.
+    showing_preview: bool,
+    /// Tiles of the shown document changed by the preview since the last
+    /// frame sent to the canvas.
+    preview_changes: PhotoChanges,
+}
+
+/// Weight of the previous position in the stabilizer: each input point
+/// moves the stroke by 35 % of the way to it (0035).
+const STABILIZER: f64 = 0.65;
+
+/// A stroke being drawn with the brush.
+struct Painting {
+    preview: StrokePreview,
+    /// Last stabilized position, when the stabilizer is on.
+    smoothed: Option<[f64; 2]>,
+    stabilizer: bool,
+    /// When the stroke began, for the time of its points.
+    started: Instant,
+}
+
+/// What the primary button does on the canvas.
+pub struct CanvasTool<'a> {
+    /// The pan tool is active.
+    pub pan: bool,
+    /// The brush is active, with its settings.
+    pub brush: Option<&'a mut crate::tools::ToolSettings>,
+    /// The layer the brush paints.
+    pub target: Option<NodeId>,
+    /// The renderer of the window, which paints the stroke.
+    pub render_state: Option<&'a egui_wgpu::RenderState>,
 }
 
 impl Session {
@@ -312,6 +351,9 @@ impl Session {
             fit_pending: true,
             gesture: false,
             message: None,
+            painting: None,
+            showing_preview: false,
+            preview_changes: PhotoChanges::default(),
         }
     }
 
@@ -327,6 +369,9 @@ impl Session {
             fit_pending: true,
             gesture: false,
             message: None,
+            painting: None,
+            showing_preview: false,
+            preview_changes: PhotoChanges::default(),
         }
     }
 
@@ -466,9 +511,9 @@ impl Session {
         self.fit_pending = false;
     }
 
-    /// Shows the canvas in `ui` and handles zoom and pan. `pan_tool` is true
-    /// when the pan tool is active (primary button pans).
-    pub fn show(&mut self, ui: &mut Ui, pan_tool: bool) {
+    /// Shows the canvas in `ui` and handles zoom, pan and the brush.
+    pub fn show(&mut self, ui: &mut Ui, tool: CanvasTool<'_>) {
+        let pan_tool = tool.pan;
         let rect = ui.max_rect();
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
@@ -516,19 +561,234 @@ impl Session {
             (center_px.y - self.center[1] * self.zoom).round(),
         ];
         let viewport = [rect.min.x * ppp, rect.min.y * ppp, size_px[0], size_px[1]];
+        if let Some(settings) = tool.brush
+            && !panning
+            && !space
+        {
+            let place = Placement { origin, ppp };
+            self.brush(
+                ui,
+                &response,
+                place,
+                settings,
+                tool.target,
+                tool.render_state,
+            );
+        } else if self.painting.is_some() {
+            self.end_stroke();
+        }
         self.paint(ui, rect, origin, viewport);
+    }
+
+    /// Document point under the screen point `pos`.
+    fn to_document(&self, place: Placement, pos: egui::Pos2) -> [f64; 2] {
+        [
+            f64::from((pos.x * place.ppp - place.origin[0]) / self.zoom),
+            f64::from((pos.y * place.ppp - place.origin[1]) / self.zoom),
+        ]
+    }
+
+    /// The brush on the canvas: eyedropper with Alt, otherwise strokes
+    /// previewed while drawn and sent as one `brush.stroke` when the button
+    /// is released (docs/decisions/0036, P2).
+    fn brush(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        place: Placement,
+        settings: &mut crate::tools::ToolSettings,
+        target: Option<NodeId>,
+        render_state: Option<&egui_wgpu::RenderState>,
+    ) {
+        let alt = ui.input(|input| input.modifiers.alt);
+        if let Some(pos) = response.hover_pos() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+            let radius = settings.diameter() * self.zoom / place.ppp / 2.0;
+            brush_cursor(ui, pos, radius, alt);
+        }
+        // Eyedropper: the composite color under the pointer (PIN-5).
+        if alt && self.painting.is_none() {
+            let picking = response.clicked_by(PointerButton::Primary)
+                || response.dragged_by(PointerButton::Primary);
+            if picking
+                && let Some(pos) = response.interact_pointer_pos()
+                && let Some(render_state) = render_state
+            {
+                let [x, y] = self.to_document(place, pos);
+                if x >= 0.0 && y >= 0.0 {
+                    let sampled = with_renderer(render_state, |renderer| {
+                        renderer.sample(&self.document, x as u32, y as u32)
+                    });
+                    if let Some(Ok(rgba)) = sampled {
+                        settings.set_foreground(rgba);
+                    }
+                }
+            }
+            return;
+        }
+        let pressed = response.drag_started_by(PointerButton::Primary)
+            || response.clicked_by(PointerButton::Primary);
+        if pressed && self.painting.is_none() {
+            let Some(target) = target else {
+                self.message = Some(tr(keys::CANVAS_NO_PAINT_TARGET).to_owned());
+                return;
+            };
+            match StrokePreview::begin(&self.document, target, settings.brush()) {
+                Ok(preview) => {
+                    self.painting = Some(Painting {
+                        preview,
+                        smoothed: None,
+                        stabilizer: settings.stabilizer(),
+                        started: Instant::now(),
+                    });
+                    self.message = None;
+                    // The press, before the drag threshold was passed.
+                    let origin = ui.input(|input| input.pointer.press_origin());
+                    if let Some(origin) = origin {
+                        let point = self.to_document(place, origin);
+                        self.add_points(render_state, &[point]);
+                    }
+                }
+                Err(error) => {
+                    self.message = Some(error.to_string());
+                    return;
+                }
+            }
+        }
+        if self.painting.is_none() {
+            return;
+        }
+        // Every pointer position of the frame, not only the last one.
+        let moves: Vec<egui::Pos2> = ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::PointerMoved(pos) => Some(*pos),
+                    _ => None,
+                })
+                .collect()
+        });
+        let points: Vec<[f64; 2]> = moves
+            .into_iter()
+            .map(|pos| self.to_document(place, pos))
+            .collect();
+        self.add_points(render_state, &points);
+        let released = response.drag_stopped_by(PointerButton::Primary)
+            || response.clicked_by(PointerButton::Primary)
+            || !ui.input(|input| input.pointer.primary_down());
+        if released {
+            // The stabilizer catches up with the last position.
+            if let Some(pos) = ui.input(|input| input.pointer.latest_pos())
+                && self.painting.as_ref().is_some_and(|p| p.stabilizer)
+            {
+                let point = self.to_document(place, pos);
+                if let Some(painting) = &mut self.painting {
+                    painting.stabilizer = false;
+                }
+                self.add_points(render_state, &[point]);
+            }
+            self.end_stroke();
+        }
+    }
+
+    /// Adds input positions to the stroke being drawn and repaints its
+    /// preview.
+    fn add_points(&mut self, render_state: Option<&egui_wgpu::RenderState>, raw: &[[f64; 2]]) {
+        let Some(painting) = &mut self.painting else {
+            return;
+        };
+        if raw.is_empty() {
+            return;
+        }
+        let time = painting.started.elapsed().as_secs_f64() * 1000.0;
+        let points: Vec<StrokePoint> = raw
+            .iter()
+            .map(|[x, y]| {
+                let [x, y] = if painting.stabilizer {
+                    let [sx, sy] = painting.smoothed.unwrap_or([*x, *y]);
+                    let next = [
+                        sx * STABILIZER + x * (1.0 - STABILIZER),
+                        sy * STABILIZER + y * (1.0 - STABILIZER),
+                    ];
+                    painting.smoothed = Some(next);
+                    next
+                } else {
+                    [*x, *y]
+                };
+                StrokePoint {
+                    x,
+                    y,
+                    pressure: None,
+                    tilt_x: None,
+                    tilt_y: None,
+                    time_ms: Some(time),
+                }
+            })
+            .collect();
+        let Some(render_state) = render_state else {
+            return;
+        };
+        let result = with_renderer(render_state, |renderer| {
+            painting.preview.extend(renderer, &points)
+        });
+        match result {
+            Some(Ok(changes)) => {
+                self.preview_changes.merge(&changes);
+                self.showing_preview = true;
+            }
+            Some(Err(error)) => {
+                self.message = Some(error.to_string());
+                self.abort_stroke();
+            }
+            None => {}
+        }
+    }
+
+    /// Sends the stroke being drawn as one command.
+    fn end_stroke(&mut self) {
+        let Some(painting) = self.painting.take() else {
+            return;
+        };
+        match painting.preview.finish() {
+            // Resolved by the preview: applied without painting again.
+            Some(command) => self.user(command),
+            None => self.drop_preview(),
+        }
+    }
+
+    /// Drops the stroke being drawn without sending it.
+    fn abort_stroke(&mut self) {
+        self.painting = None;
+        self.drop_preview();
+    }
+
+    /// Shows the document again instead of a preview that sent nothing.
+    fn drop_preview(&mut self) {
+        if self.showing_preview {
+            // Everything the preview touched is shown again from the
+            // document.
+            self.preview_changes = PhotoChanges::everything();
+        }
     }
 
     fn paint(&mut self, ui: &Ui, rect: Rect, origin: [f32; 2], viewport: [f32; 4]) {
         let revision = self.bus.revision();
-        if revision != self.sent {
+        let mut changes = self.bus.changes_since(self.sent).changes;
+        changes.merge(&std::mem::take(&mut self.preview_changes));
+        if let Some(painting) = &self.painting {
+            if !changes.is_empty() {
+                self.snapshot = Arc::new(painting.preview.document().clone());
+            }
+        } else if revision != self.sent || self.showing_preview {
             self.snapshot = Arc::new(self.document.clone());
+            self.showing_preview = false;
         }
         let callback = CanvasCallback {
             document: Arc::clone(&self.snapshot),
             revision,
             base: self.sent,
-            changes: self.bus.changes_since(self.sent).changes,
+            changes,
             preview: self.gesture,
             context: ui.ctx().clone(),
             view: CanvasView {
@@ -543,6 +803,48 @@ impl Session {
         self.sent = revision;
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+    }
+}
+
+/// Where the document is drawn: position of its origin in screen pixels,
+/// and screen pixels per point.
+#[derive(Clone, Copy)]
+struct Placement {
+    origin: [f32; 2],
+    ppp: f32,
+}
+
+/// The brush cursor: a circle of the brush diameter, dark and light so that
+/// it shows on any color, with a cross under 4 pixels; a cross and a
+/// smaller circle for the eyedropper.
+fn brush_cursor(ui: &Ui, pos: egui::Pos2, radius: f32, eyedropper: bool) {
+    let painter = ui.painter();
+    let dark = egui::Stroke::new(2.5, egui::Color32::from_black_alpha(160));
+    let light = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    let cross = |painter: &egui::Painter, half: f32| {
+        for stroke in [dark, light] {
+            painter.line_segment(
+                [pos - egui::vec2(half, 0.0), pos + egui::vec2(half, 0.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [pos - egui::vec2(0.0, half), pos + egui::vec2(0.0, half)],
+                stroke,
+            );
+        }
+    };
+    if eyedropper {
+        cross(painter, 8.0);
+        for stroke in [dark, light] {
+            painter.circle_stroke(pos, 5.0, stroke);
+        }
+        return;
+    }
+    for stroke in [dark, light] {
+        painter.circle_stroke(pos, radius.max(1.0), stroke);
+    }
+    if radius < 2.0 {
+        cross(painter, 6.0);
     }
 }
 

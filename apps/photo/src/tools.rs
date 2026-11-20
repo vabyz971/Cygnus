@@ -19,6 +19,7 @@
 //! settings are real state with default values, without effect.
 
 use cygnus_photo_core::BlendMode;
+use cygnus_photo_core::brush::{Brush, MAX_DIAMETER, MIN_DIAMETER};
 use cygnus_ui_kit::i18n::{Key, tr, tr_format};
 use cygnus_ui_kit::icons;
 use cygnus_ui_kit::theme::{metrics, palette};
@@ -110,6 +111,60 @@ impl Default for ToolSettings {
     }
 }
 
+impl ToolSettings {
+    /// The brush of these settings, painting the foreground color.
+    pub fn brush(&self) -> Brush {
+        let [r, g, b, _] = self.colors[0].to_srgba_unmultiplied();
+        let unit = |v: u8| f32::from(v) / 255.0;
+        Brush {
+            diameter: self.brush_size as f32,
+            hardness: self.brush_hardness as f32 / 100.0,
+            flow: self.brush_flow as f32 / 100.0,
+            opacity: self.brush_opacity as f32 / 100.0,
+            mode: self.brush_mode,
+            ..Brush::new([unit(r), unit(g), unit(b), 1.0])
+        }
+    }
+
+    /// Diameter of the brush, in document pixels.
+    pub fn diameter(&self) -> f32 {
+        self.brush_size as f32
+    }
+
+    /// Whether the stabilizer smooths the strokes.
+    pub fn stabilizer(&self) -> bool {
+        self.stabilizer
+    }
+
+    /// `[` and `]` (PIN-5): the diameter by steps of 10 %, at least one
+    /// pixel.
+    pub fn step_size(&mut self, larger: bool) {
+        let size = self.brush_size as f32;
+        let next = if larger {
+            (size * 1.1).round().max(size + 1.0)
+        } else {
+            (size / 1.1).round().min(size - 1.0)
+        };
+        self.brush_size = next.clamp(MIN_DIAMETER, MAX_DIAMETER) as u32;
+    }
+
+    /// Shift + `[` and `]`: the hardness by steps of 10 %.
+    pub fn step_hardness(&mut self, harder: bool) {
+        self.brush_hardness = if harder {
+            (self.brush_hardness + 10).min(100)
+        } else {
+            self.brush_hardness.saturating_sub(10)
+        };
+    }
+
+    /// Sets the foreground color from a straight 16-bit sample (the
+    /// eyedropper), opaque.
+    pub fn set_foreground(&mut self, rgba: [u16; 4]) {
+        let narrow = |v: u16| ((u32::from(v) * 255 + 32767) / 65535) as u8;
+        self.colors[0] = Color32::from_rgb(narrow(rgba[0]), narrow(rgba[1]), narrow(rgba[2]));
+    }
+}
+
 fn value_combo(
     ui: &mut Ui,
     id: &str,
@@ -190,4 +245,50 @@ pub fn color_swatches(ui: &mut Ui, settings: &mut ToolSettings) {
         );
     }
     response.on_hover_text(tr(keys::TOOL_COLORS));
+}
+
+#[cfg(test)]
+mod brush_settings_tests {
+    use super::*;
+
+    #[test]
+    fn the_brush_follows_the_settings_and_the_foreground_color() {
+        let mut settings = ToolSettings::default();
+        settings.colors[0] = Color32::from_rgb(255, 0, 51);
+        settings.brush_hardness = 35;
+        let brush = settings.brush();
+        assert_eq!(brush.diameter, 60.0);
+        assert!((brush.hardness - 0.35).abs() < 1e-6);
+        assert_eq!(brush.color, [1.0, 0.0, 0.2, 1.0]);
+        assert!(brush.validate().is_ok());
+    }
+
+    #[test]
+    fn brackets_step_the_size_by_ten_percent_within_bounds() {
+        let mut settings = ToolSettings::default();
+        settings.step_size(true);
+        assert_eq!(settings.diameter(), 66.0);
+        settings.step_size(false);
+        assert_eq!(settings.diameter(), 60.0);
+        settings.brush_size = 1;
+        settings.step_size(false);
+        assert_eq!(settings.diameter(), 1.0);
+        settings.brush_size = 3;
+        settings.step_size(true);
+        assert_eq!(settings.diameter(), 4.0, "at least one pixel per step");
+        settings.brush_size = 5000;
+        settings.step_size(true);
+        assert_eq!(settings.diameter(), 5000.0);
+        settings.step_hardness(true);
+        assert_eq!(settings.brush_hardness, 100);
+        settings.step_hardness(false);
+        assert_eq!(settings.brush_hardness, 90);
+    }
+
+    #[test]
+    fn the_eyedropper_sets_an_opaque_foreground() {
+        let mut settings = ToolSettings::default();
+        settings.set_foreground([65535, 32896, 0, 1000]);
+        assert_eq!(settings.colors[0], Color32::from_rgb(255, 128, 0));
+    }
 }

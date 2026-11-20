@@ -90,6 +90,7 @@ impl BenchRun {
                 stats,
                 sources,
                 covered: render_state.is_some_and(canvas::covered),
+                latency_ms: 0.0,
             });
             // A settling frame is repeated while the canvas has work left.
             let pending = render_state.is_some_and(canvas::pending);
@@ -103,7 +104,12 @@ impl BenchRun {
         if self.path.is_empty() {
             // The camera path depends on the canvas size, known now.
             self.viewport = [viewport[0] as u32, viewport[1] as u32];
-            self.path = bench::camera_path(viewport);
+            // The stroke phases are measured without a window (they need
+            // the preview document): left out here.
+            self.path = bench::camera_path(viewport)
+                .into_iter()
+                .filter(|frame| frame.stroke.is_none())
+                .collect();
         }
         let Some(frame) = self.path.get(self.next).copied() else {
             self.finished = true;

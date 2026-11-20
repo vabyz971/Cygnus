@@ -335,6 +335,39 @@ impl PhotoApp {
         if redo {
             self.session.redo();
         }
+        if self.tool == BRUSH && !ui.ctx().egui_wants_keyboard_input() {
+            self.brush_shortcuts(ui);
+        }
+    }
+
+    /// `[` and `]` change the brush size, with Shift its hardness (PIN-5).
+    /// On layouts where brackets need AltGr, egui reports them as text.
+    fn brush_shortcuts(&mut self, ui: &Ui) {
+        let steps: Vec<(bool, bool)> = ui.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Key {
+                        key: key @ (egui::Key::OpenBracket | egui::Key::CloseBracket),
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((*key == egui::Key::CloseBracket, modifiers.shift)),
+                    egui::Event::Text(text) if text == "[" || text == "]" => {
+                        Some((text == "]", false))
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+        for (up, shift) in steps {
+            if shift {
+                self.tools.step_hardness(up);
+            } else {
+                self.tools.step_size(up);
+            }
+        }
     }
 
     /// Development screenshot (`CYGNUS_SCREENSHOT`).
@@ -541,7 +574,14 @@ impl PhotoApp {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     }
-                    self.session.show(ui, pan_tool);
+                    let painting = self.tool == BRUSH;
+                    let tool = crate::canvas::CanvasTool {
+                        pan: pan_tool,
+                        brush: painting.then_some(&mut self.tools),
+                        target: self.view.selected,
+                        render_state,
+                    };
+                    self.session.show(ui, tool);
                 }
                 Some(error) => {
                     ui.centered_and_justified(|ui| {
