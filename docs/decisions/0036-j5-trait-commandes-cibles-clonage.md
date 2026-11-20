@@ -60,3 +60,51 @@ Cette décision traite les points 2 (trait et commandes), 3 (cibles) et 4 (tampo
 
 - **Identité aperçu/rejeu** : l'aperçu et la commande partagent les positions d'empreintes calculées par le cœur et le même shader. Un test d'égalité au bit près sur un adaptateur la vérifie.
 - **Mémoire de l'annulation** pour un très grand trait, qui touche beaucoup de tuiles : elle est comptée dans le budget de l'historique de 0022, qui écarte les plus anciennes entrées.
+
+## Mise en œuvre de l'étape P2 (2026-11-20)
+
+**Aperçu pendant le geste : écart à la proposition 2.** L'opération `Stroke` du programme par tuile, avec un tampon de trait composé par le canevas, n'est pas faite. Elle aurait agrandi le shader de composition, dont WARP ne supporte pas la croissance (0040). À la place, `photo/render/src/stroke.rs` (`StrokePreview`) fonctionne ainsi :
+
+- l'aperçu garde le document du début du trait, et une copie où la cible montre le trait en cours. C'est cette copie que le canevas affiche ;
+- à chaque nouvel événement, les empreintes de tout le trait sont recalculées (la fin de la courbe dépend du point suivant) ;
+- seules les tuiles dont la liste d'empreintes change sont repeintes, depuis leur contenu d'origine, par la passe même de `brush.stroke` ;
+- au relâchement, la commande part avec ces tuiles déjà résolues : ce qui était affiché est exactement ce qui est écrit, sans second calcul.
+
+Ce que les tests vérifient (`stroke_preview.rs`) :
+
+- **identité** : un trait nourri par morceaux donne exactement le même document que la commande calculée d'un coup, et que la commande rejouée par un script ;
+- **une seule entrée** d'historique par trait ;
+- **repeinte minimale** : seules les tuiles touchées par les nouvelles empreintes sont repeintes ;
+- **trait vide** : un trait qui ne peint rien n'envoie aucune commande.
+
+**Outil Pinceau dans l'interface** :
+
+- **geste** : tous les déplacements du pointeur d'une image sont pris, pas seulement le dernier, ainsi que le point d'appui d'avant le seuil de glissement. Un simple clic pose une empreinte ;
+- **stabilisateur** : moyenne exponentielle, où chaque point avance de 35 % vers la position ; elle rattrape le pointeur au relâchement ;
+- **curseur** : cercle du diamètre au zoom courant, en double trait sombre et clair, avec une croix sous 4 px ; le curseur système est masqué au-dessus du canevas ;
+- **pipette** : Alt et clic, ou Alt et glissement, prennent la couleur composée sous le pointeur, lue par le chemin de l'export (`Renderer::sample`). Elle donne la couleur de premier plan, opaque ;
+- **raccourcis** : `[` et `]` changent la taille par pas de 10 % (un pixel au moins), et Maj avec ces touches la dureté par pas de 10 %. Sur un clavier français, egui donne ces touches comme du texte, que l'outil lit aussi ;
+- **cible** : le calque sélectionné. Sans calque pixel sélectionné, ou sur un calque verrouillé, la barre d'état donne la raison du refus.
+
+**Latence du trait** (banc sans fenêtre, RTX 3080 Ti, vue de 2126 × 1086, document de 24 Mpx en 16 bits avec 10 calques, pinceau de 300 px) :
+
+- les entrées arrivent en temps réel à 120 Hz, et les images sont cadencées à 60 Hz ;
+- la latence va de l'arrivée d'une entrée à la fin du travail GPU de l'image qui la montre ;
+- rapports : `docs/bench/2026-11-20-*`.
+
+| Phase | Latence médiane | p95 | Max | Image la plus longue |
+| --- | --- | --- | --- | --- |
+| Trait à 100 % | 10,3 ms | 11,8 à 12,9 ms | 18,0 ms (une fois 72 ms) | 15,2 ms (une fois 72 ms) |
+| Trait en vue ajustée | 12,3 à 12,7 ms | 16,9 à 17,4 ms | 18,3 à 19,2 ms | 14,5 à 15,8 ms |
+
+- **La cible de 33 ms au p95 est tenue** : de 12 à 17 ms.
+- **Une image de 72 ms** s'est produite une fois sur deux passages, et ne s'est pas reproduite. C'est sans doute une perturbation de la machine, à surveiller.
+- **Cadence de 16,7 ms** : aucune autre image du trait ne la dépasse.
+- La mesure dans l'application, avec présentation à l'écran, reste à faire à la main.
+
+**Pas encore fait** (étapes suivantes de 0039) :
+
+- sélecteur de couleur en boîte flottante ;
+- réglages mémorisés par outil dans les préférences ;
+- pression et inclinaison (P8, 0041) ;
+- peinture de masque et gomme (P3).
