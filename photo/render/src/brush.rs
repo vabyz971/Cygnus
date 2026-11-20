@@ -20,7 +20,7 @@
 //! result, in the document depth, is read back as the new tiles of the
 //! layer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use cygnus_photo_core::brush::{Brush, Dab};
@@ -41,7 +41,7 @@ const TILE_WORDS: usize = (TILE_SIZE * TILE_SIZE * 2) as usize;
 
 /// The tiles of `bounds` each dab reaches, with the indices of the dabs in
 /// order.
-fn bins(dabs: &[Dab], bounds: Rect) -> BTreeMap<TileCoord, Vec<usize>> {
+pub(crate) fn bins(dabs: &[Dab], bounds: Rect) -> BTreeMap<TileCoord, Vec<usize>> {
     let mut bins: BTreeMap<TileCoord, Vec<usize>> = BTreeMap::new();
     let right = f64::from(bounds.x) + f64::from(bounds.width);
     let bottom = f64::from(bounds.y) + f64::from(bounds.height);
@@ -106,16 +106,23 @@ fn unpack(words: &[u32], depth: Depth) -> Option<Arc<Tile>> {
 }
 
 impl Renderer {
-    fn paint_tiles(
+    /// Paints the tiles of `target` that `dabs` reach, from their content
+    /// in `document`; only those of `only` when given (the stroke preview
+    /// repaints the tiles its new dabs reach).
+    pub(crate) fn paint_tiles(
         &self,
         document: &Document,
         target: NodeId,
         brush: &Brush,
         dabs: &[Dab],
+        only: Option<&BTreeSet<TileCoord>>,
     ) -> Result<TileBackup, RenderError> {
         let bounds = cygnus_photo_core::commands::stroke_target(document, target)
             .map_err(|_| RenderError::Unsupported("painting other than an editable pixel layer"))?;
-        let bins: Vec<(TileCoord, Vec<usize>)> = bins(dabs, bounds).into_iter().collect();
+        let bins: Vec<(TileCoord, Vec<usize>)> = bins(dabs, bounds)
+            .into_iter()
+            .filter(|(coord, _)| only.is_none_or(|only| only.contains(coord)))
+            .collect();
         let device = self.device();
         let pipeline = self
             .brush_pipeline
@@ -243,7 +250,7 @@ impl Paint for Renderer {
         brush: &Brush,
         dabs: &[Dab],
     ) -> Result<TileBackup, String> {
-        self.paint_tiles(document, target, brush, dabs)
+        self.paint_tiles(document, target, brush, dabs, None)
             .map_err(|error| error.to_string())
     }
 }

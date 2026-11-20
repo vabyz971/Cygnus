@@ -37,6 +37,7 @@ mod program;
 pub mod renderer;
 pub mod shaders;
 mod sources;
+pub mod stroke;
 
 pub use adjust::{COLOR_BALANCE_STRENGTH, CurveTableStats};
 pub use canvas::{Canvas, CanvasStats, CanvasView, FrameBudget};

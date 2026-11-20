@@ -55,7 +55,7 @@ impl PhotoChanges {
         }
     }
 
-    pub(crate) fn pixels(layer: NodeId, tiles: impl IntoIterator<Item = TileCoord>) -> Self {
+    pub fn pixels(layer: NodeId, tiles: impl IntoIterator<Item = TileCoord>) -> Self {
         Self {
             pixels: [(layer, tiles.into_iter().collect())].into(),
             ..Self::default()

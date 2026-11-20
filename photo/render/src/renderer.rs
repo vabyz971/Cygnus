@@ -1015,16 +1015,58 @@ impl Renderer {
         composite(encoder, &outputs, &filtered, target)
     }
 
+    /// The composite value of pixel (`x`, `y`) of `document`, straight
+    /// 16-bit RGBA, by the export path (the eyedropper, PIN-5). Transparent
+    /// outside the document.
+    pub fn sample(&self, document: &Document, x: u32, y: u32) -> Result<[u16; 4], RenderError> {
+        if x >= document.width || y >= document.height {
+            return Ok([0; 4]);
+        }
+        let coord = TileCoord {
+            tx: x / TILE_SIZE,
+            ty: y / TILE_SIZE,
+        };
+        let batches = self.plan(document, [coord], 1, |_, _| 0)?;
+        let Some(batch) = batches.first() else {
+            return Ok([0; 4]);
+        };
+        let words = self.batch_words(document, batch, ExportBits::Sixteen)?;
+        let pixel = ((y % TILE_SIZE) * TILE_SIZE + x % TILE_SIZE) as usize;
+        let (rg, ba) = (words[2 * pixel], words[2 * pixel + 1]);
+        Ok([rg & 0xFFFF, rg >> 16, ba & 0xFFFF, ba >> 16].map(|v| v as u16))
+    }
+
     fn export_batch(
         &self,
         document: &Document,
         batch: &Batch,
         image: &mut Image,
     ) -> Result<(), RenderError> {
+        let words_per_tile = TILE_PIXELS * image.bits.bits() / 8;
+        let words = self.batch_words(document, batch, image.bits)?;
+        for tile in &batch.outputs {
+            let start = (tile.target * words_per_tile) as usize;
+            unpack_tile(
+                &words[start..start + words_per_tile as usize],
+                tile.coord,
+                image,
+            );
+        }
+        Ok(())
+    }
+
+    /// Composes `batch` and reads back its tiles in `bits`, tile `target`
+    /// at word `target × words per tile`.
+    fn batch_words(
+        &self,
+        document: &Document,
+        batch: &Batch,
+        bits: ExportBits,
+    ) -> Result<Vec<u32>, RenderError> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
 
-        let bits = image.bits.bits();
+        let bits = bits.bits();
         // One u32 word per pixel in 8 bits, two in 16 bits.
         let words_per_tile = TILE_PIXELS * bits / 8;
         let mut export_jobs: Vec<u32> = Vec::new();
@@ -1074,16 +1116,7 @@ impl Renderer {
             return Err(RenderError::Gpu(error.to_string()));
         }
 
-        let words = self.read(&readback)?;
-        for tile in &batch.outputs {
-            let start = (tile.target * words_per_tile) as usize;
-            unpack_tile(
-                &words[start..start + words_per_tile as usize],
-                tile.coord,
-                image,
-            );
-        }
-        Ok(())
+        self.read(&readback)
     }
 
     pub(crate) fn read(&self, buffer: &wgpu::Buffer) -> Result<Vec<u32>, RenderError> {
