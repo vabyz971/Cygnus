@@ -122,6 +122,10 @@ pub enum CoreError {
         /// Why.
         reason: String,
     },
+    /// A stroke that lays nothing on its target: entirely outside the
+    /// layer, or without coverage (zero pressure with pressure on flow).
+    #[error("the stroke paints nothing: it is outside the layer or has no coverage")]
+    EmptyStroke,
     /// `layer.merge_down` cannot reproduce the image exactly.
     #[error("layer {} cannot be merged down: {reason}", id.0)]
     CannotMerge {
@@ -525,6 +529,9 @@ pub enum PhotoCommand {
     /// Merges a layer into the layer below it (resolved: renders them).
     #[serde(rename = "layer.merge_down")]
     LayerMergeDown(LayerMergeDown),
+    /// Paints a stroke on a pixel layer (docs/decisions/0035, 0036).
+    #[serde(rename = "brush.stroke")]
+    BrushStroke(crate::brush::BrushStroke),
     /// Undoes the last action (a whole gesture at once).
     #[serde(rename = "history.undo")]
     HistoryUndo(HistoryParams),
@@ -1358,6 +1365,32 @@ fn write_pixels(document: &mut Document, params: PixelsWrite) -> Outcome {
     painted(params.layer, backup)
 }
 
+/// The pixel layer a stroke paints, and its bounds: it must exist, be a
+/// pixel layer and not be locked (checked before any render).
+pub fn stroke_target(document: &Document, id: NodeId) -> Result<Rect, CoreError> {
+    editable_pixel_layer(document, id)
+}
+
+/// Applies a resolved stroke: its tiles replace those of the target, the
+/// inverse restores them by copies (as `pixels.write`).
+fn stroke(document: &mut Document, params: crate::brush::BrushStroke) -> Outcome {
+    let bounds = editable_pixel_layer(document, params.target)?;
+    let tiles = params
+        .resolved
+        .ok_or(CoreError::Unresolved("brush.stroke"))?;
+    if tiles
+        .iter()
+        .any(|(coord, _)| coord.rect().intersect(&bounds).width == 0)
+    {
+        return Err(invalid(
+            "brush.stroke",
+            "a painted tile lies outside the layer",
+        ));
+    }
+    let backup = document.pixels.restore(params.target, tiles);
+    painted(params.target, backup)
+}
+
 fn restore_pixels(document: &mut Document, restore: PixelsRestore) -> Outcome {
     // Restoring old content is allowed on any existing node with pixels,
     // even locked: it only replays history.
@@ -1393,6 +1426,7 @@ impl Command for PhotoCommand {
             Self::MaskGradient(_) => "mask.gradient",
             Self::SourceImport(_) => "source.import",
             Self::LayerMergeDown(_) => "layer.merge_down",
+            Self::BrushStroke(_) => "brush.stroke",
             Self::HistoryUndo(_) => "history.undo",
             Self::HistoryRedo(_) => "history.redo",
             Self::PixelsFill(_) => "pixels.fill",
@@ -1454,6 +1488,9 @@ impl Command for PhotoCommand {
     fn payload_bytes(&self) -> usize {
         match self {
             Self::PixelsWrite(params) => params.samples.len() * size_of::<u16>(),
+            Self::BrushStroke(params) => {
+                params.points.len() * size_of::<crate::brush::StrokePoint>()
+            }
             _ => 0,
         }
     }
@@ -1629,6 +1666,7 @@ impl PhotoCommand {
             Self::LayerUngroup(params) => ungroup_layer(document, params),
             Self::SourceImport(params) => import_source(document, params),
             Self::LayerMergeDown(params) => merge_down(document, params),
+            Self::BrushStroke(params) => stroke(document, params),
             Self::AdjustmentUpdate(params) => update_adjustment(document, params),
             Self::FilterUpdate(params) => update_filter(document, params),
             Self::MaskCreate(params) => create_mask(document, params),
@@ -1736,6 +1774,11 @@ impl Catalog for PhotoCommand {
             CommandInfo::new::<LayerMergeDown>(
                 "layer.merge_down",
                 "Merges a layer into the layer just below it, as one pixel layer showing exactly the same image. Refused when that is not possible (other blend mode than Normal, hidden layer, adjustment...).",
+                Stable,
+            ),
+            CommandInfo::new::<crate::brush::BrushStroke>(
+                "brush.stroke",
+                "Paints a stroke with a round brush on a pixel layer: the points are joined by a smooth curve and a dab is laid every `spacing` diameters. Pressure, when given, scales the diameter and the flow. One history entry per stroke.",
                 Stable,
             ),
             CommandInfo::new::<HistoryParams>(

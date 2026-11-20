@@ -140,6 +140,7 @@ fn import_embeds_the_source_once_and_redo_does_not_read_the_file_again() {
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: None,
+        paint: None,
     };
     for _ in 0..2 {
         resolve_and_execute(
@@ -194,6 +195,7 @@ fn a_failed_import_changes_nothing_and_says_why() {
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: None,
+        paint: None,
     };
     let error = resolve_and_execute(
         &mut bus,
@@ -270,6 +272,7 @@ fn merge_down_replaces_both_layers_and_undoes_exactly() {
     let resolvers = Resolvers {
         import: None,
         merge: Some(&merger),
+        paint: None,
     };
     resolve_and_execute(
         &mut bus,
@@ -317,6 +320,7 @@ fn merge_down_refuses_what_it_could_not_reproduce_exactly() {
         let resolvers = Resolvers {
             import: None,
             merge: Some(&merger),
+            paint: None,
         };
         let error = resolve_and_execute(
             &mut bus,
@@ -396,6 +400,7 @@ fn merging_a_clipped_layer_onto_its_base_gives_an_unclipped_layer() {
     let resolvers = Resolvers {
         import: None,
         merge: Some(&merger),
+        paint: None,
     };
     resolve_and_execute(
         &mut bus,

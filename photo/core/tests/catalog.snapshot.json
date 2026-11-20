@@ -1671,6 +1671,249 @@
     "stability": "stable"
   },
   {
+    "description": "Paints a stroke with a round brush on a pixel layer: the points are joined by a smooth curve and a dab is laid every `spacing` diameters. Pressure, when given, scales the diameter and the flow. One history entry per stroke.",
+    "name": "brush.stroke",
+    "params": {
+      "$defs": {
+        "BlendMode": {
+          "description": "Layer blend modes (CAL-3), following W3C Compositing and Blending\nLevel 1.",
+          "oneOf": [
+            {
+              "const": "normal",
+              "description": "Normal (source over).",
+              "type": "string"
+            },
+            {
+              "const": "multiply",
+              "description": "Multiply.",
+              "type": "string"
+            },
+            {
+              "const": "screen",
+              "description": "Screen.",
+              "type": "string"
+            },
+            {
+              "const": "overlay",
+              "description": "Overlay.",
+              "type": "string"
+            },
+            {
+              "const": "soft_light",
+              "description": "Soft light.",
+              "type": "string"
+            },
+            {
+              "const": "darken",
+              "description": "Darken.",
+              "type": "string"
+            },
+            {
+              "const": "lighten",
+              "description": "Lighten.",
+              "type": "string"
+            },
+            {
+              "const": "difference",
+              "description": "Difference.",
+              "type": "string"
+            },
+            {
+              "const": "hue",
+              "description": "Hue.",
+              "type": "string"
+            },
+            {
+              "const": "saturation",
+              "description": "Saturation.",
+              "type": "string"
+            },
+            {
+              "const": "color",
+              "description": "Color.",
+              "type": "string"
+            },
+            {
+              "const": "luminosity",
+              "description": "Luminosity.",
+              "type": "string"
+            }
+          ]
+        },
+        "Brush": {
+          "description": "Settings of the brush.",
+          "properties": {
+            "color": {
+              "description": "Straight RGBA color, sRGB-encoded, 0 to 1.",
+              "items": {
+                "format": "float",
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            "diameter": {
+              "description": "Diameter in pixels, 1 to 5000.",
+              "format": "float",
+              "type": "number"
+            },
+            "flow": {
+              "default": 1.0,
+              "description": "Coverage laid by each dab, 0 to 1.",
+              "format": "float",
+              "type": "number"
+            },
+            "flow_pressure": {
+              "default": true,
+              "description": "Pressure scales the flow.",
+              "type": "boolean"
+            },
+            "hardness": {
+              "default": 0.800000011920929,
+              "description": "Part of the radius painted at full coverage, 0 (soft) to 1 (hard).",
+              "format": "float",
+              "type": "number"
+            },
+            "min_size": {
+              "default": 0.20000000298023224,
+              "description": "Diameter at zero pressure, as a part of `diameter`, 0 to 1.",
+              "format": "float",
+              "type": "number"
+            },
+            "mode": {
+              "$ref": "#/$defs/BlendMode",
+              "default": "normal",
+              "description": "How the stroke blends with the layer."
+            },
+            "opacity": {
+              "default": 1.0,
+              "description": "Largest coverage of the whole stroke, 0 to 1.",
+              "format": "float",
+              "type": "number"
+            },
+            "size_pressure": {
+              "default": true,
+              "description": "Pressure scales the diameter, down to `min_size`.",
+              "type": "boolean"
+            },
+            "spacing": {
+              "default": 0.10000000149011612,
+              "description": "Distance between dabs, in diameters, 0.01 to 2.",
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "diameter",
+            "color"
+          ],
+          "type": "object"
+        },
+        "BrushTool": {
+          "description": "What the stroke does.",
+          "oneOf": [
+            {
+              "const": "brush",
+              "description": "Paints the brush color.",
+              "type": "string"
+            }
+          ]
+        },
+        "NodeId": {
+          "description": "Stable identifier of a node, unique within its document and never\nreused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "StrokePoint": {
+          "description": "One input point of a stroke, in document pixels.",
+          "properties": {
+            "pressure": {
+              "description": "Pen pressure, 0 to 1; absent for a mouse (full pressure).",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "tilt_x": {
+              "description": "Pen tilt along x, in degrees (recorded, not used yet).",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "tilt_y": {
+              "description": "Pen tilt along y, in degrees (recorded, not used yet).",
+              "format": "float",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "time_ms": {
+              "description": "Time since the start of the stroke, in milliseconds (recorded).",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "x": {
+              "description": "Horizontal position.",
+              "format": "double",
+              "type": "number"
+            },
+            "y": {
+              "description": "Vertical position.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters of `brush.stroke`.",
+      "properties": {
+        "brush": {
+          "$ref": "#/$defs/Brush",
+          "description": "Brush settings."
+        },
+        "points": {
+          "description": "Input points, already stabilized, 1 to 100 000.",
+          "items": {
+            "$ref": "#/$defs/StrokePoint"
+          },
+          "type": "array"
+        },
+        "target": {
+          "$ref": "#/$defs/NodeId",
+          "description": "Pixel layer painted."
+        },
+        "tool": {
+          "$ref": "#/$defs/BrushTool",
+          "default": "brush",
+          "description": "What the stroke does."
+        }
+      },
+      "required": [
+        "target",
+        "points",
+        "brush"
+      ],
+      "title": "BrushStroke",
+      "type": "object"
+    },
+    "stability": "stable"
+  },
+  {
     "description": "Undoes the last action, a whole gesture at once.",
     "name": "history.undo",
     "params": {

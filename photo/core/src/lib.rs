@@ -21,6 +21,7 @@
 //! GPU dependency: the model and the commands are tested without a GPU.
 
 pub mod adjust;
+pub mod brush;
 pub mod changes;
 pub mod commands;
 pub mod model;

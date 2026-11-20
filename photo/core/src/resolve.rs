@@ -15,17 +15,19 @@
 // with Cygnus. If not, see <https://www.gnu.org/licenses/>.
 
 //! Resolved commands (docs/decisions/0020): `source.import` needs to read a
-//! file and `layer.merge_down` to render two layers, which this crate
-//! cannot do (it depends neither on the disk nor on the GPU). The caller
+//! file, `layer.merge_down` to render two layers and `brush.stroke` to
+//! render its dabs (0036), which this crate cannot do (it depends neither
+//! on the disk nor on the GPU). The caller
 //! gives a reader and a renderer; [`resolve_and_execute`] is the **only**
 //! path that runs commands with them. The commands it resolves carry their
 //! result, unserialized, and are refused by the bus without it.
 
 use cygnus_commands::{CommandBus, Revision, Source as Origin};
 
-use crate::commands::{CoreError, ImportedSource, PhotoCommand, merge_down_target};
+use crate::brush::{self, Brush, Dab};
+use crate::commands::{CoreError, ImportedSource, PhotoCommand, merge_down_target, stroke_target};
 use crate::model::{Document, NodeId, Source, SourceId};
-use crate::pixels::LayerTiles;
+use crate::pixels::{LayerTiles, TileBackup};
 
 /// Reads and decodes an image file (implemented by `photo/io`).
 pub trait Import {
@@ -42,6 +44,21 @@ pub trait Merge {
     fn merge(&self, document: &Document, upper: NodeId) -> Result<LayerTiles, String>;
 }
 
+/// Renders the dabs of a stroke (implemented by `photo/render`).
+pub trait Paint {
+    /// The new content of the tiles of `target` that `dabs` reach, within
+    /// the layer, in the document depth (`None` where a tile becomes
+    /// empty), or why the render failed. Called only once the target is
+    /// known to be an editable pixel layer and some dab reaches it.
+    fn paint(
+        &self,
+        document: &Document,
+        target: NodeId,
+        brush: &Brush,
+        dabs: &[Dab],
+    ) -> Result<TileBackup, String>;
+}
+
 /// The reader and the renderer available to the caller.
 #[derive(Clone, Copy)]
 pub struct Resolvers<'a> {
@@ -49,6 +66,8 @@ pub struct Resolvers<'a> {
     pub import: Option<&'a dyn Import>,
     /// Renderer, for `layer.merge_down`.
     pub merge: Option<&'a dyn Merge>,
+    /// Renderer, for `brush.stroke`.
+    pub paint: Option<&'a dyn Paint>,
 }
 
 impl Resolvers<'_> {
@@ -56,6 +75,7 @@ impl Resolvers<'_> {
     pub const NONE: Resolvers<'static> = Resolvers {
         import: None,
         merge: None,
+        paint: None,
     };
 }
 
@@ -101,6 +121,22 @@ pub fn resolve_and_execute(
                 .map_err(|reason| failed("layer.merge_down", reason))?;
             params.resolved = Some(tiles);
             PhotoCommand::LayerMergeDown(params)
+        }
+        PhotoCommand::BrushStroke(mut params) if params.resolved.is_none() => {
+            // Checked before rendering: a refused stroke renders nothing.
+            let bounds = stroke_target(document, params.target)?;
+            let dabs = brush::dabs(&params.points, &params.brush)?;
+            if !dabs.iter().any(|dab| dab.touches(&bounds)) {
+                return Err(CoreError::EmptyStroke);
+            }
+            let renderer = resolvers
+                .paint
+                .ok_or_else(|| failed("brush.stroke", "no renderer is available here"))?;
+            let tiles = renderer
+                .paint(document, params.target, &params.brush, &dabs)
+                .map_err(|reason| failed("brush.stroke", reason))?;
+            params.resolved = Some(tiles);
+            PhotoCommand::BrushStroke(params)
         }
         other => other,
     };
