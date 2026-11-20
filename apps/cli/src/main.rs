@@ -26,8 +26,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use cygnus_commands::Source;
-use cygnus_photo_core::pixels::LayerTiles;
-use cygnus_photo_core::resolve::{Merge, Resolvers};
+use cygnus_photo_core::brush::{Brush, Dab};
+use cygnus_photo_core::pixels::{LayerTiles, TileBackup};
+use cygnus_photo_core::resolve::{Merge, Paint, Resolvers};
 use cygnus_photo_core::script::{Script, ScriptError};
 use cygnus_photo_core::{Depth, Document, NodeId};
 use cygnus_photo_io::FileImporter;
@@ -138,6 +139,20 @@ impl Merge for LazyRenderer {
     }
 }
 
+impl Paint for LazyRenderer {
+    fn paint(
+        &self,
+        document: &Document,
+        target: NodeId,
+        brush: &Brush,
+        dabs: &[Dab],
+    ) -> Result<TileBackup, String> {
+        self.get()
+            .map_err(|error| error.to_string())?
+            .paint(document, target, brush, dabs)
+    }
+}
+
 fn render(args: RenderArgs) -> Result<(), CliError> {
     let text = std::fs::read_to_string(&args.script).map_err(|source| CliError::Read {
         path: args.script.clone(),
@@ -162,6 +177,7 @@ fn render(args: RenderArgs) -> Result<(), CliError> {
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: Some(&renderer),
+        paint: Some(&renderer),
     };
     let document = script
         .build_with(Source::Cli, &resolvers)

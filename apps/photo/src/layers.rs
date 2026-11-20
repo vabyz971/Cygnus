@@ -167,6 +167,7 @@ pub fn run(session: &mut Session, render_state: Option<&RenderState>, command: P
             let resolvers = Resolvers {
                 import: None,
                 merge: Some(renderer),
+                paint: Some(renderer),
             };
             if let Some(command) = pending.take() {
                 session.user_with(command, &resolvers);

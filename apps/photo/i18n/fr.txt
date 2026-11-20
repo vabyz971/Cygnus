@@ -217,6 +217,7 @@ command.mask_fill = Remplissage du masque
 command.mask_gradient = Dégradé du masque
 command.source_import = Import d'image
 command.layer_merge_down = Fusion vers le bas
+command.brush_stroke = Coup de pinceau
 command.pixels = Pixels (développement)
 command.other = Action
 status.coarse_computing = Affichage simplifié, calcul en cours

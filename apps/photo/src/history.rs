@@ -53,6 +53,7 @@ pub fn command_key(name: &str) -> Key {
         "mask.gradient" => keys::COMMAND_MASK_GRADIENT,
         "source.import" => keys::COMMAND_SOURCE_IMPORT,
         "layer.merge_down" => keys::COMMAND_LAYER_MERGE_DOWN,
+        "brush.stroke" => keys::COMMAND_BRUSH_STROKE,
         "pixels.fill" | "pixels.write" => keys::COMMAND_PIXELS,
         _ => keys::COMMAND_OTHER,
     }

@@ -116,6 +116,7 @@ fn run_scenario() -> (CommandBus<PhotoCommand>, Document) {
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: None,
+        paint: None,
     };
     let mut bus = CommandBus::new();
     let mut document = Document::default();

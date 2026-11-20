@@ -216,6 +216,7 @@ cygnus_ui_kit::define_keys! {
     COMMAND_MASK_GRADIENT = "command.mask_gradient";
     COMMAND_SOURCE_IMPORT = "command.source_import";
     COMMAND_LAYER_MERGE_DOWN = "command.layer_merge_down";
+    COMMAND_BRUSH_STROKE = "command.brush_stroke";
     COMMAND_PIXELS = "command.pixels";
     COMMAND_OTHER = "command.other";
     STATUS_COARSE_COMPUTING = "status.coarse_computing";

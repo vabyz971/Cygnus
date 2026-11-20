@@ -339,6 +339,7 @@ impl Session {
         let resolvers = Resolvers {
             import: Some(&importer),
             merge: None,
+            paint: None,
         };
         self.execute_with(command, source, &resolvers)
     }
@@ -360,6 +361,7 @@ impl Session {
         let resolvers = Resolvers {
             import: Some(&importer),
             merge: resolvers.merge,
+            paint: resolvers.paint,
         };
         self.message = self
             .execute_with(command, Source::User, &resolvers)
