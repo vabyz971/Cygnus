@@ -82,6 +82,10 @@ pub enum Phase {
     CurveDragFit,
     /// The frame after the drag at fit: the preview is refined exactly.
     CurveRelease,
+    /// A brush stroke of 300 px at 100 %, inputs at 120 Hz (0035).
+    Stroke100,
+    /// The same stroke at fit.
+    StrokeFit,
 }
 
 impl Phase {
@@ -97,6 +101,8 @@ impl Phase {
             Self::CurveDrag300 => "curve_drag_300",
             Self::CurveDragFit => "curve_drag_fit",
             Self::CurveRelease => "curve_release",
+            Self::Stroke100 => "stroke_100",
+            Self::StrokeFit => "stroke_fit",
         }
     }
 }
@@ -116,6 +122,61 @@ pub struct CameraFrame {
     pub preview: bool,
     /// Repeated, without its edit, until the canvas has no work left.
     pub settle: bool,
+    /// Brush input of this frame.
+    pub stroke: Option<StrokeEvent>,
+}
+
+/// Brush input during the stroke phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeEvent {
+    /// The `n`-th frame of the stroke: the inputs arrived since the
+    /// previous frame are added.
+    Move(u32),
+    /// The button is released: the stroke is sent as one command.
+    End,
+}
+
+/// Frames of a stroke phase, at 60 Hz.
+pub const STROKE_FRAMES: u32 = 120;
+/// Brush inputs per stroke, at 120 Hz.
+pub const STROKE_INPUTS: u32 = 2 * STROKE_FRAMES;
+/// Interval between two brush inputs, in seconds.
+pub const STROKE_INPUT_INTERVAL: f64 = 1.0 / 120.0;
+/// Interval between two frames of a stroke phase, in seconds.
+pub const STROKE_FRAME_INTERVAL: f64 = 1.0 / 60.0;
+/// Pixel layer painted by the stroke phases (it has a mask).
+pub const STROKE_LAYER: NodeId = NodeId(9);
+
+/// The brush of the stroke phases: 300 px, soft, translucent.
+pub fn stroke_brush() -> cygnus_photo_core::brush::Brush {
+    cygnus_photo_core::brush::Brush {
+        diameter: 300.0,
+        hardness: 0.6,
+        flow: 0.7,
+        ..cygnus_photo_core::brush::Brush::new([0.85, 0.35, 0.2, 1.0])
+    }
+}
+
+/// Input `index` of the stroke of `phase`: a wave across the view, 1500
+/// px wide at 100 %, the whole document at fit.
+pub fn stroke_input(phase: Phase, index: u32) -> cygnus_photo_core::brush::StrokePoint {
+    let t = f64::from(index) / f64::from(STROKE_INPUTS - 1);
+    let (cx, cy) = match phase {
+        Phase::Stroke100 => (f64::from(WIDTH) * 0.5, f64::from(HEIGHT) * 0.5),
+        _ => (f64::from(WIDTH) * 0.5, f64::from(HEIGHT) * 0.5),
+    };
+    let (width, amplitude) = match phase {
+        Phase::Stroke100 => (1500.0, 250.0),
+        _ => (5000.0, 1200.0),
+    };
+    cygnus_photo_core::brush::StrokePoint {
+        x: cx - width / 2.0 + width * t,
+        y: cy + amplitude * (t * 6.0 * std::f64::consts::PI).sin(),
+        pressure: None,
+        tilt_x: None,
+        tilt_y: None,
+        time_ms: Some(f64::from(index) * STROKE_INPUT_INTERVAL * 1000.0),
+    }
 }
 
 /// A change of the document during the camera path.
@@ -145,6 +206,7 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
         edit: None,
         preview: false,
         settle: false,
+        stroke: None,
     };
     let mut path = vec![CameraFrame {
         settle: true,
@@ -199,6 +261,18 @@ pub fn camera_path(viewport: [f32; 2]) -> Vec<CameraFrame> {
         settle: true,
         ..frame(Phase::CurveRelease, fit, middle)
     });
+    // A brush stroke at 100 % then at fit, then its release.
+    for (phase, scale) in [(Phase::Stroke100, 1.0), (Phase::StrokeFit, fit)] {
+        path.extend((0..STROKE_FRAMES).map(|n| CameraFrame {
+            stroke: Some(StrokeEvent::Move(n)),
+            ..frame(phase, scale, middle)
+        }));
+        path.push(CameraFrame {
+            stroke: Some(StrokeEvent::End),
+            settle: true,
+            ..frame(phase, scale, middle)
+        });
+    }
     path
 }
 
@@ -463,6 +537,9 @@ pub struct FrameSample {
     pub sources: SourceStats,
     /// Every visible tile showed something after the frame.
     pub covered: bool,
+    /// Largest delay between a brush input shown by the frame and the end
+    /// of its GPU work, in ms; 0 without input.
+    pub latency_ms: f64,
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -526,9 +603,13 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         let start = previous;
         let start_sources = previous_sources;
         let mut times = Vec::new();
+        let mut latencies = Vec::new();
         let mut first_view: Option<f64> = None;
         while index < samples.len() && samples[index].phase == phase {
             times.push(samples[index].time.as_secs_f64() * 1000.0);
+            if samples[index].latency_ms > 0.0 {
+                latencies.push(samples[index].latency_ms);
+            }
             if first_view.is_none() && samples[index].covered {
                 first_view = Some(times.iter().sum());
             }
@@ -539,6 +620,15 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
         let mut sorted = times.clone();
         sorted.sort_by(f64::total_cmp);
         let median = percentile(&sorted, 0.5);
+        latencies.sort_by(f64::total_cmp);
+        let latency = (!latencies.is_empty()).then(|| {
+            serde_json::json!({
+                "frames": latencies.len(),
+                "median_ms": percentile(&latencies, 0.5),
+                "p95_ms": percentile(&latencies, 0.95),
+                "max_ms": latencies.last().copied().unwrap_or(0.0),
+            })
+        });
         phases.push(serde_json::json!({
             "phase": phase.name(),
             "frames": times.len(),
@@ -563,6 +653,7 @@ pub fn report(info: &RunInfo, samples: &[FrameSample]) -> serde_json::Value {
             "reduced_tiles_built": previous_sources.reduced - start_sources.reduced,
             "reduced_tiles_uploaded": previous_sources.reduced_uploads - start_sources.reduced_uploads,
             "reduced_bytes_held": previous_sources.reduced_bytes,
+            "stroke_latency": latency,
         }));
     }
     let curve_cpu = curve_table_time();
@@ -616,7 +707,9 @@ mod tests {
                 Phase::Edit,
                 Phase::CurveDrag300,
                 Phase::CurveDragFit,
-                Phase::CurveRelease
+                Phase::CurveRelease,
+                Phase::Stroke100,
+                Phase::StrokeFit
             ]
         );
         let edits = |wanted: fn(&Edit) -> bool| {

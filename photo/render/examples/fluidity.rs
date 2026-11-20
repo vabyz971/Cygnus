@@ -37,11 +37,12 @@
 //! the application (`CYGNUS_BENCH=fluidity`) is the reference measurement.
 
 use std::error::Error;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cygnus_commands::{ChangeSet, CommandBus, Source};
 use cygnus_photo_core::PhotoChanges;
 use cygnus_photo_render::bench::{self, FrameSample, RunInfo};
+use cygnus_photo_render::stroke::StrokePreview;
 use cygnus_photo_render::{Canvas, CanvasView, FrameBudget, Renderer, gpu};
 
 /// Repetitions of a settling frame at most.
@@ -164,8 +165,57 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = bench::camera_path([rect[2], rect[3]]);
     let mut index = 0;
     let mut repeats = 0;
+    // The stroke being drawn: its preview, when it began, inputs given.
+    let mut stroke: Option<(StrokePreview, Instant, u32)> = None;
     while let Some(frame) = path.get(index).copied() {
-        let start = Instant::now();
+        let mut start = Instant::now();
+        let mut earliest_input: Option<Instant> = None;
+        if let Some(event) = frame.stroke.filter(|_| repeats == 0) {
+            let (preview, began, given) = match &mut stroke {
+                Some(state) => state,
+                None => stroke.insert((
+                    StrokePreview::begin(&document, bench::STROKE_LAYER, bench::stroke_brush())?,
+                    Instant::now(),
+                    0,
+                )),
+            };
+            // Frames at 60 Hz, inputs at 120 Hz in real time: a frame adds
+            // the inputs arrived before it starts.
+            let due = |i: u32| {
+                *began + Duration::from_secs_f64(f64::from(i) * bench::STROKE_INPUT_INTERVAL)
+            };
+            let last = match event {
+                bench::StrokeEvent::Move(n) => {
+                    let at = *began
+                        + Duration::from_secs_f64(f64::from(n) * bench::STROKE_FRAME_INTERVAL);
+                    if let Some(wait) = at.checked_duration_since(Instant::now()) {
+                        std::thread::sleep(wait);
+                    }
+                    start = Instant::now();
+                    (*given..bench::STROKE_INPUTS)
+                        .take_while(|i| due(*i) <= start)
+                        .last()
+                        .map_or(*given, |i| i + 1)
+                }
+                bench::StrokeEvent::End => bench::STROKE_INPUTS,
+            };
+            if last > *given {
+                earliest_input = Some(due(*given));
+                let points: Vec<_> = (*given..last)
+                    .map(|i| bench::stroke_input(frame.phase, i))
+                    .collect();
+                changes.merge(&preview.extend(&renderer, &points)?);
+                *given = last;
+            }
+            if event == bench::StrokeEvent::End
+                && let Some((preview, _, _)) = stroke.take()
+                && let Some(command) = preview.finish()
+            {
+                let cursor = bus.revision();
+                bus.execute(&mut document, command, Source::Test)?;
+                changes.merge(&bus.changes_since(cursor).changes);
+            }
+        }
         // The 8 GiB document has no curves adjustment: no curve edit.
         let curve = |edit: &bench::Edit| matches!(edit, bench::Edit::Curve(_));
         if let Some(edit) = frame
@@ -198,7 +248,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             checker_size: 8.0,
         };
         canvas.set_preview(frame.preview);
-        canvas.prepare(&renderer, &document, &changes, &view)?;
+        let shown = stroke
+            .as_ref()
+            .map_or(&document, |(preview, _, _)| preview.document());
+        canvas.prepare(&renderer, shown, &changes, &view)?;
         changes = PhotoChanges::default();
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
@@ -225,6 +278,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             stats: canvas.stats(),
             sources: renderer.source_stats(),
             covered: canvas.is_covered(),
+            latency_ms: earliest_input.map_or(0.0, |at| at.elapsed().as_secs_f64() * 1000.0),
         });
         if frame.settle && canvas.is_pending() && repeats < MAX_REPEATS {
             repeats += 1;
