@@ -154,6 +154,7 @@ fn an_embedded_object_renders_like_a_pixel_layer_of_the_same_pixels() {
         let resolvers = Resolvers {
             import: Some(&importer),
             merge: None,
+            paint: None,
         };
         let embedded = run(
             &[
@@ -291,6 +292,7 @@ fn merge_down_leaves_the_image_unchanged() {
     let resolvers = Resolvers {
         import: None,
         merge: Some(&renderer),
+        paint: None,
     };
     for (what, depth, extra) in cases {
         let target = if what == "two clipped layers" { 4 } else { 3 };
@@ -326,6 +328,7 @@ fn an_embedded_object_can_be_merged_down() {
     let resolvers = Resolvers {
         import: Some(&importer),
         merge: Some(&renderer),
+        paint: None,
     };
     let commands = vec![
         create(64, 64, "u16"),

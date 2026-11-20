@@ -74,6 +74,7 @@ fn golden_images() {
         let resolvers = Resolvers {
             import: None,
             merge: Some(&renderer),
+            paint: Some(&renderer),
         };
         let document = script.build_with(Source::Test, &resolvers).unwrap();
         let actual = export16(&renderer, &document);
@@ -96,6 +97,8 @@ fn golden_images() {
         }
         let passes = if name.starts_with("filter-") {
             comparison.passes_with_filters()
+        } else if name.starts_with("brush-") && document.depth == cygnus_photo_core::Depth::U8 {
+            comparison.passes_with_8bit_strokes()
         } else {
             comparison.passes()
         };

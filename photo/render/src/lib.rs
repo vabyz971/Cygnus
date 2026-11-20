@@ -24,6 +24,7 @@
 
 mod adjust;
 pub mod bench;
+mod brush;
 pub mod canvas;
 mod filter;
 pub mod format;

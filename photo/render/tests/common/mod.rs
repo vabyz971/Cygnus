@@ -85,6 +85,15 @@ pub const MEAN_UNITS_BOUND: f64 = 0.01;
 #[allow(dead_code)]
 pub const FILTER_TOLERANCE_UNITS: u16 = 4;
 
+/// Largest difference allowed between adapters for brush strokes painted
+/// in an 8-bit document (docs/decisions/0035, cases named `brush-*`): the
+/// stroke is rounded once to 255 levels, where a value near a half level
+/// may round differently from one adapter to another, which is one level,
+/// 257 units of the 16-bit export, plus the unpremultiplied export error of
+/// 0026 on translucent pixels.
+#[allow(dead_code)]
+pub const BRUSH_8BIT_TOLERANCE_UNITS: u16 = 257 + 16;
+
 /// Outcome of comparing two 16-bit exports.
 #[derive(Debug)]
 pub struct Comparison {
@@ -107,6 +116,13 @@ impl Comparison {
     /// not limited: one color off by one unit fills a whole flat area.
     pub fn passes(&self) -> bool {
         self.beyond_tolerance == 0 && self.mean_units <= MEAN_UNITS_BOUND
+    }
+
+    /// Tolerance of the brush strokes of an 8-bit document:
+    /// [`BRUSH_8BIT_TOLERANCE_UNITS`], the same mean bound.
+    #[allow(dead_code)]
+    pub fn passes_with_8bit_strokes(&self) -> bool {
+        self.max_units <= BRUSH_8BIT_TOLERANCE_UNITS && self.mean_units <= MEAN_UNITS_BOUND
     }
 
     /// Tolerance of the images with filters: [`FILTER_TOLERANCE_UNITS`],

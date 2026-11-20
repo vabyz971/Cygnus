@@ -178,6 +178,8 @@ pub struct Renderer {
     export: wgpu::ComputePipeline,
     sources: Mutex<Sources>,
     composites: Pool,
+    /// Pipeline of `brush.stroke`, made on the first stroke.
+    pub(crate) brush_pipeline: std::sync::OnceLock<wgpu::ComputePipeline>,
 }
 
 /// One output tile of a batch: where it goes, and its program.
@@ -274,6 +276,7 @@ impl Renderer {
                 filters: FilterPasses::new(),
             }),
             composites: Pool::new(device, "cygnus composite pool", COMPOSITE_SLOTS),
+            brush_pipeline: std::sync::OnceLock::new(),
         };
         if let Some(error) = pollster::block_on(memory.pop()) {
             return Err(RenderError::Gpu(error.to_string()));

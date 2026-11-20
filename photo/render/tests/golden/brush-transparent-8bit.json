@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "commands": [
+    {"command": "document.create", "params": {"width": 320, "height": 200, "depth": "u8"}},
+    {"command": "layer.create", "params": {"name": "peinture"}},
+    {"command": "brush.stroke", "params": {"target": 1, "points": [{"x": 20, "y": 30}, {"x": 100, "y": 170}, {"x": 200, "y": 40}, {"x": 300, "y": 170}], "brush": {"diameter": 36, "hardness": 0.4, "flow": 0.4, "opacity": 0.85, "color": [0.901961, 0.2, 0.298039, 0.901961]}}},
+    {"command": "brush.stroke", "params": {"target": 1, "points": [{"x": 20, "y": 100}, {"x": 300, "y": 100}], "brush": {"diameter": 12, "hardness": 1.0, "spacing": 1.5, "color": [0.101961, 0.298039, 0.901961, 1.0]}}},
+    {"command": "brush.stroke", "params": {"target": 1, "points": [{"x": 160, "y": 100}], "brush": {"diameter": 3, "hardness": 1.0, "color": [0.0, 0.0, 0.0, 1.0]}}}
+  ]
+}

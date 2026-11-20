@@ -38,6 +38,7 @@ const DISPLAY: &str = include_str!("shaders/display.wgsl");
 const DOWNSAMPLE: &str = include_str!("shaders/downsample.wgsl");
 const HISTOGRAM: &str = include_str!("shaders/histogram.wgsl");
 const FILTER: &str = include_str!("shaders/filter.wgsl");
+const BRUSH: &str = include_str!("shaders/brush.wgsl");
 
 /// Name of the WGSL constant holding the code of `mode`, such as
 /// `BLEND_SOFT_LIGHT`.
@@ -111,6 +112,11 @@ pub fn filter() -> String {
     assemble(FILTER, &[COLOR])
 }
 
+/// Brush pass: the dabs of a stroke blended into the tiles of a layer.
+pub fn brush() -> String {
+    assemble(BRUSH, &[COLOR, BLEND])
+}
+
 /// Display pass: composite tiles to the screen.
 pub fn display() -> String {
     assemble(DISPLAY, &[COLOR])
@@ -140,6 +146,7 @@ mod tests {
         validate("downsample", &downsample());
         validate("histogram", &histogram());
         validate("filter", &filter());
+        validate("brush", &brush());
     }
 
     #[test]
@@ -167,6 +174,7 @@ mod tests {
             ("display", DISPLAY),
             ("downsample", DOWNSAMPLE),
             ("filter", FILTER),
+            ("brush", BRUSH),
         ] {
             assert!(
                 !source.contains("fn blend"),
