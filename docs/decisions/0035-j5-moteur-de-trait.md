@@ -94,3 +94,22 @@ Les pinceaux sensibles à la lumière et les textures générées ne sont pas da
   - la valeur stockée est arrondie une seule fois à 255 niveaux. Une valeur proche d'un demi-niveau peut donc basculer d'un niveau d'un adaptateur à l'autre, soit 257 unités de l'export 16 bits ;
   - les golden images de traits `brush-*` d'un document 8 bits ont donc une tolérance de 273 unités (un niveau plus la marge de dé-prémultiplication de 0026), et la même borne moyenne de 0,01 ;
   - les couleurs des scripts sont des valeurs 8 bits exactes, comme les donnera le sélecteur de couleur. Une couleur posée sur un demi-niveau exact (par exemple 0,9 × 255 = 229,5) faisait basculer tout un trait sur la RTX : 5 177 pixels au lieu d'un seul.
+
+## Écarts mesurés entre adaptateurs (CI du 2026-11-19, run 44672943236)
+
+**Golden images de traits**, comparées à la référence faite sur lavapipe :
+
+| Image | lavapipe | WARP | Metal (Apple Paravirtual) | RTX 3080 Ti (local) |
+| --- | --- | --- | --- | --- |
+| `brush-strokes` (16 bits) | 0 | 1 unité au plus, sur 52 pixels | 1 unité au plus, sur 438 pixels | 1 unité au plus, sur 877 pixels |
+| `brush-transparent-8bit` | 0 | 0 | 1 niveau (257 unités) sur 1 pixel ; 1 unité sur 335 autres | 1 niveau sur 1 pixel ; 1 unité sur 333 autres |
+
+**Écart avec la référence f64** du test `brush.rs` : au plus 1 unité de la profondeur du document, sur les quatre adaptateurs, en 16 et en 8 bits.
+
+**Trait à 1 % répété 100 fois** : alpha de 41 548 sur les quatre adaptateurs, égal à la récurrence arrondie.
+
+**Correctif fait pendant la CI** :
+
+- sous lavapipe et WARP, la couverture tout au bord d'une empreinte valait 0 en f32, alors que la référence f64 et les GPU matériels donnaient une valeur infime ;
+- le pixel était transparent dans les deux cas, mais avec ou sans la couleur du pinceau ;
+- un pixel peint dont l'alpha arrondi vaut 0 est désormais écrit à zéro : un pixel transparent n'a pas de couleur (0021).
