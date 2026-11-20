@@ -1,7 +1,7 @@
 # 0035 — J5 : moteur de trait sur GPU
 
 - **Date** : 2026-11-08
-- **Statut** : acceptée pour l'étape P1 le 2026-11-19, avec quatre conditions ; mise en œuvre de P1 ci-dessous
+- **Statut** : acceptée pour l'étape P1 le 2026-11-19, avec quatre conditions ; P1 mise en œuvre puis validée par l'utilisateur le 2026-11-19, y compris la tolérance d'un niveau pour les traits en 8 bits ; P2 et suivantes à valider
 - **Exigences concernées** : PIN-1, PIN-2, PIN-4, MAS-1 ; spec 5 (fluidité), 7.3 ; décisions 0021, 0026, 0028, 0034
 
 Cette décision traite les points 1 (moteur), 10 (performance) et 11 (ouverture) de la consigne.
